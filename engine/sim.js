@@ -10,6 +10,7 @@ import { stepToward } from "./movement.js";
 import { updateGather } from "./gather.js";
 import { updateCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue } from "./production.js";
+import { applySeparation } from "./separation.js";
 import { UNITS } from "./entities.js";
 import { checkWinCondition } from "./victory.js";
 import { runAI } from "./ai.js";
@@ -20,6 +21,7 @@ export function tick(state, dt) {
   runAI(state, dt);
 
   for (const unit of state.units.values()) updateUnit(state, unit, dt);
+  applySeparation(state, dt);
   for (const building of state.buildings.values()) {
     updateBuildingConstruction(building, dt);
     updateProductionQueue(state, building, dt);
