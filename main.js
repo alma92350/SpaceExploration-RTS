@@ -11,7 +11,6 @@ import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
 import { queueProduction } from "./engine/production.js";
 import { BUILDINGS, UNITS } from "./engine/entities.js";
-import { MAP_WIDTH, MAP_HEIGHT } from "./engine/map.js";
 import { PLANETS } from "./data.js";
 import { drawFrame } from "./render.js";
 import { attachInput } from "./input.js";
@@ -28,8 +27,8 @@ const mapSelectEl = document.getElementById("mapSelect");
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = MAP_WIDTH * dpr;
-  canvas.height = MAP_HEIGHT * dpr;
+  canvas.width = canvas.clientWidth * dpr;
+  canvas.height = canvas.clientHeight * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener("resize", resizeCanvas);
@@ -63,6 +62,7 @@ function renderMapSelect() {
 
 function startGame(planetId) {
   if (loop) loop.stop();
+  if (input) input.destroy();
   gameOverEl.classList.add("hidden");
 
   state = createGameState({ planetId });
@@ -70,12 +70,16 @@ function startGame(planetId) {
   announced = false;
   lastHud = 0;
   lastPanelSignature = null;
+  let lastFrame = performance.now();
 
   loop = createLoop({
     update: dt => tick(state, dt),
     render: () => {
-      drawFrame(ctx, state, input.getDragBox());
       const now = performance.now();
+      input.tickCamera((now - lastFrame) / 1000);
+      lastFrame = now;
+
+      drawFrame(ctx, state, input.getCamera(), canvas.clientWidth, canvas.clientHeight, input.getDragBox());
       if (now - lastHud > 150) { lastHud = now; renderHUD(); }
       if (state.over && !announced) { announced = true; loop.stop(); showGameOver(state.winner); }
     },
@@ -154,6 +158,7 @@ function rebuildSelectionPanel(sel) {
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
   if (barracks) {
     panelEl.appendChild(makeButton(`Produce Skiff (${UNITS.skiff.cost.ore} ore)`, () => queueProduction(state, barracks.id, "skiff")));
+    panelEl.appendChild(makeButton(`Produce Bastion (${UNITS.bastion.cost.ore} ore)`, () => queueProduction(state, barracks.id, "bastion")));
   }
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");

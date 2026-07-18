@@ -1,28 +1,58 @@
 /* ============================================================
    Canvas rendering. Pure read of state — never mutates it. Assumes the
-   caller already set up a device-pixel-ratio transform so drawing here
-   happens in plain world coordinates (0..map.width, 0..map.height).
+   caller already set up a device-pixel-ratio transform; drawFrame lays
+   the camera transform on top of that, so every draw* helper below just
+   works in plain world coordinates (0..map.width, 0..map.height) and
+   never has to know about the viewport or camera itself.
    ============================================================ */
 
 "use strict";
 
 import { COM } from "./data.js";
 import { UNITS } from "./engine/entities.js";
+import { isVisibleAt, FOG_CELL_SIZE } from "./engine/fog.js";
 
 // Facing angle per unit id, inferred frame-to-frame from movement — pure
 // render-side bookkeeping, never read by the sim.
 const facing = new Map();
 
-export function drawFrame(ctx, state, dragBox) {
-  const { width, height } = state.map;
+export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox) {
+  ctx.save();
   ctx.fillStyle = "#05070f";
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(0, 0, viewportW, viewportH);
 
+  ctx.translate(viewportW / 2, viewportH / 2);
+  ctx.scale(camera.zoom, camera.zoom);
+  ctx.translate(-camera.x, -camera.y);
+
+  drawFogBase(ctx, state);
+  // Resource deposits are charted map knowledge (see data.js), not
+  // battlefield intel — they render at full visibility regardless of
+  // fog, on top of the dimmed backdrop.
   drawNodes(ctx, state);
   drawBuildings(ctx, state);
   drawUnits(ctx, state);
   drawSelectionRings(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
+
+  ctx.restore();
+}
+
+// Unexplored cells go solid black; explored-but-not-currently-visible
+// cells get a dimming overlay so the player can see where they've
+// scouted before without it looking fully lit. Currently-visible cells
+// get nothing — the world underneath already reads at full brightness.
+function drawFogBase(ctx, state) {
+  const fog = state.fog;
+  if (!fog) return;
+  for (let gy = 0; gy < fog.rows; gy++) {
+    for (let gx = 0; gx < fog.cols; gx++) {
+      const idx = gy * fog.cols + gx;
+      if (fog.visible[idx]) continue;
+      ctx.fillStyle = fog.explored[idx] ? "rgba(5, 7, 15, 0.55)" : "#05070f";
+      ctx.fillRect(gx * FOG_CELL_SIZE, gy * FOG_CELL_SIZE, FOG_CELL_SIZE, FOG_CELL_SIZE);
+    }
+  }
 }
 
 function drawNodes(ctx, state) {
@@ -44,6 +74,7 @@ function drawNodes(ctx, state) {
 
 function drawBuildings(ctx, state) {
   for (const b of state.buildings.values()) {
+    if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
     const color = state.players[b.owner].color;
     ctx.globalAlpha = b.constructing ? 0.5 : 1;
     ctx.fillStyle = color;
@@ -58,6 +89,7 @@ function drawBuildings(ctx, state) {
 
 function drawUnits(ctx, state) {
   for (const u of state.units.values()) {
+    if (u.owner !== "player" && !isVisibleAt(state.fog, u.x, u.y)) continue;
     const def = UNITS[u.type];
     const color = state.players[u.owner].color;
     ctx.fillStyle = color;
@@ -69,7 +101,9 @@ function drawUnits(ctx, state) {
     ctx.strokeStyle = "#dce6ff";
     ctx.lineWidth = 1.5;
 
-    if (def.role === "combat") {
+    if (u.type === "bastion") {
+      drawDiamond(ctx, u.x, u.y, def.radius * 1.7);
+    } else if (def.role === "combat") {
       drawTriangle(ctx, u, def.radius * 2);
     } else {
       ctx.beginPath();
@@ -107,6 +141,20 @@ function drawTriangle(ctx, unit, r) {
   ctx.moveTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
   ctx.lineTo(cx + Math.cos(angle + 2.4) * r, cy + Math.sin(angle + 2.4) * r);
   ctx.lineTo(cx + Math.cos(angle - 2.4) * r, cy + Math.sin(angle - 2.4) * r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+// Bastion draws as a diamond — a third silhouette next to Worker's circle
+// and Skiff's triangle, so a mixed army reads at a glance instead of
+// needing color/size alone to tell a tanky melee unit from a skirmisher.
+function drawDiamond(ctx, cx, cy, r) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r, cy);
+  ctx.lineTo(cx, cy + r);
+  ctx.lineTo(cx - r, cy);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();

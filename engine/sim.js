@@ -11,6 +11,7 @@ import { updateGather } from "./gather.js";
 import { updateCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { applySeparation } from "./separation.js";
+import { updateFog } from "./fog.js";
 import { UNITS } from "./entities.js";
 import { checkWinCondition } from "./victory.js";
 import { runAI } from "./ai.js";
@@ -22,6 +23,7 @@ export function tick(state, dt) {
 
   for (const unit of state.units.values()) updateUnit(state, unit, dt);
   applySeparation(state, dt);
+  updateFog(state, state.fog, "player");
   for (const building of state.buildings.values()) {
     updateBuildingConstruction(state, building, dt);
     updateProductionQueue(state, building, dt);

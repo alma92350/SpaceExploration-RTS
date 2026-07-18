@@ -1,9 +1,9 @@
 /* ============================================================
    Scripted AI opponent: keep workers on the nearest node, keep
    population growing, put up a Barracks once it can afford one, then
-   pump Skiffs and throw them at the player's base once it has a real
-   force (or the game's dragged on long enough that it should commit
-   anyway).
+   mix Skiffs and Bastions (roughly 1 Bastion per BASTION_RATIO units)
+   and throw the whole army at the player's base once it's big enough
+   (or the game's dragged on long enough that it should commit anyway).
    ============================================================ */
 
 "use strict";
@@ -15,8 +15,9 @@ import { playerBuildings, playerUnits } from "./state.js";
 
 const THINK_INTERVAL = 1.5;
 const WORKER_TARGET = 6;
-const SKIFF_ATTACK_SIZE = 6;
+const ARMY_ATTACK_SIZE = 6;
 const ATTACK_TIMEOUT = 150;
+const BASTION_RATIO = 3;   // every 3rd unit built is a Bastion instead of a Skiff
 
 export function runAI(state, dt) {
   state.aiThink = (state.aiThink || 0) - dt;
@@ -25,7 +26,7 @@ export function runAI(state, dt) {
 
   const ai = state.players.ai;
   const workers = playerUnits(state, "ai").filter(u => u.type === "worker");
-  const skiffs = playerUnits(state, "ai").filter(u => u.type === "skiff");
+  const army = playerUnits(state, "ai").filter(u => u.type === "skiff" || u.type === "bastion");
   const buildings = playerBuildings(state, "ai");
   const cc = buildings.find(b => b.type === "command" && !b.constructing);
   const barracks = buildings.find(b => b.type === "barracks");
@@ -41,13 +42,16 @@ export function runAI(state, dt) {
   }
 
   if (barracks && !barracks.constructing && barracks.queue.length === 0) {
-    queueProduction(state, barracks.id, "skiff");
+    const nextIsBastion = (state.aiUnitsBuilt || 0) % BASTION_RATIO === BASTION_RATIO - 1;
+    if (queueProduction(state, barracks.id, nextIsBastion ? "bastion" : "skiff")) {
+      state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
+    }
   }
 
-  const readyToAttack = skiffs.length >= SKIFF_ATTACK_SIZE || state.time > ATTACK_TIMEOUT;
-  if (readyToAttack && skiffs.length > 0 && !state.aiAttacked) {
+  const readyToAttack = army.length >= ARMY_ATTACK_SIZE || state.time > ATTACK_TIMEOUT;
+  if (readyToAttack && army.length > 0 && !state.aiAttacked) {
     const target = state.map.bases.player;
-    issueAttackMove(skiffs, target.x, target.y);
+    issueAttackMove(army, target.x, target.y);
     state.aiAttacked = true;
   }
 }

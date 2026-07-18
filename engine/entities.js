@@ -13,11 +13,13 @@ export const BUILDINGS = {
     cost: {}, buildTime: 0,          // pre-placed at game start, never queued
     produces: ["worker"],
     isCommandCenter: true,
+    sight: 220,
   },
   barracks: {
     id: "barracks", name: "Barracks", hp: 500, radius: 20,
     cost: { ore: 150 }, buildTime: 20,
-    produces: ["skiff"],
+    produces: ["skiff", "bastion"],
+    sight: 150,
   },
 };
 
@@ -26,12 +28,20 @@ export const UNITS = {
     id: "worker", name: "Worker", hp: 40, radius: 6, speed: 60,
     cost: { ore: 50 }, buildTime: 8,
     role: "worker", gatherRate: 10, cargoCap: 10,
+    sight: 110,
   },
   skiff: {
     id: "skiff", name: "Skiff", hp: 80, radius: 7, speed: 90,
     cost: { ore: 100 }, buildTime: 12,
     role: "combat", attack: 12, range: 40, cooldown: 1,
     sight: 160, aggroRange: 120,
+  },
+  bastion: {
+    id: "bastion", name: "Bastion", hp: 160, radius: 9, speed: 60,
+    cost: { ore: 160 }, buildTime: 18,
+    role: "combat", attack: 10, range: 18, cooldown: 1.2,
+    sight: 130, aggroRange: 100,
+    bonusVs: { skiff: 14 },   // heavy armor built to tear through skiff hulls up close
   },
 };
 

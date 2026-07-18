@@ -14,9 +14,13 @@ The original game has no build step and no module system: ~30 script-tag files a
 
 ## Status
 
-First playable vertical slice: a 1v1 skirmish against a scripted AI on Ferros Prime (a mining world from `data.js`). Gather ore/crystals/radioactives with Workers, build a Barracks, produce Skiffs, fight, win by destroying the enemy Command Center (or lose yours). No tech tree, no multiple maps, no multiplayer yet — see `engine/` for the sim (fixed-timestep loop, movement, gather, combat, production, AI) and `render.js`/`input.js` for the canvas view and mouse controls.
+A 1v1 skirmish against a scripted AI on one of three charted worlds (Ferros Prime, Korrath, Vesper — picked at the start of each match). Gather ore/crystals/radioactives with Workers, build a Barracks, produce Skiffs and Bastions, fight under fog of war, win by destroying the enemy Command Center (or lose yours). No tech tree, no multiplayer yet — see `engine/` for the sim (fixed-timestep loop, movement + local avoidance, gather, combat, production, fog of war, AI) and `render.js`/`input.js`/`camera.js` for the canvas view, camera, and mouse/keyboard controls.
 
-Controls: left-drag to select your units, right-click to move/gather/attack depending on what's under the cursor, click a Worker or a completed building for build/produce options in the side panel.
+Two combat units with a real counter relationship: Skiff (fast, ranged, cheap) vs Bastion (slow, short-ranged, tanky, bonus damage specifically against Skiffs) — scouting what the enemy is building matters.
+
+Controls: left-drag to select your units, right-click to move (ignores enemies) or gather/assist-build/attack depending on what's under the cursor, Shift+right-click for attack-move (engages anything encountered along the way), mouse wheel to zoom, WASD/arrow keys to pan. Click a Worker or a completed building for build/produce options in the side panel.
+
+Fog of war hides enemy units and buildings outside your current vision (resource deposits are always shown — they're charted map knowledge, not battlefield intel). The AI plays with full knowledge of the map; only the player's view and targeting are fogged.
 
 ## Running it
 

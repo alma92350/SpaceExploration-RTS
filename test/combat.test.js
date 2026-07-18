@@ -93,3 +93,40 @@ test("attack-move still engages an enemy encountered along the way (unlike plain
 
   assert.ok(enemy.hp < enemyHp, "attack-move should still fight what it runs into");
 });
+
+test("Bastion deals its bonus damage specifically against Skiff", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const bastion = makeUnit("bastion", "player", 500, 500);
+  const skiff = makeUnit("skiff", "ai", 500 + UNITS.bastion.range - 1, 500);   // within melee range
+  state.units.set(bastion.id, bastion);
+  state.units.set(skiff.id, skiff);
+  const startHp = skiff.hp;
+
+  updateCombat(state, bastion, UNITS.bastion.cooldown);
+
+  const expectedDamage = UNITS.bastion.attack + UNITS.bastion.bonusVs.skiff;
+  assert.equal(startHp - skiff.hp, expectedDamage);
+});
+
+test("Bastion deals only its base damage against a non-Skiff target", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("bastion", "player", 500, 500);
+  const otherBastion = makeUnit("bastion", "ai", 500 + UNITS.bastion.range - 1, 500);
+  state.units.set(attacker.id, attacker);
+  state.units.set(otherBastion.id, otherBastion);
+  const startHp = otherBastion.hp;
+
+  updateCombat(state, attacker, UNITS.bastion.cooldown);
+
+  assert.equal(startHp - otherBastion.hp, UNITS.bastion.attack);
+});
+
+test("Skiff has no bonus damage table and deals only its base attack", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  const startHp = b.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.equal(startHp - b.hp, UNITS.skiff.attack);
+});

@@ -38,6 +38,17 @@ test("queueProduction refuses a unit type the building can't produce", () => {
   assert.equal(ok, false);
 });
 
+test("a Barracks can queue both Skiff and Bastion", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 1000;
+
+  assert.equal(queueProduction(state, barracks.id, "skiff"), true);
+  assert.equal(queueProduction(state, barracks.id, "bastion"), true);
+  assert.equal(barracks.queue.length, 2);
+});
+
 test("a queued unit spawns once its build time elapses, at the building and owned by it", () => {
   const state = createGameState({ planetId: "ferros" });
   const cc = commandCenterOf(state, "player");

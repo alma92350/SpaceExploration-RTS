@@ -8,6 +8,7 @@
 
 import { generateMap } from "./map.js";
 import { BUILDINGS, UNITS } from "./entities.js";
+import { createFog, updateFog } from "./fog.js";
 
 let nextEntityId = 1;
 function newId(prefix) { return `${prefix}${nextEntityId++}`; }
@@ -51,10 +52,12 @@ export function createGameState(opts = {}) {
     units: new Map(),
     buildings: new Map(),
     selection: [],          // unit/building ids currently selected by the human player
+    fog: createFog(map),    // the player's fog of war — see engine/fog.js
   };
 
   seedPlayer(state, "player", map.bases.player);
   seedPlayer(state, "ai", map.bases.ai);
+  updateFog(state, state.fog, "player");   // so the starting base's vision is correct before the first render
 
   return state;
 }

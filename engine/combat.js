@@ -1,11 +1,14 @@
 /* ============================================================
-   Combat-role units (skiffs): auto-acquire the nearest enemy within
-   aggro range, close to weapon range, and fire on cooldown. An explicit
-   'attack' order pins the target; 'attack-move' auto-engages anything
-   encountered en route to its destination.
+   Combat-role units (Skiff, Bastion): auto-acquire the nearest enemy
+   within aggro range, close to weapon range, and fire on cooldown. An
+   explicit 'attack' order pins the target; 'attack-move' auto-engages
+   anything encountered en route to its destination. A unit type's
+   bonusVs table (entities.js) adds extra damage against a specific
+   target type — Bastion's slow, short-range bulk is built to punch
+   through Skiff hulls specifically.
 
    A plain 'move' order is the deliberate exception: it's how a player
-   pulls a skiff OUT of a fight or redirects it past a threat, so it
+   pulls a unit OUT of a fight or redirects it past a threat, so it
    skips auto-acquire entirely rather than getting silently overridden
    the moment an enemy wanders into aggro range.
    ============================================================ */
@@ -37,7 +40,7 @@ export function updateCombat(state, unit, dt) {
       if (dist > def.range) {
         stepToward(state, unit, target.x, target.y, def.speed, dt);
       } else if (unit.attackTimer <= 0) {
-        target.hp -= def.attack;
+        target.hp -= attackDamage(def, target);
         unit.attackTimer = def.cooldown;
         if (target.hp <= 0) {
           removeEntity(state, target.id);
@@ -52,6 +55,11 @@ export function updateCombat(state, unit, dt) {
     const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
     if (arrived) unit.order = null;
   }
+}
+
+function attackDamage(def, target) {
+  const bonus = def.bonusVs && def.bonusVs[target.type] || 0;
+  return def.attack + bonus;
 }
 
 function isAlive(state, id) {
