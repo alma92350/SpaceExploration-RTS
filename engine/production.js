@@ -76,6 +76,27 @@ export function queueProduction(state, buildingId, unitType) {
   return true;
 }
 
+// Pulls a job out of the queue (in progress or still waiting, either
+// one) and fully refunds its cost — the simplest, most player-friendly
+// convention, and consistent with nothing having been spent on it yet
+// beyond the ore itself (a part-built unit doesn't exist as an entity,
+// unlike a part-built building, so there's no partial-progress asset to
+// account for).
+export function cancelProduction(state, buildingId, queueIndex) {
+  const building = state.buildings.get(buildingId);
+  if (!building) return false;
+  const job = building.queue[queueIndex];
+  if (!job) return false;
+  building.queue.splice(queueIndex, 1);
+  const player = state.players[building.owner];
+  payCost(player.resources, negate(UNITS[job.unitType].cost));
+  return true;
+}
+
+function negate(cost) {
+  return Object.fromEntries(Object.entries(cost).map(([com, qty]) => [com, -qty]));
+}
+
 // A Refinery's one-time, player-wide purchase — see UPGRADES in
 // entities.js for what each one does. Not a queue: it applies the
 // instant it's paid for (combat.js reads state.players[owner].upgrades

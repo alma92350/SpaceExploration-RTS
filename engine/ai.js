@@ -3,11 +3,19 @@
    population growing, put up a Barracks once it can afford one, then
    cycle through its archetype's unit mix (Skiff/Bastion/Lancer — see
    entities.js for the rock-paper-scissors relationship between them)
-   and throw the whole army at the player's base once it's big enough
-   (or the game's dragged on long enough that it should commit anyway).
-   Also puts up a Refinery and researches both upgrades once it can
-   afford to, so the player isn't the only side that gets to use
-   crystals/radioactives.
+   and throw its home army at the player's base in repeated waves, once
+   each wave is big enough (or the game's dragged on long enough that it
+   should commit anyway). Also puts up a Refinery and researches both
+   upgrades once it can afford to, so the player isn't the only side
+   that gets to use crystals/radioactives.
+
+   Every few units it also breaks from the archetype's mix to build
+   whatever directly counters the type the player fields most (see
+   counterToPlayerArmy below) — full-knowledge scouting, consistent with
+   the AI already playing with an unfogged view of the map (fog.js only
+   ever gates the player's own view). The rest of the cycle still
+   follows the archetype's own flavor, so a Rusher doesn't turn into a
+   pure reactive counter-picker.
 
    How aggressively vs. how patiently it plays — worker/army targets,
    attack timing, unit mix — comes from state.aiArchetype (see
@@ -23,6 +31,16 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
 import { playerBuildings, playerUnits } from "./state.js";
 
 const THINK_INTERVAL = 1.5;
+const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
+
+// Derived once from each unit's bonusVs table (entities.js), rather than
+// hardcoded here, so this stays correct automatically if the roster or
+// its counter relationships ever change: COUNTER_OF['lancer'] === 'skiff'
+// means Skiff is the type that holds bonus damage against Lancer.
+const COUNTER_OF = Object.values(UNITS).reduce((map, def) => {
+  if (def.bonusVs) for (const targetType of Object.keys(def.bonusVs)) map[targetType] = def.id;
+  return map;
+}, {});
 
 export function runAI(state, dt) {
   state.aiThink = (state.aiThink || 0) - dt;
@@ -49,8 +67,7 @@ export function runAI(state, dt) {
   }
 
   if (barracks && !barracks.constructing && barracks.queue.length === 0) {
-    const mix = archetype.unitMix;
-    const nextType = mix[(state.aiUnitsBuilt || 0) % mix.length];
+    const nextType = pickNextUnitType(state, archetype);
     if (queueProduction(state, barracks.id, nextType)) {
       state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
     }
@@ -67,12 +84,50 @@ export function runAI(state, dt) {
     }
   }
 
-  const readyToAttack = army.length >= archetype.armyAttackSize || state.time > archetype.attackTimeout;
-  if (readyToAttack && army.length > 0 && !state.aiAttacked) {
+  // "Home" army is whatever hasn't already been sent off to attack — a
+  // freshly produced or still-idle unit has order null/'move' (its walk
+  // to the rally point), while a committed one is mid attack-move (see
+  // combat.js: an attack-move order survives fighting along the way, and
+  // only clears once the unit truly arrives with nothing left to fight).
+  // Filtering on that instead of a one-shot flag means each new batch of
+  // units automatically forms the next wave once the threshold is met
+  // again, so the AI keeps attacking instead of throwing exactly one
+  // army at the player for the whole match.
+  const homeArmy = army.filter(u => !u.order || u.order.type === "move");
+  const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
+  const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || state.time >= nextAttackAt);
+  if (readyToAttack) {
     const target = state.map.bases.player;
-    issueAttackMove(army, target.x, target.y);
-    state.aiAttacked = true;
+    issueAttackMove(homeArmy, target.x, target.y);
+    state.aiNextAttackAt = state.time + archetype.attackTimeout;
   }
+}
+
+function pickNextUnitType(state, archetype) {
+  const built = state.aiUnitsBuilt || 0;
+  if (built > 0 && built % COUNTER_EVERY === 0) {
+    const counter = counterToPlayerArmy(state);
+    if (counter) return counter;
+  }
+  const mix = archetype.unitMix;
+  return mix[built % mix.length];
+}
+
+// Whatever combat type the player currently fields the most of, mapped
+// to its hard counter. Ties keep whichever type was seen first, which is
+// fine — there's no meaningfully "correct" pick between two equally
+// common threats.
+function counterToPlayerArmy(state) {
+  const counts = {};
+  for (const u of state.units.values()) {
+    if (u.owner !== "player" || UNITS[u.type].role !== "combat") continue;
+    counts[u.type] = (counts[u.type] || 0) + 1;
+  }
+  let best = null, bestCount = 0;
+  for (const [type, count] of Object.entries(counts)) {
+    if (count > bestCount) { bestCount = count; best = type; }
+  }
+  return best ? COUNTER_OF[best] : null;
 }
 
 function assignIdleWorkers(state, workers) {

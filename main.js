@@ -9,24 +9,33 @@
 import { createGameState } from "./engine/state.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
-import { queueProduction, researchUpgrade } from "./engine/production.js";
+import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { BUILDINGS, UNITS, UPGRADES } from "./engine/entities.js";
 import { PLANETS } from "./data.js";
 import { drawFrame } from "./render.js";
 import { attachInput } from "./input.js";
 import { isVisibleAt } from "./engine/fog.js";
+import { clampCamera } from "./camera.js";
+import { drawMinimap, minimapToWorld } from "./minimap.js";
+import { addTracer, addDeathFlash, addUnderAttackPing, resetEffects } from "./effects.js";
 import * as sound from "./sound.js";
 
 const MAP_CHOICES = ["ferros", "korrath", "vesper"];
+const MINIMAP_W = 200, MINIMAP_H = 125;
+const UNDER_ATTACK_THROTTLE_MS = 4000;
+const UNDER_ATTACK_BANNER_MS = 2500;
 
 const canvas = document.getElementById("field");
 const ctx = canvas.getContext("2d");
+const minimapCanvas = document.getElementById("minimap");
+const minimapCtx = minimapCanvas.getContext("2d");
 const resourcesEl = document.getElementById("resources");
 const clockEl = document.getElementById("matchClock");
 const panelEl = document.getElementById("selectionPanel");
 const gameOverEl = document.getElementById("gameOver");
 const mapSelectEl = document.getElementById("mapSelect");
 const muteBtn = document.getElementById("muteBtn");
+const underAttackEl = document.getElementById("underAttackAlert");
 
 muteBtn.addEventListener("click", () => {
   const next = !sound.isMuted();
@@ -44,7 +53,29 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-let state, input, loop, announced, lastHud, lastPanelSignature;
+function resizeMinimap() {
+  const dpr = window.devicePixelRatio || 1;
+  minimapCanvas.width = MINIMAP_W * dpr;
+  minimapCanvas.height = MINIMAP_H * dpr;
+  minimapCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resizeMinimap);
+resizeMinimap();
+
+let state, input, loop, announced, lastHud, lastPanelSignature, lastUnderAttackAt, underAttackTimer;
+
+// Attached once, not per-game: state/input are read fresh from the outer
+// closure at click time, so this stays correct across a "choose another
+// battlefield" restart without needing to re-wire on every startGame().
+minimapCanvas.addEventListener("click", e => {
+  if (!state || !input) return;
+  const rect = minimapCanvas.getBoundingClientRect();
+  const world = minimapToWorld(state.map, MINIMAP_W, MINIMAP_H, e.clientX - rect.left, e.clientY - rect.top);
+  const camera = input.getCamera();
+  camera.x = world.x;
+  camera.y = world.y;
+  clampCamera(camera, state.map, canvas.clientWidth, canvas.clientHeight);
+});
 
 renderMapSelect();
 
@@ -75,12 +106,16 @@ function startGame(planetId) {
   if (loop) loop.stop();
   if (input) input.destroy();
   gameOverEl.classList.add("hidden");
+  underAttackEl.classList.add("hidden");
+  clearTimeout(underAttackTimer);
 
   state = createGameState({ planetId });
   input = attachInput(canvas, state, () => renderHUD());
+  resetEffects();
   announced = false;
   lastHud = 0;
   lastPanelSignature = null;
+  lastUnderAttackAt = -Infinity;
   let lastFrame = performance.now();
 
   loop = createLoop({
@@ -90,8 +125,9 @@ function startGame(planetId) {
       input.tickCamera((now - lastFrame) / 1000);
       lastFrame = now;
 
-      drawFrame(ctx, state, input.getCamera(), canvas.clientWidth, canvas.clientHeight, input.getDragBox());
-      drainSoundEvents();
+      drawFrame(ctx, state, input.getCamera(), canvas.clientWidth, canvas.clientHeight, input.getDragBox(), input.getBuildGhost());
+      drawMinimap(minimapCtx, state, input.getCamera(), canvas.clientWidth, canvas.clientHeight, MINIMAP_W, MINIMAP_H);
+      processFrameEvents();
       if (now - lastHud > 150) { lastHud = now; renderHUD(); }
       if (state.over && !announced) { announced = true; loop.stop(); showGameOver(state.winner); }
     },
@@ -100,21 +136,51 @@ function startGame(planetId) {
   renderHUD();
 }
 
-// A sim event plays a sound if it's the player's own, or if it happened
-// somewhere currently visible — same "you can hear what you can see"
-// rule as fog of war applies to rendering. Every AI-only skirmish
-// happening off in the fogged dark stays silent.
-function drainSoundEvents() {
+// A sim event plays a sound (and spawns a matching visual effect — see
+// effects.js) if it's the player's own, or if it happened somewhere
+// currently visible — same "you can hear what you can see" rule as fog
+// of war applies to rendering. Every AI-only skirmish happening off in
+// the fogged dark stays silent. An attackHit whose attacker is the AI
+// necessarily means the target is the player's (only two sides exist),
+// so that's also the under-attack alert's trigger.
+function processFrameEvents() {
   for (const ev of state.events) {
     if (ev.owner !== "player" && !isVisibleAt(state.fog, ev.x, ev.y)) continue;
     switch (ev.type) {
-      case "unitSpawned": sound.playUnitSpawned(); break;
-      case "attackHit": sound.playAttackHit(); break;
-      case "entityKilled": sound.playEntityKilled(); break;
-      case "buildingComplete": sound.playBuildingComplete(); break;
+      case "unitSpawned":
+        sound.playUnitSpawned();
+        break;
+      case "attackHit":
+        sound.playAttackHit();
+        addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType);
+        if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
+        break;
+      case "entityKilled":
+        sound.playEntityKilled();
+        addDeathFlash(ev.x, ev.y);
+        break;
+      case "buildingComplete":
+        sound.playBuildingComplete();
+        break;
     }
   }
   state.events.length = 0;
+}
+
+// Throttled independently of sound.js's own internal throttle (which
+// only governs the alarm tone) so the banner and the minimap/world ping
+// stay in lockstep with each other during a sustained siege instead of
+// re-flashing on every single hit.
+function triggerUnderAttack(x, y) {
+  const now = performance.now();
+  if (now - lastUnderAttackAt < UNDER_ATTACK_THROTTLE_MS) return;
+  lastUnderAttackAt = now;
+
+  sound.playUnderAttack();
+  addUnderAttackPing(x, y);
+  underAttackEl.classList.remove("hidden");
+  clearTimeout(underAttackTimer);
+  underAttackTimer = setTimeout(() => underAttackEl.classList.add("hidden"), UNDER_ATTACK_BANNER_MS);
 }
 
 function renderHUD() {
@@ -133,20 +199,50 @@ function renderHUD() {
   renderSelectionPanel();
 }
 
+// Selecting more than one unit collapses the panel to one row per type
+// ("12× Skiff — 84% hp") instead of a row per unit — unusable past a
+// handful of units otherwise. A single unit or building still gets its
+// own detailed row. Buildings never aggregate (box-select only ever
+// picks up units; a building is always a lone click-selection).
+function countByType(units) {
+  const counts = new Map();
+  units.forEach(u => {
+    const entry = counts.get(u.type) || { count: 0, hp: 0, maxHp: 0 };
+    entry.count++;
+    entry.hp += u.hp;
+    entry.maxHp += u.maxHp;
+    counts.set(u.type, entry);
+  });
+  return counts;
+}
+
+// Only the queue's *composition* (what's queued, in what order) needs a
+// full rebuild -- a job's progress fraction changes every tick and is
+// instead patched in place below, same reasoning as the hp-only patch
+// path this already sits alongside.
+function queueSignature(sel) {
+  const b = sel.length === 1 && sel[0].kind === "building" ? sel[0] : null;
+  return b && b.queue ? b.queue.map(j => j.unitType).join(",") : "";
+}
+
 function renderSelectionPanel() {
   const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
+  const aggregated = sel.length > 1 && sel.every(e => e.kind === "unit");
 
-  // Only rebuild the panel's DOM when the set of buttons it should show
-  // would actually change (selection, or a building finishing
-  // construction/entering build-placement mode). Rebuilding on every HUD
-  // tick — even though hp numbers change constantly — replaced the exact
-  // button the player was mid-click on with a fresh DOM node, and a
-  // mouseup landing after that swap could drop the click entirely: felt
-  // like only a sliver of the button was clickable, when really it was a
-  // timing race, not a sizing one.
+  // Only rebuild the panel's DOM when the set of buttons/rows it should
+  // show would actually change (selection, build-placement mode,
+  // upgrades researched, or the production queue's composition).
+  // Rebuilding on every HUD tick — even though hp/progress numbers
+  // change constantly — replaced the exact button the player was
+  // mid-click on with a fresh DOM node, and a mouseup landing after that
+  // swap could drop the click entirely: felt like only a sliver of the
+  // button was clickable, when really it was a timing race, not a
+  // sizing one.
   const signature = sel.map(e => `${e.id}:${e.kind === "building" ? e.constructing : ""}`).join(",")
     + "|" + (input.building ? input.building.buildingType : "")
-    + "|" + Object.keys(state.players.player.upgrades).sort().join(",");
+    + "|" + Object.keys(state.players.player.upgrades).sort().join(",")
+    + "|" + aggregated
+    + "|" + queueSignature(sel);
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -154,10 +250,54 @@ function renderSelectionPanel() {
     return;
   }
 
-  const rows = panelEl.querySelectorAll(".sel-row");
-  sel.forEach((e, i) => {
-    const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
-    if (rows[i]) rows[i].textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
+  if (aggregated) {
+    const rows = panelEl.querySelectorAll(".sel-row");
+    [...countByType(sel).entries()].forEach(([type, entry], i) => {
+      const def = UNITS[type];
+      const pct = Math.round((entry.hp / entry.maxHp) * 100);
+      if (rows[i]) rows[i].textContent = `${entry.count}× ${def.name} — ${pct}% hp`;
+    });
+  } else {
+    const rows = panelEl.querySelectorAll(".sel-row");
+    sel.forEach((e, i) => {
+      const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
+      if (rows[i]) rows[i].textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
+    });
+  }
+
+  // Patch the in-progress queue slot's live percentage without touching
+  // the cancel buttons (a full rebuild would otherwise be needed on
+  // every single tick, since progress changes every tick).
+  const building = sel.length === 1 && sel[0].kind === "building" ? sel[0] : null;
+  if (building && building.queue && building.queue.length) {
+    const queueLabels = panelEl.querySelectorAll(".queue-label");
+    building.queue.forEach((job, i) => {
+      if (!queueLabels[i]) return;
+      const def = UNITS[job.unitType];
+      queueLabels[i].textContent = i === 0 ? `${def.name} — ${Math.round(job.progress * 100)}%` : `${def.name} (queued)`;
+    });
+  }
+}
+
+function renderQueueRows(building) {
+  building.queue.forEach((job, i) => {
+    const def = UNITS[job.unitType];
+    const row = document.createElement("div");
+    row.className = "sel-row queue-row";
+
+    const label = document.createElement("span");
+    label.className = "queue-label";
+    label.textContent = i === 0 ? `${def.name} — ${Math.round(job.progress * 100)}%` : `${def.name} (queued)`;
+    row.appendChild(label);
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "queue-cancel";
+    cancelBtn.textContent = "×";
+    cancelBtn.title = "Cancel (full refund)";
+    cancelBtn.addEventListener("click", () => { cancelProduction(state, building.id, i); renderHUD(); });
+    row.appendChild(cancelBtn);
+
+    panelEl.appendChild(row);
   });
 }
 
@@ -172,17 +312,29 @@ function rebuildSelectionPanel(sel) {
     return;
   }
 
-  sel.forEach(e => {
-    const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
-    const row = document.createElement("div");
-    row.className = "sel-row";
-    row.textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
-    panelEl.appendChild(row);
-  });
+  if (sel.length > 1 && sel.every(e => e.kind === "unit")) {
+    for (const [type, entry] of countByType(sel)) {
+      const def = UNITS[type];
+      const row = document.createElement("div");
+      row.className = "sel-row";
+      const pct = Math.round((entry.hp / entry.maxHp) * 100);
+      row.textContent = `${entry.count}× ${def.name} — ${pct}% hp`;
+      panelEl.appendChild(row);
+    }
+  } else {
+    sel.forEach(e => {
+      const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
+      const row = document.createElement("div");
+      row.className = "sel-row";
+      row.textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
+      panelEl.appendChild(row);
+    });
+  }
 
   const cc = sel.find(e => e.kind === "building" && e.type === "command" && !e.constructing);
   if (cc) {
     panelEl.appendChild(makeButton(`Produce Worker (${UNITS.worker.cost.ore} ore)`, () => queueProduction(state, cc.id, "worker")));
+    if (cc.queue.length) renderQueueRows(cc);
   }
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
@@ -190,6 +342,7 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(makeButton(`Produce Skiff (${UNITS.skiff.cost.ore} ore)`, () => queueProduction(state, barracks.id, "skiff")));
     panelEl.appendChild(makeButton(`Produce Bastion (${UNITS.bastion.cost.ore} ore)`, () => queueProduction(state, barracks.id, "bastion")));
     panelEl.appendChild(makeButton(`Produce Lancer (${UNITS.lancer.cost.ore} ore)`, () => queueProduction(state, barracks.id, "lancer")));
+    if (barracks.queue.length) renderQueueRows(barracks);
   }
 
   const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);

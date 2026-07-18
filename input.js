@@ -32,6 +32,7 @@ export function attachInput(canvas, state, onChange) {
 
   let dragBox = null;
   let buildMode = null;
+  let lastWorldPos = { x: state.map.width / 2, y: state.map.height / 2 };
 
   function viewport() {
     return { vw: canvas.clientWidth, vh: canvas.clientHeight };
@@ -67,10 +68,10 @@ export function attachInput(canvas, state, onChange) {
   }, { signal });
 
   canvas.addEventListener("mousemove", e => {
+    lastWorldPos = toWorld(e.clientX, e.clientY);   // tracked continuously for the build-placement ghost
     if (!dragBox) return;
-    const p = toWorld(e.clientX, e.clientY);
-    dragBox.x2 = p.x;
-    dragBox.y2 = p.y;
+    dragBox.x2 = lastWorldPos.x;
+    dragBox.y2 = lastWorldPos.y;
   }, { signal });
 
   window.addEventListener("mouseup", e => {
@@ -156,11 +157,16 @@ export function attachInput(canvas, state, onChange) {
   window.addEventListener("keydown", e => heldKeys.add(e.key.toLowerCase()), { signal });
   window.addEventListener("keyup", e => heldKeys.delete(e.key.toLowerCase()), { signal });
 
+  // Only exits build mode on an actual successful placement -- an
+  // invalid spot (see engine/placement.js) or no eligible worker just
+  // leaves the ghost up so the player can click again without having to
+  // re-open the build menu. The ghost itself (drawBuildGhost in
+  // render.js) already shows red/green before they even click.
   function placeBuildingAt(p) {
     const buildingType = buildMode.buildingType;
-    buildMode = null;
     const worker = state.selection.map(id => state.units.get(id)).find(u => u && u.cargo);
-    if (worker) issueBuild(state, worker.id, buildingType, p.x, p.y);
+    const built = worker && issueBuild(state, worker.id, buildingType, p.x, p.y);
+    if (built) buildMode = null;
     onChange();
   }
 
@@ -168,6 +174,7 @@ export function attachInput(canvas, state, onChange) {
     getDragBox: () => dragBox,
     startBuild(buildingType) { buildMode = { buildingType }; },
     get building() { return buildMode; },
+    getBuildGhost() { return buildMode ? { buildingType: buildMode.buildingType, x: lastWorldPos.x, y: lastWorldPos.y } : null; },
     getCamera: () => camera,
     tickCamera(dt) {
       let dx = 0, dy = 0;

@@ -24,7 +24,11 @@ Fog of war hides enemy units and buildings outside your current vision (resource
 
 A Refinery (built by a Worker, like the Barracks) researches two one-time upgrades once you're gathering crystals/radioactives: Reinforced Plating (less damage taken) and Overcharged Weapons (more damage dealt) — both apply live to your whole army, not just future production. Not every world has both resources (Korrath has no crystals, Vesper no radioactives), so which upgrade path is even available depends on where you're fighting.
 
-Each of the three worlds also gives the AI a different temperament: Korrath's is a Rusher (small economy, commits early), Ferros's is an Economist (builds up before attacking), Vesper's is Balanced.
+Each of the three worlds also gives the AI a different temperament: Korrath's is a Rusher (small economy, commits early), Ferros's is an Economist (builds up before attacking), Vesper's is Balanced. It attacks in repeated waves, not just once — a fresh batch of units becomes the next wave once it's big enough or the timeout comes back around — and it scouts: every third unit it builds directly counters whichever combat type the player currently fields the most of.
+
+A minimap (bottom-left) shows the whole map at a glance — fog, resource deposits, and every unit/building you can currently see — and doubles as a camera shortcut: click anywhere on it to jump the main view there. An "Under Attack" banner (with its own alarm sound and a pulsing ping on both the main view and the minimap) fires when the AI hits something of yours, so a raid on an unwatched flank doesn't go unnoticed. Combat itself is legible at a glance too: a tracer flashes from attacker to target on every hit (colored by weapon type), and a brief ring marks a kill.
+
+Placing a building shows a live green/red footprint preview under the cursor before you click — invalid spots (off the map, overlapping another building, too close to a resource node) are rejected with no cost and no need to reselect. The selection panel shows what's queued at a selected Command Center or Barracks (with live progress on the in-progress job) and lets you cancel any queued unit for a full refund; selecting a group of units collapses the panel to one row per type ("12× Skiff — 84% hp") instead of one per unit.
 
 ## Running it
 

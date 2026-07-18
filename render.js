@@ -11,12 +11,14 @@
 import { COM } from "./data.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, FOG_CELL_SIZE } from "./engine/fog.js";
+import { isValidPlacement } from "./engine/placement.js";
+import { activeEffects } from "./effects.js";
 
 // Facing angle per unit id, inferred frame-to-frame from movement — pure
 // render-side bookkeeping, never read by the sim.
 const facing = new Map();
 
-export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox) {
+export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost) {
   ctx.save();
   ctx.fillStyle = "#05070f";
   ctx.fillRect(0, 0, viewportW, viewportH);
@@ -32,6 +34,8 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox) {
   drawNodes(ctx, state);
   drawBuildings(ctx, state);
   drawUnits(ctx, state);
+  drawEffects(ctx);
+  if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
   drawSelectionRings(ctx, state);
   drawRallyPoint(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
@@ -179,6 +183,77 @@ function drawStar(ctx, cx, cy, r) {
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+}
+
+// Tracer color hints at what fired: Bastion's short, heavy hit reads
+// warm/gold, Lancer's precision shot reads cool/blue, everything else
+// (Skiff, and any future default) reads hostile red.
+function tracerColor(unitType) {
+  if (unitType === "bastion") return "#ffd166";
+  if (unitType === "lancer") return "#4fd1ff";
+  return "#f87171";
+}
+
+// Attack tracers, death flashes, and under-attack pings: all purely
+// cosmetic and short-lived (see effects.js), so this is the only place
+// in render.js that reads wall-clock-timed state instead of the sim's
+// own state object.
+function drawEffects(ctx) {
+  const { tracers, deaths, pings } = activeEffects();
+
+  for (const t of tracers) {
+    ctx.globalAlpha = Math.max(0, 1 - t.age);
+    ctx.strokeStyle = tracerColor(t.unitType);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(t.fromX, t.fromY);
+    ctx.lineTo(t.toX, t.toY);
+    ctx.stroke();
+  }
+
+  for (const d of deaths) {
+    const r = 6 + d.age * 16;
+    ctx.globalAlpha = Math.max(0, 1 - d.age);
+    ctx.strokeStyle = "#ffab5e";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  for (const p of pings) {
+    // Two expanding rings on a repeating pulse read as an alarm rather
+    // than a one-shot flash, matching a ping's much longer lifetime.
+    const pulse = (p.age * 2.5) % 1;
+    ctx.globalAlpha = Math.max(0, (1 - pulse) * (1 - p.age * 0.6));
+    ctx.strokeStyle = "#f87171";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 14 + pulse * 40, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+// Translucent footprint under the cursor while placing a building, green
+// when the spot is buildable and red when it isn't (out of bounds,
+// overlapping another building, or too close to a resource node — see
+// engine/placement.js) so invalid placement is obvious before the
+// player even clicks, not just rejected silently after.
+function drawBuildGhost(ctx, state, ghost) {
+  const def = BUILDINGS[ghost.buildingType];
+  if (!def) return;
+  const valid = isValidPlacement(state, ghost.buildingType, ghost.x, ghost.y);
+  const color = valid ? "#4ade80" : "#f87171";
+
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = color;
+  ctx.fillRect(ghost.x - def.radius, ghost.y - def.radius, def.radius * 2, def.radius * 2);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(ghost.x - def.radius, ghost.y - def.radius, def.radius * 2, def.radius * 2);
 }
 
 function drawHealthBar(ctx, cx, y, w, hp, maxHp) {

@@ -8,6 +8,7 @@
 
 import { BUILDINGS, canAfford, payCost } from "./entities.js";
 import { makeBuilding } from "./state.js";
+import { isValidPlacement } from "./placement.js";
 
 const FORMATION_SPACING = 20;
 
@@ -46,13 +47,17 @@ export function issueAttackMove(units, x, y) {
 }
 
 // Pays the cost up front, drops a constructing building on the spot, and
-// sends the chosen worker to stand at it until it finishes.
+// sends the chosen worker to stand at it until it finishes. Placement is
+// checked (and payment withheld) before anything is committed, so a bad
+// click never charges the player -- see engine/placement.js for what
+// counts as valid ground.
 export function issueBuild(state, workerId, buildingType, x, y) {
   const worker = state.units.get(workerId);
   if (!worker) return null;
   const player = state.players[worker.owner];
   const def = BUILDINGS[buildingType];
   if (!def || !canAfford(player.resources, def.cost)) return null;
+  if (!isValidPlacement(state, buildingType, x, y)) return null;
   payCost(player.resources, def.cost);
   const building = makeBuilding(buildingType, worker.owner, x, y, { constructing: true });
   state.buildings.set(building.id, building);

@@ -76,6 +76,16 @@ export function playBuildingComplete() {
   throttled("building", 200, () => tone({ freq: 400, duration: 0.18, type: "sine", gain: 0.13, sweep: 260 }));
 }
 
+// A distinct two-blip alarm, heavily throttled at the module level (on
+// top of whatever throttling the caller does for the banner/ping) so a
+// sustained siege reads as a periodic alert, not a continuous buzz.
+export function playUnderAttack() {
+  throttled("underattack", 4000, () => {
+    tone({ freq: 220, duration: 0.18, type: "square", gain: 0.16, sweep: -40 });
+    setTimeout(() => { if (!muted) tone({ freq: 220, duration: 0.18, type: "square", gain: 0.16, sweep: -40 }); }, 220);
+  });
+}
+
 export function playVictory() {
   if (muted) return;
   [523, 659, 784].forEach((freq, i) => setTimeout(() => tone({ freq, duration: 0.22, type: "triangle", gain: 0.15 }), i * 110));

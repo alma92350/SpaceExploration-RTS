@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
-import { queueProduction, updateProductionQueue, updateBuildingConstruction, researchUpgrade } from "../engine/production.js";
+import { queueProduction, cancelProduction, updateProductionQueue, updateBuildingConstruction, researchUpgrade } from "../engine/production.js";
 import { UNITS, UPGRADES } from "../engine/entities.js";
 
 function commandCenterOf(state, owner) {
@@ -47,6 +47,46 @@ test("a Barracks can queue both Skiff and Bastion", () => {
   assert.equal(queueProduction(state, barracks.id, "skiff"), true);
   assert.equal(queueProduction(state, barracks.id, "bastion"), true);
   assert.equal(barracks.queue.length, 2);
+});
+
+test("cancelProduction fully refunds an in-progress job and removes it from the queue", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const cc = commandCenterOf(state, "player");
+  const before = state.players.player.resources.ore;
+  queueProduction(state, cc.id, "worker");
+  updateProductionQueue(state, cc, 2);   // some progress, but nowhere near buildTime
+
+  const ok = cancelProduction(state, cc.id, 0);
+
+  assert.equal(ok, true);
+  assert.equal(cc.queue.length, 0);
+  assert.equal(state.players.player.resources.ore, before, "canceling should refund the full original cost");
+});
+
+test("cancelProduction can remove a job further back in the queue, leaving the rest intact", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 1000;
+  queueProduction(state, barracks.id, "skiff");
+  queueProduction(state, barracks.id, "bastion");
+  queueProduction(state, barracks.id, "lancer");
+
+  const ok = cancelProduction(state, barracks.id, 1);   // the Bastion, still waiting
+
+  assert.equal(ok, true);
+  assert.deepEqual(barracks.queue.map(j => j.unitType), ["skiff", "lancer"]);
+});
+
+test("cancelProduction refuses an out-of-range index instead of corrupting the queue", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const cc = commandCenterOf(state, "player");
+  queueProduction(state, cc.id, "worker");
+
+  const ok = cancelProduction(state, cc.id, 5);
+
+  assert.equal(ok, false);
+  assert.equal(cc.queue.length, 1, "the real job should be untouched");
 });
 
 test("a queued unit spawns once its build time elapses, at the building and owned by it", () => {

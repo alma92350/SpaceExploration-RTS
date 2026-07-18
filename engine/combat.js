@@ -42,7 +42,7 @@ export function updateCombat(state, unit, dt) {
       } else if (unit.attackTimer <= 0) {
         target.hp -= attackDamage(state, unit, def, target);
         unit.attackTimer = def.cooldown;
-        state.events.push({ type: "attackHit", x: target.x, y: target.y, owner: unit.owner });
+        state.events.push({ type: "attackHit", x: target.x, y: target.y, fromX: unit.x, fromY: unit.y, unitType: unit.type, owner: unit.owner });
         if (target.hp <= 0) {
           removeEntity(state, target.id);
           state.events.push({ type: "entityKilled", x: target.x, y: target.y, owner: target.owner });
