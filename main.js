@@ -49,6 +49,17 @@ muteBtn.addEventListener("click", () => {
   muteBtn.textContent = next ? "🔇" : "🔊";
 });
 
+// Right-click is a game command (move / attack / gather / queue a waypoint),
+// so the browser's own context menu must never pop over the game. The canvas
+// already suppresses it for clicks that land squarely on it, but the view has
+// padding around the canvas and the minimap sits on top of it — a right-click
+// on either of those would otherwise open the native menu. One window-level
+// listener covers the whole window in one place. (Firefox is the one holdout:
+// it deliberately lets Shift+right-click bypass this, so a Firefox player
+// queuing waypoints may still see the native menu — a browser policy no page
+// can override.)
+window.addEventListener("contextmenu", e => e.preventDefault());
+
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = canvas.clientWidth * dpr;
