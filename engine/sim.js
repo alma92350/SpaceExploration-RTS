@@ -8,7 +8,7 @@
 
 import { stepToward } from "./movement.js";
 import { updateGather } from "./gather.js";
-import { updateCombat } from "./combat.js";
+import { updateCombat, updateBuildingCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { applySeparation } from "./separation.js";
 import { updateFog } from "./fog.js";
@@ -27,6 +27,7 @@ export function tick(state, dt) {
   for (const building of state.buildings.values()) {
     updateBuildingConstruction(state, building, dt);
     updateProductionQueue(state, building, dt);
+    updateBuildingCombat(state, building, dt);
   }
 
   checkWinCondition(state);

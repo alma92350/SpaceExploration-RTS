@@ -1,10 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather, issueAssistBuild, issueSetRally } from "../engine/commands.js";
-import { makeBuilding } from "../engine/state.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally } from "../engine/commands.js";
+import { createGameState, makeBuilding } from "../engine/state.js";
+import { BUILDINGS } from "../engine/entities.js";
 
 function dummyUnits(n) {
   return Array.from({ length: n }, (_, i) => ({ id: `u${i}`, order: null, cargo: { com: null, qty: 0 } }));
+}
+
+function playerWorker(state) {
+  return [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
 }
 
 test("issueMove spreads a group across distinct destinations instead of one shared point", () => {
@@ -58,6 +63,87 @@ test("issueAssistBuild only assigns cargo-capable (worker) units", () => {
   issueAssistBuild(units, "site-1");
   assert.deepEqual(units[0].order, { type: "build", buildingId: "site-1" });
   assert.equal(units[1].order, null);
+});
+
+test("issueBuild pays the cost, founds a constructing site, and puts the worker on it", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = playerWorker(state);
+  const before = state.players.player.resources.ore;
+
+  const id = issueBuild(state, worker.id, "barracks", 800, 500);
+
+  assert.ok(id, "a successful build should return the new site's id");
+  assert.equal(state.players.player.resources.ore, before - BUILDINGS.barracks.cost.ore);
+  const site = state.buildings.get(id);
+  assert.equal(site.constructing, true);
+  assert.equal(site.buildProgress, 0);
+  assert.deepEqual(worker.order, { type: "build", buildingId: id });
+});
+
+test("issueBuild refuses when the player can't afford it: no site, no charge", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = playerWorker(state);
+  state.players.player.resources.ore = 0;
+  const buildingsBefore = state.buildings.size;
+
+  const id = issueBuild(state, worker.id, "barracks", 800, 500);
+
+  assert.equal(id, null);
+  assert.equal(state.buildings.size, buildingsBefore);
+  assert.equal(state.players.player.resources.ore, 0);
+  assert.equal(worker.order, null);
+});
+
+test("issueBuild refuses an invalid placement without charging for it", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = playerWorker(state);
+  const cc = [...state.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const before = state.players.player.resources.ore;
+  const buildingsBefore = state.buildings.size;
+
+  const id = issueBuild(state, worker.id, "barracks", cc.x, cc.y);   // dead center of the Command Center
+
+  assert.equal(id, null);
+  assert.equal(state.players.player.resources.ore, before, "a rejected placement must not cost anything");
+  assert.equal(state.buildings.size, buildingsBefore);
+  assert.equal(worker.order, null);
+});
+
+test("a Command Center expansion is issuable like any building: charged in full, founded constructing", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = playerWorker(state);
+  state.players.player.resources.ore = 500;   // the starting 300 deliberately can't afford the 400 up front
+
+  const id = issueBuild(state, worker.id, "command", 800, 500);
+
+  assert.ok(id, "a clear spot with funds in hand should found the expansion");
+  assert.equal(state.players.player.resources.ore, 500 - BUILDINGS.command.cost.ore);
+  const site = state.buildings.get(id);
+  assert.equal(site.type, "command");
+  assert.equal(site.constructing, true);
+});
+
+test("issueBuild pays a multi-commodity cost and refuses when the crystal half is missing", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = playerWorker(state);
+  state.players.player.resources.ore = 500;
+  state.players.player.resources.crystals = 200;
+
+  const id = issueBuild(state, worker.id, "turret", 800, 500);
+
+  assert.ok(id, "a clear spot with both commodities in hand should found the turret");
+  assert.equal(state.players.player.resources.ore, 500 - BUILDINGS.turret.cost.ore);
+  assert.equal(state.players.player.resources.crystals, 200 - BUILDINGS.turret.cost.crystals);
+
+  state.players.player.resources.crystals = 0;   // ore still ample, but the crystal half is gone
+  const oreBefore = state.players.player.resources.ore;
+  const buildingsBefore = state.buildings.size;
+
+  const denied = issueBuild(state, worker.id, "turret", 900, 500);
+
+  assert.equal(denied, null, "ore alone can't cover a crystal-costed building");
+  assert.equal(state.buildings.size, buildingsBefore, "a rejected build founds no site");
+  assert.equal(state.players.player.resources.ore, oreBefore, "and charges nothing");
 });
 
 test("issueSetRally replaces a building's rally point", () => {

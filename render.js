@@ -16,7 +16,7 @@
 import { COM } from "./data.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, FOG_CELL_SIZE } from "./engine/fog.js";
-import { isValidPlacement } from "./engine/placement.js";
+import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects } from "./effects.js";
 
 // A light, near-white accent used for hull details (sensor eyes, canopy
@@ -216,6 +216,8 @@ function drawBuildings(ctx, state) {
     if (b.type === "command") drawCommandCenter(ctx, b, color);
     else if (b.type === "barracks") drawBarracks(ctx, b, color);
     else if (b.type === "refinery") drawRefinery(ctx, b, color);
+    else if (b.type === "turret") drawTurret(ctx, state, b, color);   // only this draw takes state — it aims at its live target
+    else if (b.type === "habitat") drawHabitat(ctx, b, color);
 
     ctx.globalAlpha = 1;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp);
@@ -331,6 +333,62 @@ function drawRefinery(ctx, b, color) {
   }
 }
 
+// Habitat — a small residential dome: a squat foundation slab, a half-dome
+// roof and a row of lit windows, so a supply building reads as "people live
+// here" rather than as another weapons platform.
+function drawHabitat(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 1.8, h = r * 0.9;
+  ctx.fillStyle = shade(color, -20);
+  ctx.fillRect(cx - w / 2, cy, w, h * 0.7);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2;
+  ctx.strokeRect(cx - w / 2, cy, w, h * 0.7);
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, w * 0.42, Math.PI, 0);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = DETAIL;
+  for (const dx of [-w * 0.25, 0, w * 0.25]) ctx.fillRect(cx + dx - 1.5, cy + h * 0.2, 3, 3);
+}
+
+// Sentinel Turret — a hexagonal base pad with a single barrel that swings to
+// track its current target, so a defended base reads as actively guarded
+// rather than as just another building. The barrel angle comes from the
+// sim's auto-acquired targetId, not from any movement (a turret never moves).
+function drawTurret(ctx, state, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y;
+  pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));           // base pad
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2; ctx.stroke();
+
+  const angle = turretFacing(state, b);
+  ctx.strokeStyle = shade(color, -25); ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(angle) * r * 1.5, cy + Math.sin(angle) * r * 1.5); ctx.stroke();
+
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);          // mount
+  ctx.fillStyle = shade(color, 20); ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5; ctx.stroke();
+
+  ctx.beginPath();                                                    // muzzle tip light
+  ctx.arc(cx + Math.cos(angle) * r * 1.5, cy + Math.sin(angle) * r * 1.5, 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL; ctx.fill();
+}
+
+// Reuses the module-level facing Map — building "b*" ids can't collide with
+// unit "u*" ids. Holds its last aim when idle (targetId null) instead of
+// snapping back to a default, so a turret between shots keeps pointing where
+// it last fired.
+function turretFacing(state, b) {
+  const prev = facing.get(b.id);
+  let angle = prev ? prev.angle : -Math.PI / 2;
+  const t = b.targetId ? (state.units.get(b.targetId) || state.buildings.get(b.targetId)) : null;
+  if (t) angle = Math.atan2(t.y - b.y, t.x - b.x);
+  facing.set(b.id, { x: b.x, y: b.y, angle });
+  return angle;
+}
+
 /* ---------- units ---------- */
 
 function drawUnits(ctx, state) {
@@ -351,6 +409,7 @@ function drawUnits(ctx, state) {
     else if (u.type === "skiff") drawSkiff(ctx, u, def, color);
     else if (u.type === "bastion") drawBastion(ctx, u, def, color);
     else if (u.type === "lancer") drawLancer(ctx, u, def, color);
+    else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
 
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
@@ -495,6 +554,50 @@ function drawLancer(ctx, u, def, color) {
   }
 }
 
+// Breacher — a wide, low siege chassis CARRYING an oversized gun, where the
+// Lancer's whole hull instead IS its javelin. The barrel overhangs the hull
+// well past the nose and two recoil spades brace the rear, so it reads as
+// artillery hauling a cannon rather than a fighter.
+function drawBreacher(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.2, W = r * 0.9;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L * 0.5, W],
+    [L * 0.5, -W],
+    [-L * 0.7, -W * 0.8],
+    [-L * 0.7, W * 0.8],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = shade(color, -25);
+  ctx.lineWidth = r * 0.3;
+  const [bx1, by1] = toWorld(cx, cy, angle, -L * 0.2, 0);
+  const [bx2, by2] = toWorld(cx, cy, angle, L * 1.9, 0);
+  ctx.beginPath();
+  ctx.moveTo(bx1, by1);
+  ctx.lineTo(bx2, by2);
+  ctx.stroke();
+
+  ctx.fillStyle = shade(color, -25);
+  for (const side of [1, -1]) {
+    pathOriented(ctx, cx, cy, angle, [
+      [-L * 0.6, side * W * 0.45],
+      [-L * 0.6, side * W * 0.8],
+      [-L, side * W * 0.6],
+    ]);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = DETAIL;
+  const [tipX, tipY] = toWorld(cx, cy, angle, L * 1.9, 0);
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, r * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function updateFacing(unit) {
   const prev = facing.get(unit.id);
   let angle = prev ? prev.angle : -Math.PI / 2;
@@ -560,12 +663,12 @@ function drawEffects(ctx) {
 // Translucent footprint under the cursor while placing a building, green
 // when the spot is buildable and red when it isn't (out of bounds,
 // overlapping another building, or too close to a resource node — see
-// engine/placement.js) so invalid placement is obvious before the
+// engine/colliders.js) so invalid placement is obvious before the
 // player even clicks, not just rejected silently after.
 function drawBuildGhost(ctx, state, ghost) {
   const def = BUILDINGS[ghost.buildingType];
   if (!def) return;
-  const valid = isValidPlacement(state, ghost.buildingType, ghost.x, ghost.y);
+  const valid = canPlaceBuilding(state, ghost.buildingType, ghost.x, ghost.y);
   const color = valid ? "#4ade80" : "#f87171";
 
   ctx.globalAlpha = 0.45;

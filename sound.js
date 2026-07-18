@@ -68,6 +68,12 @@ export function playAttackHit() {
   throttled("hit", 70, () => tone({ freq: 180, duration: 0.06, type: "square", gain: 0.07, sweep: -60 }));
 }
 
+// Heavier, lower thud for siege rounds landing on a structure — a deeper
+// "crump" the ear reads as bigger ordnance than the Skiff-scale attack hit.
+export function playHeavyHit() {
+  throttled("heavyHit", 120, () => tone({ freq: 90, duration: 0.14, type: "sawtooth", gain: 0.11, sweep: -40 }));
+}
+
 export function playEntityKilled() {
   throttled("kill", 150, () => tone({ freq: 140, duration: 0.28, type: "sawtooth", gain: 0.13, sweep: -100 }));
 }
@@ -84,6 +90,12 @@ export function playUnderAttack() {
     tone({ freq: 220, duration: 0.18, type: "square", gain: 0.16, sweep: -40 });
     setTimeout(() => { if (!muted) tone({ freq: 220, duration: 0.18, type: "square", gain: 0.16, sweep: -40 }); }, 220);
   });
+}
+
+// A short, low "denied" buzz when production is blocked on supply — a flat,
+// unmusical square wave that reads as a warning, not an achievement.
+export function playProductionBlocked() {
+  throttled("blocked", 250, () => tone({ freq: 110, duration: 0.15, type: "square", gain: 0.1, sweep: -30 }));
 }
 
 export function playVictory() {

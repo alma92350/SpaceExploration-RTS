@@ -75,3 +75,20 @@ test("cells outside the map bounds are neither visible nor explored, not a crash
 test("FOG_CELL_SIZE is a sane positive grid resolution", () => {
   assert.ok(FOG_CELL_SIZE > 0);
 });
+
+test("a planet sight modifier shrinks how far a unit reveals fog", () => {
+  const worker = makeUnit("worker", "player", 400, 300);   // worker sight 110
+  const reveal = modifiers => {
+    const map = { width: 800, height: 600, modifiers };
+    const fog = createFog(map);
+    updateFog({ map, units: new Map([[worker.id, worker]]), buildings: new Map() }, fog, "player");
+    return fog;
+  };
+
+  const full = reveal({});
+  const dim = reveal({ sightMult: 0.5 });   // effective sight 55
+
+  assert.equal(isVisibleAt(full, 490, 300), true, "at full sight the far tile is visible");
+  assert.equal(isVisibleAt(dim, 490, 300), false, "the modifier pulls that same tile out of sight");
+  assert.equal(isVisibleAt(dim, 430, 300), true, "close ground stays visible under the modifier");
+});

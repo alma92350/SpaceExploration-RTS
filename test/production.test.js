@@ -108,6 +108,51 @@ test("a queued unit spawns once its build time elapses, at the building and owne
   assert.equal(spawned.owner, "player");
 });
 
+test("a multi-resource unit deducts every commodity in its cost, not just ore", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 500;
+  state.players.player.resources.radioactives = 500;
+
+  const ok = queueProduction(state, barracks.id, "breacher");
+
+  assert.equal(ok, true);
+  assert.equal(state.players.player.resources.ore, 500 - UNITS.breacher.cost.ore);
+  assert.equal(state.players.player.resources.radioactives, 500 - UNITS.breacher.cost.radioactives);
+});
+
+test("a Breacher can't be built on ore alone with no radioactives banked", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 1000;
+  state.players.player.resources.radioactives = 0;
+
+  assert.equal(queueProduction(state, barracks.id, "breacher"), false);
+  assert.equal(barracks.queue.length, 0);
+});
+
+test("a spawned Breacher rallies to the Barracks rally point like any other unit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 500;
+  state.players.player.resources.radioactives = 500;
+  const idsBefore = new Set(state.units.keys());
+  queueProduction(state, barracks.id, "breacher");
+
+  const dt = 0.5;
+  for (let t = 0; t < UNITS.breacher.buildTime + 1; t += dt) {
+    updateProductionQueue(state, barracks, dt);
+  }
+
+  const spawnedId = [...state.units.keys()].find(id => !idsBefore.has(id));
+  const spawned = state.units.get(spawnedId);
+  assert.equal(spawned.type, "breacher");
+  assert.deepEqual(spawned.order, { type: "move", x: barracks.rally.x, y: barracks.rally.y });
+});
+
 test("updateBuildingConstruction advances hp with progress and finishes on schedule", () => {
   const state = { units: new Map(), events: [] };
   const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });
@@ -187,6 +232,38 @@ test("an enemy worker standing nearby doesn't contribute to your build rate", ()
   updateBuildingConstruction({ units: new Map(), events: [] }, solo, 1);
 
   assert.equal(b.buildProgress, solo.buildProgress);
+});
+
+test("an under-construction Command Center refuses production until it completes", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const expansion = makeBuilding("command", "player", 800, 500, { constructing: true });
+  state.buildings.set(expansion.id, expansion);
+
+  assert.equal(queueProduction(state, expansion.id, "worker"), false);
+
+  updateBuildingConstruction(state, expansion, 1000);   // more than enough to finish the 30s build
+
+  assert.equal(expansion.constructing, false);
+  assert.equal(queueProduction(state, expansion.id, "worker"), true);
+});
+
+test("a planet build-time modifier speeds construction and production alike", () => {
+  // Construction: barracks buildTime 20; a 0.5 modifier should finish it in
+  // half the seconds of build progress.
+  const state = { units: new Map(), events: [], map: { modifiers: { buildTimeMult: 0.5 } } };
+  const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  updateBuildingConstruction(state, barracks, 10);
+  assert.equal(barracks.constructing, false, "half build-time completes the barracks in 10s, not 20");
+
+  // Production: a queued worker (buildTime 8) should pop out in ~4s under 0.5.
+  const game = createGameState({ planetId: "ferros" });
+  game.map.modifiers = { buildTimeMult: 0.5 };
+  const cc = [...game.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  queueProduction(game, cc.id, "worker");
+  const idsBefore = new Set(game.units.keys());
+  for (let t = 0; t < UNITS.worker.buildTime / 2 + 0.5; t += 0.5) updateProductionQueue(game, cc, 0.5);
+  const spawned = [...game.units.keys()].find(id => !idsBefore.has(id));
+  assert.ok(spawned, "the queued worker spawns in half its normal build time");
 });
 
 test("researchUpgrade pays the cost and flags it researched", () => {

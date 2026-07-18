@@ -15,30 +15,52 @@ export const ARCHETYPES = {
     armyAttackSize: 4,     // ...to throw a small army in early...
     attackTimeout: 90,     // ...and commits sooner even if it isn't ready.
     unitMix: ["skiff", "skiff", "skiff", "bastion", "lancer"],   // mostly cheap, fast Skiffs
+    turretCount: 0,        // no time or crystals to spare on static defense...
+    maxBarracks: 1,        // ...and 4 workers can't even feed a second one;
+    expandWhenNodesBelow: 0,   // its plan resolves long before home ore runs dry, so it never expands.
   },
   economist: {
     name: "Economist",
     workerTarget: 8,       // builds up a bigger economy first...
     armyAttackSize: 9,     // ...for a much larger attacking force...
     attackTimeout: 200,    // ...and is patient about it.
-    unitMix: ["skiff", "skiff", "bastion", "skiff", "lancer", "bastion"],
+    // Its out-scale identity spelled out: siege in the mix, proactive
+    // expansion, two barracks feeding one cycle, and two turrets to hold home.
+    unitMix: ["skiff", "skiff", "bastion", "skiff", "lancer", "bastion", "breacher"],
+    turretCount: 2,
+    maxBarracks: 2,
+    expandWhenNodesBelow: 0.4,   // grabs a second field while the first still has 40% left
   },
   balanced: {
     name: "Balanced",
     workerTarget: 6,
     armyAttackSize: 6,
     attackTimeout: 150,
-    unitMix: ["skiff", "bastion", "lancer"],   // even split across all three
+    unitMix: ["skiff", "bastion", "lancer", "breacher"],   // even split, plus siege where the map allows it
+    turretCount: 1,
+    maxBarracks: 2,
+    expandWhenNodesBelow: 0.25,   // expands later than the Economist, but still does
   },
 };
 
-// Korrath: lawless "Warlord World" -> aggressive rush.
-// Ferros: industrious "Mining World" -> economic buildup.
-// Vesper: "Twilight World" -> balanced.
-const PLANET_ARCHETYPE = {
+// Which temperament each playable world hands the AI. Key order drives the
+// map-picker's card order (main.js derives MAP_CHOICES from this), so the
+// original three stay first and in their long-standing order; the rest of the
+// curated roster follows. Every id is a real planet in data.js and every value
+// a real ARCHETYPES key (aiArchetypes.test asserts both).
+//   Korrath: lawless "Warlord World"    -> aggressive rush.
+//   Ferros:  industrious "Mining World"  -> economic buildup.
+//   Vesper:  "Twilight World"            -> balanced.
+export const PLANET_ARCHETYPE = {
   korrath: "rusher",
   ferros: "economist",
   vesper: "balanced",
+  glacius: "balanced",     // frozen ground slows everyone; a steady build suits it
+  nimbus: "rusher",        // storm-shortened sight rewards closing fast
+  pyralis: "balanced",     // long sightlines, even-handed play
+  helix: "economist",      // a crystal-dense belt to out-scale on
+  oort: "rusher",          // rich but lawless — grab and hit
+  forge: "economist",      // a factory world begs to out-produce
 };
 
 export function archetypeFor(planetId) {

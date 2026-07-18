@@ -10,7 +10,10 @@ import { createGameState } from "./engine/state.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
+import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES } from "./engine/entities.js";
+import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
+import { PLANET_MODIFIERS } from "./engine/map.js";
 import { PLANETS } from "./data.js";
 import { drawFrame } from "./render.js";
 import { attachInput } from "./input.js";
@@ -20,7 +23,9 @@ import { drawMinimap, minimapToWorld } from "./minimap.js";
 import { addTracer, addDeathFlash, addUnderAttackPing, resetEffects } from "./effects.js";
 import * as sound from "./sound.js";
 
-const MAP_CHOICES = ["ferros", "korrath", "vesper"];
+// The curated roster and its order both come from the AI archetype table, so
+// the picker, the opponent temperament, and the tests all agree on one list.
+const MAP_CHOICES = Object.keys(PLANET_ARCHETYPE);
 const MINIMAP_W = 200, MINIMAP_H = 125;
 const UNDER_ATTACK_THROTTLE_MS = 4000;
 const UNDER_ATTACK_BANNER_MS = 2500;
@@ -63,6 +68,9 @@ window.addEventListener("resize", resizeMinimap);
 resizeMinimap();
 
 let state, input, loop, announced, lastHud, lastPanelSignature, lastUnderAttackAt, underAttackTimer;
+// Timestamp until which the supply readout flashes red after a blocked
+// production attempt — see drainSoundEvents/renderHUD below.
+let supplyBlockedUntil = 0;
 
 // Attached once, not per-game: state/input are read fresh from the outer
 // closure at click time, so this stays correct across a "choose another
@@ -89,9 +97,15 @@ function renderMapSelect() {
   cards.className = "cards";
   MAP_CHOICES.forEach(id => {
     const planet = PLANETS.find(p => p.id === id);
+    const mod = PLANET_MODIFIERS[id];
     const card = document.createElement("button");
     card.className = "map-card";
-    card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`;
+    // Each card advertises who you're up against (the archetype's temperament)
+    // and how the world itself bends the fight (its modifier, if any), so the
+    // choice of battlefield is an informed one rather than just flavor text.
+    card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`
+      + `<span class="ai-note">Opponent doctrine: ${archetypeFor(id).name}</span>`
+      + (mod ? `<span class="mod-note">${mod.label}</span>` : "");
     card.addEventListener("click", () => {
       sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
@@ -116,6 +130,7 @@ function startGame(planetId) {
   lastHud = 0;
   lastPanelSignature = null;
   lastUnderAttackAt = -Infinity;
+  supplyBlockedUntil = 0;
   let lastFrame = performance.now();
 
   loop = createLoop({
@@ -151,7 +166,7 @@ function processFrameEvents() {
         sound.playUnitSpawned();
         break;
       case "attackHit":
-        sound.playAttackHit();
+        (ev.heavy ? sound.playHeavyHit : sound.playAttackHit)();
         addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType);
         if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
@@ -161,6 +176,14 @@ function processFrameEvents() {
         break;
       case "buildingComplete":
         sound.playBuildingComplete();
+        break;
+      // Only the player's own supply block beeps and flashes — a visible
+      // enemy stalling on supply is their problem, not a HUD alert of ours.
+      case "productionBlocked":
+        if (ev.owner === "player") {
+          sound.playProductionBlocked();
+          supplyBlockedUntil = performance.now() + 800;
+        }
         break;
     }
   }
@@ -191,6 +214,14 @@ function renderHUD() {
     span.textContent = `${com}: ${Math.floor(qty)}`;
     resourcesEl.appendChild(span);
   });
+
+  const used = supplyUsed(state, "player"), cap = supplyCap(state, "player");
+  const supplySpan = document.createElement("span");
+  supplySpan.className = "supply"
+    + (used >= cap ? " at-cap" : "")
+    + (performance.now() < supplyBlockedUntil ? " blocked" : "");
+  supplySpan.textContent = `supply: ${used}/${cap}`;
+  resourcesEl.appendChild(supplySpan);
 
   const mins = Math.floor(state.time / 60);
   const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
@@ -342,6 +373,7 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(makeButton(`Produce Skiff (${UNITS.skiff.cost.ore} ore)`, () => queueProduction(state, barracks.id, "skiff")));
     panelEl.appendChild(makeButton(`Produce Bastion (${UNITS.bastion.cost.ore} ore)`, () => queueProduction(state, barracks.id, "bastion")));
     panelEl.appendChild(makeButton(`Produce Lancer (${UNITS.lancer.cost.ore} ore)`, () => queueProduction(state, barracks.id, "lancer")));
+    panelEl.appendChild(makeButton(`Produce Breacher (${costText(UNITS.breacher.cost)})`, () => queueProduction(state, barracks.id, "breacher")));
     if (barracks.queue.length) renderQueueRows(barracks);
   }
 
@@ -355,8 +387,7 @@ function rebuildSelectionPanel(sel) {
         row.textContent = `${u.name} — researched`;
         panelEl.appendChild(row);
       } else {
-        const costText = Object.entries(u.cost).map(([com, qty]) => `${qty} ${com}`).join(", ");
-        panelEl.appendChild(makeButton(`Research ${u.name} (${costText})`, () => researchUpgrade(state, refinery.id, u.id)));
+        panelEl.appendChild(makeButton(`Research ${u.name} (${costText(u.cost)})`, () => researchUpgrade(state, refinery.id, u.id)));
       }
     });
   }
@@ -365,6 +396,9 @@ function rebuildSelectionPanel(sel) {
   if (worker && !input.building) {
     panelEl.appendChild(makeButton(`Build Barracks (${BUILDINGS.barracks.cost.ore} ore)`, () => input.startBuild("barracks")));
     panelEl.appendChild(makeButton(`Build Refinery (${BUILDINGS.refinery.cost.ore} ore)`, () => input.startBuild("refinery")));
+    panelEl.appendChild(makeButton(`Build Turret (${costText(BUILDINGS.turret.cost)})`, () => input.startBuild("turret")));
+    panelEl.appendChild(makeButton(`Build Habitat (${BUILDINGS.habitat.cost.ore} ore)`, () => input.startBuild("habitat")));
+    panelEl.appendChild(makeButton(`Build Command Center (${BUILDINGS.command.cost.ore} ore)`, () => input.startBuild("command")));
   }
 
   if (input.building) {
@@ -385,6 +419,12 @@ function rebuildSelectionPanel(sel) {
   }
 }
 
+// "150 ore, 100 crystals" — renders any multi-commodity cost so buttons for
+// crystal/radioactive-costed things read the same as the plain-ore ones.
+function costText(cost) {
+  return Object.entries(cost).map(([com, qty]) => `${qty} ${com}`).join(", ");
+}
+
 function makeButton(label, onClick) {
   const btn = document.createElement("button");
   btn.className = "btn";
@@ -401,8 +441,8 @@ function showGameOver(winner) {
 
   const msg = document.createElement("div");
   msg.textContent = winner === "player"
-    ? "Victory — enemy Command Center destroyed."
-    : "Defeat — your Command Center was destroyed.";
+    ? "Victory — the enemy's last Command Center is destroyed."
+    : "Defeat — your last Command Center was destroyed.";
   gameOverEl.appendChild(msg);
 
   const again = document.createElement("button");

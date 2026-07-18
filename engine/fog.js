@@ -61,10 +61,13 @@ function reveal(fog, x, y, sight) {
 // resolution) and folds newly-seen cells permanently into `explored`.
 export function updateFog(state, fog, owner) {
   fog.visible.fill(0);
+  // A world's sight modifier scales every reveal radius (see PLANET_MODIFIERS).
+  // Optional-chained so the fog tests' map-less stubs read the default 1.
+  const sightMult = state.map?.modifiers?.sightMult ?? 1;
   for (const u of state.units.values()) {
-    if (u.owner === owner) reveal(fog, u.x, u.y, UNITS[u.type].sight);
+    if (u.owner === owner) reveal(fog, u.x, u.y, UNITS[u.type].sight * sightMult);
   }
   for (const b of state.buildings.values()) {
-    if (b.owner === owner) reveal(fog, b.x, b.y, BUILDINGS[b.type].sight);
+    if (b.owner === owner) reveal(fog, b.x, b.y, BUILDINGS[b.type].sight * sightMult);
   }
 }

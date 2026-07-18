@@ -45,7 +45,11 @@ export function stepToward(state, unit, tx, ty, speed, dt) {
     if (mag > 1e-6) { dirX = steerX / mag; dirY = steerY / mag; }
   }
 
-  const step = Math.min(distToTarget, speed * dt);
+  // Per-planet speed modifier applied at the one choke point every mover
+  // funnels through (see engine/map.js PLANET_MODIFIERS). Optional-chained so
+  // the movement tests' map-less state stubs read the default 1.
+  const speedMult = state.map?.modifiers?.speedMult ?? 1;
+  const step = Math.min(distToTarget, speed * speedMult * dt);
   unit.x += dirX * step;
   unit.y += dirY * step;
   return false;

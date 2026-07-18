@@ -56,3 +56,13 @@ test("eventually still reaches the target despite steering around a neighbor alo
 
   assert.equal(arrived, true);
 });
+
+test("a planet speed modifier scales how far a unit steps in a tick", () => {
+  const unit = makeUnit("worker", "player", 0, 0);
+  const state = stateWith(unit);
+  state.map = { modifiers: { speedMult: 0.5 } };
+
+  stepToward(state, unit, 1000, 0, 60, 1);   // distant target so arrival never clamps the step
+
+  assert.ok(Math.abs(unit.x - 30) < 1e-6, `speed 60 x 0.5 x 1s should move 30, got ${unit.x}`);
+});

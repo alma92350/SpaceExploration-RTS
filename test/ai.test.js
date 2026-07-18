@@ -10,7 +10,11 @@ test("the AI cycles through its archetype's exact unit mix instead of pure Skiff
   const mix = state.aiArchetype.unitMix;
   const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
   state.buildings.set(barracks.id, barracks);
-  state.players.ai.resources.ore = 100000;
+  // Fund every commodity: ferros has radioactive nodes, so effectiveMix keeps
+  // the economist's Breacher entry — funding only ore would stall the cycle on
+  // it (queueProduction fails for lack of radioactives, and the AI retries the
+  // same entry). The assertions below still expect the full, unfiltered mix.
+  Object.assign(state.players.ai.resources, { ore: 100000, crystals: 100000, radioactives: 100000 });
 
   const builtTypes = [];
   const rounds = mix.length * 3;
@@ -96,4 +100,137 @@ test("the AI biases production toward the counter of the player's most common co
   assert.equal(builtTypes[0], state.aiArchetype.unitMix[0], "the very first build should still follow the archetype's mix");
   assert.equal(builtTypes[3], "bastion", "the 4th unit built (the first counter-pick slot) should directly counter the player's Skiff-heavy army");
   assert.equal(builtTypes[6], "bastion", "the counter-pick recurs every 3rd unit thereafter");
+});
+
+// A completed Barracks the tests can drive without waiting on construction.
+function stockedBarracks(state, dy = -100) {
+  const b = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y + dy);
+  state.buildings.set(b.id, b);
+  return b;
+}
+function fundAll(state) {
+  Object.assign(state.players.ai.resources, { ore: 100000, crystals: 100000, radioactives: 100000 });
+}
+function aiBuildings(state, type) {
+  return [...state.buildings.values()].filter(b => b.owner === "ai" && b.type === type);
+}
+
+test("the Economist adds a second Barracks once it can afford one, and never a third", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  fundAll(state);
+  stockedBarracks(state);
+
+  for (let i = 0; i < 15; i++) runAI(state, THINK_INTERVAL);
+
+  // economist maxBarracks is 2: the seeded one plus exactly one more, which
+  // stays constructing (no tick here) so a third is never founded behind it.
+  const barracks = aiBuildings(state, "barracks");
+  assert.equal(barracks.length, 2);
+  assert.equal(barracks.filter(b => b.constructing).length, 1);
+});
+
+test("two completed Barracks drain a single shared mix cycle", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  fundAll(state);
+  const mix = state.aiArchetype.unitMix;   // ferros has every commodity, so the full economist mix survives
+  const b1 = stockedBarracks(state, -100);
+  const b2 = stockedBarracks(state, 100);
+
+  const built = [];
+  const rounds = mix.length * 2;
+  for (let i = 0; i < rounds; i++) {
+    runAI(state, THINK_INTERVAL);
+    for (const b of [b1, b2]) {   // read in insertion order — the same order the shared cycle advances
+      if (b.queue.length) { built.push(b.queue[b.queue.length - 1].unitType); b.queue.length = 0; }
+    }
+  }
+
+  assert.equal(built.length, rounds * 2, "both barracks should have queued every round");
+  const expected = Array.from({ length: built.length }, (_, i) => mix[i % mix.length]);
+  assert.deepEqual(built, expected, "consecutive barracks pick up consecutive mix entries, one sequence");
+});
+
+test("a mix entry this map can't pay for is skipped, not stalled", () => {
+  const state = createGameState({ planetId: "vesper", rng: () => 0.5 });   // vesper deposits no radioactives
+  fundAll(state);   // even fully funded, there's simply no radioactive node to draw a Breacher's cost from
+  const barracks = stockedBarracks(state);
+
+  const built = [];
+  for (let i = 0; i < 9; i++) {
+    runAI(state, THINK_INTERVAL);
+    if (barracks.queue.length) { built.push(barracks.queue[barracks.queue.length - 1].unitType); barracks.queue.length = 0; }
+  }
+
+  // balanced mix is [skiff, bastion, lancer, breacher]; vesper drops the
+  // Breacher, leaving a clean three-unit cycle that never stalls on it.
+  assert.deepEqual(built.slice(0, 6), ["skiff", "bastion", "lancer", "skiff", "bastion", "lancer"]);
+  assert.ok(!built.includes("breacher"), "the unbuildable Breacher never enters the cycle");
+});
+
+// Zeros every ore node within HOME_RADIUS of the AI base, dropping the
+// Economist's home-ore fraction under its expansion threshold.
+function drainHomeOre(state) {
+  for (const n of state.map.nodes) {
+    if (n.com === "ore" && Math.hypot(n.x - state.map.bases.ai.x, n.y - state.map.bases.ai.y) <= 420) n.amount = 0;
+  }
+}
+
+test("home-ore depletion sends the Economist to expand onto an unclaimed cluster", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.players.ai.resources.ore = 100000;
+  drainHomeOre(state);
+
+  runAI(state, THINK_INTERVAL);
+
+  const expansions = aiBuildings(state, "command").filter(b => b.constructing);
+  assert.equal(expansions.length, 1, "one expansion Command Center is now going up");
+});
+
+test("the AI banks for an expansion without starving unit production", () => {
+  function drainedFerros(ore) {
+    const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+    state.players.ai.resources.ore = ore;
+    drainHomeOre(state);
+    const barracks = stockedBarracks(state);
+    return { state, barracks };
+  }
+
+  const ccCost = 400;
+  const short = drainedFerros(ccCost - 50);
+  runAI(short.state, THINK_INTERVAL);
+  assert.equal(aiBuildings(short.state, "command").filter(b => b.constructing).length, 0,
+    "with the CC unaffordable it hasn't placed the expansion it can't yet pay for");
+  assert.equal(short.barracks.queue.length, 1,
+    "but the army keeps flowing — the reserve pauses infrastructure, never unit production");
+
+  const flush = drainedFerros(100000);
+  runAI(flush.state, THINK_INTERVAL);
+  assert.equal(aiBuildings(flush.state, "command").filter(b => b.constructing).length, 1,
+    "once it can afford the CC, it plants the expansion");
+});
+
+test("the Economist fortifies with turrets on the approach vector, up to its turretCount", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  Object.assign(state.players.ai.resources, { ore: 100000, crystals: 10000 });
+  stockedBarracks(state);
+  const cc = aiBuildings(state, "command")[0];
+
+  for (let i = 0; i < 12; i++) runAI(state, THINK_INTERVAL);
+
+  const turrets = aiBuildings(state, "turret");
+  assert.equal(turrets.length, 2, "economist turretCount is 2");
+  for (const t of turrets) {
+    assert.ok(t.x < cc.x, "turrets sit between the CC (on the right edge) and mid-map");
+    assert.ok(Math.abs(t.y - cc.y) <= 120, "and hug the approach lane rather than scattering");
+  }
+});
+
+test("a legacy archetype without the Tier 4 fields still runs without throwing", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.aiArchetype = { name: "Legacy", workerTarget: 4, armyAttackSize: 4, attackTimeout: 90, unitMix: ["skiff"] };
+  const barracks = stockedBarracks(state);
+  state.players.ai.resources.ore = 100000;
+
+  assert.doesNotThrow(() => { for (let i = 0; i < 5; i++) runAI(state, THINK_INTERVAL); });
+  assert.ok(barracks.queue.length > 0 || state.aiUnitsBuilt > 0, "it still queues Skiffs from the bare mix");
 });

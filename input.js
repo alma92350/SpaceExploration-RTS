@@ -158,7 +158,7 @@ export function attachInput(canvas, state, onChange) {
   window.addEventListener("keyup", e => heldKeys.delete(e.key.toLowerCase()), { signal });
 
   // Only exits build mode on an actual successful placement -- an
-  // invalid spot (see engine/placement.js) or no eligible worker just
+  // invalid spot (see engine/colliders.js) or no eligible worker just
   // leaves the ghost up so the player can click again without having to
   // re-open the build menu. The ghost itself (drawBuildGhost in
   // render.js) already shows red/green before they even click.

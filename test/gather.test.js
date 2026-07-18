@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState } from "../engine/state.js";
+import { createGameState, makeBuilding } from "../engine/state.js";
 import { updateGather } from "../engine/gather.js";
 
 function firstNode(state, com) {
@@ -49,4 +49,26 @@ test("a fully depleted node leaves the worker idle after its final deposit", () 
 
   assert.equal(worker.order, null);
   assert.ok(node.amount <= 0);
+});
+
+test("a constructing expansion Command Center only becomes a dropoff once it completes", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  const site = makeBuilding("command", "player", node.x + 60, node.y, { constructing: true });
+  state.buildings.set(site.id, site);
+
+  // A full worker right beside the site, ready to deposit.
+  worker.x = site.x + 10; worker.y = site.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+  const before = state.players.player.resources.ore;
+
+  updateGather(state, worker, 0.05);
+  assert.equal(state.players.player.resources.ore, before, "a construction site accepts no deposits — the worker heads for the distant seeded CC");
+
+  site.constructing = false;
+  site.buildProgress = 1;
+  updateGather(state, worker, 0.05);
+  assert.ok(state.players.player.resources.ore > before, "the finished expansion is the nearest dropoff");
 });

@@ -32,6 +32,8 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
     x, y, radius: def.radius, hp: opts.hp ?? def.hp, maxHp: def.hp,
     constructing: !!opts.constructing, buildProgress: opts.constructing ? 0 : 1,
     queue: [],             // [{ unitType, progress }]
+    attackTimer: 0,        // combat.js decrements this for buildings with an attack stat (turret)
+    targetId: null,        // current auto-acquired target; render.js reads it to aim the turret barrel
     rally: { x: x + 60, y: y + 60 },
   };
 }
