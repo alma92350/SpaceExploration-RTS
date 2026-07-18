@@ -49,6 +49,7 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   drawUnits(ctx, state);
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
+  drawWaypoints(ctx, state);
   drawSelectionRings(ctx, state);
   drawRallyPoint(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
@@ -730,6 +731,62 @@ function drawRallyPoint(ctx, state) {
   ctx.strokeStyle = "#05070f";
   ctx.lineWidth = 1;
   ctx.stroke();
+}
+
+// The queued-waypoint path for every selected player unit: a dashed line
+// threading the unit through its active order and each shift-queued step,
+// with a dot at each stop. Only drawn for units that actually have a queue,
+// so an ordinary single-destination move doesn't clutter the field.
+function drawWaypoints(ctx, state) {
+  ctx.save();
+  ctx.setLineDash([4, 5]);
+  for (const id of state.selection) {
+    const unit = state.units.get(id);
+    if (!unit || unit.owner !== "player" || !unit.orderQueue || unit.orderQueue.length === 0) continue;
+
+    const stops = [];
+    for (const order of [unit.order, ...unit.orderQueue]) {
+      const pt = orderPoint(state, order);
+      if (pt) stops.push(pt);
+    }
+    if (!stops.length) continue;
+
+    ctx.strokeStyle = "rgba(79, 209, 255, 0.5)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(unit.x, unit.y);
+    for (const s of stops) ctx.lineTo(s.x, s.y);
+    ctx.stroke();
+
+    ctx.fillStyle = "#4fd1ff";
+    for (const s of stops) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// Where an order points on the map, for its waypoint marker — a fixed spot
+// for move/attack-move, or the live position of the unit/building/node it's
+// chasing. Null for an order with nowhere to point.
+function orderPoint(state, order) {
+  if (!order) return null;
+  if (order.type === "move" || order.type === "attack-move") return { x: order.x, y: order.y };
+  if (order.type === "attack") {
+    const t = state.units.get(order.targetId) || state.buildings.get(order.targetId);
+    return t ? { x: t.x, y: t.y } : null;
+  }
+  if (order.type === "gather") {
+    const n = state.map.nodes.find(nd => nd.id === order.nodeId);
+    return n ? { x: n.x, y: n.y } : null;
+  }
+  if (order.type === "build") {
+    const b = state.buildings.get(order.buildingId);
+    return b ? { x: b.x, y: b.y } : null;
+  }
+  return null;
 }
 
 function drawDragBox(ctx, box) {

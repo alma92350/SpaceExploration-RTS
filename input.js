@@ -113,35 +113,42 @@ export function attachInput(canvas, state, onChange) {
     const selected = state.selection.map(id => state.units.get(id)).filter(Boolean);
     if (!selected.length) return;
 
+    // Holding Shift queues the order as a waypoint instead of replacing what
+    // the units are doing, so a sequence of Shift+right-clicks lays down a
+    // path (move/attack/gather steps) the units run through in order. A plain
+    // right-click issues immediately and clears any queued waypoints.
+    const queue = e.shiftKey;
+
     const target = entityAt(p.x, p.y);
     if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
       const workers = selected.filter(u => u.cargo);
-      if (workers.length) issueAssistBuild(workers, target.id);
+      if (workers.length) issueAssistBuild(workers, target.id, queue);
       return;
     }
 
     if (target && target.owner !== "player") {
       const attackers = selected.filter(u => UNITS[u.type].role === "combat");
-      if (attackers.length) issueAttack(attackers, target.id);
+      if (attackers.length) issueAttack(attackers, target.id, queue);
       return;
     }
 
     const node = nodeAt(p.x, p.y);
     if (node) {
       const workers = selected.filter(u => u.cargo);
-      if (workers.length) issueGather(workers, node.id);
+      if (workers.length) issueGather(workers, node.id, queue);
       return;
     }
 
-    // Plain right-click is a real move: it goes exactly where clicked,
-    // ignoring any enemy it passes. Shift+right-click is the deliberate
-    // aggressive-advance option (attack-move) for combat units, which
-    // stops to fight anything encountered along the way.
-    if (e.shiftKey) {
+    // On open ground a plain right-click is a real move — it goes exactly
+    // where clicked, ignoring any enemy it passes. Shift keeps that
+    // aggressive-advance flavor while queuing it: combat units get an
+    // attack-move waypoint (they stop to fight anything met along the way),
+    // workers a plain move, and each extra Shift+click extends the path.
+    if (queue) {
       const combatants = selected.filter(u => UNITS[u.type].role === "combat");
       const others = selected.filter(u => UNITS[u.type].role !== "combat");
-      if (combatants.length) issueAttackMove(combatants, p.x, p.y);
-      if (others.length) issueMove(others, p.x, p.y);
+      if (combatants.length) issueAttackMove(combatants, p.x, p.y, true);
+      if (others.length) issueMove(others, p.x, p.y, true);
     } else {
       issueMove(selected, p.x, p.y);
     }

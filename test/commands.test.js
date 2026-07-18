@@ -146,6 +146,48 @@ test("issueBuild pays a multi-commodity cost and refuses when the crystal half i
   assert.equal(state.players.player.resources.ore, oreBefore, "and charges nothing");
 });
 
+test("a shift-queued order appends as a waypoint instead of replacing the active one", () => {
+  const [unit] = dummyUnits(1);
+  issueMove([unit], 500, 400);              // plain: takes effect now
+  issueMove([unit], 600, 400, true);        // shift: queued behind it
+  issueAttackMove([unit], 700, 400, true);  // shift: queued behind that
+
+  assert.deepEqual(unit.order, { type: "move", x: 500, y: 400 }, "the active order is untouched");
+  assert.equal(unit.orderQueue.length, 2, "both shift-clicks are queued");
+  assert.deepEqual(unit.orderQueue[0], { type: "move", x: 600, y: 400 });
+  assert.equal(unit.orderQueue[1].type, "attack-move");
+});
+
+test("a shift order to a fully idle unit takes effect immediately, not as a dead first waypoint", () => {
+  const [unit] = dummyUnits(1);
+  issueMove([unit], 500, 400, true);   // shift, but nothing is queued or active yet
+  assert.deepEqual(unit.order, { type: "move", x: 500, y: 400 });
+  assert.equal(unit.orderQueue.length, 0);
+});
+
+test("a plain order clears any queued waypoints", () => {
+  const [unit] = dummyUnits(1);
+  issueMove([unit], 500, 400);
+  issueMove([unit], 600, 400, true);
+  issueMove([unit], 700, 400, true);
+  assert.equal(unit.orderQueue.length, 2);
+
+  issueAttack([unit], "target-1");   // a plain command cancels the chain
+  assert.deepEqual(unit.order, { type: "attack", targetId: "target-1" });
+  assert.equal(unit.orderQueue.length, 0);
+});
+
+test("queued orders are context-sensitive — a mix of move, attack, and gather in one chain", () => {
+  const [unit] = dummyUnits(1);
+  issueMove([unit], 500, 400);
+  issueAttack([unit], "enemy-9", true);
+  issueGather([unit], "node-3", true);
+
+  assert.equal(unit.orderQueue.length, 2);
+  assert.deepEqual(unit.orderQueue[0], { type: "attack", targetId: "enemy-9" });
+  assert.deepEqual(unit.orderQueue[1], { type: "gather", nodeId: "node-3" });
+});
+
 test("issueSetRally replaces a building's rally point", () => {
   const building = makeBuilding("command", "player", 500, 500);
   const originalRally = building.rally;

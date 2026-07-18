@@ -28,22 +28,38 @@ function formationSpots(count, x, y) {
   return spots;
 }
 
-export function issueMove(units, x, y) {
+// Give a unit an order, either replacing what it's doing (a plain command)
+// or appending it as a waypoint (shift+command). Appending only queues when
+// the unit is actually busy — a shift-command to a fully idle unit acts
+// immediately, so the first waypoint of a chain doesn't sit inert. A plain
+// command always wipes any queued waypoints, so it cancels a chain cleanly.
+// sim.js pulls the next queued order in as soon as `order` clears.
+function dispatch(unit, order, queue) {
+  if (!unit.orderQueue) unit.orderQueue = [];
+  if (queue && (unit.order || unit.orderQueue.length)) {
+    unit.orderQueue.push(order);
+  } else {
+    unit.order = order;
+    unit.orderQueue = [];
+  }
+}
+
+export function issueMove(units, x, y, queue = false) {
   const spots = formationSpots(units.length, x, y);
-  units.forEach((u, i) => { u.order = { type: "move", x: spots[i].x, y: spots[i].y }; });
+  units.forEach((u, i) => dispatch(u, { type: "move", x: spots[i].x, y: spots[i].y }, queue));
 }
 
-export function issueGather(units, nodeId) {
-  units.forEach(u => { if (u.cargo) u.order = { type: "gather", nodeId }; });
+export function issueGather(units, nodeId, queue = false) {
+  units.forEach(u => { if (u.cargo) dispatch(u, { type: "gather", nodeId }, queue); });
 }
 
-export function issueAttack(units, targetId) {
-  units.forEach(u => { u.order = { type: "attack", targetId }; });
+export function issueAttack(units, targetId, queue = false) {
+  units.forEach(u => dispatch(u, { type: "attack", targetId }, queue));
 }
 
-export function issueAttackMove(units, x, y) {
+export function issueAttackMove(units, x, y, queue = false) {
   const spots = formationSpots(units.length, x, y);
-  units.forEach((u, i) => { u.order = { type: "attack-move", x: spots[i].x, y: spots[i].y }; });
+  units.forEach((u, i) => dispatch(u, { type: "attack-move", x: spots[i].x, y: spots[i].y }, queue));
 }
 
 // Pays the cost up front, drops a constructing building on the spot, and
@@ -68,8 +84,8 @@ export function issueBuild(state, workerId, buildingType, x, y) {
 // Sends more workers to help an already-founded construction site — no
 // cost (already paid when it was placed), no new building. Extra hands
 // speed the build up; see production.js's updateBuildingConstruction.
-export function issueAssistBuild(units, buildingId) {
-  units.forEach(u => { if (u.cargo) u.order = { type: "build", buildingId }; });
+export function issueAssistBuild(units, buildingId, queue = false) {
+  units.forEach(u => { if (u.cargo) dispatch(u, { type: "build", buildingId }, queue); });
 }
 
 // Every unit the building produces from now on walks to this point

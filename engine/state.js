@@ -19,7 +19,8 @@ export function makeUnit(type, owner, x, y) {
   return {
     kind: "unit", id: newId("u"), type, owner,
     x, y, hp: def.hp, maxHp: def.hp,
-    order: null,          // { type: 'move'|'gather'|'attack'|'attack-move', ... }
+    order: null,          // { type: 'move'|'gather'|'attack'|'attack-move'|'build', ... } — the active order
+    orderQueue: [],       // shift-queued waypoints; sim.js pulls the next one in whenever `order` clears
     cargo: def.role === "worker" ? { com: null, qty: 0 } : null,
     attackTimer: 0,
   };
