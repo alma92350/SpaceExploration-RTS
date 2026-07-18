@@ -166,6 +166,11 @@ function rebuildSelectionPanel(sel) {
     hint.className = "hint";
     hint.textContent = "Click the map to place it. Right-click to cancel.";
     panelEl.appendChild(hint);
+  } else if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Right-click to move (ignores enemies). Shift+right-click to attack-move.";
+    panelEl.appendChild(hint);
   }
 }
 

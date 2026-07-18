@@ -1,8 +1,13 @@
 /* ============================================================
    Combat-role units (skiffs): auto-acquire the nearest enemy within
    aggro range, close to weapon range, and fire on cooldown. An explicit
-   'attack' order pins the target; 'move'/'attack-move' just supply a
-   fallback destination once nothing's left to fight.
+   'attack' order pins the target; 'attack-move' auto-engages anything
+   encountered en route to its destination.
+
+   A plain 'move' order is the deliberate exception: it's how a player
+   pulls a skiff OUT of a fight or redirects it past a threat, so it
+   skips auto-acquire entirely rather than getting silently overridden
+   the moment an enemy wanders into aggro range.
    ============================================================ */
 
 "use strict";
@@ -14,6 +19,12 @@ import { getEntity, removeEntity } from "./state.js";
 export function updateCombat(state, unit, dt) {
   const def = UNITS[unit.type];
   unit.attackTimer = Math.max(0, unit.attackTimer - dt);
+
+  if (unit.order && unit.order.type === "move") {
+    const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
+    if (arrived) unit.order = null;
+    return;
+  }
 
   let targetId = unit.order && unit.order.type === "attack" ? unit.order.targetId : null;
   if (targetId && !isAlive(state, targetId)) { unit.order = null; targetId = null; }
@@ -37,7 +48,7 @@ export function updateCombat(state, unit, dt) {
     }
   }
 
-  if (unit.order && (unit.order.type === "move" || unit.order.type === "attack-move")) {
+  if (unit.order && unit.order.type === "attack-move") {
     const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
     if (arrived) unit.order = null;
   }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather } from "../engine/commands.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueAssistBuild } from "../engine/commands.js";
 
 function dummyUnits(n) {
   return Array.from({ length: n }, (_, i) => ({ id: `u${i}`, order: null, cargo: { com: null, qty: 0 } }));
@@ -42,5 +42,19 @@ test("issueGather only assigns cargo-capable units", () => {
   units[1].cargo = null;   // simulate a non-worker slipping into the selection
   issueGather(units, "node-1");
   assert.deepEqual(units[0].order, { type: "gather", nodeId: "node-1" });
+  assert.equal(units[1].order, null);
+});
+
+test("issueAssistBuild sends every worker in the group to the same site, no formation spreading", () => {
+  const units = dummyUnits(3);
+  issueAssistBuild(units, "site-1");
+  units.forEach(u => assert.deepEqual(u.order, { type: "build", buildingId: "site-1" }));
+});
+
+test("issueAssistBuild only assigns cargo-capable (worker) units", () => {
+  const units = dummyUnits(2);
+  units[1].cargo = null;   // e.g. a skiff caught in the same selection
+  issueAssistBuild(units, "site-1");
+  assert.deepEqual(units[0].order, { type: "build", buildingId: "site-1" });
   assert.equal(units[1].order, null);
 });

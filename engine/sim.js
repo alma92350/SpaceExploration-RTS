@@ -9,7 +9,7 @@
 import { stepToward } from "./movement.js";
 import { updateGather } from "./gather.js";
 import { updateCombat } from "./combat.js";
-import { updateBuildingConstruction, updateProductionQueue } from "./production.js";
+import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { applySeparation } from "./separation.js";
 import { UNITS } from "./entities.js";
 import { checkWinCondition } from "./victory.js";
@@ -23,7 +23,7 @@ export function tick(state, dt) {
   for (const unit of state.units.values()) updateUnit(state, unit, dt);
   applySeparation(state, dt);
   for (const building of state.buildings.values()) {
-    updateBuildingConstruction(building, dt);
+    updateBuildingConstruction(state, building, dt);
     updateProductionQueue(state, building, dt);
   }
 
@@ -50,7 +50,7 @@ function updateUnit(state, unit, dt) {
       const b = state.buildings.get(unit.order.buildingId);
       if (!b) { unit.order = null; break; }
       const dist = Math.hypot(b.x - unit.x, b.y - unit.y);
-      if (dist > 24) stepToward(state, unit, b.x, b.y, def.speed, dt);
+      if (dist > BUILD_REACH) stepToward(state, unit, b.x, b.y, def.speed, dt);
       else if (!b.constructing) unit.order = null;
       break;
     }

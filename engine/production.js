@@ -7,7 +7,26 @@
 import { BUILDINGS, UNITS, canAfford, payCost } from "./entities.js";
 import { makeUnit } from "./state.js";
 
-export function updateBuildingConstruction(building, dt) {
+// How close a worker has to stand to actually count as building, not just
+// walking over. Shared with sim.js's arrival check for the 'build' order.
+export const BUILD_REACH = 24;
+
+// More workers can pile onto the same construction site to speed it up —
+// capped so a single building can't be insta-rushed by massing an
+// unlimited crowd of workers on it.
+const MAX_BUILDERS = 4;
+
+function countBuilders(state, building) {
+  let n = 0;
+  for (const u of state.units.values()) {
+    if (u.owner !== building.owner) continue;
+    if (!u.order || u.order.type !== "build" || u.order.buildingId !== building.id) continue;
+    if (Math.hypot(u.x - building.x, u.y - building.y) <= BUILD_REACH) n++;
+  }
+  return n;
+}
+
+export function updateBuildingConstruction(state, building, dt) {
   if (!building.constructing) return;
   const def = BUILDINGS[building.type];
   if (def.buildTime <= 0) {
@@ -16,7 +35,12 @@ export function updateBuildingConstruction(building, dt) {
     building.hp = def.hp;
     return;
   }
-  building.buildProgress = Math.min(1, building.buildProgress + dt / def.buildTime);
+  // The founding worker alone still builds at the original pace even if
+  // it wanders off or dies — extra workers on-site are a bonus, not a
+  // requirement.
+  const builders = Math.min(countBuilders(state, building), MAX_BUILDERS);
+  const rate = Math.max(1, builders);
+  building.buildProgress = Math.min(1, building.buildProgress + (rate * dt) / def.buildTime);
   building.hp = Math.round(def.hp * building.buildProgress);
   if (building.buildProgress >= 1) building.constructing = false;
 }

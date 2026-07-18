@@ -8,7 +8,7 @@
 "use strict";
 
 import { MAP_WIDTH, MAP_HEIGHT } from "./engine/map.js";
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild } from "./engine/commands.js";
 import { UNITS } from "./engine/entities.js";
 
 const CLICK_THRESHOLD = 4;
@@ -82,6 +82,12 @@ export function attachInput(canvas, state, onChange) {
     if (!selected.length) return;
 
     const target = entityAt(p.x, p.y);
+    if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
+      const workers = selected.filter(u => u.cargo);
+      if (workers.length) issueAssistBuild(workers, target.id);
+      return;
+    }
+
     if (target && target.owner !== "player") {
       const attackers = selected.filter(u => UNITS[u.type].role === "combat");
       if (attackers.length) issueAttack(attackers, target.id);
@@ -95,10 +101,18 @@ export function attachInput(canvas, state, onChange) {
       return;
     }
 
-    const combatants = selected.filter(u => UNITS[u.type].role === "combat");
-    const others = selected.filter(u => UNITS[u.type].role !== "combat");
-    if (combatants.length) issueAttackMove(combatants, p.x, p.y);
-    if (others.length) issueMove(others, p.x, p.y);
+    // Plain right-click is a real move: it goes exactly where clicked,
+    // ignoring any enemy it passes. Shift+right-click is the deliberate
+    // aggressive-advance option (attack-move) for combat units, which
+    // stops to fight anything encountered along the way.
+    if (e.shiftKey) {
+      const combatants = selected.filter(u => UNITS[u.type].role === "combat");
+      const others = selected.filter(u => UNITS[u.type].role !== "combat");
+      if (combatants.length) issueAttackMove(combatants, p.x, p.y);
+      if (others.length) issueMove(others, p.x, p.y);
+    } else {
+      issueMove(selected, p.x, p.y);
+    }
   });
 
   function placeBuildingAt(p) {

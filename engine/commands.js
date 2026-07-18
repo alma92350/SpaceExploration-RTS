@@ -59,3 +59,10 @@ export function issueBuild(state, workerId, buildingType, x, y) {
   worker.order = { type: "build", buildingId: building.id };
   return building.id;
 }
+
+// Sends more workers to help an already-founded construction site — no
+// cost (already paid when it was placed), no new building. Extra hands
+// speed the build up; see production.js's updateBuildingConstruction.
+export function issueAssistBuild(units, buildingId) {
+  units.forEach(u => { if (u.cargo) u.order = { type: "build", buildingId }; });
+}

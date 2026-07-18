@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeBuilding } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { queueProduction, updateProductionQueue, updateBuildingConstruction } from "../engine/production.js";
 import { UNITS } from "../engine/entities.js";
 
@@ -58,14 +58,82 @@ test("a queued unit spawns once its build time elapses, at the building and owne
 });
 
 test("updateBuildingConstruction advances hp with progress and finishes on schedule", () => {
-  const state = createGameState({ planetId: "ferros" });
+  const state = { units: new Map() };
   const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });
 
-  updateBuildingConstruction(barracks, 5);
+  updateBuildingConstruction(state, barracks, 5);
   assert.ok(barracks.constructing);
   assert.ok(barracks.hp > 0 && barracks.hp < barracks.maxHp);
 
-  updateBuildingConstruction(barracks, 100);
+  updateBuildingConstruction(state, barracks, 100);
   assert.equal(barracks.constructing, false);
   assert.equal(barracks.hp, barracks.maxHp);
+});
+
+test("with no worker on-site, construction still proceeds at the original (one-builder) pace", () => {
+  const state = { units: new Map() };
+  const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+
+  updateBuildingConstruction(state, barracks, 1);
+  const solo = barracks.buildProgress;
+
+  const barracks2 = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  const onSiteWorker = makeUnit("worker", "player", 500, 500);
+  onSiteWorker.order = { type: "build", buildingId: barracks2.id };
+  const state2 = { units: new Map([[onSiteWorker.id, onSiteWorker]]) };
+  updateBuildingConstruction(state2, barracks2, 1);
+
+  assert.equal(barracks2.buildProgress, solo, "one on-site worker should match the no-worker baseline pace");
+});
+
+test("a second worker on-site roughly doubles construction speed, up to the cap", () => {
+  const buildingType = "barracks";
+  function progressAfter(workerCount, dt) {
+    const b = makeBuilding(buildingType, "player", 500, 500, { constructing: true });
+    const units = new Map();
+    for (let i = 0; i < workerCount; i++) {
+      const w = makeUnit("worker", "player", 500 + i, 500);   // within BUILD_REACH of the site
+      w.order = { type: "build", buildingId: b.id };
+      units.set(w.id, w);
+    }
+    updateBuildingConstruction({ units }, b, dt);
+    return b.buildProgress;
+  }
+
+  const oneWorker = progressAfter(1, 1);
+  const twoWorkers = progressAfter(2, 1);
+  const fourWorkers = progressAfter(4, 1);
+  const tenWorkers = progressAfter(10, 1);   // beyond the cap
+
+  assert.equal(twoWorkers, oneWorker * 2);
+  assert.equal(fourWorkers, oneWorker * 4);
+  assert.equal(tenWorkers, fourWorkers, "more than the cap shouldn't add further speed");
+});
+
+test("a worker still en route (outside BUILD_REACH) doesn't count toward the build rate", () => {
+  const b = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  const farWorker = makeUnit("worker", "player", 500, 500 + 500);   // nowhere near the site
+  farWorker.order = { type: "build", buildingId: b.id };
+  const state = { units: new Map([[farWorker.id, farWorker]]) };
+
+  updateBuildingConstruction(state, b, 1);
+
+  const solo = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  updateBuildingConstruction({ units: new Map() }, solo, 1);
+
+  assert.equal(b.buildProgress, solo.buildProgress);
+});
+
+test("an enemy worker standing nearby doesn't contribute to your build rate", () => {
+  const b = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  const enemyWorker = makeUnit("worker", "ai", 500, 500);
+  enemyWorker.order = { type: "build", buildingId: b.id };
+  const state = { units: new Map([[enemyWorker.id, enemyWorker]]) };
+
+  updateBuildingConstruction(state, b, 1);
+
+  const solo = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  updateBuildingConstruction({ units: new Map() }, solo, 1);
+
+  assert.equal(b.buildProgress, solo.buildProgress);
 });

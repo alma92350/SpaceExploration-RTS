@@ -52,3 +52,44 @@ test("an explicit attack order on a target killed by someone else re-acquires in
   assert.equal(a.order, null, "the stale order should be dropped, not kept forever");
   assert.ok(other.hp < startHp, "it should have engaged the new nearby enemy instead of idling");
 });
+
+test("a plain move order is honored even with an enemy sitting right on top of the destination", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const a = makeUnit("skiff", "player", 500, 500);
+  const enemy = makeUnit("skiff", "ai", 505, 500);   // well within aggro range
+  state.units.set(a.id, a);
+  state.units.set(enemy.id, enemy);
+  a.order = { type: "move", x: 700, y: 500 };
+  const enemyHp = enemy.hp;
+
+  updateCombat(state, a, 0.1);
+
+  assert.equal(enemy.hp, enemyHp, "should not have attacked despite the enemy being in range");
+  assert.ok(a.x > 500, "should have moved toward its destination, not stayed to fight");
+  assert.equal(a.order.type, "move", "the move order should survive an enemy being nearby");
+});
+
+test("a move order still eventually clears on arrival, same as before", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const a = makeUnit("skiff", "player", 500, 500);
+  state.units.set(a.id, a);
+  a.order = { type: "move", x: 500, y: 500 };   // already there
+
+  updateCombat(state, a, 0.1);
+
+  assert.equal(a.order, null);
+});
+
+test("attack-move still engages an enemy encountered along the way (unlike plain move)", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const a = makeUnit("skiff", "player", 500, 500);
+  const enemy = makeUnit("skiff", "ai", 505, 500);
+  state.units.set(a.id, a);
+  state.units.set(enemy.id, enemy);
+  a.order = { type: "attack-move", x: 700, y: 500 };
+  const enemyHp = enemy.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.ok(enemy.hp < enemyHp, "attack-move should still fight what it runs into");
+});
