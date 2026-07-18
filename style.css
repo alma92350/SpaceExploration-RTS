@@ -1,0 +1,77 @@
+/* ===== Stellar Frontier: RTS — styles =====
+   Palette carried over from the original Stellar Frontier's style.css so
+   the two games read as the same universe. Everything below the :root
+   block is new — the original's layout was built for a turn-based tab/panel
+   UI and doesn't fit a real-time view. */
+:root {
+  --bg: #05070f;
+  --bg-grad-1: #0a1028;
+  --bg-grad-2: #060814;
+  --panel: #0e1530;
+  --panel-2: #141d42;
+  --border: #243162;
+  --accent: #4fd1ff;
+  --accent-2: #8a6bff;
+  --good: #4ade80;
+  --bad: #f87171;
+  --warn: #fbbf24;
+  --text: #dce6ff;
+  --muted: #8593c4;
+  --gold: #ffd166;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: radial-gradient(ellipse at top, var(--bg-grad-1), var(--bg-grad-2));
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+#topbar .title {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+#view {
+  flex: 1;
+  position: relative;
+}
+
+#field {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: var(--bg);
+}
+
+#hud {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  padding: 10px 14px;
+  background: rgba(14, 21, 48, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}

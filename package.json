@@ -1,0 +1,12 @@
+{
+  "name": "stellar-frontier-rts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time strategy game in the Stellar Frontier universe. No dependencies, no build step.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
