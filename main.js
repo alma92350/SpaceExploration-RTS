@@ -189,6 +189,7 @@ function rebuildSelectionPanel(sel) {
   if (barracks) {
     panelEl.appendChild(makeButton(`Produce Skiff (${UNITS.skiff.cost.ore} ore)`, () => queueProduction(state, barracks.id, "skiff")));
     panelEl.appendChild(makeButton(`Produce Bastion (${UNITS.bastion.cost.ore} ore)`, () => queueProduction(state, barracks.id, "bastion")));
+    panelEl.appendChild(makeButton(`Produce Lancer (${UNITS.lancer.cost.ore} ore)`, () => queueProduction(state, barracks.id, "lancer")));
   }
 
   const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);

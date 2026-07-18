@@ -1,11 +1,13 @@
 /* ============================================================
    Scripted AI opponent: keep workers on the nearest node, keep
    population growing, put up a Barracks once it can afford one, then
-   mix Skiffs and Bastions and throw the whole army at the player's base
-   once it's big enough (or the game's dragged on long enough that it
-   should commit anyway). Also puts up a Refinery and researches both
-   upgrades once it can afford to, so the player isn't the only side
-   that gets to use crystals/radioactives.
+   cycle through its archetype's unit mix (Skiff/Bastion/Lancer — see
+   entities.js for the rock-paper-scissors relationship between them)
+   and throw the whole army at the player's base once it's big enough
+   (or the game's dragged on long enough that it should commit anyway).
+   Also puts up a Refinery and researches both upgrades once it can
+   afford to, so the player isn't the only side that gets to use
+   crystals/radioactives.
 
    How aggressively vs. how patiently it plays — worker/army targets,
    attack timing, unit mix — comes from state.aiArchetype (see
@@ -17,7 +19,7 @@
 
 import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueAttackMove } from "./commands.js";
-import { BUILDINGS, UPGRADES, canAfford } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
 import { playerBuildings, playerUnits } from "./state.js";
 
 const THINK_INTERVAL = 1.5;
@@ -30,7 +32,7 @@ export function runAI(state, dt) {
   const archetype = state.aiArchetype;
   const ai = state.players.ai;
   const workers = playerUnits(state, "ai").filter(u => u.type === "worker");
-  const army = playerUnits(state, "ai").filter(u => u.type === "skiff" || u.type === "bastion");
+  const army = playerUnits(state, "ai").filter(u => UNITS[u.type].role === "combat");
   const buildings = playerBuildings(state, "ai");
   const cc = buildings.find(b => b.type === "command" && !b.constructing);
   const barracks = buildings.find(b => b.type === "barracks");
@@ -47,8 +49,9 @@ export function runAI(state, dt) {
   }
 
   if (barracks && !barracks.constructing && barracks.queue.length === 0) {
-    const nextIsBastion = (state.aiUnitsBuilt || 0) % archetype.bastionRatio === archetype.bastionRatio - 1;
-    if (queueProduction(state, barracks.id, nextIsBastion ? "bastion" : "skiff")) {
+    const mix = archetype.unitMix;
+    const nextType = mix[(state.aiUnitsBuilt || 0) % mix.length];
+    if (queueProduction(state, barracks.id, nextType)) {
       state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
     }
   }

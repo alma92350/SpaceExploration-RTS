@@ -18,7 +18,7 @@ export const BUILDINGS = {
   barracks: {
     id: "barracks", name: "Barracks", hp: 500, radius: 20,
     cost: { ore: 150 }, buildTime: 20,
-    produces: ["skiff", "bastion"],
+    produces: ["skiff", "bastion", "lancer"],
     sight: 150,
   },
   refinery: {
@@ -46,6 +46,12 @@ export const UPGRADES = {
   },
 };
 
+// Skiff, Bastion and Lancer form a deliberate rock-paper-scissors: each
+// one's bonusVs targets exactly the unit that would otherwise be its
+// hardest matchup, and nothing beats all three at once.
+//   Skiff   -> beats Lancer  (fast raiders shred a lightly-armored gun platform before it can find its range)
+//   Bastion -> beats Skiff   (heavy armor shrugs off skiff fire and tears through light hulls up close)
+//   Lancer  -> beats Bastion (armor-piercing rounds built specifically to punch through heavy plating)
 export const UNITS = {
   worker: {
     id: "worker", name: "Worker", hp: 40, radius: 6, speed: 60,
@@ -58,13 +64,21 @@ export const UNITS = {
     cost: { ore: 100 }, buildTime: 12,
     role: "combat", attack: 12, range: 40, cooldown: 1,
     sight: 160, aggroRange: 120,
+    bonusVs: { lancer: 10 },
   },
   bastion: {
     id: "bastion", name: "Bastion", hp: 160, radius: 9, speed: 60,
     cost: { ore: 160 }, buildTime: 18,
     role: "combat", attack: 10, range: 18, cooldown: 1.2,
     sight: 130, aggroRange: 100,
-    bonusVs: { skiff: 14 },   // heavy armor built to tear through skiff hulls up close
+    bonusVs: { skiff: 14 },
+  },
+  lancer: {
+    id: "lancer", name: "Lancer", hp: 70, radius: 8, speed: 75,
+    cost: { ore: 150 }, buildTime: 16,
+    role: "combat", attack: 16, range: 55, cooldown: 1.4,
+    sight: 170, aggroRange: 130,
+    bonusVs: { bastion: 20 },
   },
 };
 

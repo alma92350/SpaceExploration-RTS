@@ -31,6 +31,20 @@ test("Bastion is the deliberate Skiff counter: bonus damage vs skiff, but slower
   assert.ok(UNITS.bastion.hp > UNITS.skiff.hp);
 });
 
+test("Lancer is the deliberate Bastion counter: bonus damage vs bastion, but squishier and not a strict upgrade", () => {
+  assert.equal(UNITS.lancer.bonusVs.bastion, 20);
+  assert.ok(UNITS.lancer.hp < UNITS.bastion.hp, "Lancer should be squishier than the Bastion it counters");
+  assert.ok(UNITS.lancer.range > UNITS.bastion.range, "Lancer's long range is its edge against Bastion's short melee range");
+});
+
+test("the rock-paper-scissors triangle closes: Skiff beats Lancer, Bastion beats Skiff, Lancer beats Bastion", () => {
+  assert.equal(UNITS.skiff.bonusVs.lancer, 10);
+  assert.equal(UNITS.bastion.bonusVs.skiff, 14);
+  assert.equal(UNITS.lancer.bonusVs.bastion, 20);
+  assert.equal(UNITS.lancer.role, "combat");
+  assert.ok(BUILDINGS.barracks.produces.includes("lancer"));
+});
+
 test("every unit and building carries a sight radius for fog of war", () => {
   for (const def of Object.values(UNITS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
   for (const def of Object.values(BUILDINGS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);

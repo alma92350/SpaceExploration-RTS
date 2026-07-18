@@ -16,7 +16,7 @@ The original game has no build step and no module system: ~30 script-tag files a
 
 A 1v1 skirmish against a scripted AI on one of three charted worlds (Ferros Prime, Korrath, Vesper — picked at the start of each match). Gather ore/crystals/radioactives with Workers, build a Barracks, produce Skiffs and Bastions, fight under fog of war, win by destroying the enemy Command Center (or lose yours). No tech tree, no multiplayer yet — see `engine/` for the sim (fixed-timestep loop, movement + local avoidance, gather, combat, production, fog of war, AI) and `render.js`/`input.js`/`camera.js` for the canvas view, camera, and mouse/keyboard controls.
 
-Two combat units with a real counter relationship: Skiff (fast, ranged, cheap) vs Bastion (slow, short-ranged, tanky, bonus damage specifically against Skiffs) — scouting what the enemy is building matters.
+Three combat units forming a genuine rock-paper-scissors triangle, not just a single hard counter: Skiff (fast, cheap) beats Lancer, Bastion (slow, short-ranged, tanky) beats Skiff, and Lancer (long-ranged, armor-piercing) beats Bastion — each unit's bonus damage targets exactly the matchup that would otherwise be its worst, and nothing beats all three at once. Scouting what the enemy is building, and countering it, matters.
 
 Controls: left-drag to select your units, right-click to move (ignores enemies) or gather/assist-build/attack/set-rally-point depending on what's selected and under the cursor, Shift+right-click for attack-move (engages anything encountered along the way), mouse wheel to zoom, WASD/arrow keys to pan. Click a Worker or a completed building for build/produce/research options in the side panel. Sound can be muted from the top bar.
 

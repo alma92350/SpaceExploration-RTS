@@ -121,6 +121,56 @@ test("Bastion deals only its base damage against a non-Skiff target", () => {
   assert.equal(startHp - otherBastion.hp, UNITS.bastion.attack);
 });
 
+test("Lancer deals its bonus damage specifically against Bastion", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const lancer = makeUnit("lancer", "player", 500, 500);
+  const bastion = makeUnit("bastion", "ai", 500 + UNITS.lancer.range - 1, 500);   // within Lancer's long range
+  state.units.set(lancer.id, lancer);
+  state.units.set(bastion.id, bastion);
+  const startHp = bastion.hp;
+
+  updateCombat(state, lancer, UNITS.lancer.cooldown);
+
+  const expectedDamage = UNITS.lancer.attack + UNITS.lancer.bonusVs.bastion;
+  assert.equal(startHp - bastion.hp, expectedDamage);
+});
+
+test("Lancer deals only its base damage against a non-Bastion target", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const lancer = makeUnit("lancer", "player", 500, 500);
+  const skiff = makeUnit("skiff", "ai", 500 + UNITS.lancer.range - 1, 500);
+  state.units.set(lancer.id, lancer);
+  state.units.set(skiff.id, skiff);
+  const startHp = skiff.hp;
+
+  updateCombat(state, lancer, UNITS.lancer.cooldown);
+
+  assert.equal(startHp - skiff.hp, UNITS.lancer.attack);
+});
+
+test("Skiff deals its bonus damage specifically against Lancer, closing the rock-paper-scissors loop", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  const lancer = makeUnit("lancer", "ai", 500 + UNITS.skiff.range - 1, 500);
+  state.units.set(skiff.id, skiff);
+  state.units.set(lancer.id, lancer);
+  const startHp = lancer.hp;
+
+  updateCombat(state, skiff, UNITS.skiff.cooldown);
+
+  const expectedDamage = UNITS.skiff.attack + UNITS.skiff.bonusVs.lancer;
+  assert.equal(startHp - lancer.hp, expectedDamage);
+});
+
+test("the rock-paper-scissors triangle is a genuine cycle: no unit also counters the unit that counters it", () => {
+  assert.ok(UNITS.skiff.bonusVs.lancer > 0, "Skiff should beat Lancer");
+  assert.ok(UNITS.bastion.bonusVs.skiff > 0, "Bastion should beat Skiff");
+  assert.ok(UNITS.lancer.bonusVs.bastion > 0, "Lancer should beat Bastion");
+  assert.ok(!UNITS.skiff.bonusVs.bastion, "Skiff must not also counter Bastion, or Skiff would beat everything");
+  assert.ok(!UNITS.bastion.bonusVs.lancer, "Bastion must not also counter Lancer, or Bastion would beat everything");
+  assert.ok(!UNITS.lancer.bonusVs.skiff, "Lancer must not also counter Skiff, or Lancer would beat everything");
+});
+
 test("Skiff has no bonus damage table and deals only its base attack", () => {
   const state = createGameState({ planetId: "ferros" });
   const [a, b] = faceOff(state);
