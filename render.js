@@ -7,6 +7,11 @@
 "use strict";
 
 import { COM } from "./data.js";
+import { UNITS } from "./engine/entities.js";
+
+// Facing angle per unit id, inferred frame-to-frame from movement — pure
+// render-side bookkeeping, never read by the sim.
+const facing = new Map();
 
 export function drawFrame(ctx, state, dragBox) {
   const { width, height } = state.map;
@@ -53,19 +58,53 @@ function drawBuildings(ctx, state) {
 
 function drawUnits(ctx, state) {
   for (const u of state.units.values()) {
+    const def = UNITS[u.type];
     const color = state.players[u.owner].color;
-    ctx.beginPath();
-    ctx.arc(u.x, u.y, 6, 0, Math.PI * 2);
     ctx.fillStyle = color;
-    ctx.fill();
+    ctx.strokeStyle = "#05070f";
+    ctx.lineWidth = 1.5;
+
+    if (def.role === "combat") {
+      drawTriangle(ctx, u, def.radius * 1.5);
+    } else {
+      ctx.beginPath();
+      ctx.arc(u.x, u.y, def.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
-      ctx.arc(u.x, u.y - 11, 3, 0, Math.PI * 2);
+      ctx.arc(u.x, u.y - def.radius - 5, 3, 0, Math.PI * 2);
       ctx.fillStyle = "#ffd166";
       ctx.fill();
     }
-    drawHealthBar(ctx, u.x, u.y - 15, 16, u.hp, u.maxHp);
+    drawHealthBar(ctx, u.x, u.y - def.radius - 9, 16, u.hp, u.maxHp);
   }
+}
+
+// Combat units render as a triangle pointing the way they're moving, so
+// skiffs read as distinct from (round) Workers at a glance and hint at
+// facing during a fight. Facing is inferred from the position delta since
+// the last frame, since orders don't always carry a destination point
+// (e.g. an 'attack' order tracks a target id, not x/y).
+function drawTriangle(ctx, unit, r) {
+  const prev = facing.get(unit.id);
+  let angle = prev ? prev.angle : -Math.PI / 2;
+  if (prev) {
+    const dx = unit.x - prev.x, dy = unit.y - prev.y;
+    if (Math.hypot(dx, dy) > 0.5) angle = Math.atan2(dy, dx);
+  }
+  facing.set(unit.id, { x: unit.x, y: unit.y, angle });
+
+  const cx = unit.x, cy = unit.y;
+  ctx.beginPath();
+  ctx.moveTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
+  ctx.lineTo(cx + Math.cos(angle + 2.4) * r, cy + Math.sin(angle + 2.4) * r);
+  ctx.lineTo(cx + Math.cos(angle - 2.4) * r, cy + Math.sin(angle - 2.4) * r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
 }
 
 function drawHealthBar(ctx, cx, y, w, hp, maxHp) {
@@ -81,9 +120,11 @@ function drawSelectionRings(ctx, state) {
   ctx.strokeStyle = "#4fd1ff";
   ctx.lineWidth = 2;
   for (const id of state.selection) {
-    const e = state.units.get(id) || state.buildings.get(id);
+    const unit = state.units.get(id);
+    const e = unit || state.buildings.get(id);
     if (!e) continue;
-    const r = (e.radius || 9) + 4;
+    const baseRadius = unit ? UNITS[unit.type].radius : e.radius;
+    const r = baseRadius + 4;
     ctx.beginPath();
     ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
     ctx.stroke();
