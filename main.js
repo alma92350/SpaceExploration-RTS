@@ -10,6 +10,7 @@ import { createGameState } from "./engine/state.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
 import { queueProduction, researchUpgrade } from "./engine/production.js";
+import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES } from "./engine/entities.js";
 import { PLANETS } from "./data.js";
 import { drawFrame } from "./render.js";
@@ -45,6 +46,9 @@ window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
 let state, input, loop, announced, lastHud, lastPanelSignature;
+// Timestamp until which the supply readout flashes red after a blocked
+// production attempt — see drainSoundEvents/renderHUD below.
+let supplyBlockedUntil = 0;
 
 renderMapSelect();
 
@@ -81,6 +85,7 @@ function startGame(planetId) {
   announced = false;
   lastHud = 0;
   lastPanelSignature = null;
+  supplyBlockedUntil = 0;
   let lastFrame = performance.now();
 
   loop = createLoop({
@@ -112,6 +117,14 @@ function drainSoundEvents() {
       case "attackHit": (ev.heavy ? sound.playHeavyHit : sound.playAttackHit)(); break;
       case "entityKilled": sound.playEntityKilled(); break;
       case "buildingComplete": sound.playBuildingComplete(); break;
+      // Only the player's own supply block beeps and flashes — a visible
+      // enemy stalling on supply is their problem, not a HUD alert of ours.
+      case "productionBlocked":
+        if (ev.owner === "player") {
+          sound.playProductionBlocked();
+          supplyBlockedUntil = performance.now() + 800;
+        }
+        break;
     }
   }
   state.events.length = 0;
@@ -125,6 +138,14 @@ function renderHUD() {
     span.textContent = `${com}: ${Math.floor(qty)}`;
     resourcesEl.appendChild(span);
   });
+
+  const used = supplyUsed(state, "player"), cap = supplyCap(state, "player");
+  const supplySpan = document.createElement("span");
+  supplySpan.className = "supply"
+    + (used >= cap ? " at-cap" : "")
+    + (performance.now() < supplyBlockedUntil ? " blocked" : "");
+  supplySpan.textContent = `supply: ${used}/${cap}`;
+  resourcesEl.appendChild(supplySpan);
 
   const mins = Math.floor(state.time / 60);
   const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
@@ -213,6 +234,7 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(makeButton(`Build Barracks (${BUILDINGS.barracks.cost.ore} ore)`, () => input.startBuild("barracks")));
     panelEl.appendChild(makeButton(`Build Refinery (${BUILDINGS.refinery.cost.ore} ore)`, () => input.startBuild("refinery")));
     panelEl.appendChild(makeButton(`Build Turret (${costText(BUILDINGS.turret.cost)})`, () => input.startBuild("turret")));
+    panelEl.appendChild(makeButton(`Build Habitat (${BUILDINGS.habitat.cost.ore} ore)`, () => input.startBuild("habitat")));
     panelEl.appendChild(makeButton(`Build Command Center (${BUILDINGS.command.cost.ore} ore)`, () => input.startBuild("command")));
   }
 

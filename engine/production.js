@@ -6,6 +6,7 @@
 
 import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost } from "./entities.js";
 import { makeUnit } from "./state.js";
+import { supplyUsed, supplyCap } from "./supply.js";
 
 // How close a worker has to stand to actually count as building, not just
 // walking over. Shared with sim.js's arrival check for the 'build' order.
@@ -71,6 +72,16 @@ export function queueProduction(state, buildingId, unitType) {
   if (!producable) return false;
   const player = state.players[building.owner];
   if (!canAfford(player.resources, def.cost)) return false;
+  // Supply check sits AFTER canAfford (so being broke stays the silent
+  // today-UX, and the supply beep only fires when supply is the real
+  // blocker) and BEFORE payCost (reject before charging — nothing to
+  // refund). All queued jobs already count toward supplyUsed, so this
+  // is what actually caps queue-stuffing.
+  if (supplyUsed(state, building.owner) + (def.supplyCost || 0) > supplyCap(state, building.owner)) {
+    state.events.push({ type: "productionBlocked", reason: "supply",
+                        x: building.x, y: building.y, owner: building.owner });
+    return false;
+  }
   payCost(player.resources, def.cost);
   building.queue.push({ unitType, progress: 0 });
   return true;

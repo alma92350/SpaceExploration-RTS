@@ -84,3 +84,10 @@ test("the Breacher sits outside the triangle and outranges the turret", () => {
   const worst = Math.min(...combatUnits.map(dps));
   assert.equal(dps(UNITS.breacher), worst, "the Breacher should deal the worst raw DPS of any combat unit");
 });
+
+test("every unit carries a supply cost, and the Command Center and Habitat are the supply grantors", () => {
+  for (const def of Object.values(UNITS)) assert.ok(def.supplyCost >= 1, `${def.id} needs a supply cost`);
+  assert.equal(BUILDINGS.command.supplyGrants, 10, "the seeded CC houses the starting workers with room to grow");
+  assert.equal(BUILDINGS.habitat.supplyGrants, 8);
+  assert.ok(!BUILDINGS.habitat.produces, "the Habitat has no `produces` — keeps it out of the rally UI/render");
+});

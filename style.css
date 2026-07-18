@@ -59,6 +59,10 @@ html, body {
   flex: 1;
 }
 .resources span { color: var(--text); }
+/* Supply readout warns amber at the cap, flashes red for the ~800ms after a
+   supply-blocked production attempt (see main.js's supplyBlockedUntil). */
+.resources .supply.at-cap { color: var(--warn); }
+.resources .supply.blocked { color: var(--bad); }
 
 .clock {
   font-variant-numeric: tabular-nums;

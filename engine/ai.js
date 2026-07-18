@@ -21,6 +21,7 @@ import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueAttackMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
+import { supplyUsed, supplyCap } from "./supply.js";
 import { playerBuildings, playerUnits } from "./state.js";
 
 const THINK_INTERVAL = 1.5;
@@ -43,6 +44,19 @@ export function runAI(state, dt) {
 
   if (cc && workers.length < archetype.workerTarget && cc.queue.length === 0) {
     queueProduction(state, cc.id, "worker");
+  }
+
+  // Near the cap (or over it after losing a Habitat) with none already
+  // going up: put down a Habitat by the CC, or production stalls forever.
+  // The `>= cap - 2` fires before a 2-supply unit can wedge the mix cycle
+  // (the AI retries the same mix entry until it succeeds), and the same
+  // condition covers the destroyed-Habitat over-cap case.
+  const used = supplyUsed(state, "ai"), cap = supplyCap(state, "ai");
+  const habitatConstructing = buildings.some(b => b.type === "habitat" && b.constructing);
+  if (cc && workers.length > 0 && used >= cap - 2 && !habitatConstructing
+      && canAfford(ai.resources, BUILDINGS.habitat.cost)) {
+    const spot = findPlacement(state, "habitat", cc.x, cc.y + 90);
+    if (spot) issueBuild(state, workers[0].id, "habitat", spot.x, spot.y);
   }
 
   // Build spots are fixed offsets from the CC, so anything already sitting

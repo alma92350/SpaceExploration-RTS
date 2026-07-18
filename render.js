@@ -213,6 +213,7 @@ function drawBuildings(ctx, state) {
     else if (b.type === "barracks") drawBarracks(ctx, b, color);
     else if (b.type === "refinery") drawRefinery(ctx, b, color);
     else if (b.type === "turret") drawTurret(ctx, state, b, color);   // only this draw takes state — it aims at its live target
+    else if (b.type === "habitat") drawHabitat(ctx, b, color);
 
     ctx.globalAlpha = 1;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp);
@@ -326,6 +327,25 @@ function drawRefinery(ctx, b, color) {
     ctx.lineTo(tx - tankR * 0.3, cy - h * 0.1 + tankR * 0.6);
     ctx.stroke();
   }
+}
+
+// Habitat — a small residential dome: a squat foundation slab, a half-dome
+// roof and a row of lit windows, so a supply building reads as "people live
+// here" rather than as another weapons platform.
+function drawHabitat(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 1.8, h = r * 0.9;
+  ctx.fillStyle = shade(color, -20);
+  ctx.fillRect(cx - w / 2, cy, w, h * 0.7);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2;
+  ctx.strokeRect(cx - w / 2, cy, w, h * 0.7);
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, w * 0.42, Math.PI, 0);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = DETAIL;
+  for (const dx of [-w * 0.25, 0, w * 0.25]) ctx.fillRect(cx + dx - 1.5, cy + h * 0.2, 3, 3);
 }
 
 // Sentinel Turret — a hexagonal base pad with a single barrel that swings to

@@ -82,6 +82,12 @@ export function playBuildingComplete() {
   throttled("building", 200, () => tone({ freq: 400, duration: 0.18, type: "sine", gain: 0.13, sweep: 260 }));
 }
 
+// A short, low "denied" buzz when production is blocked on supply — a flat,
+// unmusical square wave that reads as a warning, not an achievement.
+export function playProductionBlocked() {
+  throttled("blocked", 250, () => tone({ freq: 110, duration: 0.15, type: "square", gain: 0.1, sweep: -30 }));
+}
+
 export function playVictory() {
   if (muted) return;
   [523, 659, 784].forEach((freq, i) => setTimeout(() => tone({ freq, duration: 0.22, type: "triangle", gain: 0.15 }), i * 110));
