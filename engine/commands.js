@@ -9,8 +9,27 @@
 import { BUILDINGS, canAfford, payCost } from "./entities.js";
 import { makeBuilding } from "./state.js";
 
+const FORMATION_SPACING = 20;
+
+// Spreads a group moving to the same point across a grid centered on it,
+// so a multi-unit move/attack-move doesn't converge into one stacked pile.
+function formationSpots(count, x, y) {
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+  const spots = [];
+  for (let i = 0; i < count; i++) {
+    const col = i % cols, row = Math.floor(i / cols);
+    spots.push({
+      x: x + (col - (cols - 1) / 2) * FORMATION_SPACING,
+      y: y + (row - (rows - 1) / 2) * FORMATION_SPACING,
+    });
+  }
+  return spots;
+}
+
 export function issueMove(units, x, y) {
-  units.forEach(u => { u.order = { type: "move", x, y }; });
+  const spots = formationSpots(units.length, x, y);
+  units.forEach((u, i) => { u.order = { type: "move", x: spots[i].x, y: spots[i].y }; });
 }
 
 export function issueGather(units, nodeId) {
@@ -22,7 +41,8 @@ export function issueAttack(units, targetId) {
 }
 
 export function issueAttackMove(units, x, y) {
-  units.forEach(u => { u.order = { type: "attack-move", x, y }; });
+  const spots = formationSpots(units.length, x, y);
+  units.forEach((u, i) => { u.order = { type: "attack-move", x: spots[i].x, y: spots[i].y }; });
 }
 
 // Pays the cost up front, drops a constructing building on the spot, and

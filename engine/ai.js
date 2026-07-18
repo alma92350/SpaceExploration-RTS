@@ -9,7 +9,7 @@
 "use strict";
 
 import { queueProduction } from "./production.js";
-import { issueBuild } from "./commands.js";
+import { issueBuild, issueAttackMove } from "./commands.js";
 import { BUILDINGS, canAfford } from "./entities.js";
 import { playerBuildings, playerUnits } from "./state.js";
 
@@ -47,7 +47,7 @@ export function runAI(state, dt) {
   const readyToAttack = skiffs.length >= SKIFF_ATTACK_SIZE || state.time > ATTACK_TIMEOUT;
   if (readyToAttack && skiffs.length > 0 && !state.aiAttacked) {
     const target = state.map.bases.player;
-    skiffs.forEach(s => { s.order = { type: "attack-move", x: target.x, y: target.y }; });
+    issueAttackMove(skiffs, target.x, target.y);
     state.aiAttacked = true;
   }
 }

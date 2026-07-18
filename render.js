@@ -61,11 +61,16 @@ function drawUnits(ctx, state) {
     const def = UNITS[u.type];
     const color = state.players[u.owner].color;
     ctx.fillStyle = color;
-    ctx.strokeStyle = "#05070f";
+    // A dark outline disappears against the (equally dark) background —
+    // it only ever separated overlapping same-color units, never defined
+    // the silhouette. A light one keeps the shape crisp at small sizes,
+    // where anti-aliasing otherwise blurs a triangle's corners into
+    // looking like just another circle.
+    ctx.strokeStyle = "#dce6ff";
     ctx.lineWidth = 1.5;
 
     if (def.role === "combat") {
-      drawTriangle(ctx, u, def.radius * 1.5);
+      drawTriangle(ctx, u, def.radius * 2);
     } else {
       ctx.beginPath();
       ctx.arc(u.x, u.y, def.radius, 0, Math.PI * 2);
