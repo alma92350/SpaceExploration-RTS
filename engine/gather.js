@@ -9,8 +9,18 @@
 import { stepToward } from "./movement.js";
 import { UNITS } from "./entities.js";
 
-const NODE_REACH = 18;
+const ORBIT_RADIUS = 16;   // workers ring the node instead of stacking on its exact center
+const ARRIVE_REACH = 4;
 const DROP_REACH = 30;
+
+// Stable per-worker angle around the node, so a group sent to the same
+// node spreads out around it instead of converging on one point.
+function orbitSpot(node, unitId) {
+  let hash = 7;
+  for (const c of unitId) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  const angle = (hash % 360) * (Math.PI / 180);
+  return { x: node.x + Math.cos(angle) * ORBIT_RADIUS, y: node.y + Math.sin(angle) * ORBIT_RADIUS };
+}
 
 export function updateGather(state, unit, dt) {
   const def = UNITS.worker;
@@ -20,9 +30,10 @@ export function updateGather(state, unit, dt) {
   if (!order.phase) order.phase = "toNode";
 
   if (order.phase === "toNode") {
-    const dist = Math.hypot(node.x - unit.x, node.y - unit.y);
-    if (dist <= NODE_REACH) order.phase = "mining";
-    else stepToward(unit, node.x, node.y, def.speed, dt);
+    const spot = orbitSpot(node, unit.id);
+    const dist = Math.hypot(spot.x - unit.x, spot.y - unit.y);
+    if (dist <= ARRIVE_REACH) order.phase = "mining";
+    else stepToward(unit, spot.x, spot.y, def.speed, dt);
     return;
   }
 

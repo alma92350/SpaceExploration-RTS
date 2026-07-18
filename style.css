@@ -130,6 +130,7 @@ html, body {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: rgba(5, 7, 15, 0.85);
@@ -140,3 +141,41 @@ html, body {
   padding: 20px;
 }
 .overlay.hidden { display: none; }
+
+.map-select {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: radial-gradient(ellipse at top, var(--bg-grad-1), var(--bg-grad-2));
+  z-index: 10;
+}
+.map-select.hidden { display: none; }
+.map-select h2 {
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+.map-select .cards {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 900px;
+}
+.map-card {
+  width: 240px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  color: var(--text);
+  cursor: pointer;
+}
+.map-card:hover { border-color: var(--accent); }
+.map-card .name { font-weight: 700; color: var(--accent); display: block; }
+.map-card .tag { font-size: 0.78rem; color: var(--gold); display: block; margin: 4px 0 8px; }
+.map-card .desc { font-size: 0.82rem; color: var(--muted); }

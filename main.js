@@ -1,6 +1,7 @@
 /* ============================================================
-   Entry point: wires state, the fixed-timestep sim, rendering and input
-   together. One skirmish, one planet, player vs scripted AI.
+   Entry point: a map-select screen picks which charted world to fight
+   over, then wires up state, the fixed-timestep sim, rendering and
+   input for that skirmish. Player vs scripted AI.
    ============================================================ */
 
 "use strict";
@@ -11,8 +12,11 @@ import { tick } from "./engine/sim.js";
 import { queueProduction } from "./engine/production.js";
 import { BUILDINGS, UNITS } from "./engine/entities.js";
 import { MAP_WIDTH, MAP_HEIGHT } from "./engine/map.js";
+import { PLANETS } from "./data.js";
 import { drawFrame } from "./render.js";
 import { attachInput } from "./input.js";
+
+const MAP_CHOICES = ["ferros", "korrath", "vesper"];
 
 const canvas = document.getElementById("field");
 const ctx = canvas.getContext("2d");
@@ -20,6 +24,7 @@ const resourcesEl = document.getElementById("resources");
 const clockEl = document.getElementById("matchClock");
 const panelEl = document.getElementById("selectionPanel");
 const gameOverEl = document.getElementById("gameOver");
+const mapSelectEl = document.getElementById("mapSelect");
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -30,22 +35,53 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-const state = createGameState({ planetId: "ferros" });
-const input = attachInput(canvas, state, () => renderHUD());
+let state, input, loop, announced, lastHud;
 
-let announced = false;
-let lastHud = 0;
-const loop = createLoop({
-  update: dt => tick(state, dt),
-  render: () => {
-    drawFrame(ctx, state, input.getDragBox());
-    const now = performance.now();
-    if (now - lastHud > 150) { lastHud = now; renderHUD(); }
-    if (state.over && !announced) { announced = true; loop.stop(); showGameOver(state.winner); }
-  },
-});
-loop.start();
-renderHUD();
+renderMapSelect();
+
+function renderMapSelect() {
+  mapSelectEl.innerHTML = "";
+  const title = document.createElement("h2");
+  title.textContent = "Choose a battlefield";
+  mapSelectEl.appendChild(title);
+
+  const cards = document.createElement("div");
+  cards.className = "cards";
+  MAP_CHOICES.forEach(id => {
+    const planet = PLANETS.find(p => p.id === id);
+    const card = document.createElement("button");
+    card.className = "map-card";
+    card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`;
+    card.addEventListener("click", () => {
+      mapSelectEl.classList.add("hidden");
+      startGame(id);
+    });
+    cards.appendChild(card);
+  });
+  mapSelectEl.appendChild(cards);
+}
+
+function startGame(planetId) {
+  if (loop) loop.stop();
+  gameOverEl.classList.add("hidden");
+
+  state = createGameState({ planetId });
+  input = attachInput(canvas, state, () => renderHUD());
+  announced = false;
+  lastHud = 0;
+
+  loop = createLoop({
+    update: dt => tick(state, dt),
+    render: () => {
+      drawFrame(ctx, state, input.getDragBox());
+      const now = performance.now();
+      if (now - lastHud > 150) { lastHud = now; renderHUD(); }
+      if (state.over && !announced) { announced = true; loop.stop(); showGameOver(state.winner); }
+    },
+  });
+  loop.start();
+  renderHUD();
+}
 
 function renderHUD() {
   const res = state.players.player.resources;
@@ -116,7 +152,24 @@ function makeButton(label, onClick) {
 
 function showGameOver(winner) {
   gameOverEl.classList.remove("hidden");
-  gameOverEl.textContent = winner === "player"
+  gameOverEl.innerHTML = "";
+
+  const msg = document.createElement("div");
+  msg.textContent = winner === "player"
     ? "Victory — enemy Command Center destroyed."
     : "Defeat — your Command Center was destroyed.";
+  gameOverEl.appendChild(msg);
+
+  const again = document.createElement("button");
+  again.className = "btn";
+  again.style.width = "auto";
+  again.style.padding = "10px 20px";
+  again.style.marginTop = "16px";
+  again.textContent = "Choose another battlefield";
+  again.addEventListener("click", () => {
+    gameOverEl.classList.add("hidden");
+    renderMapSelect();
+    mapSelectEl.classList.remove("hidden");
+  });
+  gameOverEl.appendChild(again);
 }
