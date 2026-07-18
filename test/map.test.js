@@ -1,6 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateMap, MAP_WIDTH, MAP_HEIGHT } from "../engine/map.js";
+import { PLANETS } from "../data.js";
+
+// Tiny deterministic PRNG so two generateMap runs can share an identical
+// rng sequence (() => 0.5 can't distinguish "same seed" from "constant").
+function lcg(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
 
 test("generateMap only scatters nodes for commodities the planet actually deposits", () => {
   const map = generateMap("ferros", () => 0.5);
@@ -33,7 +44,7 @@ test("no two nodes overlap, even across different commodity types", () => {
   // rng() => 0.5 is the exact seed that used to land an ore cluster and a
   // crystals cluster on the identical point (each commodity picks its own
   // y-band independently, with no coordination between them).
-  for (const planetId of ["ferros", "korrath", "vesper"]) {
+  for (const planetId of ["ferros", "korrath", "vesper", "glacius"]) {
     const map = generateMap(planetId, () => 0.5);
     for (let i = 0; i < map.nodes.length; i++) {
       for (let j = i + 1; j < map.nodes.length; j++) {
@@ -51,4 +62,41 @@ test("overlap resolution keeps every node inside the map bounds", () => {
     assert.ok(n.x >= 0 && n.x <= MAP_WIDTH, `node x=${n.x} out of bounds`);
     assert.ok(n.y >= 0 && n.y <= MAP_HEIGHT, `node y=${n.y} out of bounds`);
   }
+});
+
+test("a world that deposits no ore still gets a mirrored ore cluster near each base", () => {
+  const map = generateMap("glacius", () => 0.5);   // glacius deposits only ice and gas
+  const oreNodes = map.nodes.filter(n => n.com === "ore");
+  assert.ok(oreNodes.length > 0, "the guarantee should have inserted ore");
+  assert.equal(oreNodes.length % 2, 0, "guaranteed ore should come as mirrored pairs");
+  const left = oreNodes.filter(n => n.x < MAP_WIDTH / 2).length;
+  const right = oreNodes.filter(n => n.x >= MAP_WIDTH / 2).length;
+  assert.equal(left, right);
+  for (const base of Object.values(map.bases)) {
+    const near = oreNodes.some(n => Math.hypot(n.x - base.x, n.y - base.y) <= 500);
+    assert.ok(near, "each base should have an ore node within reach");
+  }
+});
+
+test("every charted world yields ore within reach of both bases", () => {
+  for (const planet of PLANETS) {
+    const map = generateMap(planet.id, () => 0.5);
+    for (const base of Object.values(map.bases)) {
+      const near = map.nodes.some(n => n.com === "ore" &&
+        Math.hypot(n.x - base.x, n.y - base.y) <= 500);
+      assert.ok(near, `${planet.id}: no ore within 500 of the base at (${base.x}, ${base.y})`);
+    }
+  }
+});
+
+test("the ore guarantee never fires on an ore-bearing world: ferros keeps its deposit-table node count", () => {
+  const map = generateMap("ferros", () => 0.5);
+  const oreNodes = map.nodes.filter(n => n.com === "ore");
+  assert.equal(oreNodes.length, Math.round(2.0 * 1.5) * 2);   // ferros' ore yieldMult drives exactly 3 mirrored clusters
+});
+
+test("generateMap is deterministic: the same planet and rng seed reproduce the same nodes", () => {
+  const a = generateMap("glacius", lcg(42));
+  const b = generateMap("glacius", lcg(42));
+  assert.deepEqual(a.nodes, b.nodes);
 });

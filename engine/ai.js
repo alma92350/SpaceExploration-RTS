@@ -19,6 +19,7 @@
 
 import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueAttackMove } from "./commands.js";
+import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
 import { playerBuildings, playerUnits } from "./state.js";
 
@@ -44,8 +45,13 @@ export function runAI(state, dt) {
     queueProduction(state, cc.id, "worker");
   }
 
+  // Build spots are fixed offsets from the CC, so anything already sitting
+  // there (a node, an earlier building) would make issueBuild reject the
+  // same spot every think cycle and stall the build order forever —
+  // findPlacement slides the request to the nearest valid ground instead.
   if (!barracks && cc && workers.length > 0 && canAfford(ai.resources, BUILDINGS.barracks.cost)) {
-    issueBuild(state, workers[0].id, "barracks", cc.x + 90, cc.y - 90);
+    const spot = findPlacement(state, "barracks", cc.x + 90, cc.y - 90);
+    if (spot) issueBuild(state, workers[0].id, "barracks", spot.x, spot.y);
   }
 
   if (barracks && !barracks.constructing && barracks.queue.length === 0) {
@@ -57,7 +63,8 @@ export function runAI(state, dt) {
   }
 
   if (!refinery && barracks && !barracks.constructing && workers.length > 0 && canAfford(ai.resources, BUILDINGS.refinery.cost)) {
-    issueBuild(state, workers[0].id, "refinery", cc.x - 90, cc.y - 90);
+    const spot = findPlacement(state, "refinery", cc.x - 90, cc.y - 90);
+    if (spot) issueBuild(state, workers[0].id, "refinery", spot.x, spot.y);
   }
 
   if (refinery && !refinery.constructing) {

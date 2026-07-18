@@ -12,6 +12,9 @@ import { PLANETS } from "../data.js";
 export const MAP_WIDTH = 1600;
 export const MAP_HEIGHT = 1000;
 
+const ORE_GUARANTEE_RADIUS = 500;   // never triggers on a planet whose deposit table already yields ore
+const GUARANTEED_ORE_AMOUNT = 480;  // a lean seam (0.8x the 600 baseline)
+
 export function generateMap(planetId = "ferros", rng = Math.random) {
   const planet = PLANETS.find(p => p.id === planetId);
   if (!planet) throw new Error(`Unknown planet: ${planetId}`);
@@ -36,6 +39,18 @@ export function generateMap(planetId = "ferros", rng = Math.random) {
     }
   });
 
+  // Every unit costs ore, but several charted worlds deposit none — a map
+  // without ore is unwinnable no matter what the planet's economy says.
+  // Guarantee one lean ore cluster near each base; the deposit table
+  // still shapes everything else.
+  const nearPlayerOre = nodes.some(n => n.com === "ore" &&
+    Math.hypot(n.x - bases.player.x, n.y - bases.player.y) <= ORE_GUARANTEE_RADIUS);
+  if (!nearPlayerOre) {
+    const y = MAP_HEIGHT / 2;
+    nodes.push({ id: `n${nid++}`, com: "ore", amount: GUARANTEED_ORE_AMOUNT, max: GUARANTEED_ORE_AMOUNT, x: 320 + rng() * 160, y });
+    nodes.push({ id: `n${nid++}`, com: "ore", amount: GUARANTEED_ORE_AMOUNT, max: GUARANTEED_ORE_AMOUNT, x: MAP_WIDTH - 320 - rng() * 160, y });
+  }
+
   resolveNodeOverlaps(nodes);
   return { planet, width: MAP_WIDTH, height: MAP_HEIGHT, bases, nodes };
 }
@@ -46,11 +61,14 @@ export function generateMap(planetId = "ferros", rng = Math.random) {
 // tick. A fixed number of relaxation passes nudges every overlapping pair
 // apart regardless of what they are, until none are left (or the budget
 // runs out on a pathological case rather than looping forever).
-const NODE_VISUAL_RADIUS = 16;   // matches drawNodes' max render radius (7 + 9) in render.js
+// Matches drawNodes' max render radius (7 + 9) in render.js. Exported
+// because colliders.js treats it as the node's physical footprint too —
+// what the map draws and what a building must keep clear of stay one number.
+export const NODE_RADIUS = 16;
 const RESOLVE_ITERATIONS = 40;
 
 function resolveNodeOverlaps(nodes) {
-  const minDist = NODE_VISUAL_RADIUS * 2;
+  const minDist = NODE_RADIUS * 2;
   for (let iter = 0; iter < RESOLVE_ITERATIONS; iter++) {
     let moved = false;
     for (let i = 0; i < nodes.length; i++) {

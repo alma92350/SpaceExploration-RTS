@@ -45,6 +45,13 @@ test("the rock-paper-scissors triangle closes: Skiff beats Lancer, Bastion beats
   assert.ok(BUILDINGS.barracks.produces.includes("lancer"));
 });
 
+test("the Command Center is buildable but steep: the priciest, slowest structure on the roster", () => {
+  assert.equal(BUILDINGS.command.cost.ore, 400);
+  assert.equal(BUILDINGS.command.buildTime, 30);
+  assert.ok(BUILDINGS.command.buildTime > BUILDINGS.barracks.buildTime, "an expansion should take longer than a Barracks");
+  assert.ok(BUILDINGS.command.cost.ore > BUILDINGS.refinery.cost.ore, "an expansion should out-price every other building");
+});
+
 test("every unit and building carries a sight radius for fog of war", () => {
   for (const def of Object.values(UNITS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
   for (const def of Object.values(BUILDINGS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);

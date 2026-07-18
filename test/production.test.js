@@ -149,6 +149,19 @@ test("an enemy worker standing nearby doesn't contribute to your build rate", ()
   assert.equal(b.buildProgress, solo.buildProgress);
 });
 
+test("an under-construction Command Center refuses production until it completes", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const expansion = makeBuilding("command", "player", 800, 500, { constructing: true });
+  state.buildings.set(expansion.id, expansion);
+
+  assert.equal(queueProduction(state, expansion.id, "worker"), false);
+
+  updateBuildingConstruction(state, expansion, 1000);   // more than enough to finish the 30s build
+
+  assert.equal(expansion.constructing, false);
+  assert.equal(queueProduction(state, expansion.id, "worker"), true);
+});
+
 test("researchUpgrade pays the cost and flags it researched", () => {
   const state = createGameState({ planetId: "ferros" });
   const refinery = makeBuilding("refinery", "player", 500, 500);

@@ -10,7 +10,10 @@
 export const BUILDINGS = {
   command: {
     id: "command", name: "Command Center", hp: 1000, radius: 26,
-    cost: {}, buildTime: 0,          // pre-placed at game start, never queued
+    cost: { ore: 400 }, buildTime: 30,   // steep + slow: an expansion is a long-game commitment
+    // The starting CC is still seeded finished by state.js's seedPlayer —
+    // makeBuilding without { constructing: true } spawns complete regardless
+    // of buildTime. cost/buildTime only gate the issueBuild path.
     produces: ["worker"],
     isCommandCenter: true,
     sight: 220,

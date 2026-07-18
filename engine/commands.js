@@ -7,6 +7,7 @@
 "use strict";
 
 import { BUILDINGS, canAfford, payCost } from "./entities.js";
+import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
 
 const FORMATION_SPACING = 20;
@@ -46,13 +47,15 @@ export function issueAttackMove(units, x, y) {
 }
 
 // Pays the cost up front, drops a constructing building on the spot, and
-// sends the chosen worker to stand at it until it finishes.
+// sends the chosen worker to stand at it until it finishes. Placement is
+// validated before payCost so a rejected spot never charges anything.
 export function issueBuild(state, workerId, buildingType, x, y) {
   const worker = state.units.get(workerId);
   if (!worker) return null;
   const player = state.players[worker.owner];
   const def = BUILDINGS[buildingType];
   if (!def || !canAfford(player.resources, def.cost)) return null;
+  if (!canPlaceBuilding(state, buildingType, x, y)) return null;
   payCost(player.resources, def.cost);
   const building = makeBuilding(buildingType, worker.owner, x, y, { constructing: true });
   state.buildings.set(building.id, building);

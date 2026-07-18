@@ -212,6 +212,7 @@ function rebuildSelectionPanel(sel) {
   if (worker && !input.building) {
     panelEl.appendChild(makeButton(`Build Barracks (${BUILDINGS.barracks.cost.ore} ore)`, () => input.startBuild("barracks")));
     panelEl.appendChild(makeButton(`Build Refinery (${BUILDINGS.refinery.cost.ore} ore)`, () => input.startBuild("refinery")));
+    panelEl.appendChild(makeButton(`Build Command Center (${BUILDINGS.command.cost.ore} ore)`, () => input.startBuild("command")));
   }
 
   if (input.building) {
@@ -248,8 +249,8 @@ function showGameOver(winner) {
 
   const msg = document.createElement("div");
   msg.textContent = winner === "player"
-    ? "Victory — enemy Command Center destroyed."
-    : "Defeat — your Command Center was destroyed.";
+    ? "Victory — the enemy's last Command Center is destroyed."
+    : "Defeat — your last Command Center was destroyed.";
   gameOverEl.appendChild(msg);
 
   const again = document.createElement("button");
