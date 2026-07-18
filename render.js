@@ -506,24 +506,6 @@ function updateFacing(unit) {
   return angle;
 }
 
-// Lancer draws as a 4-pointed star — a precision-strike reticle, the
-// fourth distinct silhouette (circle/triangle/diamond/star) so all three
-// combat types plus Worker read apart from each other at a glance.
-function drawStar(ctx, cx, cy, r) {
-  const inner = r * 0.42;
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const angle = (Math.PI / 4) * i - Math.PI / 2;
-    const radius = i % 2 === 0 ? r : inner;
-    const x = cx + Math.cos(angle) * radius;
-    const y = cy + Math.sin(angle) * radius;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-}
-
 // Tracer color hints at what fired: Bastion's short, heavy hit reads
 // warm/gold, Lancer's precision shot reads cool/blue, everything else
 // (Skiff, and any future default) reads hostile red.
