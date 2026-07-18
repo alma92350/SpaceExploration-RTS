@@ -33,7 +33,7 @@ export function updateGather(state, unit, dt) {
     const spot = orbitSpot(node, unit.id);
     const dist = Math.hypot(spot.x - unit.x, spot.y - unit.y);
     if (dist <= ARRIVE_REACH) order.phase = "mining";
-    else stepToward(unit, spot.x, spot.y, def.speed, dt);
+    else stepToward(state, unit, spot.x, spot.y, def.speed, dt);
     return;
   }
 
@@ -59,7 +59,7 @@ export function updateGather(state, unit, dt) {
       order.phase = node.amount > 0 ? "toNode" : null;
       if (!order.phase) unit.order = null;
     } else {
-      stepToward(unit, drop.x, drop.y, def.speed, dt);
+      stepToward(state, unit, drop.x, drop.y, def.speed, dt);
     }
   }
 }

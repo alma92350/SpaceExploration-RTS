@@ -24,7 +24,7 @@ export function updateCombat(state, unit, dt) {
     if (target && target.hp > 0) {
       const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
       if (dist > def.range) {
-        stepToward(unit, target.x, target.y, def.speed, dt);
+        stepToward(state, unit, target.x, target.y, def.speed, dt);
       } else if (unit.attackTimer <= 0) {
         target.hp -= def.attack;
         unit.attackTimer = def.cooldown;
@@ -38,7 +38,7 @@ export function updateCombat(state, unit, dt) {
   }
 
   if (unit.order && (unit.order.type === "move" || unit.order.type === "attack-move")) {
-    const arrived = stepToward(unit, unit.order.x, unit.order.y, def.speed, dt);
+    const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
     if (arrived) unit.order = null;
   }
 }

@@ -39,7 +39,7 @@ function updateUnit(state, unit, dt) {
   if (!unit.order) return;
   switch (unit.order.type) {
     case "move": {
-      const arrived = stepToward(unit, unit.order.x, unit.order.y, def.speed, dt);
+      const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
       if (arrived) unit.order = null;
       break;
     }
@@ -50,7 +50,7 @@ function updateUnit(state, unit, dt) {
       const b = state.buildings.get(unit.order.buildingId);
       if (!b) { unit.order = null; break; }
       const dist = Math.hypot(b.x - unit.x, b.y - unit.y);
-      if (dist > 24) stepToward(unit, b.x, b.y, def.speed, dt);
+      if (dist > 24) stepToward(state, unit, b.x, b.y, def.speed, dt);
       else if (!b.constructing) unit.order = null;
       break;
     }
