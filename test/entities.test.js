@@ -56,3 +56,31 @@ test("every unit and building carries a sight radius for fog of war", () => {
   for (const def of Object.values(UNITS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
   for (const def of Object.values(BUILDINGS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
 });
+
+test("the Sentinel Turret is a crystal sink with real combat stats", () => {
+  const turret = BUILDINGS.turret;
+  assert.ok(turret.cost.crystals > 0, "the turret should cost crystals — it's the first repeatable crystal sink");
+  assert.ok(turret.attack > 0, "a static defense with no attack is pointless");
+  assert.equal(turret.range, turret.aggroRange, "a turret can't chase, so acquiring beyond its own range is useless");
+  assert.ok(turret.sight >= turret.range, "sight must cover its own range or it fires blind");
+});
+
+test("the Breacher is a radioactives sink, produced by the Barracks", () => {
+  assert.ok(UNITS.breacher.cost.radioactives > 0, "the Breacher should cost radioactives — the first repeatable radioactive sink");
+  assert.ok(BUILDINGS.barracks.produces.includes("breacher"));
+  assert.equal(UNITS.breacher.role, "combat");
+});
+
+test("the Breacher sits outside the triangle and outranges the turret", () => {
+  assert.ok(!UNITS.breacher.bonusVs, "the Breacher must carry no bonusVs — it's outside the rock-paper-scissors triangle");
+  for (const type of ["skiff", "bastion", "lancer"]) {
+    assert.ok(!UNITS[type].bonusVs.breacher, `${type} must not counter the Breacher, or it would be inside the triangle`);
+  }
+  assert.ok(UNITS.breacher.range > BUILDINGS.turret.range, "the Breacher's whole edge is out-ranging the turret's acquisition");
+  assert.ok(UNITS.breacher.bonusVsBuildings > 0, "its identity is the structure bonus, not anti-unit power");
+
+  const dps = def => def.attack / def.cooldown;
+  const combatUnits = Object.values(UNITS).filter(u => u.role === "combat");
+  const worst = Math.min(...combatUnits.map(dps));
+  assert.equal(dps(UNITS.breacher), worst, "the Breacher should deal the worst raw DPS of any combat unit");
+});

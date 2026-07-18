@@ -109,7 +109,7 @@ function drainSoundEvents() {
     if (ev.owner !== "player" && !isVisibleAt(state.fog, ev.x, ev.y)) continue;
     switch (ev.type) {
       case "unitSpawned": sound.playUnitSpawned(); break;
-      case "attackHit": sound.playAttackHit(); break;
+      case "attackHit": (ev.heavy ? sound.playHeavyHit : sound.playAttackHit)(); break;
       case "entityKilled": sound.playEntityKilled(); break;
       case "buildingComplete": sound.playBuildingComplete(); break;
     }
@@ -190,6 +190,7 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(makeButton(`Produce Skiff (${UNITS.skiff.cost.ore} ore)`, () => queueProduction(state, barracks.id, "skiff")));
     panelEl.appendChild(makeButton(`Produce Bastion (${UNITS.bastion.cost.ore} ore)`, () => queueProduction(state, barracks.id, "bastion")));
     panelEl.appendChild(makeButton(`Produce Lancer (${UNITS.lancer.cost.ore} ore)`, () => queueProduction(state, barracks.id, "lancer")));
+    panelEl.appendChild(makeButton(`Produce Breacher (${costText(UNITS.breacher.cost)})`, () => queueProduction(state, barracks.id, "breacher")));
   }
 
   const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);
@@ -202,8 +203,7 @@ function rebuildSelectionPanel(sel) {
         row.textContent = `${u.name} — researched`;
         panelEl.appendChild(row);
       } else {
-        const costText = Object.entries(u.cost).map(([com, qty]) => `${qty} ${com}`).join(", ");
-        panelEl.appendChild(makeButton(`Research ${u.name} (${costText})`, () => researchUpgrade(state, refinery.id, u.id)));
+        panelEl.appendChild(makeButton(`Research ${u.name} (${costText(u.cost)})`, () => researchUpgrade(state, refinery.id, u.id)));
       }
     });
   }
@@ -212,6 +212,7 @@ function rebuildSelectionPanel(sel) {
   if (worker && !input.building) {
     panelEl.appendChild(makeButton(`Build Barracks (${BUILDINGS.barracks.cost.ore} ore)`, () => input.startBuild("barracks")));
     panelEl.appendChild(makeButton(`Build Refinery (${BUILDINGS.refinery.cost.ore} ore)`, () => input.startBuild("refinery")));
+    panelEl.appendChild(makeButton(`Build Turret (${costText(BUILDINGS.turret.cost)})`, () => input.startBuild("turret")));
     panelEl.appendChild(makeButton(`Build Command Center (${BUILDINGS.command.cost.ore} ore)`, () => input.startBuild("command")));
   }
 
@@ -231,6 +232,12 @@ function rebuildSelectionPanel(sel) {
     hint.textContent = "Right-click the map to set its rally point.";
     panelEl.appendChild(hint);
   }
+}
+
+// "150 ore, 100 crystals" — renders any multi-commodity cost so buttons for
+// crystal/radioactive-costed things read the same as the plain-ore ones.
+function costText(cost) {
+  return Object.entries(cost).map(([com, qty]) => `${qty} ${com}`).join(", ");
 }
 
 function makeButton(label, onClick) {

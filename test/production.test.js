@@ -68,6 +68,51 @@ test("a queued unit spawns once its build time elapses, at the building and owne
   assert.equal(spawned.owner, "player");
 });
 
+test("a multi-resource unit deducts every commodity in its cost, not just ore", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 500;
+  state.players.player.resources.radioactives = 500;
+
+  const ok = queueProduction(state, barracks.id, "breacher");
+
+  assert.equal(ok, true);
+  assert.equal(state.players.player.resources.ore, 500 - UNITS.breacher.cost.ore);
+  assert.equal(state.players.player.resources.radioactives, 500 - UNITS.breacher.cost.radioactives);
+});
+
+test("a Breacher can't be built on ore alone with no radioactives banked", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 1000;
+  state.players.player.resources.radioactives = 0;
+
+  assert.equal(queueProduction(state, barracks.id, "breacher"), false);
+  assert.equal(barracks.queue.length, 0);
+});
+
+test("a spawned Breacher rallies to the Barracks rally point like any other unit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 500;
+  state.players.player.resources.radioactives = 500;
+  const idsBefore = new Set(state.units.keys());
+  queueProduction(state, barracks.id, "breacher");
+
+  const dt = 0.5;
+  for (let t = 0; t < UNITS.breacher.buildTime + 1; t += dt) {
+    updateProductionQueue(state, barracks, dt);
+  }
+
+  const spawnedId = [...state.units.keys()].find(id => !idsBefore.has(id));
+  const spawned = state.units.get(spawnedId);
+  assert.equal(spawned.type, "breacher");
+  assert.deepEqual(spawned.order, { type: "move", x: barracks.rally.x, y: barracks.rally.y });
+});
+
 test("updateBuildingConstruction advances hp with progress and finishes on schedule", () => {
   const state = { units: new Map(), events: [] };
   const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });

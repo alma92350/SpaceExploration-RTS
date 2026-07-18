@@ -21,7 +21,7 @@ export const BUILDINGS = {
   barracks: {
     id: "barracks", name: "Barracks", hp: 500, radius: 20,
     cost: { ore: 150 }, buildTime: 20,
-    produces: ["skiff", "bastion", "lancer"],
+    produces: ["skiff", "bastion", "lancer", "breacher"],
     sight: 150,
   },
   refinery: {
@@ -31,6 +31,15 @@ export const BUILDINGS = {
     // No `produces` — it researches upgrades instead of building units,
     // which is also what keeps it out of the rally-point UI (input.js
     // only offers that for buildings with a `produces` list).
+  },
+  turret: {
+    id: "turret", name: "Sentinel Turret", hp: 350, radius: 12,
+    cost: { ore: 150, crystals: 100 }, buildTime: 12,
+    sight: 170,
+    // Static defense: same combat stat names units use, so combat.js's
+    // acquireTarget/attackDamage apply verbatim. aggroRange === range on
+    // purpose — a turret can't chase, so acquiring beyond range is useless.
+    attack: 20, range: 130, cooldown: 1, aggroRange: 130,
   },
 };
 
@@ -82,6 +91,17 @@ export const UNITS = {
     role: "combat", attack: 16, range: 55, cooldown: 1.4,
     sight: 170, aggroRange: 130,
     bonusVs: { bastion: 20 },
+  },
+  breacher: {
+    id: "breacher", name: "Breacher", hp: 100, radius: 10, speed: 50,
+    cost: { ore: 100, radioactives: 100 }, buildTime: 20,
+    role: "combat", attack: 10, range: 150, cooldown: 2,
+    sight: 180, aggroRange: 150,
+    // Deliberately OUTSIDE the Skiff/Lancer/Bastion triangle: no bonusVs
+    // any unit type, and no unit gets bonusVs breacher. Its whole identity
+    // is the class-wide structure bonus below plus outranging the turret.
+    bonusVsBuildings: 30,
+    prefersBuildings: true,
   },
 };
 

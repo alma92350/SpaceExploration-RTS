@@ -212,6 +212,7 @@ function drawBuildings(ctx, state) {
     if (b.type === "command") drawCommandCenter(ctx, b, color);
     else if (b.type === "barracks") drawBarracks(ctx, b, color);
     else if (b.type === "refinery") drawRefinery(ctx, b, color);
+    else if (b.type === "turret") drawTurret(ctx, state, b, color);   // only this draw takes state — it aims at its live target
 
     ctx.globalAlpha = 1;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp);
@@ -327,6 +328,43 @@ function drawRefinery(ctx, b, color) {
   }
 }
 
+// Sentinel Turret — a hexagonal base pad with a single barrel that swings to
+// track its current target, so a defended base reads as actively guarded
+// rather than as just another building. The barrel angle comes from the
+// sim's auto-acquired targetId, not from any movement (a turret never moves).
+function drawTurret(ctx, state, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y;
+  pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));           // base pad
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2; ctx.stroke();
+
+  const angle = turretFacing(state, b);
+  ctx.strokeStyle = shade(color, -25); ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(angle) * r * 1.5, cy + Math.sin(angle) * r * 1.5); ctx.stroke();
+
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);          // mount
+  ctx.fillStyle = shade(color, 20); ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5; ctx.stroke();
+
+  ctx.beginPath();                                                    // muzzle tip light
+  ctx.arc(cx + Math.cos(angle) * r * 1.5, cy + Math.sin(angle) * r * 1.5, 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL; ctx.fill();
+}
+
+// Reuses the module-level facing Map — building "b*" ids can't collide with
+// unit "u*" ids. Holds its last aim when idle (targetId null) instead of
+// snapping back to a default, so a turret between shots keeps pointing where
+// it last fired.
+function turretFacing(state, b) {
+  const prev = facing.get(b.id);
+  let angle = prev ? prev.angle : -Math.PI / 2;
+  const t = b.targetId ? (state.units.get(b.targetId) || state.buildings.get(b.targetId)) : null;
+  if (t) angle = Math.atan2(t.y - b.y, t.x - b.x);
+  facing.set(b.id, { x: b.x, y: b.y, angle });
+  return angle;
+}
+
 /* ---------- units ---------- */
 
 function drawUnits(ctx, state) {
@@ -347,6 +385,7 @@ function drawUnits(ctx, state) {
     else if (u.type === "skiff") drawSkiff(ctx, u, def, color);
     else if (u.type === "bastion") drawBastion(ctx, u, def, color);
     else if (u.type === "lancer") drawLancer(ctx, u, def, color);
+    else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
 
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
@@ -491,6 +530,50 @@ function drawLancer(ctx, u, def, color) {
   }
 }
 
+// Breacher — a wide, low siege chassis CARRYING an oversized gun, where the
+// Lancer's whole hull instead IS its javelin. The barrel overhangs the hull
+// well past the nose and two recoil spades brace the rear, so it reads as
+// artillery hauling a cannon rather than a fighter.
+function drawBreacher(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.2, W = r * 0.9;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L * 0.5, W],
+    [L * 0.5, -W],
+    [-L * 0.7, -W * 0.8],
+    [-L * 0.7, W * 0.8],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = shade(color, -25);
+  ctx.lineWidth = r * 0.3;
+  const [bx1, by1] = toWorld(cx, cy, angle, -L * 0.2, 0);
+  const [bx2, by2] = toWorld(cx, cy, angle, L * 1.9, 0);
+  ctx.beginPath();
+  ctx.moveTo(bx1, by1);
+  ctx.lineTo(bx2, by2);
+  ctx.stroke();
+
+  ctx.fillStyle = shade(color, -25);
+  for (const side of [1, -1]) {
+    pathOriented(ctx, cx, cy, angle, [
+      [-L * 0.6, side * W * 0.45],
+      [-L * 0.6, side * W * 0.8],
+      [-L, side * W * 0.6],
+    ]);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = DETAIL;
+  const [tipX, tipY] = toWorld(cx, cy, angle, L * 1.9, 0);
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, r * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function updateFacing(unit) {
   const prev = facing.get(unit.id);
   let angle = prev ? prev.angle : -Math.PI / 2;
@@ -500,24 +583,6 @@ function updateFacing(unit) {
   }
   facing.set(unit.id, { x: unit.x, y: unit.y, angle });
   return angle;
-}
-
-// Lancer draws as a 4-pointed star — a precision-strike reticle, the
-// fourth distinct silhouette (circle/triangle/diamond/star) so all three
-// combat types plus Worker read apart from each other at a glance.
-function drawStar(ctx, cx, cy, r) {
-  const inner = r * 0.42;
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const angle = (Math.PI / 4) * i - Math.PI / 2;
-    const radius = i % 2 === 0 ? r : inner;
-    const x = cx + Math.cos(angle) * radius;
-    const y = cy + Math.sin(angle) * radius;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
 }
 
 function drawHealthBar(ctx, cx, y, w, hp, maxHp) {

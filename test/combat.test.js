@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeUnit } from "../engine/state.js";
-import { updateCombat } from "../engine/combat.js";
-import { UNITS, UPGRADES } from "../engine/entities.js";
+import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
+import { updateCombat, updateBuildingCombat } from "../engine/combat.js";
+import { UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
 
 function faceOff(state, x = 500, y = 500) {
   const a = makeUnit("skiff", "player", x, y);
@@ -227,4 +227,195 @@ test("a player's own upgrades don't affect damage against their own side", () =>
   updateCombat(state, a, UNITS.skiff.cooldown);
 
   assert.equal(startHp - b.hp, UNITS.skiff.attack, "the attacker's own defensive research shouldn't reduce their own damage output");
+});
+
+// A completed turret standing at (500,500); enemies dropped near it, well
+// clear of the map's far-apart Command Centers so the only target in aggro
+// is the one the test placed.
+function turretAt(state, x = 500, y = 500) {
+  const t = makeBuilding("turret", "player", x, y);
+  state.buildings.set(t.id, t);
+  return t;
+}
+
+test("a completed Sentinel Turret auto-acquires and damages an enemy unit in range", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const enemy = makeUnit("skiff", "ai", turret.x + 10, turret.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  assert.equal(startHp - enemy.hp, BUILDINGS.turret.attack);
+  assert.equal(turret.targetId, enemy.id);
+});
+
+test("a turret under construction never fires and holds no target", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = makeBuilding("turret", "player", 500, 500, { constructing: true });
+  state.buildings.set(turret.id, turret);
+  const enemy = makeUnit("skiff", "ai", 510, 500);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  assert.equal(enemy.hp, startHp, "an unfinished turret must not deal damage");
+  assert.equal(turret.targetId, null);
+});
+
+test("a turret ignores an enemy sitting just beyond its range", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const enemy = makeUnit("skiff", "ai", turret.x + BUILDINGS.turret.range + 5, turret.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  assert.equal(enemy.hp, startHp);
+  assert.equal(turret.targetId, null);
+});
+
+test("a turret respects its cooldown: two quick ticks land only one hit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const enemy = makeUnit("skiff", "ai", 510, 500);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, turret, 0.1);
+  updateBuildingCombat(state, turret, 0.1);   // still inside cooldown — no second shot
+
+  assert.equal(startHp - enemy.hp, BUILDINGS.turret.attack);
+});
+
+test("a turret kill removes the entity and pushes an entityKilled event", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const enemy = makeUnit("skiff", "ai", 510, 500);
+  enemy.hp = 1;
+  state.units.set(enemy.id, enemy);
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  assert.equal(state.units.has(enemy.id), false);
+  assert.ok(state.events.some(e => e.type === "entityKilled"));
+});
+
+test("Overcharged Weapons multiplies a turret's damage, same as a unit's", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const enemy = makeUnit("skiff", "ai", 510, 500);
+  state.units.set(enemy.id, enemy);
+  state.players.player.upgrades.overchargedWeapons = true;
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  const { damageDealtMult } = UPGRADES.overchargedWeapons;
+  assert.ok(Math.abs((startHp - enemy.hp) - BUILDINGS.turret.attack * damageDealtMult) < 1e-9);
+});
+
+test("a Breacher deals its structure bonus against a building but only base damage against a unit", () => {
+  const vsBuilding = createGameState({ planetId: "ferros" });
+  const breacher = makeUnit("breacher", "player", 500, 500);
+  const barracks = makeBuilding("barracks", "ai", 600, 500);   // within the Breacher's 150 range
+  vsBuilding.units.set(breacher.id, breacher);
+  vsBuilding.buildings.set(barracks.id, barracks);
+  const barracksHp = barracks.hp;
+
+  updateCombat(vsBuilding, breacher, UNITS.breacher.cooldown);
+
+  assert.equal(barracksHp - barracks.hp, UNITS.breacher.attack + UNITS.breacher.bonusVsBuildings);
+
+  const vsUnit = createGameState({ planetId: "ferros" });
+  const breacher2 = makeUnit("breacher", "player", 500, 500);
+  const skiff = makeUnit("skiff", "ai", 600, 500);
+  vsUnit.units.set(breacher2.id, breacher2);
+  vsUnit.units.set(skiff.id, skiff);
+  const skiffHp = skiff.hp;
+
+  updateCombat(vsUnit, breacher2, UNITS.breacher.cooldown);
+
+  assert.equal(skiffHp - skiff.hp, UNITS.breacher.attack, "no structure bonus, no bonusVs — just base attack against a unit");
+});
+
+test("a Breacher shells a building even when an enemy unit stands closer", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const breacher = makeUnit("breacher", "player", 500, 500);
+  const skiff = makeUnit("skiff", "ai", 520, 500);        // closer (20 away)
+  const barracks = makeBuilding("barracks", "ai", 600, 500);   // farther (100 away)
+  state.units.set(breacher.id, breacher);
+  state.units.set(skiff.id, skiff);
+  state.buildings.set(barracks.id, barracks);
+  const skiffHp = skiff.hp, barracksHp = barracks.hp;
+
+  updateCombat(state, breacher, UNITS.breacher.cooldown);
+
+  assert.ok(barracks.hp < barracksHp, "prefersBuildings should win over the nearer unit");
+  assert.equal(skiff.hp, skiffHp, "the closer unit should be ignored");
+});
+
+test("a Breacher falls back to the nearest unit when no building is in aggro range", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const breacher = makeUnit("breacher", "player", 500, 500);
+  const skiff = makeUnit("skiff", "ai", 520, 500);
+  state.units.set(breacher.id, breacher);
+  state.units.set(skiff.id, skiff);
+  const skiffHp = skiff.hp;
+
+  updateCombat(state, breacher, UNITS.breacher.cooldown);
+
+  assert.ok(skiff.hp < skiffHp, "with no building to shell, it should still engage a unit");
+});
+
+test("default acquisition is unchanged: the nearest enemy wins across units and buildings, ties to units", () => {
+  const nearest = createGameState({ planetId: "ferros" });
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  const enemyUnit = makeUnit("skiff", "ai", 530, 500);        // 30 away
+  const enemyBuilding = makeBuilding("barracks", "ai", 550, 500);   // 50 away
+  nearest.units.set(skiff.id, skiff);
+  nearest.units.set(enemyUnit.id, enemyUnit);
+  nearest.buildings.set(enemyBuilding.id, enemyBuilding);
+  const unitHp = enemyUnit.hp, buildingHp = enemyBuilding.hp;
+
+  updateCombat(nearest, skiff, UNITS.skiff.cooldown);
+
+  assert.ok(enemyUnit.hp < unitHp, "the nearer unit should be chosen over the farther building");
+  assert.equal(enemyBuilding.hp, buildingHp);
+
+  // Exact tie: a unit and a building at the same distance both inside weapon
+  // range — the unit must win (units are scanned first).
+  const tie = createGameState({ planetId: "ferros" });
+  const skiff2 = makeUnit("skiff", "player", 500, 500);
+  const tiedUnit = makeUnit("skiff", "ai", 515, 500);
+  const tiedBuilding = makeBuilding("barracks", "ai", 515, 500);
+  tie.units.set(skiff2.id, skiff2);
+  tie.units.set(tiedUnit.id, tiedUnit);
+  tie.buildings.set(tiedBuilding.id, tiedBuilding);
+  const tiedUnitHp = tiedUnit.hp, tiedBuildingHp = tiedBuilding.hp;
+
+  updateCombat(tie, skiff2, UNITS.skiff.cooldown);
+
+  assert.ok(tiedUnit.hp < tiedUnitHp, "an exact distance tie should resolve to the unit");
+  assert.equal(tiedBuilding.hp, tiedBuildingHp);
+});
+
+test("a Breacher out-ranges a Sentinel Turret: it chips the turret down while taking nothing back", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = makeBuilding("turret", "ai", 500, 500);
+  const breacher = makeUnit("breacher", "player", 500 + 140, 500);   // 140: inside Breacher's 150, outside turret's 130
+  state.buildings.set(turret.id, turret);
+  state.units.set(breacher.id, breacher);
+  const turretHp = turret.hp, breacherHp = breacher.hp;
+
+  for (let t = 0; t < 6; t += 0.5) {
+    updateCombat(state, breacher, 0.5);
+    updateBuildingCombat(state, turret, 0.5);
+  }
+
+  assert.ok(turret.hp < turretHp, "the Breacher should be steadily shelling the turret");
+  assert.equal(breacher.hp, breacherHp, "the turret can't reach the Breacher, so it takes no damage");
 });

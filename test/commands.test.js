@@ -123,6 +123,29 @@ test("a Command Center expansion is issuable like any building: charged in full,
   assert.equal(site.constructing, true);
 });
 
+test("issueBuild pays a multi-commodity cost and refuses when the crystal half is missing", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = playerWorker(state);
+  state.players.player.resources.ore = 500;
+  state.players.player.resources.crystals = 200;
+
+  const id = issueBuild(state, worker.id, "turret", 800, 500);
+
+  assert.ok(id, "a clear spot with both commodities in hand should found the turret");
+  assert.equal(state.players.player.resources.ore, 500 - BUILDINGS.turret.cost.ore);
+  assert.equal(state.players.player.resources.crystals, 200 - BUILDINGS.turret.cost.crystals);
+
+  state.players.player.resources.crystals = 0;   // ore still ample, but the crystal half is gone
+  const oreBefore = state.players.player.resources.ore;
+  const buildingsBefore = state.buildings.size;
+
+  const denied = issueBuild(state, worker.id, "turret", 900, 500);
+
+  assert.equal(denied, null, "ore alone can't cover a crystal-costed building");
+  assert.equal(state.buildings.size, buildingsBefore, "a rejected build founds no site");
+  assert.equal(state.players.player.resources.ore, oreBefore, "and charges nothing");
+});
+
 test("issueSetRally replaces a building's rally point", () => {
   const building = makeBuilding("command", "player", 500, 500);
   const originalRally = building.rally;
