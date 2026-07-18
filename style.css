@@ -164,6 +164,10 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 20px;
+  /* The roster is nine worlds now, so the grid can outgrow the viewport —
+     let the whole screen scroll rather than clipping the bottom cards. */
+  overflow-y: auto;
+  padding: 24px 16px;
   background: radial-gradient(ellipse at top, var(--bg-grad-1), var(--bg-grad-2));
   z-index: 10;
 }
@@ -177,7 +181,7 @@ html, body {
   gap: 16px;
   flex-wrap: wrap;
   justify-content: center;
-  max-width: 900px;
+  max-width: 1000px;
 }
 .map-card {
   width: 240px;
@@ -193,3 +197,8 @@ html, body {
 .map-card .name { font-weight: 700; color: var(--accent); display: block; }
 .map-card .tag { font-size: 0.78rem; color: var(--gold); display: block; margin: 4px 0 8px; }
 .map-card .desc { font-size: 0.82rem; color: var(--muted); }
+/* Who you're fighting, and how the world tilts the fight — see main.js's
+   renderMapSelect. The doctrine line reuses the accent-2 hue; the modifier
+   line warns amber like every other "this changes the rules" cue. */
+.map-card .ai-note { display: block; margin-top: 8px; font-size: 0.78rem; color: var(--accent-2); }
+.map-card .mod-note { display: block; margin-top: 4px; font-size: 0.78rem; color: var(--warn); }

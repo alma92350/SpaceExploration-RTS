@@ -113,8 +113,12 @@ function nearestEnemy(entities, unit, maxRange) {
 // structures inside aggro even when a unit stands closer, falling back to
 // the nearest unit only when no building is in range.
 function acquireTarget(state, unit, def) {
-  const u = nearestEnemy(state.units.values(), unit, def.aggroRange);
-  const b = nearestEnemy(state.buildings.values(), unit, def.aggroRange);
+  // The same sight modifier that scales fog reveal also scales how far a unit
+  // (or turret) reaches out to acquire — so a storm-shortened world bites both
+  // sides' aggro symmetrically. Optional-chained for map-less test states.
+  const aggro = def.aggroRange * (state.map?.modifiers?.sightMult ?? 1);
+  const u = nearestEnemy(state.units.values(), unit, aggro);
+  const b = nearestEnemy(state.buildings.values(), unit, aggro);
   if (def.prefersBuildings && b) return b.id;
   if (!u) return b ? b.id : null;
   if (!b) return u.id;

@@ -12,13 +12,17 @@ import { tick } from "./engine/sim.js";
 import { queueProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES } from "./engine/entities.js";
+import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
+import { PLANET_MODIFIERS } from "./engine/map.js";
 import { PLANETS } from "./data.js";
 import { drawFrame } from "./render.js";
 import { attachInput } from "./input.js";
 import { isVisibleAt } from "./engine/fog.js";
 import * as sound from "./sound.js";
 
-const MAP_CHOICES = ["ferros", "korrath", "vesper"];
+// The curated roster and its order both come from the AI archetype table, so
+// the picker, the opponent temperament, and the tests all agree on one list.
+const MAP_CHOICES = Object.keys(PLANET_ARCHETYPE);
 
 const canvas = document.getElementById("field");
 const ctx = canvas.getContext("2d");
@@ -62,9 +66,15 @@ function renderMapSelect() {
   cards.className = "cards";
   MAP_CHOICES.forEach(id => {
     const planet = PLANETS.find(p => p.id === id);
+    const mod = PLANET_MODIFIERS[id];
     const card = document.createElement("button");
     card.className = "map-card";
-    card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`;
+    // Each card advertises who you're up against (the archetype's temperament)
+    // and how the world itself bends the fight (its modifier, if any), so the
+    // choice of battlefield is an informed one rather than just flavor text.
+    card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`
+      + `<span class="ai-note">Opponent doctrine: ${archetypeFor(id).name}</span>`
+      + (mod ? `<span class="mod-note">${mod.label}</span>` : "");
     card.addEventListener("click", () => {
       sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");

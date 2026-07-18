@@ -207,6 +207,25 @@ test("an under-construction Command Center refuses production until it completes
   assert.equal(queueProduction(state, expansion.id, "worker"), true);
 });
 
+test("a planet build-time modifier speeds construction and production alike", () => {
+  // Construction: barracks buildTime 20; a 0.5 modifier should finish it in
+  // half the seconds of build progress.
+  const state = { units: new Map(), events: [], map: { modifiers: { buildTimeMult: 0.5 } } };
+  const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  updateBuildingConstruction(state, barracks, 10);
+  assert.equal(barracks.constructing, false, "half build-time completes the barracks in 10s, not 20");
+
+  // Production: a queued worker (buildTime 8) should pop out in ~4s under 0.5.
+  const game = createGameState({ planetId: "ferros" });
+  game.map.modifiers = { buildTimeMult: 0.5 };
+  const cc = [...game.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  queueProduction(game, cc.id, "worker");
+  const idsBefore = new Set(game.units.keys());
+  for (let t = 0; t < UNITS.worker.buildTime / 2 + 0.5; t += 0.5) updateProductionQueue(game, cc, 0.5);
+  const spawned = [...game.units.keys()].find(id => !idsBefore.has(id));
+  assert.ok(spawned, "the queued worker spawns in half its normal build time");
+});
+
 test("researchUpgrade pays the cost and flags it researched", () => {
   const state = createGameState({ planetId: "ferros" });
   const refinery = makeBuilding("refinery", "player", 500, 500);

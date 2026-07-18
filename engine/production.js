@@ -30,18 +30,23 @@ function countBuilders(state, building) {
 export function updateBuildingConstruction(state, building, dt) {
   if (!building.constructing) return;
   const def = BUILDINGS[building.type];
+  // The instant-build early-exit stays on the RAW buildTime — a modifier
+  // never turns a real build time into a zero-time one.
   if (def.buildTime <= 0) {
     building.constructing = false;
     building.buildProgress = 1;
     building.hp = def.hp;
     return;
   }
+  // A world's build-time modifier speeds (or slows) construction; optional-
+  // chained so production tests' map-less states read the default 1.
+  const bt = def.buildTime * (state.map?.modifiers?.buildTimeMult ?? 1);
   // The founding worker alone still builds at the original pace even if
   // it wanders off or dies — extra workers on-site are a bonus, not a
   // requirement.
   const builders = Math.min(countBuilders(state, building), MAX_BUILDERS);
   const rate = Math.max(1, builders);
-  building.buildProgress = Math.min(1, building.buildProgress + (rate * dt) / def.buildTime);
+  building.buildProgress = Math.min(1, building.buildProgress + (rate * dt) / bt);
   building.hp = Math.round(def.hp * building.buildProgress);
   if (building.buildProgress >= 1) {
     building.constructing = false;
@@ -53,7 +58,10 @@ export function updateProductionQueue(state, building, dt) {
   if (building.constructing || building.queue.length === 0) return;
   const job = building.queue[0];
   const def = UNITS[job.unitType];
-  job.progress += dt / def.buildTime;
+  // Same build-time modifier applies to unit production (a factory world
+  // trains faster too); optional-chained for map-less test states.
+  const bt = def.buildTime * (state.map?.modifiers?.buildTimeMult ?? 1);
+  job.progress += dt / bt;
   if (job.progress >= 1) {
     building.queue.shift();
     const spawn = { x: building.x + building.radius + 10, y: building.y + building.radius + 10 };

@@ -403,6 +403,26 @@ test("default acquisition is unchanged: the nearest enemy wins across units and 
   assert.equal(tiedBuilding.hp, tiedBuildingHp);
 });
 
+test("a planet sight modifier scales aggro range for both sides", () => {
+  // An enemy just inside a Skiff's full aggro range but well beyond weapon
+  // range: with the target acquired the Skiff steps toward it (moving), and
+  // with it out of aggro the Skiff has nothing to chase (stays put). Movement
+  // is the clean tell for whether acquisition happened.
+  function engages(sightMult) {
+    const state = createGameState({ planetId: "ferros" });
+    state.map.modifiers = { sightMult };
+    const a = makeUnit("skiff", "player", 500, 500);
+    const enemy = makeUnit("skiff", "ai", 500 + UNITS.skiff.aggroRange * 0.9, 500);
+    state.units.set(a.id, a);
+    state.units.set(enemy.id, enemy);
+    updateCombat(state, a, 0.1);
+    return a.x > 500;
+  }
+
+  assert.equal(engages(1), true, "at full aggro the enemy just inside range is chased");
+  assert.equal(engages(0.75), false, "a 0.75 sight modifier pulls that same enemy out of aggro range");
+});
+
 test("a Breacher out-ranges a Sentinel Turret: it chips the turret down while taking nothing back", () => {
   const state = createGameState({ planetId: "ferros" });
   const turret = makeBuilding("turret", "ai", 500, 500);
