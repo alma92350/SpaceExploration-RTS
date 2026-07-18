@@ -9,6 +9,7 @@
 import { generateMap } from "./map.js";
 import { BUILDINGS, UNITS } from "./entities.js";
 import { createFog, updateFog } from "./fog.js";
+import { archetypeFor } from "./aiArchetypes.js";
 
 let nextEntityId = 1;
 function newId(prefix) { return `${prefix}${nextEntityId++}`; }
@@ -46,13 +47,16 @@ export function createGameState(opts = {}) {
     winner: null,
     map,
     players: {
-      player: { id: "player", faction: "frontier", isAI: false, resources: startingResources(), color: "#4fd1ff" },
-      ai: { id: "ai", faction: "miners", isAI: true, resources: startingResources(), color: "#f87171" },
+      player: { id: "player", faction: "frontier", isAI: false, resources: startingResources(), color: "#4fd1ff", upgrades: {} },
+      ai: { id: "ai", faction: "miners", isAI: true, resources: startingResources(), color: "#f87171", upgrades: {} },
     },
     units: new Map(),
     buildings: new Map(),
     selection: [],          // unit/building ids currently selected by the human player
     fog: createFog(map),    // the player's fog of war — see engine/fog.js
+    aiArchetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
+    events: [],              // sim events this tick (unitSpawned/attackHit/entityKilled/buildingComplete) — pushed by
+                              // production.js/combat.js, drained and turned into sound by main.js each render frame
   };
 
   seedPlayer(state, "player", map.bases.player);

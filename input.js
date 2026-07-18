@@ -8,8 +8,8 @@
 
 "use strict";
 
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild } from "./engine/commands.js";
-import { UNITS } from "./engine/entities.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally } from "./engine/commands.js";
+import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera } from "./camera.js";
 
@@ -96,6 +96,19 @@ export function attachInput(canvas, state, onChange) {
     if (buildMode) { buildMode = null; onChange(); return; }
 
     const p = toWorld(e.clientX, e.clientY);
+
+    // A single selected production building sets its rally point instead
+    // of the usual unit orders below (which need at least one unit
+    // selected and don't apply to buildings at all).
+    if (state.selection.length === 1) {
+      const building = state.buildings.get(state.selection[0]);
+      if (building && building.owner === "player" && BUILDINGS[building.type].produces) {
+        issueSetRally(building, p.x, p.y);
+        onChange();
+        return;
+      }
+    }
+
     const selected = state.selection.map(id => state.units.get(id)).filter(Boolean);
     if (!selected.length) return;
 

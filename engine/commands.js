@@ -66,3 +66,11 @@ export function issueBuild(state, workerId, buildingType, x, y) {
 export function issueAssistBuild(units, buildingId) {
   units.forEach(u => { if (u.cargo) u.order = { type: "build", buildingId }; });
 }
+
+// Every unit the building produces from now on walks to this point
+// instead of wherever the old rally was — production.js reads
+// building.rally fresh at spawn time, so this takes effect immediately
+// with no other plumbing needed.
+export function issueSetRally(building, x, y) {
+  building.rally = { x, y };
+}

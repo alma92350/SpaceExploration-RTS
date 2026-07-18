@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit } from "../engine/state.js";
 import { updateCombat } from "../engine/combat.js";
-import { UNITS } from "../engine/entities.js";
+import { UNITS, UPGRADES } from "../engine/entities.js";
 
 function faceOff(state, x = 500, y = 500) {
   const a = makeUnit("skiff", "player", x, y);
@@ -129,4 +129,52 @@ test("Skiff has no bonus damage table and deals only its base attack", () => {
   updateCombat(state, a, UNITS.skiff.cooldown);
 
   assert.equal(startHp - b.hp, UNITS.skiff.attack);
+});
+
+test("Overcharged Weapons multiplies the attacker's damage dealt", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  state.players.player.upgrades.overchargedWeapons = true;
+  const startHp = b.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const { damageDealtMult } = UPGRADES.overchargedWeapons;
+  assert.ok(Math.abs((startHp - b.hp) - UNITS.skiff.attack * damageDealtMult) < 1e-9);
+});
+
+test("Reinforced Plating multiplies the defender's damage taken", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  state.players.ai.upgrades.reinforcedPlating = true;   // the defender's research, not the attacker's
+  const startHp = b.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const { damageTakenMult } = UPGRADES.reinforcedPlating;
+  assert.ok(Math.abs((startHp - b.hp) - UNITS.skiff.attack * damageTakenMult) < 1e-9);
+});
+
+test("both upgrades stack: attacker's damage bonus and defender's damage reduction apply together", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  state.players.player.upgrades.overchargedWeapons = true;
+  state.players.ai.upgrades.reinforcedPlating = true;
+  const startHp = b.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const expected = UNITS.skiff.attack * UPGRADES.overchargedWeapons.damageDealtMult * UPGRADES.reinforcedPlating.damageTakenMult;
+  assert.ok(Math.abs((startHp - b.hp) - expected) < 1e-9);
+});
+
+test("a player's own upgrades don't affect damage against their own side", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  state.players.player.upgrades.reinforcedPlating = true;   // attacker researched the DEFENSIVE upgrade for themselves
+  const startHp = b.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.equal(startHp - b.hp, UNITS.skiff.attack, "the attacker's own defensive research shouldn't reduce their own damage output");
 });

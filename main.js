@@ -9,11 +9,13 @@
 import { createGameState } from "./engine/state.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
-import { queueProduction } from "./engine/production.js";
-import { BUILDINGS, UNITS } from "./engine/entities.js";
+import { queueProduction, researchUpgrade } from "./engine/production.js";
+import { BUILDINGS, UNITS, UPGRADES } from "./engine/entities.js";
 import { PLANETS } from "./data.js";
 import { drawFrame } from "./render.js";
 import { attachInput } from "./input.js";
+import { isVisibleAt } from "./engine/fog.js";
+import * as sound from "./sound.js";
 
 const MAP_CHOICES = ["ferros", "korrath", "vesper"];
 
@@ -24,6 +26,14 @@ const clockEl = document.getElementById("matchClock");
 const panelEl = document.getElementById("selectionPanel");
 const gameOverEl = document.getElementById("gameOver");
 const mapSelectEl = document.getElementById("mapSelect");
+const muteBtn = document.getElementById("muteBtn");
+
+muteBtn.addEventListener("click", () => {
+  const next = !sound.isMuted();
+  sound.setMuted(next);
+  muteBtn.setAttribute("aria-pressed", String(next));
+  muteBtn.textContent = next ? "🔇" : "🔊";
+});
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -52,6 +62,7 @@ function renderMapSelect() {
     card.className = "map-card";
     card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`;
     card.addEventListener("click", () => {
+      sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
       startGame(id);
     });
@@ -80,12 +91,30 @@ function startGame(planetId) {
       lastFrame = now;
 
       drawFrame(ctx, state, input.getCamera(), canvas.clientWidth, canvas.clientHeight, input.getDragBox());
+      drainSoundEvents();
       if (now - lastHud > 150) { lastHud = now; renderHUD(); }
       if (state.over && !announced) { announced = true; loop.stop(); showGameOver(state.winner); }
     },
   });
   loop.start();
   renderHUD();
+}
+
+// A sim event plays a sound if it's the player's own, or if it happened
+// somewhere currently visible — same "you can hear what you can see"
+// rule as fog of war applies to rendering. Every AI-only skirmish
+// happening off in the fogged dark stays silent.
+function drainSoundEvents() {
+  for (const ev of state.events) {
+    if (ev.owner !== "player" && !isVisibleAt(state.fog, ev.x, ev.y)) continue;
+    switch (ev.type) {
+      case "unitSpawned": sound.playUnitSpawned(); break;
+      case "attackHit": sound.playAttackHit(); break;
+      case "entityKilled": sound.playEntityKilled(); break;
+      case "buildingComplete": sound.playBuildingComplete(); break;
+    }
+  }
+  state.events.length = 0;
 }
 
 function renderHUD() {
@@ -116,7 +145,8 @@ function renderSelectionPanel() {
   // like only a sliver of the button was clickable, when really it was a
   // timing race, not a sizing one.
   const signature = sel.map(e => `${e.id}:${e.kind === "building" ? e.constructing : ""}`).join(",")
-    + "|" + (input.building ? input.building.buildingType : "");
+    + "|" + (input.building ? input.building.buildingType : "")
+    + "|" + Object.keys(state.players.player.upgrades).sort().join(",");
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -161,9 +191,26 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(makeButton(`Produce Bastion (${UNITS.bastion.cost.ore} ore)`, () => queueProduction(state, barracks.id, "bastion")));
   }
 
+  const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);
+  if (refinery) {
+    const upgrades = state.players.player.upgrades;
+    Object.values(UPGRADES).forEach(u => {
+      if (upgrades[u.id]) {
+        const row = document.createElement("div");
+        row.className = "sel-row";
+        row.textContent = `${u.name} — researched`;
+        panelEl.appendChild(row);
+      } else {
+        const costText = Object.entries(u.cost).map(([com, qty]) => `${qty} ${com}`).join(", ");
+        panelEl.appendChild(makeButton(`Research ${u.name} (${costText})`, () => researchUpgrade(state, refinery.id, u.id)));
+      }
+    });
+  }
+
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
     panelEl.appendChild(makeButton(`Build Barracks (${BUILDINGS.barracks.cost.ore} ore)`, () => input.startBuild("barracks")));
+    panelEl.appendChild(makeButton(`Build Refinery (${BUILDINGS.refinery.cost.ore} ore)`, () => input.startBuild("refinery")));
   }
 
   if (input.building) {
@@ -175,6 +222,11 @@ function rebuildSelectionPanel(sel) {
     const hint = document.createElement("p");
     hint.className = "hint";
     hint.textContent = "Right-click to move (ignores enemies). Shift+right-click to attack-move.";
+    panelEl.appendChild(hint);
+  } else if (sel.length === 1 && (cc || barracks)) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Right-click the map to set its rally point.";
     panelEl.appendChild(hint);
   }
 }
@@ -188,6 +240,8 @@ function makeButton(label, onClick) {
 }
 
 function showGameOver(winner) {
+  if (winner === "player") sound.playVictory(); else sound.playDefeat();
+
   gameOverEl.classList.remove("hidden");
   gameOverEl.innerHTML = "";
 

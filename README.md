@@ -18,9 +18,13 @@ A 1v1 skirmish against a scripted AI on one of three charted worlds (Ferros Prim
 
 Two combat units with a real counter relationship: Skiff (fast, ranged, cheap) vs Bastion (slow, short-ranged, tanky, bonus damage specifically against Skiffs) — scouting what the enemy is building matters.
 
-Controls: left-drag to select your units, right-click to move (ignores enemies) or gather/assist-build/attack depending on what's under the cursor, Shift+right-click for attack-move (engages anything encountered along the way), mouse wheel to zoom, WASD/arrow keys to pan. Click a Worker or a completed building for build/produce options in the side panel.
+Controls: left-drag to select your units, right-click to move (ignores enemies) or gather/assist-build/attack/set-rally-point depending on what's selected and under the cursor, Shift+right-click for attack-move (engages anything encountered along the way), mouse wheel to zoom, WASD/arrow keys to pan. Click a Worker or a completed building for build/produce/research options in the side panel. Sound can be muted from the top bar.
 
 Fog of war hides enemy units and buildings outside your current vision (resource deposits are always shown — they're charted map knowledge, not battlefield intel). The AI plays with full knowledge of the map; only the player's view and targeting are fogged.
+
+A Refinery (built by a Worker, like the Barracks) researches two one-time upgrades once you're gathering crystals/radioactives: Reinforced Plating (less damage taken) and Overcharged Weapons (more damage dealt) — both apply live to your whole army, not just future production. Not every world has both resources (Korrath has no crystals, Vesper no radioactives), so which upgrade path is even available depends on where you're fighting.
+
+Each of the three worlds also gives the AI a different temperament: Korrath's is a Rusher (small economy, commits early), Ferros's is an Economist (builds up before attacking), Vesper's is Balanced.
 
 ## Running it
 

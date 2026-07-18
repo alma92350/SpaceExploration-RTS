@@ -5,14 +5,16 @@ import { runAI } from "../engine/ai.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
-test("the AI mixes in a Bastion every 3rd unit instead of pure Skiff spam", () => {
+test("the AI mixes in a Bastion every Nth unit instead of pure Skiff spam", () => {
   const state = createGameState({ planetId: "ferros" });
+  const ratio = state.aiArchetype.bastionRatio;
   const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
   state.buildings.set(barracks.id, barracks);
   state.players.ai.resources.ore = 100000;
 
   const builtTypes = [];
-  for (let i = 0; i < 9; i++) {
+  const rounds = ratio * 3;
+  for (let i = 0; i < rounds; i++) {
     runAI(state, THINK_INTERVAL);
     if (barracks.queue.length) {
       builtTypes.push(barracks.queue[barracks.queue.length - 1].unitType);
@@ -20,13 +22,14 @@ test("the AI mixes in a Bastion every 3rd unit instead of pure Skiff spam", () =
     }
   }
 
-  assert.equal(builtTypes.length, 9, "every think cycle should have queued something with ample ore");
-  assert.deepEqual(builtTypes, ["skiff", "skiff", "bastion", "skiff", "skiff", "bastion", "skiff", "skiff", "bastion"]);
+  const expected = Array.from({ length: rounds }, (_, i) => (i % ratio === ratio - 1 ? "bastion" : "skiff"));
+  assert.equal(builtTypes.length, rounds, "every think cycle should have queued something with ample ore");
+  assert.deepEqual(builtTypes, expected);
 });
 
 test("the AI's attack wave includes Bastions, not just Skiffs", () => {
   const state = createGameState({ planetId: "ferros" });
-  state.time = 200;   // past ATTACK_TIMEOUT, so it commits regardless of army size
+  state.time = state.aiArchetype.attackTimeout + 50;   // well past the timeout, so it commits regardless of army size
 
   const skiff = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
   const bastion = makeUnit("bastion", "ai", state.map.bases.ai.x, state.map.bases.ai.y);

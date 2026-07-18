@@ -9,7 +9,7 @@
 "use strict";
 
 import { COM } from "./data.js";
-import { UNITS } from "./engine/entities.js";
+import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, FOG_CELL_SIZE } from "./engine/fog.js";
 
 // Facing angle per unit id, inferred frame-to-frame from movement — pure
@@ -33,6 +33,7 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox) {
   drawBuildings(ctx, state);
   drawUnits(ctx, state);
   drawSelectionRings(ctx, state);
+  drawRallyPoint(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
 
   ctx.restore();
@@ -182,6 +183,34 @@ function drawSelectionRings(ctx, state) {
     ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
     ctx.stroke();
   }
+}
+
+// Shown only for the single selected production building, matching the
+// usual RTS convention of not cluttering the view with every building's
+// rally line at once.
+function drawRallyPoint(ctx, state) {
+  if (state.selection.length !== 1) return;
+  const building = state.buildings.get(state.selection[0]);
+  if (!building || building.owner !== "player" || !BUILDINGS[building.type].produces) return;
+
+  const { x: rx, y: ry } = building.rally;
+  ctx.save();
+  ctx.setLineDash([6, 6]);
+  ctx.strokeStyle = "rgba(79, 209, 255, 0.6)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(building.x, building.y);
+  ctx.lineTo(rx, ry);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(rx, ry, 5, 0, Math.PI * 2);
+  ctx.fillStyle = "#4fd1ff";
+  ctx.fill();
+  ctx.strokeStyle = "#05070f";
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
 function drawDragBox(ctx, box) {

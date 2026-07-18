@@ -65,6 +65,19 @@ html, body {
   color: var(--gold);
 }
 
+.mute-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.mute-btn:hover { border-color: var(--accent); }
+.mute-btn[aria-pressed="true"] { color: var(--muted); }
+
 #main {
   flex: 1;
   display: flex;

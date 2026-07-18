@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather, issueAssistBuild } from "../engine/commands.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueAssistBuild, issueSetRally } from "../engine/commands.js";
+import { makeBuilding } from "../engine/state.js";
 
 function dummyUnits(n) {
   return Array.from({ length: n }, (_, i) => ({ id: `u${i}`, order: null, cargo: { com: null, qty: 0 } }));
@@ -57,4 +58,14 @@ test("issueAssistBuild only assigns cargo-capable (worker) units", () => {
   issueAssistBuild(units, "site-1");
   assert.deepEqual(units[0].order, { type: "build", buildingId: "site-1" });
   assert.equal(units[1].order, null);
+});
+
+test("issueSetRally replaces a building's rally point", () => {
+  const building = makeBuilding("command", "player", 500, 500);
+  const originalRally = building.rally;
+
+  issueSetRally(building, 900, 300);
+
+  assert.deepEqual(building.rally, { x: 900, y: 300 });
+  assert.notDeepEqual(building.rally, originalRally);
 });

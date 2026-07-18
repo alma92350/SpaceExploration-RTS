@@ -21,6 +21,29 @@ export const BUILDINGS = {
     produces: ["skiff", "bastion"],
     sight: 150,
   },
+  refinery: {
+    id: "refinery", name: "Refinery", hp: 400, radius: 18,
+    cost: { ore: 200 }, buildTime: 16,
+    sight: 140,
+    // No `produces` — it researches upgrades instead of building units,
+    // which is also what keeps it out of the rally-point UI (input.js
+    // only offers that for buildings with a `produces` list).
+  },
+};
+
+// One-time, player-wide purchases from a completed Refinery. Applied as
+// live multipliers in combat.js rather than baked into unit stats at
+// spawn, so they affect a player's whole army immediately — including
+// units already on the field — not just future production.
+export const UPGRADES = {
+  reinforcedPlating: {
+    id: "reinforcedPlating", name: "Reinforced Plating", cost: { crystals: 150 },
+    desc: "-15% damage taken by all combat units", damageTakenMult: 0.85,
+  },
+  overchargedWeapons: {
+    id: "overchargedWeapons", name: "Overcharged Weapons", cost: { radioactives: 150 },
+    desc: "+20% damage dealt by all combat units", damageDealtMult: 1.2,
+  },
 };
 
 export const UNITS = {

@@ -4,7 +4,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, canAfford, payCost } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost } from "./entities.js";
 import { makeUnit } from "./state.js";
 
 // How close a worker has to stand to actually count as building, not just
@@ -42,7 +42,10 @@ export function updateBuildingConstruction(state, building, dt) {
   const rate = Math.max(1, builders);
   building.buildProgress = Math.min(1, building.buildProgress + (rate * dt) / def.buildTime);
   building.hp = Math.round(def.hp * building.buildProgress);
-  if (building.buildProgress >= 1) building.constructing = false;
+  if (building.buildProgress >= 1) {
+    building.constructing = false;
+    state.events.push({ type: "buildingComplete", x: building.x, y: building.y, owner: building.owner });
+  }
 }
 
 export function updateProductionQueue(state, building, dt) {
@@ -56,6 +59,7 @@ export function updateProductionQueue(state, building, dt) {
     const u = makeUnit(job.unitType, building.owner, spawn.x, spawn.y);
     u.order = { type: "move", x: building.rally.x, y: building.rally.y };
     state.units.set(u.id, u);
+    state.events.push({ type: "unitSpawned", x: u.x, y: u.y, owner: u.owner });
   }
 }
 
@@ -63,11 +67,27 @@ export function queueProduction(state, buildingId, unitType) {
   const building = state.buildings.get(buildingId);
   if (!building || building.constructing) return false;
   const def = UNITS[unitType];
-  const producable = def && BUILDINGS[building.type].produces.includes(unitType);
+  const producable = def && BUILDINGS[building.type].produces?.includes(unitType);
   if (!producable) return false;
   const player = state.players[building.owner];
   if (!canAfford(player.resources, def.cost)) return false;
   payCost(player.resources, def.cost);
   building.queue.push({ unitType, progress: 0 });
+  return true;
+}
+
+// A Refinery's one-time, player-wide purchase — see UPGRADES in
+// entities.js for what each one does. Not a queue: it applies the
+// instant it's paid for (combat.js reads state.players[owner].upgrades
+// live), so there's nothing further to tick down.
+export function researchUpgrade(state, buildingId, upgradeId) {
+  const building = state.buildings.get(buildingId);
+  if (!building || building.type !== "refinery" || building.constructing) return false;
+  const player = state.players[building.owner];
+  if (player.upgrades[upgradeId]) return false;
+  const def = UPGRADES[upgradeId];
+  if (!def || !canAfford(player.resources, def.cost)) return false;
+  payCost(player.resources, def.cost);
+  player.upgrades[upgradeId] = true;
   return true;
 }

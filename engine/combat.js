@@ -16,7 +16,7 @@
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS } from "./entities.js";
+import { UNITS, UPGRADES } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 
 export function updateCombat(state, unit, dt) {
@@ -40,10 +40,12 @@ export function updateCombat(state, unit, dt) {
       if (dist > def.range) {
         stepToward(state, unit, target.x, target.y, def.speed, dt);
       } else if (unit.attackTimer <= 0) {
-        target.hp -= attackDamage(def, target);
+        target.hp -= attackDamage(state, unit, def, target);
         unit.attackTimer = def.cooldown;
+        state.events.push({ type: "attackHit", x: target.x, y: target.y, owner: unit.owner });
         if (target.hp <= 0) {
           removeEntity(state, target.id);
+          state.events.push({ type: "entityKilled", x: target.x, y: target.y, owner: target.owner });
           if (unit.order && unit.order.targetId === target.id) unit.order = null;
         }
       }
@@ -57,9 +59,22 @@ export function updateCombat(state, unit, dt) {
   }
 }
 
-function attackDamage(def, target) {
+// Bonus-vs-type is a flat add (a specific hard counter), while researched
+// Refinery upgrades (entities.js's UPGRADES) are multipliers applied on
+// top — one on the attacker's side (damage dealt), one on the
+// defender's (damage taken) — so both sides' research matters on every
+// single hit, not just for units built after researching.
+function attackDamage(state, unit, def, target) {
   const bonus = def.bonusVs && def.bonusVs[target.type] || 0;
-  return def.attack + bonus;
+  let dmg = def.attack + bonus;
+
+  const attackerUpgrades = state.players[unit.owner].upgrades;
+  if (attackerUpgrades.overchargedWeapons) dmg *= UPGRADES.overchargedWeapons.damageDealtMult;
+
+  const defenderUpgrades = state.players[target.owner]?.upgrades;
+  if (defenderUpgrades?.reinforcedPlating) dmg *= UPGRADES.reinforcedPlating.damageTakenMult;
+
+  return dmg;
 }
 
 function isAlive(state, id) {
