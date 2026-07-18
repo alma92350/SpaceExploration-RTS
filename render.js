@@ -4,6 +4,11 @@
    the camera transform on top of that, so every draw* helper below just
    works in plain world coordinates (0..map.width, 0..map.height) and
    never has to know about the viewport or camera itself.
+
+   No image assets — the project is deliberately zero-dependency/no-build,
+   so every entity is a small vector silhouette built from canvas paths
+   rather than sprite files, keeping that same "no assets to manage" story
+   for art as for code.
    ============================================================ */
 
 "use strict";
@@ -12,8 +17,16 @@ import { COM } from "./data.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, FOG_CELL_SIZE } from "./engine/fog.js";
 
+// A light, near-white accent used for hull details (sensor eyes, canopy
+// glass, engine glow, antenna lights) across both players' colors — the
+// same "light outline reads at small sizes" reasoning the old triangle
+// used, just reused for interior greebles too instead of only the outline.
+const DETAIL = "#dce6ff";
+
 // Facing angle per unit id, inferred frame-to-frame from movement — pure
-// render-side bookkeeping, never read by the sim.
+// render-side bookkeeping, never read by the sim. Shared by every oriented
+// unit type (currently Skiff, Bastion and Lancer) so hull/turret art can
+// point the way the unit is actually moving.
 const facing = new Map();
 
 export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox) {
@@ -56,16 +69,76 @@ function drawFogBase(ctx, state) {
   }
 }
 
+/* ---------- small geometry helpers ---------- */
+
+// Deterministic string hash → seeded PRNG, so each resource node's
+// "irregular rock" silhouette is stable frame to frame (derived from its
+// id) instead of jittering every draw call like a fresh Math.random() would.
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function seededRng(seed) {
+  let s = seed >>> 0;
+  return function () {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Lightens (positive percent) or darkens (negative) a "#rrggbb" color, used
+// to derive hull-shadow/highlight tones from a player's own color so
+// buildings/units read as one paint job rather than a flat single fill.
+function shade(hex, percent) {
+  const num = parseInt(hex.slice(1), 16);
+  const amt = Math.round(2.55 * percent);
+  const clamp = (v) => Math.min(255, Math.max(0, v));
+  const r = clamp((num >> 16) + amt);
+  const g = clamp(((num >> 8) & 0xff) + amt);
+  const b = clamp((num & 0xff) + amt);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+function polygonPoints(cx, cy, r, sides, rotation = 0) {
+  const pts = [];
+  for (let i = 0; i < sides; i++) {
+    const a = rotation + (i / sides) * Math.PI * 2;
+    pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+  }
+  return pts;
+}
+
+function pathPoints(ctx, pts) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.closePath();
+}
+
+// Rotates a local point (nose along +x) by `angle` and places it at (cx,cy)
+// — lets oriented-unit shapes be authored once in "facing right" space.
+function toWorld(cx, cy, angle, lx, ly) {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  return [cx + lx * cos - ly * sin, cy + lx * sin + ly * cos];
+}
+function pathOriented(ctx, cx, cy, angle, localPts) {
+  pathPoints(ctx, localPts.map(([lx, ly]) => toWorld(cx, cy, angle, lx, ly)));
+}
+
 function drawNodes(ctx, state) {
   for (const n of state.map.nodes) {
     if (n.amount <= 0) continue;
     const r = 7 + 9 * (n.amount / n.max);
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffd166";
-    ctx.globalAlpha = 0.85;
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    const extract = COM[n.com]?.extract;
+    if (extract === "forage") drawOrganicNode(ctx, n, r);
+    else if (extract === "capture") drawGasNode(ctx, n, r);
+    else drawRockyNode(ctx, n, r); // mine / exploit — ore, crystals, radioactives, ice, relics
+
     ctx.font = "10px sans-serif";
     ctx.textAlign = "center";
     ctx.fillStyle = "#05070f";
@@ -73,20 +146,188 @@ function drawNodes(ctx, state) {
   }
 }
 
+// Mined/exploited deposits (ore, crystals, radioactives, ice, relics) read
+// as a faceted asteroid chunk — an irregular polygon beats a perfect circle
+// at selling "rock" at a glance, and the per-node seed keeps it stable.
+function drawRockyNode(ctx, n, r) {
+  const rng = seededRng(hashStr(n.id));
+  const pts = polygonPoints(n.x, n.y, r, 8, rng() * Math.PI * 2).map(([x, y]) => {
+    const jitter = 0.72 + rng() * 0.5;
+    return [n.x + (x - n.x) * jitter, n.y + (y - n.y) * jitter];
+  });
+  pathPoints(ctx, pts);
+  ctx.fillStyle = "#ffd166";
+  ctx.globalAlpha = 0.85;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#b9822f";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// Foraged deposits (biomass, spice) read as a soft cluster of overlapping
+// blobs — organic growth rather than mineral facets.
+function drawOrganicNode(ctx, n, r) {
+  const rng = seededRng(hashStr(n.id) ^ 0x9e3779b9);
+  ctx.fillStyle = "#ffd166";
+  ctx.globalAlpha = 0.85;
+  const lobes = 3;
+  for (let i = 0; i < lobes; i++) {
+    const a = (i / lobes) * Math.PI * 2 + rng() * 0.6;
+    const dist = r * 0.32 * rng();
+    const lr = r * (0.55 + rng() * 0.15);
+    ctx.beginPath();
+    ctx.arc(n.x + Math.cos(a) * dist, n.y + Math.sin(a) * dist, lr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Captured deposits (Helium-3 gas) read as a soft drifting cloud — nested
+// translucent rings instead of a hard edge.
+function drawGasNode(ctx, n, r) {
+  const rings = [
+    { rr: r * 1.3, a: 0.18 },
+    { rr: r * 0.95, a: 0.35 },
+    { rr: r * 0.55, a: 0.7 },
+  ];
+  for (const { rr, a } of rings) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, rr, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd166";
+    ctx.globalAlpha = a;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- buildings ---------- */
+
 function drawBuildings(ctx, state) {
   for (const b of state.buildings.values()) {
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
     const color = state.players[b.owner].color;
     ctx.globalAlpha = b.constructing ? 0.5 : 1;
-    ctx.fillStyle = color;
-    ctx.fillRect(b.x - b.radius, b.y - b.radius, b.radius * 2, b.radius * 2);
-    ctx.strokeStyle = "#05070f";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(b.x - b.radius, b.y - b.radius, b.radius * 2, b.radius * 2);
+
+    if (b.type === "command") drawCommandCenter(ctx, b, color);
+    else if (b.type === "barracks") drawBarracks(ctx, b, color);
+    else if (b.type === "refinery") drawRefinery(ctx, b, color);
+
     ctx.globalAlpha = 1;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp);
   }
 }
+
+// Command Center — the base's biggest, most "important-looking" structure:
+// an octagonal hull, a raised central dome, four corner struts and a
+// blinking antenna, so it reads as the hub building even before checking HP.
+function drawCommandCenter(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y;
+
+  pathPoints(ctx, polygonPoints(cx, cy, r, 8, Math.PI / 8));
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = "#05070f";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  for (const [x, y] of polygonPoints(cx, cy, r * 0.92, 4, Math.PI / 4)) {
+    ctx.fillStyle = shade(color, -25);
+    ctx.fillRect(x - 2.5, y - 2.5, 5, 5);
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
+  ctx.fillStyle = shade(color, 20);
+  ctx.fill();
+  ctx.strokeStyle = "#05070f";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.strokeStyle = DETAIL;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r * 0.85);
+  ctx.lineTo(cx, cy - r * 1.2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy - r * 1.2, 2, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL;
+  ctx.fill();
+}
+
+// Barracks — an angular bunker (a "home plate" silhouette with a pointed
+// front) with hangar-door stripes and a radar dish, distinct from the
+// Command Center's rounded dome and the Refinery's cylindrical tanks.
+function drawBarracks(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 1.9, h = r * 1.6;
+  pathPoints(ctx, [
+    [cx - w / 2, cy - h / 2],
+    [cx + w / 2, cy - h / 2],
+    [cx + w / 2, cy + h * 0.05],
+    [cx, cy + h / 2],
+    [cx - w / 2, cy + h * 0.05],
+  ]);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = "#05070f";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = shade(color, -25);
+  ctx.fillRect(cx - w * 0.28, cy - h * 0.4, w * 0.16, h * 0.55);
+  ctx.fillRect(cx + w * 0.12, cy - h * 0.4, w * 0.16, h * 0.55);
+
+  ctx.strokeStyle = DETAIL;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx + w * 0.4, cy - h / 2);
+  ctx.lineTo(cx + w * 0.48, cy - h * 0.75);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx + w * 0.48, cy - h * 0.75, 2, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL;
+  ctx.fill();
+}
+
+// Refinery — a low industrial base with two cylindrical storage tanks
+// (each given a highlight stripe to read as round, not just circular
+// blobs) joined by a connecting pipe.
+function drawRefinery(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 1.7, h = r * 0.9;
+
+  ctx.fillStyle = shade(color, -15);
+  ctx.fillRect(cx - w / 2, cy + h * 0.05, w, h * 0.55);
+  ctx.strokeStyle = "#05070f";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cx - w / 2, cy + h * 0.05, w, h * 0.55);
+
+  ctx.strokeStyle = shade(color, -10);
+  ctx.lineWidth = r * 0.35;
+  ctx.beginPath();
+  ctx.moveTo(cx - w * 0.28, cy);
+  ctx.lineTo(cx + w * 0.28, cy);
+  ctx.stroke();
+
+  const tankR = r * 0.5;
+  for (const tx of [cx - w * 0.28, cx + w * 0.28]) {
+    ctx.beginPath();
+    ctx.arc(tx, cy - h * 0.1, tankR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = "#05070f";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.strokeStyle = DETAIL;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tx - tankR * 0.3, cy - h * 0.1 - tankR * 0.6);
+    ctx.lineTo(tx - tankR * 0.3, cy - h * 0.1 + tankR * 0.6);
+    ctx.stroke();
+  }
+}
+
+/* ---------- units ---------- */
 
 function drawUnits(ctx, state) {
   for (const u of state.units.values()) {
@@ -97,23 +338,15 @@ function drawUnits(ctx, state) {
     // A dark outline disappears against the (equally dark) background —
     // it only ever separated overlapping same-color units, never defined
     // the silhouette. A light one keeps the shape crisp at small sizes,
-    // where anti-aliasing otherwise blurs a triangle's corners into
-    // looking like just another circle.
-    ctx.strokeStyle = "#dce6ff";
+    // where anti-aliasing otherwise blurs a hull's corners into looking
+    // like just another blob.
+    ctx.strokeStyle = DETAIL;
     ctx.lineWidth = 1.5;
 
-    if (u.type === "bastion") {
-      drawDiamond(ctx, u.x, u.y, def.radius * 1.7);
-    } else if (u.type === "lancer") {
-      drawStar(ctx, u.x, u.y, def.radius * 1.9);
-    } else if (def.role === "combat") {
-      drawTriangle(ctx, u, def.radius * 2);
-    } else {
-      ctx.beginPath();
-      ctx.arc(u.x, u.y, def.radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
+    if (u.type === "worker") drawWorker(ctx, u, def, color);
+    else if (u.type === "skiff") drawSkiff(ctx, u, def, color);
+    else if (u.type === "bastion") drawBastion(ctx, u, def, color);
+    else if (u.type === "lancer") drawLancer(ctx, u, def, color);
 
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
@@ -125,12 +358,140 @@ function drawUnits(ctx, state) {
   }
 }
 
-// Combat units render as a triangle pointing the way they're moving, so
-// skiffs read as distinct from (round) Workers at a glance and hint at
-// facing during a fight. Facing is inferred from the position delta since
-// the last frame, since orders don't always carry a destination point
-// (e.g. an 'attack' order tracks a target id, not x/y).
-function drawTriangle(ctx, unit, r) {
+// Worker — a small hex-bodied utility pod with two stub grabber arms and a
+// sensor "eye", reading as a drone rather than a combatant. Unoriented
+// (nothing about gathering/building implies a facing), unlike the two
+// combat units below.
+function drawWorker(ctx, u, def, color) {
+  const r = def.radius, cx = u.x, cy = u.y;
+  pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = shade(color, -25);
+  ctx.fillRect(cx - r - 2.5, cy - 1.5, 2.5, 3);
+  ctx.fillRect(cx + r, cy - 1.5, 2.5, 3);
+
+  ctx.beginPath();
+  ctx.arc(cx, cy - r * 0.1, r * 0.3, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL;
+  ctx.fill();
+}
+
+// Skiff — fast, ranged, cheap: drawn as a slim dart with swept wingtips and
+// a lit engine tail, pointing the way it's moving so a mixed army reads at
+// a glance and hints at facing mid-fight.
+function drawSkiff(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.6, W = r * 1.1;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L, 0],
+    [-L * 0.3, W],
+    [-L * 0.6, W * 0.35],
+    [-L * 0.75, 0],
+    [-L * 0.6, -W * 0.35],
+    [-L * 0.3, -W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = DETAIL;
+  for (const side of [1, -1]) {
+    const [ex, ey] = toWorld(cx, cy, angle, -L * 0.7, side * W * 0.35);
+    ctx.beginPath();
+    ctx.arc(ex, ey, r * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// Bastion — slow, tanky, short-ranged, bonus damage vs Skiffs: drawn as a
+// heavier hull with side turret pods and twin nose cannons, so it reads
+// as armored muscle rather than the Skiff's slim dart even at a glance.
+function drawBastion(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.3, W = r * 1.0;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L, 0],
+    [L * 0.45, W],
+    [-L * 0.6, W * 0.85],
+    [-L * 0.6, -W * 0.85],
+    [L * 0.45, -W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = shade(color, -25);
+  for (const side of [1, -1]) {
+    const [tx, ty] = toWorld(cx, cy, angle, -L * 0.05, side * W * 0.95);
+    ctx.beginPath();
+    ctx.arc(tx, ty, r * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = DETAIL;
+  for (const side of [1, -1]) {
+    const [nx, ny] = toWorld(cx, cy, angle, L * 0.85, side * W * 0.25);
+    ctx.beginPath();
+    ctx.arc(nx, ny, r * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// Lancer — long-ranged, armor-piercing, squishier than Bastion: drawn as a
+// slender javelin hull with a lit lance-tip and small tail fins, reading as
+// a precision skirmisher distinct from Skiff's stubby dart and Bastion's
+// armored bulk.
+function drawLancer(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 2.0, W = r * 0.55;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L, 0],
+    [L * 0.2, W],
+    [-L * 0.7, W * 0.4],
+    [-L, 0],
+    [-L * 0.7, -W * 0.4],
+    [L * 0.2, -W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = DETAIL;
+  ctx.lineWidth = 1;
+  const [shaftX1, shaftY1] = toWorld(cx, cy, angle, L * 0.9, 0);
+  const [shaftX2, shaftY2] = toWorld(cx, cy, angle, -L * 0.3, 0);
+  ctx.beginPath();
+  ctx.moveTo(shaftX1, shaftY1);
+  ctx.lineTo(shaftX2, shaftY2);
+  ctx.stroke();
+
+  ctx.fillStyle = DETAIL;
+  const [tipX, tipY] = toWorld(cx, cy, angle, L, 0);
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, r * 0.14, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = shade(color, -25);
+  for (const side of [1, -1]) {
+    const [fx1, fy1] = toWorld(cx, cy, angle, -L * 0.45, side * W * 0.3);
+    const [fx2, fy2] = toWorld(cx, cy, angle, -L * 0.65, side * W * 0.55);
+    const [fx3, fy3] = toWorld(cx, cy, angle, -L * 0.85, side * W * 0.25);
+    ctx.beginPath();
+    ctx.moveTo(fx1, fy1);
+    ctx.lineTo(fx2, fy2);
+    ctx.lineTo(fx3, fy3);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function updateFacing(unit) {
   const prev = facing.get(unit.id);
   let angle = prev ? prev.angle : -Math.PI / 2;
   if (prev) {
@@ -138,29 +499,7 @@ function drawTriangle(ctx, unit, r) {
     if (Math.hypot(dx, dy) > 0.5) angle = Math.atan2(dy, dx);
   }
   facing.set(unit.id, { x: unit.x, y: unit.y, angle });
-
-  const cx = unit.x, cy = unit.y;
-  ctx.beginPath();
-  ctx.moveTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
-  ctx.lineTo(cx + Math.cos(angle + 2.4) * r, cy + Math.sin(angle + 2.4) * r);
-  ctx.lineTo(cx + Math.cos(angle - 2.4) * r, cy + Math.sin(angle - 2.4) * r);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-}
-
-// Bastion draws as a diamond — a third silhouette next to Worker's circle
-// and Skiff's triangle, so a mixed army reads at a glance instead of
-// needing color/size alone to tell a tanky melee unit from a skirmisher.
-function drawDiamond(ctx, cx, cy, r) {
-  ctx.beginPath();
-  ctx.moveTo(cx, cy - r);
-  ctx.lineTo(cx + r, cy);
-  ctx.lineTo(cx, cy + r);
-  ctx.lineTo(cx - r, cy);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
+  return angle;
 }
 
 // Lancer draws as a 4-pointed star — a precision-strike reticle, the
