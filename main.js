@@ -35,7 +35,7 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-let state, input, loop, announced, lastHud;
+let state, input, loop, announced, lastHud, lastPanelSignature;
 
 renderMapSelect();
 
@@ -69,6 +69,7 @@ function startGame(planetId) {
   input = attachInput(canvas, state, () => renderHUD());
   announced = false;
   lastHud = 0;
+  lastPanelSignature = null;
 
   loop = createLoop({
     update: dt => tick(state, dt),
@@ -100,8 +101,34 @@ function renderHUD() {
 }
 
 function renderSelectionPanel() {
-  panelEl.innerHTML = "";
   const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
+
+  // Only rebuild the panel's DOM when the set of buttons it should show
+  // would actually change (selection, or a building finishing
+  // construction/entering build-placement mode). Rebuilding on every HUD
+  // tick — even though hp numbers change constantly — replaced the exact
+  // button the player was mid-click on with a fresh DOM node, and a
+  // mouseup landing after that swap could drop the click entirely: felt
+  // like only a sliver of the button was clickable, when really it was a
+  // timing race, not a sizing one.
+  const signature = sel.map(e => `${e.id}:${e.kind === "building" ? e.constructing : ""}`).join(",")
+    + "|" + (input.building ? input.building.buildingType : "");
+
+  if (signature !== lastPanelSignature) {
+    lastPanelSignature = signature;
+    rebuildSelectionPanel(sel);
+    return;
+  }
+
+  const rows = panelEl.querySelectorAll(".sel-row");
+  sel.forEach((e, i) => {
+    const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
+    if (rows[i]) rows[i].textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
+  });
+}
+
+function rebuildSelectionPanel(sel) {
+  panelEl.innerHTML = "";
 
   if (!sel.length) {
     const hint = document.createElement("p");
