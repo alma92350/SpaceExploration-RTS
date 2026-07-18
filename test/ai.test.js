@@ -134,7 +134,7 @@ test("home-ore depletion sends the Economist to expand onto an unclaimed cluster
   assert.equal(expansions.length, 1, "one expansion Command Center is now going up");
 });
 
-test("the AI banks for an expansion instead of spending the reserve on units", () => {
+test("the AI banks for an expansion without starving unit production", () => {
   function drainedFerros(ore) {
     const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
     state.players.ai.resources.ore = ore;
@@ -146,9 +146,10 @@ test("the AI banks for an expansion instead of spending the reserve on units", (
   const ccCost = 400;
   const short = drainedFerros(ccCost - 50);
   runAI(short.state, THINK_INTERVAL);
-  assert.equal(short.barracks.queue.length, 0, "with the CC unaffordable, the reserve starves unit production");
   assert.equal(aiBuildings(short.state, "command").filter(b => b.constructing).length, 0,
-    "and it hasn't placed the CC it can't yet afford");
+    "with the CC unaffordable it hasn't placed the expansion it can't yet pay for");
+  assert.equal(short.barracks.queue.length, 1,
+    "but the army keeps flowing — the reserve pauses infrastructure, never unit production");
 
   const flush = drainedFerros(100000);
   runAI(flush.state, THINK_INTERVAL);

@@ -65,9 +65,12 @@ export function runAI(state, dt) {
 
   // EXPANSION: once home ore runs thin, plant a second Command Center on the
   // richest unclaimed cluster. Runs before every ore-spending block so it can
-  // reserve the CC's cost (oreReserve) and keep the unit mix / a second
-  // barracks / the refinery from draining the bank the expansion needs. At
-  // most one expansion in flight — no stacking a third CC while one builds.
+  // reserve the CC's cost (oreReserve) to bank toward it. The reserve pauses
+  // only the lower-priority infrastructure spends (a second Barracks, the
+  // Refinery) — never unit production, so the army keeps flowing while the AI
+  // saves. Gating units too would starve the army indefinitely on an ore-poor
+  // world, where income can't outrun a 400-ore bank before the last seam dries
+  // and it never actually expands. At most one expansion in flight.
   const ccCost = BUILDINGS.command.cost.ore;
   const threshold = archetype.expandWhenNodesBelow || 0;
   if (threshold > 0 && cc && workers.length > 0
@@ -76,7 +79,7 @@ export function runAI(state, dt) {
     if (homeOreFraction(state, myCCs) < threshold) {
       const anchor = bestExpansionCluster(state, myCCs);
       if (anchor) {
-        oreReserve = ccCost;   // gate units / 2nd barracks / refinery this think
+        oreReserve = ccCost;   // bank toward the CC by pausing infrastructure spend
         if (ai.resources.ore >= ccCost) {
           const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // place on the home side of the cluster
           const spot = findPlacement(state, "command",
@@ -117,13 +120,14 @@ export function runAI(state, dt) {
   // One shared production cycle across every completed Barracks: consecutive
   // barracks pick up consecutive mix entries, so two of them drain the same
   // sequence twice as fast rather than each running its own. Map insertion
-  // order keeps the pick deterministic. canAffordKeeping honors the expansion
-  // reserve so banking for a CC pauses the mix instead of starving it.
+  // order keeps the pick deterministic. Unit production is deliberately NOT
+  // gated by the expansion reserve — the army keeps growing while the AI banks
+  // for a CC out of its infrastructure budget, never freezing on a poor world.
   const mix = effectiveMix(state, archetype);
   for (const b of allBarracks) {
     if (b.constructing || b.queue.length > 0) continue;
     const nextType = mix[(state.aiUnitsBuilt || 0) % mix.length];
-    if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, oreReserve)) continue;
+    if (!canAfford(ai.resources, UNITS[nextType].cost)) continue;
     if (queueProduction(state, b.id, nextType)) {
       state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
     }
@@ -184,14 +188,36 @@ export function runAI(state, dt) {
 function assignIdleWorkers(state, workers) {
   const live = state.map.nodes.filter(n => n.amount > 0);
   if (!live.length) return;
-  // Prefer nodes whose commodity the AI can actually spend; only fall back to
-  // whatever's live if the map has no spendable node left at all.
-  const useful = live.filter(n => SPENDABLE.has(n.com));
-  const nodes = useful.length ? useful : live;
+  const oreLive = live.filter(n => n.com === "ore");
+  const otherLive = live.filter(n => n.com !== "ore" && SPENDABLE.has(n.com));
+  const nodeById = new Map(state.map.nodes.map(n => [n.id, n]));
+  let secondaryMiners = 0;
+  for (const w of workers) {
+    const n = w.order && w.order.type === "gather" ? nodeById.get(w.order.nodeId) : null;
+    if (n && n.com !== "ore" && SPENDABLE.has(n.com)) secondaryMiners++;
+  }
+  // Crystals/radioactives buy only optional extras (a couple of turrets, the
+  // one-time upgrades, the occasional Breacher), so a small trickle funds them
+  // — everyone else stays on ore, the currency the whole army and every
+  // building actually run on. A flat "half on ore" split would over-divert on
+  // an ore-rich world and under-fund ore on an ore-poor one; capping the
+  // secondary crew keeps ore primary everywhere while still reaching the
+  // extras. On a crystal-heavy map (Helix) this is what stops workers piling
+  // onto crystals and starving the ore the army needs.
+  const secondaryCap = Math.min(2, Math.floor(workers.length / 3));
+
   workers.forEach(w => {
     if (w.order) return;
+    let pool;
+    if (otherLive.length && oreLive.length && secondaryMiners < secondaryCap) {
+      pool = otherLive; secondaryMiners++;   // fund the extras with a small crew...
+    } else if (oreLive.length) {
+      pool = oreLive;                         // ...but keep the bulk of workers on ore
+    } else {
+      pool = otherLive.length ? otherLive : live;   // ore's gone — take spendable, else any live node
+    }
     let best = null, bestD = Infinity;
-    for (const n of nodes) {
+    for (const n of pool) {
       const d = Math.hypot(n.x - w.x, n.y - w.y);
       if (d < bestD) { bestD = d; best = n; }
     }
