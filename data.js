@@ -11,7 +11,7 @@
 "use strict";
 
 /* ---------- Meta resources (not cargo, shown in the top bar) ---------- */
-const META = {
+export const META = {
   credits:   { name: "Credits",   ico: "💰" },
   fuel:      { name: "Fuel",      ico: "⛽" },
   tech:      { name: "Tech Pts",  ico: "🔬" },
@@ -19,7 +19,7 @@ const META = {
 };
 
 /* ---------- Factions ---------- */
-const FACTIONS = {
+export const FACTIONS = {
   core:      { name: "Core Authority",     ico: "⚖️", color: "#3b82f6",
                desc: "Lawful government of the inner worlds. Hates smugglers." },
   miners:    { name: "Mining Guild",       ico: "⛏️", color: "#b45309",
@@ -39,7 +39,7 @@ const FACTIONS = {
    illegalAt: list of planet ids where carrying/selling is contraband
    hazard:  true if dangerous to carry without a Shielded Hold
 */
-const COM = {
+export const COM = {
   // ----- RAW -----
   ore:         { name: "Ore",            ico: "🪨", tier: "Raw", base: 9,  extract: "mine" },
   crystals:    { name: "Crystals",       ico: "💎", tier: "Raw", base: 30, extract: "mine" },
@@ -75,16 +75,16 @@ const COM = {
   plasmatorp:  { name: "Plasma Torpedoes", ico: "💥", tier: "Strategic", base: 460,
                  illegalAt: ["terra", "verdani", "kybernet", "forge", "glacius"], hazard: true },
 };
-const COM_IDS = Object.keys(COM);
-const CARGO_IDS = COM_IDS.filter(id => !COM[id].isFuel); // everything except fuel uses the ship's cargo hold
-const STORE_IDS = CARGO_IDS.concat(["fuel"]);            // base/colony storage & the trade network also hold/move fuel
-const TIERS = ["Raw", "Refined", "Component", "Finished", "Luxury", "Strategic"];
+export const COM_IDS = Object.keys(COM);
+export const CARGO_IDS = COM_IDS.filter(id => !COM[id].isFuel); // everything except fuel uses the ship's cargo hold
+export const STORE_IDS = CARGO_IDS.concat(["fuel"]);            // base/colony storage & the trade network also hold/move fuel
+export const TIERS = ["Raw", "Refined", "Component", "Finished", "Luxury", "Strategic"];
 
 /* ---------- Production recipes ----------
    out: commodity produced, qty: per-batch yield, in: input map, req: tech id
    kind: "refine" | "make" (for grouping); boosted differently by modules
 */
-const RECIPES = [
+export const RECIPES = [
   { id: "smelt",   out: "metals",      qty: 2, in: { ore: 2, energy: 2 },                         kind: "refine" },
   { id: "biogen",  out: "energy",      qty: 2, in: { biomass: 2 },                                kind: "refine" },
   { id: "gasgen",  out: "energy",      qty: 3, in: { gas: 1 },                                    kind: "refine" },
@@ -111,7 +111,7 @@ const RECIPES = [
    enforce: 0..1 contraband enforcement strength
    faction: controlling faction id
 */
-const PLANETS = [
+export const PLANETS = [
   { id: "terra", name: "Terra Nova", tag: "Capital • Garden World", color: "#3b82f6", x: 0,
     faction: "core", industry: 6, tech: 7, enforce: 0.92,
     desc: "Cradle of the colonies — lush, populous, politically dominant and mineral-poor. Smuggling here is suicide.",
@@ -201,4 +201,4 @@ const PLANETS = [
 // applyCoreVariance() call (in game.js) recomputes FROM this baseline, never from
 // whatever the previous seed/playthrough left behind, so re-applying it (a mid-session
 // New Game reuses these same 20 objects, unlike the frontier ring) can never compound drift.
-const CORE_BASELINE = PLANETS.map(p => ({ id: p.id, industry: p.industry, tech: p.tech, enforce: p.enforce, deposits: { ...p.deposits } }));
+export const CORE_BASELINE = PLANETS.map(p => ({ id: p.id, industry: p.industry, tech: p.tech, enforce: p.enforce, deposits: { ...p.deposits } }));

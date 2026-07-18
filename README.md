@@ -14,8 +14,14 @@ The original game has no build step and no module system: ~30 script-tag files a
 
 ## Status
 
-Bootstrap only. `index.html` + `main.js` render the charted worlds from `data.js` on a canvas with a `requestAnimationFrame` tick, to prove out the real-time loop seam — no game state, units, or mechanics yet.
+First playable vertical slice: a 1v1 skirmish against a scripted AI on Ferros Prime (a mining world from `data.js`). Gather ore/crystals/radioactives with Workers, build a Barracks, produce Skiffs, fight, win by destroying the enemy Command Center (or lose yours). No tech tree, no multiple maps, no multiplayer yet — see `engine/` for the sim (fixed-timestep loop, movement, gather, combat, production, AI) and `render.js`/`input.js` for the canvas view and mouse controls.
+
+Controls: left-drag to select your units, right-click to move/gather/attack depending on what's under the cursor, click a Worker or a completed building for build/produce options in the side panel.
 
 ## Running it
 
-No build step. Open `index.html` in a browser, or serve the directory locally (e.g. `npx serve .`).
+No build step, but the game loads as ES modules, which browsers block over `file://`. Serve the directory locally, e.g. `npx serve .` or `python3 -m http.server`, and open the printed URL.
+
+## Tests
+
+`npm test` runs `engine/`'s unit and integration tests (`node --test`), including a full simulated skirmish that plays out to a winner.

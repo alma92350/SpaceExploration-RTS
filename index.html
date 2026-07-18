@@ -10,14 +10,18 @@
   <div id="app">
     <header id="topbar">
       <span class="title">STELLAR FRONTIER: RTS</span>
+      <div id="resources" class="resources"></div>
+      <div id="matchClock" class="clock">0:00</div>
     </header>
-    <main id="view">
-      <canvas id="field"></canvas>
-      <div id="hud">Real-time prototype — the 20 charted worlds from data.js, drifting live instead of waiting on a cycle.</div>
+    <main id="main">
+      <div id="view">
+        <canvas id="field"></canvas>
+        <div id="gameOver" class="overlay hidden"></div>
+      </div>
+      <aside id="selectionPanel" class="panel"></aside>
     </main>
   </div>
 
-  <script src="data.js"></script>
-  <script src="main.js"></script>
+  <script type="module" src="main.js"></script>
 </body>
 </html>
