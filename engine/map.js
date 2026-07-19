@@ -39,6 +39,57 @@ const GUARANTEE_Y = { ore: 0, crystals: -0.12, radioactives: 0.12 };
 
 const CACHE_BASE_AMOUNT = 360;   // ~0.6x a normal 600 cluster — a real bonus, not a second economy
 
+/* ---------- terrain ---------- */
+
+// A coarse per-cell terrain field (a flat Uint8Array of type codes, same idiom
+// as the fog grid), sampled O(1) by movement/fog/combat/colliders. Deliberately
+// NOT impassable — a slow cell still has speed > 0, so no unit can ever be
+// trapped (the engine has no pathfinding) and a wave can never deadlock. Rough
+// fields flanking an open lane read as a soft choke; high ground is a strong
+// point worth holding. Terrain is static for the whole match and drawn from
+// fixed fractional specs, so it consumes ZERO rng draws — map determinism and
+// the byte-identical node layout are untouched.
+export const TERRAIN_CELL_SIZE = 40;   // aligned with FOG_CELL_SIZE so a future LOS pass can share cell coords
+export const TERRAIN = {
+  0: { name: "open",  speedMult: 1,   sightMult: 1,    buildable: true,  combatMult: 1 },
+  1: { name: "rough", speedMult: 0.6, sightMult: 1,    buildable: false, combatMult: 1 },     // slow, unbuildable field
+  2: { name: "high",  speedMult: 1,   sightMult: 1.25, buildable: true,  combatMult: 1.15 },  // high ground: sees + hits farther/harder
+};
+
+// Feature specs are [xFrac, yFrac, wFrac, hFrac, code, mirror?] — a rectangular
+// blob centred at (xFrac,yFrac) in fractions of the scaled map, stamped into the
+// grid. `mirror` reflects it across the vertical centreline for fairness (both
+// sides face the same ground). Scales self-similarly with sizeMult.
+function generateTerrain(width, height, specs) {
+  const cols = Math.ceil(width / TERRAIN_CELL_SIZE);
+  const rows = Math.ceil(height / TERRAIN_CELL_SIZE);
+  const type = new Uint8Array(cols * rows);   // 0 = open everywhere by default
+  const stamp = (xf, yf, wf, hf, code) => {
+    const cx0 = Math.floor(((xf - wf / 2) * width) / TERRAIN_CELL_SIZE);
+    const cx1 = Math.floor(((xf + wf / 2) * width) / TERRAIN_CELL_SIZE);
+    const cy0 = Math.floor(((yf - hf / 2) * height) / TERRAIN_CELL_SIZE);
+    const cy1 = Math.floor(((yf + hf / 2) * height) / TERRAIN_CELL_SIZE);
+    for (let gy = Math.max(0, cy0); gy <= Math.min(rows - 1, cy1); gy++)
+      for (let gx = Math.max(0, cx0); gx <= Math.min(cols - 1, cx1); gx++)
+        type[gy * cols + gx] = code;
+  };
+  for (const [xf, yf, wf, hf, code, mirror] of specs) {
+    stamp(xf, yf, wf, hf, code);
+    if (mirror) stamp(1 - xf, yf, wf, hf, code);
+  }
+  return { cols, rows, cell: TERRAIN_CELL_SIZE, type };
+}
+
+// The TERRAIN entry at a world point. Returns OPEN for a missing grid or an
+// out-of-bounds point, so every consumer degrades to "no terrain effect"
+// safely (map-less test stubs, off-map coords).
+export function sampleTerrain(terrain, x, y) {
+  if (!terrain) return TERRAIN[0];
+  const gx = Math.floor(x / terrain.cell), gy = Math.floor(y / terrain.cell);
+  if (gx < 0 || gy < 0 || gx >= terrain.cols || gy >= terrain.rows) return TERRAIN[0];
+  return TERRAIN[terrain.type[gy * terrain.cols + gx]] || TERRAIN[0];
+}
+
 export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
   const planet = PLANETS.find(p => p.id === planetId);
   if (!planet) throw new Error(`Unknown planet: ${planetId}`);
@@ -127,7 +178,10 @@ export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
   // are never added or removed after generation (they deplete in place), so the
   // Map stays valid for the whole match and holds live references.
   const nodesById = new Map(nodes.map(n => [n.id, n]));
-  return { planet, width, height, bases, nodes, nodesById, modifiers };
+  // Static terrain field from this world's fixed specs (none ⇒ an all-open
+  // grid). Built after nodes, consumes no rng — determinism unaffected.
+  const terrain = generateTerrain(width, height, modifiers.terrain || []);
+  return { planet, width, height, bases, nodes, nodesById, terrain, modifiers };
 }
 
 // Hidden-cache placements as [xFrac, yFrac, commodity, mirror?]: mirror pairs
@@ -161,12 +215,29 @@ function cacheSpecs(sizeMult) {
 // which is why ferros/korrath/vesper (the original three) deliberately carry
 // none, keeping their long-established sim behavior unchanged.
 export const PLANET_MODIFIERS = {
-  glacius: { speedMult: 0.9,                 label: "Frozen ground: all units 10% slower" },
+  // `terrain` (optional) is a list of feature specs (see generateTerrain):
+  // [xFrac, yFrac, wFrac, hFrac, code, mirror?], code 1=rough, 2=high ground.
+  glacius: {
+    speedMult: 0.9, label: "Frozen ground: all units 10% slower; ice fields flank a central lane",
+    // Rough ice fields top and bottom of the midline pinch armies through an
+    // open central corridor — a soft choke on top of the world's global slow.
+    terrain: [[0.5, 0.13, 0.34, 0.2, 1, false], [0.5, 0.87, 0.34, 0.2, 1, false]],
+  },
   nimbus:  { sightMult: 0.75,                label: "Storm bands: sight and aggro ranges 25% shorter" },
-  pyralis: { sightMult: 1.15,                label: "Open dunes: sight and aggro ranges 15% longer" },
+  pyralis: {
+    sightMult: 1.15, label: "Open dunes: long sightlines, and a central mesa worth holding",
+    // High-ground mesa in the contested middle: extra sight and a damage edge
+    // for whoever seizes it — a real objective on an otherwise open field.
+    terrain: [[0.5, 0.5, 0.16, 0.26, 2, false]],
+  },
   helix:   { extraClusters: { crystals: 1 }, label: "Dense belt: one extra crystal cluster per side" },
   oort:    { nodeAmountMult: 1.3,            label: "Rich frontier: deposits hold 30% more" },
-  forge:   { buildTimeMult: 0.85,            label: "Factory world: construction and production 15% faster" },
+  forge:   {
+    buildTimeMult: 0.85, label: "Factory world: 15% faster construction; rough industrial sprawl midfield",
+    // Scattered rough ground on the approach makes the flanks slow going and
+    // the direct centre the fast lane.
+    terrain: [[0.4, 0.32, 0.13, 0.18, 1, true], [0.4, 0.68, 0.13, 0.18, 1, true]],
+  },
 };
 
 // Each commodity picks its cluster spots independently, so two different

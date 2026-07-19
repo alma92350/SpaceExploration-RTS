@@ -85,6 +85,7 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
 
   const view = viewBounds(camera, viewportW, viewportH, 40);   // 40px pad ≥ largest entity radius
   drawFogBase(ctx, state, view);
+  drawTerrain(ctx, state, view);   // charted geography — under nodes/units, always visible
   // Resource deposits are charted map knowledge (see data.js), not
   // battlefield intel — they render at full visibility regardless of
   // fog, on top of the dimmed backdrop.
@@ -120,6 +121,29 @@ function drawFogBase(ctx, state, view) {
       if (fog.visible[idx]) continue;
       ctx.fillStyle = fog.explored[idx] ? "rgba(5, 7, 15, 0.55)" : "#05070f";
       ctx.fillRect(gx * FOG_CELL_SIZE, gy * FOG_CELL_SIZE, FOG_CELL_SIZE, FOG_CELL_SIZE);
+    }
+  }
+}
+
+// Terrain washes, drawn as charted geography beneath everything else. Rough
+// ground reads as a cool slate haze, high ground as a warm gold glow — subtle,
+// so it shapes the field without fighting the units for attention. OPEN cells
+// (the majority) draw nothing; viewport-culled like the fog base, so on a big
+// map the cost tracks the feature cells actually on screen.
+const TERRAIN_FILL = { 1: "rgba(120, 140, 180, 0.16)", 2: "rgba(255, 209, 102, 0.13)" };
+function drawTerrain(ctx, state, view) {
+  const t = state.map.terrain;
+  if (!t) return;
+  const gx0 = view ? Math.max(0, Math.floor(view.minX / t.cell)) : 0;
+  const gx1 = view ? Math.min(t.cols - 1, Math.floor(view.maxX / t.cell)) : t.cols - 1;
+  const gy0 = view ? Math.max(0, Math.floor(view.minY / t.cell)) : 0;
+  const gy1 = view ? Math.min(t.rows - 1, Math.floor(view.maxY / t.cell)) : t.rows - 1;
+  for (let gy = gy0; gy <= gy1; gy++) {
+    for (let gx = gx0; gx <= gx1; gx++) {
+      const code = t.type[gy * t.cols + gx];
+      if (!code) continue;
+      ctx.fillStyle = TERRAIN_FILL[code];
+      ctx.fillRect(gx * t.cell, gy * t.cell, t.cell + 1, t.cell + 1);   // +1 hides cell seams
     }
   }
 }

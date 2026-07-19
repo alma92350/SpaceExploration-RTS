@@ -14,7 +14,7 @@
 "use strict";
 
 import { BUILDINGS } from "./entities.js";
-import { NODE_RADIUS } from "./map.js";
+import { NODE_RADIUS, sampleTerrain } from "./map.js";
 
 const PLACEMENT_GAP = 8;
 const RING_STEP = 24;
@@ -33,6 +33,13 @@ export function canPlaceBuilding(state, buildingType, x, y) {
   for (const n of map.nodes) {
     if (n.amount <= 0) continue;   // depleted nodes never refill and stop rendering — dead ground is buildable
     if (Math.hypot(n.x - x, n.y - y) < NODE_RADIUS + r + PLACEMENT_GAP) return false;
+  }
+  // No building on unbuildable terrain (rough ground). Sample the footprint's
+  // centre and corners so a building can't straddle onto it. OPEN / terrain-less
+  // worlds pass every point. findPlacement slides off bad terrain for free.
+  if (map.terrain) {
+    const pts = [[x, y], [x - r, y - r], [x + r, y - r], [x - r, y + r], [x + r, y + r]];
+    for (const [px, py] of pts) if (!sampleTerrain(map.terrain, px, py).buildable) return false;
   }
   return true;
 }

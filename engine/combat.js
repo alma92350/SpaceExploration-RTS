@@ -19,6 +19,7 @@ import { stepToward } from "./movement.js";
 import { UNITS, BUILDINGS, UPGRADES } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
+import { sampleTerrain } from "./map.js";
 
 export function updateCombat(state, unit, dt) {
   const def = UNITS[unit.type];
@@ -115,6 +116,11 @@ function attackDamage(state, unit, def, target) {
 
   const defenderUpgrades = state.players[target.owner]?.upgrades;
   if (defenderUpgrades?.reinforcedPlating) dmg *= UPGRADES.reinforcedPlating.damageTakenMult;
+
+  // A positional edge, not a counter: an attacker firing from high ground hits
+  // for a flat bonus (terrain combatMult). Situational and symmetric, so the RPS
+  // triangle is untouched. OPEN / map-less states read 1.
+  if (state.map?.terrain) dmg *= sampleTerrain(state.map.terrain, unit.x, unit.y).combatMult;
 
   return dmg;
 }

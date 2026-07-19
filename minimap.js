@@ -31,6 +31,20 @@ export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH) 
     }
   }
 
+  // Terrain features at a glance — high ground warm, rough ground cool. Feature
+  // cells only (OPEN draws nothing), same whole-map scale as the fog wash above.
+  const terr = map.terrain;
+  if (terr) {
+    for (let gy = 0; gy < terr.rows; gy++) {
+      for (let gx = 0; gx < terr.cols; gx++) {
+        const code = terr.type[gy * terr.cols + gx];
+        if (!code) continue;
+        ctx.fillStyle = code === 2 ? "rgba(255, 209, 102, 0.20)" : "rgba(120, 140, 180, 0.18)";
+        ctx.fillRect(gx * terr.cell * sx, gy * terr.cell * sy, terr.cell * sx + 1, terr.cell * sy + 1);
+      }
+    }
+  }
+
   ctx.fillStyle = "#ffd166";
   ctx.globalAlpha = 0.7;
   for (const n of map.nodes) {

@@ -17,6 +17,7 @@
 "use strict";
 
 import { UNITS, BUILDINGS } from "./entities.js";
+import { sampleTerrain } from "./map.js";
 
 export const FOG_CELL_SIZE = 40;
 
@@ -75,10 +76,14 @@ export function updateFog(state, fog, owner) {
   // A world's sight modifier scales every reveal radius (see PLANET_MODIFIERS).
   // Optional-chained so the fog tests' map-less stubs read the default 1.
   const sightMult = state.map?.modifiers?.sightMult ?? 1;
+  // A source standing on high ground sees farther (terrain sightMult); OPEN and
+  // the map-less test stubs read 1. One sample per source per tick.
+  const terr = state.map?.terrain;
+  const srcMult = (x, y) => (terr ? sampleTerrain(terr, x, y).sightMult : 1);
   for (const u of state.units.values()) {
-    if (u.owner === owner) reveal(fog, u.x, u.y, UNITS[u.type].sight * sightMult);
+    if (u.owner === owner) reveal(fog, u.x, u.y, UNITS[u.type].sight * sightMult * srcMult(u.x, u.y));
   }
   for (const b of state.buildings.values()) {
-    if (b.owner === owner) reveal(fog, b.x, b.y, BUILDINGS[b.type].sight * sightMult);
+    if (b.owner === owner) reveal(fog, b.x, b.y, BUILDINGS[b.type].sight * sightMult * srcMult(b.x, b.y));
   }
 }
