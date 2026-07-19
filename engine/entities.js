@@ -22,7 +22,7 @@ export const BUILDINGS = {
   barracks: {
     id: "barracks", name: "Barracks", hp: 500, radius: 20,
     cost: { ore: 150 }, buildTime: 20,
-    produces: ["skiff", "bastion", "lancer", "breacher", "dreadnought"],
+    produces: ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender"],
     sight: 150,
   },
   refinery: {
@@ -263,6 +263,22 @@ export const UNITS = {
     // mean cheaper massed units still trade cost-effectively into it — so it
     // anchors an army rather than hard-countering it.
     requires: ["arsenal"],
+  },
+  mender: {
+    id: "mender", name: "Mender", hp: 70, radius: 8, speed: 78,
+    cost: { ore: 90, crystals: 60 }, buildTime: 16, supplyCost: 2,
+    // A pure-support drone: no attack of any kind (role "support" ⇒ it never
+    // auto-acquires and combat.js never gives it a weapon). It closes a real
+    // gap in the roster — until now every hp lost was permanent, so attrition
+    // always favoured whoever could out-produce. A Mender lets a bruised army
+    // heal between fights and lets a besieged base patch its buildings, so
+    // *keeping* an army alive becomes a strategy, not just re-buying it.
+    role: "support", requires: ["foundry"], sight: 130,
+    // Heals every damaged friendly unit AND building within repairRange at
+    // repairRate hp/sec each (see repair.js) — capped at each target's maxHp,
+    // never itself, never something still under construction. Fragile and
+    // unarmed, so it's a priority kill: escort it or lose it.
+    repairRate: 6, repairRange: 110,
   },
 };
 

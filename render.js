@@ -598,6 +598,7 @@ function drawUnits(ctx, state, view) {
     else if (u.type === "lancer") drawLancer(ctx, u, def, color);
     else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
     else if (u.type === "dreadnought") drawDreadnought(ctx, u, def, color);
+    else if (u.type === "mender") drawMender(ctx, u, def, color);
     else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 
     if (u.cargo && u.cargo.qty > 0) {
@@ -674,6 +675,30 @@ function drawRanger(ctx, u, def, color) {
   ctx.arc(nx, ny, r * 0.24, 0, Math.PI * 2);
   ctx.fillStyle = DETAIL;
   ctx.fill();
+}
+
+// Mender — a support drone, not a combatant. A rounded octagonal body carrying
+// a bright green medic cross (a fixed heal-green on both sides, so "this one
+// heals" reads independent of the friend/foe colour), flanked by two little
+// emitter nubs. Unoriented like the Worker — it hovers and mends, it doesn't
+// charge — so nothing about it says "gun", which is exactly the point.
+const HEAL_GREEN = "#8ef5b0";
+function drawMender(ctx, u, def, color) {
+  const r = def.radius, cx = u.x, cy = u.y;
+  pathPoints(ctx, polygonPoints(cx, cy, r, 8, Math.PI / 8));
+  ctx.fill();
+  ctx.stroke();
+
+  // Twin emitter nubs at the flanks (where the repair beams would emit from).
+  ctx.fillStyle = shade(color, -25);
+  ctx.fillRect(cx - r - 2, cy - 1.5, 2.5, 3);
+  ctx.fillRect(cx + r - 0.5, cy - 1.5, 2.5, 3);
+
+  // The medic cross — the whole identity of the unit.
+  const a = r * 0.72, t = r * 0.26;
+  ctx.fillStyle = HEAL_GREEN;
+  ctx.fillRect(cx - t / 2, cy - a / 2, t, a);
+  ctx.fillRect(cx - a / 2, cy - t / 2, a, t);
 }
 
 // A last-resort silhouette for any unit type without a bespoke draw — a small

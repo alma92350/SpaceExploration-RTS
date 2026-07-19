@@ -162,6 +162,20 @@ test("the Ranger is a Command-Center recon unit: cheap, fragile, all-terrain, fa
   assert.equal(UNITS.ranger.supplyCost, 1);
 });
 
+test("the Mender is a Foundry-gated support drone: heals, but carries no weapon", () => {
+  assert.equal(UNITS.mender.role, "support", "its own role — never auto-acquires, never counted in the combat army");
+  assert.deepEqual(UNITS.mender.requires, ["foundry"], "gated behind the Foundry, like the Tier-2 units");
+  assert.ok(BUILDINGS.barracks.produces.includes("mender"), "trained at the Barracks");
+  assert.ok(UNITS.mender.repairRate > 0, "it heals");
+  assert.ok(UNITS.mender.repairRange > 0, "...over an area");
+  assert.ok(!UNITS.mender.attack, "a support unit carries no attack stat — combat.js must never arm it");
+  assert.ok(!UNITS.mender.bonusVs && !UNITS.mender.bonusVsBuildings, "it sits entirely outside the combat triangle");
+  assert.ok(UNITS.mender.hp < UNITS.skiff.hp, "fragile — a priority kill that must be escorted");
+  assert.ok(UNITS.mender.cost.crystals > 0, "crystal-costed, so it's a real economic commitment gated by that income");
+  const combat = Object.values(UNITS).filter(u => u.role === "combat");
+  assert.ok(combat.every(u => u.role !== "support"), "the combat army filter excludes the support role");
+});
+
 test("every unit and building carries a sight radius for fog of war", () => {
   for (const def of Object.values(UNITS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
   for (const def of Object.values(BUILDINGS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);

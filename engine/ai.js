@@ -209,6 +209,26 @@ export function runAI(state, dt) {
   const refineryReserve = archetype.wantsRefinery && !refinery && foundryHandled && oreReserve === 0
     ? BUILDINGS.refinery.cost.ore : 0;
 
+  // TACTICAL: keep exactly one Mender at home for army-sustain — it repairs
+  // battle-damaged units between waves and patches wounded buildings (see
+  // repair.js). Built at a Barracks (Foundry-gated, like the Tier-2 units) and
+  // claimed BEFORE the mix cycle below fills every idle Barracks. Standard AI
+  // never builds one, so its economy and opening are untouched; it's capped at
+  // one, crystal-gated (canAfford only passes with a real crystal income), spends
+  // only surplus ore (a mix buffer stays back), and it never attacks or defends —
+  // so the resolves-to-a-winner guarantee holds even in the aiMicro resolve variant.
+  const foundryDone = buildings.some(b => b.type === "foundry" && !b.constructing);
+  if (state.aiMicro && foundryDone) {
+    const haveMender = playerUnits(state, "ai").some(u => u.type === "mender")
+      || allBarracks.some(b => b.queue.some(j => j.unitType === "mender"));
+    const idleRax = allBarracks.find(b => !b.constructing && b.queue.length === 0);
+    if (!haveMender && idleRax
+        && canAffordKeeping(ai.resources, UNITS.mender.cost, oreReserve + BARRACKS_BUFFER)
+        && canAct(state)) {
+      if (queueProduction(state, idleRax.id, "mender")) spend(state);
+    }
+  }
+
   // One shared production cycle across every completed Barracks: consecutive
   // barracks pick up consecutive mix entries, so two of them drain the same
   // sequence twice as fast rather than each running its own. Map insertion

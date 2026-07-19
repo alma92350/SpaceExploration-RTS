@@ -714,3 +714,39 @@ test("Tactical AI raids the economy: a raid wave targets a visible player worker
   assert.ok(Math.hypot(attacker.order.x - worker.x, attacker.order.y - worker.y) < 60,
     "the raid wave is aimed at the worker line, not the main base");
 });
+
+test("Tactical AI builds exactly one home Mender once its Foundry is up", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, aiMicro: true });
+  fundAll(state);
+  const barracks = stockedBarracks(state);
+  stockedFoundry(state);   // the Mender's prereq — a completed Foundry
+
+  runAI(state, THINK_INTERVAL);
+
+  const queuedMenders = () => aiBuildings(state, "barracks")
+    .reduce((n, b) => n + b.queue.filter(j => j.unitType === "mender").length, 0);
+  assert.equal(queuedMenders(), 1, "a Tactical AI with a Foundry queues a Mender for army-sustain");
+
+  // Capped at one: further think cycles don't stack a second while the first is
+  // still in the queue (so it never crowds out the combat mix).
+  for (let i = 0; i < 6; i++) runAI(state, THINK_INTERVAL);
+  const menderUnits = [...state.units.values()].filter(u => u.owner === "ai" && u.type === "mender").length;
+  assert.equal(queuedMenders() + menderUnits, 1, "never more than one Mender in flight at a time");
+});
+
+test("Standard (non-Tactical) AI never builds a Mender, even with a Foundry", () => {
+  // The Mender is gated on aiMicro, so a plain resolve-test AI (aiMicro false)
+  // spends its Barracks time on the combat mix — keeping the resolves-to-a-winner
+  // guarantee, and its economy, exactly as before the support unit existed.
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });   // aiMicro defaults false
+  fundAll(state);
+  const barracks = stockedBarracks(state);
+  stockedFoundry(state);
+
+  for (let i = 0; i < 6; i++) runAI(state, THINK_INTERVAL);
+
+  const anyMender = aiBuildings(state, "barracks").some(b => b.queue.some(j => j.unitType === "mender"))
+    || [...state.units.values()].some(u => u.owner === "ai" && u.type === "mender");
+  assert.equal(anyMender, false, "a Standard AI builds no Mender");
+  assert.ok(barracks.queue.length > 0, "...it's still producing combat units from the mix");
+});

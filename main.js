@@ -721,7 +721,7 @@ function rebuildSelectionPanel(sel) {
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
   if (barracks) {
-    for (const t of ["skiff", "bastion", "lancer", "breacher", "dreadnought"]) {
+    for (const t of ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender"]) {
       const def = UNITS[t];
       const locked = !prereqsMet(state, "player", def);
       panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
@@ -856,6 +856,7 @@ function lockTipFor(def) {
 function unitTip(def) {
   const bits = [`${def.hp} hp`];
   if (def.attack) bits.push(`${def.attack} dmg`, `rng ${def.range}`);
+  if (def.repairRate) bits.push(`heals ${def.repairRate}/s`, `rng ${def.repairRange}`);
   if (def.speed) bits.push(`spd ${def.speed}`);
   if (def.supplyCost) bits.push(`${def.supplyCost} supply`);
   if (def.supplyGrants) bits.push(`+${def.supplyGrants} supply`);

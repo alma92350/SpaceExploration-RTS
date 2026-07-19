@@ -10,11 +10,13 @@ import { stepToward } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
 import { updateScoutMode } from "./scout.js";
+import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { applySeparation } from "./separation.js";
 import { updateFog } from "./fog.js";
 import { UNITS } from "./entities.js";
+import { getEntity } from "./state.js";
 import { checkWinCondition } from "./victory.js";
 import { runAI } from "./ai.js";
 
@@ -40,6 +42,10 @@ export function tick(state, dt) {
     updateProductionQueue(state, building, dt);
     updateBuildingCombat(state, building, dt);
   }
+
+  // Healing runs last, once every combatant and building has taken its damage
+  // for the tick, so a Mender patches the freshest wounds (see repair.js).
+  updateRepair(state, dt);
 
   checkWinCondition(state);
   state.time += dt;
@@ -73,6 +79,7 @@ function updateUnit(state, unit, dt) {
 
   const def = UNITS[unit.type];
   if (def.role === "combat") { updateCombat(state, unit, dt); return; }
+  if (def.role === "support") { updateSupport(state, unit, def, dt); return; }
 
   if (!unit.order) return;
   switch (unit.order.type) {
@@ -101,4 +108,27 @@ function updateUnit(state, unit, dt) {
       break;
     }
   }
+}
+
+// Support-role units (the Mender) carry no weapon — the actual healing is the
+// global updateRepair pass in repair.js. All this does is MOVE them, so the
+// player can position the drone: a plain move/attack-move goes to the point;
+// an 'attack' order (should one ever be issued — input.js won't, since a Mender
+// has no attack stat) is reinterpreted as "go to that foe" so the drone can be
+// pushed toward a fight to mend the units in it, and it never deals damage.
+function updateSupport(state, unit, def, dt) {
+  const o = unit.order;
+  if (!o) return;
+  let tx, ty, follow = false;
+  if (o.type === "attack") {
+    const t = getEntity(state, o.targetId);
+    if (!t || t.hp <= 0) { unit.order = null; return; }
+    tx = t.x; ty = t.y; follow = true;   // keep chasing a moving foe rather than stopping on arrival
+  } else if (o.type === "move" || o.type === "attack-move") {
+    tx = o.x; ty = o.y;
+  } else {
+    unit.order = null; return;   // gather / scout / build are meaningless for a drone
+  }
+  const arrived = stepToward(state, unit, tx, ty, def.speed, dt);
+  if (arrived && !follow) unit.order = null;
 }
