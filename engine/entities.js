@@ -87,17 +87,22 @@ export const UNITS = {
     attack: 4, range: 15, cooldown: 1.4,
   },
   skiff: {
-    id: "skiff", name: "Skiff", hp: 80, radius: 7, speed: 90,
+    id: "skiff", name: "Skiff", hp: 72, radius: 7, speed: 90,
     cost: { ore: 100 }, buildTime: 12, supplyCost: 1,
     role: "combat", attack: 12, range: 40, cooldown: 1,
     sight: 160, aggroRange: 120,
+    // Fast and cheap, but a touch fragile (72 hp): it wins by harassment and
+    // numbers, not by trading blows, so its counters punish it faster now.
     bonusVs: { lancer: 10 },
   },
   bastion: {
-    id: "bastion", name: "Bastion", hp: 160, radius: 9, speed: 60,
+    id: "bastion", name: "Bastion", hp: 160, radius: 9, speed: 68,
     cost: { ore: 160 }, buildTime: 18, supplyCost: 2,
-    role: "combat", attack: 10, range: 18, cooldown: 1.2,
+    role: "combat", attack: 10, range: 24, cooldown: 1.2,
     sight: 130, aggroRange: 100,
+    // Its job is to catch and crush Skiffs, so it's a bit quicker (68) and
+    // longer-reaching (24) than before — a kiting Skiff can no longer simply
+    // outrun and outrange the very unit built to hard-counter it.
     bonusVs: { skiff: 14 },
   },
   lancer: {
@@ -108,8 +113,8 @@ export const UNITS = {
     bonusVs: { bastion: 20 },
   },
   breacher: {
-    id: "breacher", name: "Breacher", hp: 100, radius: 10, speed: 50,
-    cost: { ore: 100, radioactives: 100 }, buildTime: 20, supplyCost: 2,
+    id: "breacher", name: "Breacher", hp: 130, radius: 10, speed: 50,
+    cost: { ore: 100, radioactives: 60 }, buildTime: 20, supplyCost: 2,
     role: "combat", attack: 10, range: 150, cooldown: 2,
     sight: 180, aggroRange: 150,
     // Deliberately OUTSIDE the Skiff/Lancer/Bastion triangle: no bonusVs

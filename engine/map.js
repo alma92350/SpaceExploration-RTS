@@ -108,7 +108,15 @@ export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
   // them on bigger maps so exploring the larger space keeps paying off.
   const cacheAmount = amountOf(CACHE_BASE_AMOUNT);
   for (const [xf, yf, com, mirror] of cacheSpecs(sizeMult)) {
-    const cx = width * xf, cy = height * yf;
+    // Per-match position jitter so cache spots aren't memorizable map knowledge:
+    // each seed hides them somewhere a little different. A mirrored pair jitters
+    // its anchor and reflects it (both sides stay equidistant — fair); a
+    // centerline cache keeps x=0.5 and only shifts vertically. The jitter is
+    // small and the anchors sit far from both bases, so a cache never lands in
+    // reach of a start (map.test guards the >300 clearance).
+    const jx = mirror ? (rng() - 0.5) * 0.08 : 0;   // ±4% of width; centerline stays centered
+    const jy = (rng() - 0.5) * 0.10;                // ±5% of height
+    const cx = width * (xf + jx), cy = height * (yf + jy);
     nodes.push({ id: `n${nid++}`, com, amount: cacheAmount, max: cacheAmount, x: cx, y: cy, hidden: true });
     if (mirror) nodes.push({ id: `n${nid++}`, com, amount: cacheAmount, max: cacheAmount, x: width - cx, y: cy, hidden: true });
   }
