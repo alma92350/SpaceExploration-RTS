@@ -125,6 +125,18 @@ test("resource drop-offs are the Command Center and the industrial buildings tha
   for (const t of ["refinery", "foundry", "arsenal"]) assert.equal(BUILDINGS[t].dropOff, true, `${t} carries the dropOff flag`);
 });
 
+test("the Ranger is a Command-Center recon unit: cheap, fragile, all-terrain, far-sighted", () => {
+  assert.ok(BUILDINGS.command.produces.includes("ranger"), "trained at the Command Center, like a Worker");
+  assert.equal(UNITS.ranger.role, "scout", "its own role — never auto-acquires, never counted in the combat army");
+  assert.equal(UNITS.ranger.allTerrain, true, "ice fields and rough ground never slow it");
+  const combat = Object.values(UNITS).filter(u => u.role === "combat");
+  assert.ok(combat.every(u => UNITS.ranger.sight > u.sight), "it out-sees every combat unit — vision is its edge");
+  assert.ok(UNITS.ranger.cost.ore < UNITS.skiff.cost.ore, "cheaper than the cheapest combat unit");
+  assert.ok(UNITS.ranger.hp <= UNITS.skiff.hp, "fragile — it scouts, it doesn't trade blows");
+  assert.ok(UNITS.ranger.attack > 0 && UNITS.ranger.attack < UNITS.skiff.attack, "a token bite for self-defence, no more");
+  assert.equal(UNITS.ranger.supplyCost, 1);
+});
+
 test("every unit and building carries a sight radius for fog of war", () => {
   for (const def of Object.values(UNITS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
   for (const def of Object.values(BUILDINGS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);

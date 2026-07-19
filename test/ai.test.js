@@ -4,7 +4,7 @@ import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
-import { isNodeDiscovered } from "../engine/fog.js";
+import { isNodeDiscovered, isExploredAt } from "../engine/fog.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -410,6 +410,43 @@ test("the AI marches on a SEEN enemy building rather than the fixed start coordi
   assert.equal(u.order?.type, "attack-move");
   assert.ok(Math.hypot(u.order.x - seenCC.x, u.order.y - seenCC.y) < 1,
     "it targets the enemy building it can see, not state.map.bases.player");
+});
+
+test("with no enemy in sight, the AI beelines to the player's start while it's still uncharted", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.time = state.aiArchetype.attackTimeout + 50;   // force a commit
+  const aiBase = state.map.bases.ai;
+  const u = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
+  state.units.set(u.id, u);
+  // The AI can see no enemy and hasn't charted the player's corner yet.
+  assert.equal(isExploredAt(state.fogAI, state.map.bases.player.x, state.map.bases.player.y), false, "fixture: start uncharted");
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(u.order?.type, "attack-move");
+  assert.ok(Math.hypot(u.order.x - state.map.bases.player.x, u.order.y - state.map.bases.player.y) < 1,
+    "unseen + uncharted start -> head straight for it (the fast beeline that keeps the game resolving)");
+});
+
+test("once the start is charted and empty, the AI searches unexplored ground for a hidden CC", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.time = state.aiArchetype.attackTimeout + 50;
+  const aiBase = state.map.bases.ai;
+  const u = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
+  state.units.set(u.id, u);
+  // The AI has charted the whole map EXCEPT one dark patch (a hidden expansion
+  // could be there). It sees no enemy right now, and the start is charted+empty.
+  const fog = state.fogAI;
+  fog.explored.fill(1);
+  const cx0 = Math.floor(fog.cols * 0.5), cy0 = 3;
+  for (let cy = cy0; cy < cy0 + 3; cy++) for (let cx = cx0; cx < cx0 + 3; cx++) fog.explored[cy * fog.cols + cx] = 0;
+  assert.equal(isExploredAt(fog, state.map.bases.player.x, state.map.bases.player.y), true, "fixture: start charted");
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(u.order?.type, "attack-move");
+  assert.equal(isExploredAt(fog, u.order.x, u.order.y), false,
+    "start charted + nothing seen -> it sweeps the remaining dark ground hunting the hidden CC");
 });
 
 test("without a completed Foundry the AI trains only Tier-1 units and never stalls the cycle", () => {

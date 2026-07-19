@@ -6,7 +6,7 @@
 
 "use strict";
 
-import { BUILDINGS, canAfford, payCost, prereqsMet } from "./entities.js";
+import { BUILDINGS, UNITS, canAfford, payCost, prereqsMet } from "./entities.js";
 import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
 
@@ -95,6 +95,17 @@ export function issueAssistBuild(units, buildingId, queue = false) {
 // path — the standard RTS "stop" that pulls a unit out of a move or a chain.
 export function issueStop(units) {
   units.forEach(u => { u.order = null; u.orderQueue = []; });
+}
+
+// Put a Ranger into autonomous scout mode (order type "scout"): it ranges the
+// map on its own toward the nearest unexplored ground until re-ordered (see
+// scout.js). Only scout-role units accept it, so issuing it to a mixed selection
+// simply skips everything that isn't a Ranger. Clears any queued waypoints, like
+// a plain command — the mode is persistent, not something to stack behind.
+export function issueScout(units) {
+  units.forEach(u => {
+    if (UNITS[u.type] && UNITS[u.type].role === "scout") { u.order = { type: "scout" }; u.orderQueue = []; }
+  });
 }
 
 // Every unit the building produces from now on walks to this point

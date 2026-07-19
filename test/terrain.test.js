@@ -83,6 +83,20 @@ test("rough ground slows a unit crossing it versus open ground", () => {
   assert.ok(onRough < onOpen, `rough advance ${onRough.toFixed(2)} should be less than open ${onOpen.toFixed(2)}`);
 });
 
+test("an all-terrain unit (Ranger) crosses rough ground at full speed", () => {
+  const map = generateMap("forge", () => 0.5);
+  assert.equal(sampleTerrain(map.terrain, map.width * 0.4, map.height * 0.32).name, "rough", "fixture sanity");
+  const advance = (fx, fy) => {
+    const unit = { type: "ranger", x: map.width * fx, y: map.height * fy };
+    const state = { map, units: new Map() };
+    const startX = unit.x;
+    stepToward(state, unit, unit.x + 1000, unit.y, 100, 0.1);
+    return unit.x - startX;
+  };
+  const onRough = advance(0.4, 0.32), onOpen = advance(0.4, 0.5);
+  assert.ok(Math.abs(onRough - onOpen) < 1e-9, `the Ranger's allTerrain flag means rough (${onRough.toFixed(3)}) == open (${onOpen.toFixed(3)})`);
+});
+
 test("a building can't be placed on rough terrain, but can on open ground", () => {
   const map = generateMap("forge", () => 0.5);
   const state = { map, buildings: new Map() };

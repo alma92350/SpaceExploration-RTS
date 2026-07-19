@@ -588,11 +588,13 @@ function drawUnits(ctx, state, view) {
     ctx.lineWidth = 1.5;
 
     if (u.type === "worker") drawWorker(ctx, u, def, color);
+    else if (u.type === "ranger") drawRanger(ctx, u, def, color);
     else if (u.type === "skiff") drawSkiff(ctx, u, def, color);
     else if (u.type === "bastion") drawBastion(ctx, u, def, color);
     else if (u.type === "lancer") drawLancer(ctx, u, def, color);
     else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
     else if (u.type === "dreadnought") drawDreadnought(ctx, u, def, color);
+    else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
@@ -637,6 +639,50 @@ function drawWorker(ctx, u, def, color) {
 
   ctx.beginPath();
   ctx.arc(cx, cy - r * 0.1, r * 0.3, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL;
+  ctx.fill();
+}
+
+// Ranger — a light, fast recon craft: a slim forward-swept hull ringed by a
+// sensor scanner amidships with a lit eye at the nose, so the scout reads as
+// "eyes, not guns" — distinct from the Skiff's winged dart. Oriented, since it's
+// almost always on the move charting the map.
+function drawRanger(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.7, W = r * 0.85, cx = u.x, cy = u.y;
+  pathOriented(ctx, cx, cy, angle, [
+    [L, 0],
+    [-L * 0.35, W],
+    [-L * 0.7, 0],
+    [-L * 0.35, -W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();                                   // sensor ring — signals its long sight
+  ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2);
+  ctx.strokeStyle = DETAIL;
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+
+  const [nx, ny] = toWorld(cx, cy, angle, L * 0.5, 0);   // lit scanner eye at the nose
+  ctx.beginPath();
+  ctx.arc(nx, ny, r * 0.24, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL;
+  ctx.fill();
+}
+
+// A last-resort silhouette for any unit type without a bespoke draw — a small
+// diamond with a lit core. Nothing on the roster falls through to it today, but
+// it keeps the "every entity has a graphical representation" invariant true for
+// anything added later, so a new unit can never ship invisible.
+function drawGenericUnit(ctx, u, def, color) {
+  const r = def.radius, cx = u.x, cy = u.y;
+  pathPoints(ctx, [[cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy]]);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2);
   ctx.fillStyle = DETAIL;
   ctx.fill();
 }

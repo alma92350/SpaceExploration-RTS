@@ -54,6 +54,27 @@ export function isNodeDiscovered(fog, node) {
   return !node.hidden || isExploredAt(fog, node.x, node.y);
 }
 
+// World point at the centre of the nearest never-explored cell to (fromX, fromY),
+// or null when the whole grid has been explored. A row-major scan with a strict
+// `<` keeps the pick deterministic (first cell wins a distance tie), so it's safe
+// to call from the sim. Shared by the Ranger's scout mode (heads for the nearest
+// dark ground to reveal it) and the AI's hunt for a hidden Command Center (sweeps
+// unexplored ground when it can see no enemy). Cheap enough at this grid
+// resolution to call on demand, and only ever when a new target is needed.
+export function nearestUnexploredPoint(fog, fromX, fromY) {
+  let best = null, bestD = Infinity;
+  for (let cy = 0; cy < fog.rows; cy++) {
+    for (let cx = 0; cx < fog.cols; cx++) {
+      if (fog.explored[cy * fog.cols + cx]) continue;
+      const wx = cx * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+      const wy = cy * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+      const d = (wx - fromX) * (wx - fromX) + (wy - fromY) * (wy - fromY);
+      if (d < bestD) { bestD = d; best = { x: wx, y: wy }; }
+    }
+  }
+  return best;
+}
+
 function reveal(fog, x, y, sight) {
   const { cx, cy } = cellOf(fog, x, y);
   const reach = Math.ceil(sight / FOG_CELL_SIZE);

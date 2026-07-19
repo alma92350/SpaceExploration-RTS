@@ -14,7 +14,7 @@ export const BUILDINGS = {
     // The starting CC is still seeded finished by state.js's seedPlayer —
     // makeBuilding without { constructing: true } spawns complete regardless
     // of buildTime. cost/buildTime only gate the issueBuild path.
-    produces: ["worker"],
+    produces: ["worker", "ranger"],
     isCommandCenter: true,
     supplyGrants: 10,   // the seeded CC already houses the starting 3 workers with room to grow
     sight: 220,
@@ -168,6 +168,20 @@ export const UNITS = {
     // abandon the economy to go pick fights; a handful ganging up can drive off
     // a lone raider, but they're no substitute for real military units.
     attack: 4, range: 15, cooldown: 1.4,
+  },
+  ranger: {
+    id: "ranger", name: "Ranger", hp: 50, radius: 6, speed: 115,
+    cost: { ore: 45 }, buildTime: 10, supplyCost: 1,
+    // A dedicated recon unit, built at the Command Center like a Worker. Cheap
+    // and fragile — it scouts, it doesn't fight — with a token bite for
+    // self-defence only (role "scout" ⇒ it never auto-acquires, so it won't wander
+    // into a fight on its own; the attack fires only when explicitly ordered, like
+    // a Worker's). Its edges are the three things a scout wants:
+    role: "scout", attack: 6, range: 22, cooldown: 1.3,
+    sight: 340,          // sees far — vision is the whole point of the unit
+    allTerrain: true,    // ice fields and rough ground never slow it (movement.js honours this flag)
+    // ...and a "scout mode" (issueScout / order type "scout") where it ranges the
+    // map on its own, heading for the nearest unexplored ground — see scout.js.
   },
   skiff: {
     id: "skiff", name: "Skiff", hp: 72, radius: 7, speed: 90,

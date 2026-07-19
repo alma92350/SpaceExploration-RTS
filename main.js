@@ -529,8 +529,11 @@ function rebuildSelectionPanel(sel) {
 
   const cc = sel.find(e => e.kind === "building" && e.type === "command" && !e.constructing);
   if (cc) {
-    panelEl.appendChild(makeButton(`Produce Worker (${UNITS.worker.cost.ore} ore)`,
-      () => queueProduction(state, cc.id, "worker"), { cost: UNITS.worker.cost, tip: unitTip(UNITS.worker) }));
+    for (const t of ["worker", "ranger"]) {
+      const def = UNITS[t];
+      panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
+        () => queueProduction(state, cc.id, t), { cost: def.cost, tip: unitTip(def) }));
+    }
     if (cc.queue.length) renderQueueRows(cc);
   }
 
@@ -584,11 +587,21 @@ function rebuildSelectionPanel(sel) {
   if (sel.some(e => e.kind === "unit")) {
     panelEl.appendChild(makeButton("Stop ( X )", () => input.stopSelected()));
   }
+  const hasRanger = sel.some(e => e.kind === "unit" && UNITS[e.type].role === "scout");
+  if (hasRanger) {
+    panelEl.appendChild(makeButton("Scout Mode ( E )", () => input.scoutSelected(),
+      { tip: "Auto-explore: the Ranger ranges toward the nearest unexplored ground on its own" }));
+  }
 
   if (input.building) {
     const hint = document.createElement("p");
     hint.className = "hint";
     hint.textContent = "Click the map to place it. Right-click to cancel.";
+    panelEl.appendChild(hint);
+  } else if (hasRanger) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Ranger: all-terrain, far sight. E to auto-scout; right-click to move it yourself.";
     panelEl.appendChild(hint);
   } else if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
     const hint = document.createElement("p");

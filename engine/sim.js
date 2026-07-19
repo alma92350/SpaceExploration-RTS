@@ -9,6 +9,7 @@
 import { stepToward } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
+import { updateScoutMode } from "./scout.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { applySeparation } from "./separation.js";
@@ -82,6 +83,9 @@ function updateUnit(state, unit, dt) {
     }
     case "gather":
       updateGather(state, unit, dt);
+      break;
+    case "scout":
+      updateScoutMode(state, unit, dt);
       break;
     case "attack":
       // Workers only reach here on an explicit attack order (combat units are

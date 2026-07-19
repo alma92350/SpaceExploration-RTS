@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createFog, updateFog, isVisibleAt, isExploredAt, isNodeDiscovered, FOG_CELL_SIZE } from "../engine/fog.js";
+import { createFog, updateFog, isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint, FOG_CELL_SIZE } from "../engine/fog.js";
 import { makeUnit, makeBuilding } from "../engine/state.js";
 
 function mapStub(width = 800, height = 600) {
@@ -111,4 +111,30 @@ test("a planet sight modifier shrinks how far a unit reveals fog", () => {
   assert.equal(isVisibleAt(full, 490, 300), true, "at full sight the far tile is visible");
   assert.equal(isVisibleAt(dim, 490, 300), false, "the modifier pulls that same tile out of sight");
   assert.equal(isVisibleAt(dim, 430, 300), true, "close ground stays visible under the modifier");
+});
+
+test("nearestUnexploredPoint returns the closest dark cell, and null once all is explored", () => {
+  const map = mapStub(800, 600);
+  const fog = createFog(map);
+  // Reveal a patch around (400,300) via a worker, leaving the rest dark.
+  const worker = makeUnit("worker", "player", 400, 300);
+  updateFog({ map, units: new Map([[worker.id, worker]]), buildings: new Map() }, fog, "player");
+
+  const p = nearestUnexploredPoint(fog, 400, 300);
+  assert.ok(p, "there is unexplored ground to head for");
+  assert.equal(isExploredAt(fog, p.x, p.y), false, "the returned point is genuinely unexplored");
+  // It should be just outside the explored patch, not off in a far corner.
+  assert.ok(Math.hypot(p.x - 400, p.y - 300) < 200, "and it's the NEAREST dark ground, hugging the frontier");
+
+  // Explore everything -> null.
+  fog.explored.fill(1);
+  assert.equal(nearestUnexploredPoint(fog, 400, 300), null, "a fully-charted map has nothing left to find");
+});
+
+test("nearestUnexploredPoint is deterministic — same fog and origin give the same point", () => {
+  const fog = createFog(mapStub(800, 600));
+  fog.explored[0] = 1;   // chart one corner cell so the scan isn't trivial
+  const a = nearestUnexploredPoint(fog, 400, 300);
+  const b = nearestUnexploredPoint(fog, 400, 300);
+  assert.deepEqual(a, b);
 });

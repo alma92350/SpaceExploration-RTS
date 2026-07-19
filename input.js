@@ -8,7 +8,7 @@
 
 "use strict";
 
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout } from "./engine/commands.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera } from "./camera.js";
@@ -225,6 +225,11 @@ export function attachInput(canvas, state, onChange) {
   function stopSelected() {
     issueStop(selectedUnits());
   }
+  // Send every selected Ranger off to chart the map on its own (see scout.js).
+  // A no-op if nothing scout-role is selected.
+  function scoutSelected() {
+    issueScout(selectedUnits());
+  }
   function selectAllArmy() {
     state.selection = [...state.units.values()]
       .filter(u => u.owner === "player" && UNITS[u.type].role === "combat")
@@ -262,6 +267,7 @@ export function attachInput(canvas, state, onChange) {
     }
     if (k === "x") { stopSelected(); onChange(); return; }
     if (k === "q") { selectAllArmy(); onChange(); return; }
+    if (k === "e") { scoutSelected(); onChange(); return; }   // send selected Rangers to auto-scout
     if (k === "`") { focusIdleWorker(); return; }   // it calls onChange itself
   }, { signal });
   window.addEventListener("keyup", e => heldKeys.delete(e.key.toLowerCase()), { signal });
@@ -288,6 +294,7 @@ export function attachInput(canvas, state, onChange) {
     focusIdleWorker,
     selectAllArmy: () => { selectAllArmy(); onChange(); },
     stopSelected: () => { stopSelected(); onChange(); },
+    scoutSelected: () => { scoutSelected(); onChange(); },
     tickCamera(dt) {
       let dx = edgePan[0], dy = edgePan[1];
       for (const key of heldKeys) {

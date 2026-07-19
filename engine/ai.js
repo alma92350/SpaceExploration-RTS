@@ -37,7 +37,7 @@ import { issueBuild, issueAttackMove, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, isDropOff } from "./entities.js";
 import { supplyUsed, supplyCap } from "./supply.js";
-import { isVisibleAt, isNodeDiscovered } from "./fog.js";
+import { isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
 
 const THINK_INTERVAL = 1.5;
@@ -411,10 +411,14 @@ function withoutHomeGuard(homeArmy, cc, garrison) {
 
 // Where to send the wave. Prefer a seen enemy Command Center (the win
 // condition), then any seen enemy building, then a seen enemy unit (raid the
-// army or worker line). Only when it has spotted nothing does it march on the
-// player's start position — attack-move reveals fog on the way, so it still
-// finds and engages them there instead of committing to a coordinate that may
-// no longer hold anything.
+// army or worker line). With nothing in sight it goes HUNTING: a player CC is
+// still standing somewhere (the game isn't over), and the player can hold — and
+// hide — several of them, so razing the first is not the win. It first marches on
+// the player's start if it hasn't even charted it yet (the likeliest spot early,
+// and the fast beeline that keeps the game resolving); once that's explored and
+// empty, it sweeps the nearest unexplored ground, attack-moving to reveal fog,
+// until it turns up a hidden expansion CC — instead of committing forever to a
+// start coordinate the player has long since left.
 function chooseAttackTarget(state, cc) {
   const from = cc || { x: state.map.bases.ai.x, y: state.map.bases.ai.y };
   const seen = e => e.owner === "player" && isVisibleAt(state.fogAI, e.x, e.y);
@@ -428,9 +432,12 @@ function chooseAttackTarget(state, cc) {
     }
     return best;
   };
-  return nearestOf(ccs) || nearestOf(seenBuildings)
-      || nearestOf([...state.units.values()].filter(seen))
-      || state.map.bases.player;
+  const target = nearestOf(ccs) || nearestOf(seenBuildings)
+      || nearestOf([...state.units.values()].filter(seen));
+  if (target) return target;
+  const start = state.map.bases.player;
+  if (!isExploredAt(state.fogAI, start.x, start.y)) return start;   // haven't looked at the start yet — go there
+  return nearestUnexploredPoint(state.fogAI, from.x, from.y) || start;   // else search the map for a hidden CC
 }
 
 // The next unit to build: normally the next entry in the archetype's mix,
