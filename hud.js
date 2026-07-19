@@ -9,11 +9,21 @@
 "use strict";
 
 import { game } from "./session.js";
-import { resourcesEl, clockEl, panelEl, idleWorkersEl, isTouchMode } from "./dom.js";
+import {
+  resourcesEl, clockEl, panelEl, idleWorkersEl, isTouchMode,
+  scenarioBarEl, scenarioBannerEl, scenarioStatusEl, repairBtn, departBtn,
+} from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
+import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import * as sound from "./sound.js";
+
+// Scenario dock actions — wired once. They read game.state at click time, and
+// re-render immediately so the button state / budget update without waiting for
+// the next HUD tick.
+repairBtn.addEventListener("click", () => { if (game.state && repairConvoy(game.state)) renderHUD(); });
+departBtn.addEventListener("click", () => { if (game.state) { departNow(game.state); renderHUD(); } });
 
 // Panel-rebuild guard: the last signature the selection panel was rebuilt for.
 // Module-local (only renderSelectionPanel reads/writes it); boot.js clears it via
@@ -23,36 +33,83 @@ export function resetPanelSignature() { lastPanelSignature = null; }
 
 export function renderHUD() {
   const { state } = game;
-  const res = state.players.player.resources;
-  resourcesEl.innerHTML = "";
-  Object.entries(res).forEach(([com, qty]) => {
-    const span = document.createElement("span");
-    span.textContent = `${com}: ${Math.floor(qty)}`;
-    resourcesEl.appendChild(span);
-  });
 
-  const used = supplyUsed(state, "player"), cap = supplyCap(state, "player");
-  const supplySpan = document.createElement("span");
-  supplySpan.className = "supply"
-    + (used >= cap ? " at-cap" : "")
-    + (performance.now() < game.supplyBlockedUntil ? " blocked" : "");
-  supplySpan.textContent = `supply: ${used}/${cap}`;
-  resourcesEl.appendChild(supplySpan);
+  if (state.scenario) {
+    // A scenario has no economy: its budget + clock live in the scenario bar,
+    // so blank the skirmish readouts and drive the bar instead.
+    resourcesEl.innerHTML = "";
+    idleWorkersEl.classList.add("hidden");
+    clockEl.textContent = "";
+  } else {
+    const res = state.players.player.resources;
+    resourcesEl.innerHTML = "";
+    Object.entries(res).forEach(([com, qty]) => {
+      const span = document.createElement("span");
+      span.textContent = `${com}: ${Math.floor(qty)}`;
+      resourcesEl.appendChild(span);
+    });
 
-  const mins = Math.floor(state.time / 60);
-  const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
-  clockEl.textContent = `${mins}:${secs}`;
+    const used = supplyUsed(state, "player"), cap = supplyCap(state, "player");
+    const supplySpan = document.createElement("span");
+    supplySpan.className = "supply"
+      + (used >= cap ? " at-cap" : "")
+      + (performance.now() < game.supplyBlockedUntil ? " blocked" : "");
+    supplySpan.textContent = `supply: ${used}/${cap}`;
+    resourcesEl.appendChild(supplySpan);
 
-  // Idle-worker indicator: a lost worker on a big map is easy to miss, so surface
-  // the count in the topbar (click, or `, to jump to the next one).
-  let idle = 0;
-  for (const u of state.units.values()) {
-    if (u.owner === "player" && u.type === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length)) idle++;
+    const mins = Math.floor(state.time / 60);
+    const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
+    clockEl.textContent = `${mins}:${secs}`;
+
+    // Idle-worker indicator: a lost worker on a big map is easy to miss, so surface
+    // the count in the topbar (click, or `, to jump to the next one).
+    let idle = 0;
+    for (const u of state.units.values()) {
+      if (u.owner === "player" && u.type === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length)) idle++;
+    }
+    idleWorkersEl.textContent = `⚒ ${idle} idle`;
+    idleWorkersEl.classList.toggle("hidden", idle === 0);
   }
-  idleWorkersEl.textContent = `⚒ ${idle} idle`;
-  idleWorkersEl.classList.toggle("hidden", idle === 0);
 
+  renderScenarioBar(state);
   renderSelectionPanel();
+}
+
+// The scenario status strip: the phase banner, a leg/freighters/clock/budget
+// line, and the Repair / Depart actions while docked at a station. Hidden
+// entirely in a skirmish.
+function renderScenarioBar(state) {
+  const sc = state.scenario;
+  if (!sc) { scenarioBarEl.classList.add("hidden"); return; }
+  scenarioBarEl.classList.remove("hidden");
+  scenarioBannerEl.textContent = sc.banner;
+
+  const alive = [...state.units.values()].filter(u => u.owner === "player" && u.type === "freighter").length;
+  const legs = sc.route.length - 1;
+  const legNo = Math.min(sc.legIndex + 1, legs);
+  const remain = Math.max(0, sc.timeLimit - state.time);
+  const shown = sc.outcome ? sc.delivered : alive;
+  scenarioStatusEl.textContent =
+    `Leg ${legNo}/${legs} · Freighters ${shown}/${sc.freightersTotal} · ⏱ ${clockStr(remain)} · 💰 ${Math.round(sc.budget)}`;
+
+  if (sc.phase === "docked") {
+    const cost = repairCost(state);
+    repairBtn.classList.remove("hidden");
+    departBtn.classList.remove("hidden");
+    repairBtn.classList.toggle("disabled", sc.repairedThisStop || cost === 0 || cost > sc.budget);
+    repairBtn.textContent = sc.repairedThisStop ? "Repaired ✓"
+      : cost === 0 ? "No damage"
+      : cost > sc.budget ? `Repair (${cost}) — no funds`
+      : `Repair all (${cost} 💰)`;
+  } else {
+    repairBtn.classList.add("hidden");
+    departBtn.classList.add("hidden");
+  }
+}
+
+function clockStr(sec) {
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
 }
 
 // Selecting more than one unit collapses the panel to one row per type

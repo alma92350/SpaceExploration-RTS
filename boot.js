@@ -23,8 +23,9 @@ import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
 import { addTracer, addDeathFlash, addUnderAttackPing, resetEffects } from "./effects.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
-import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver } from "./overlays.js";
+import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
+import { setupEscort } from "./engine/scenarios.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -68,6 +69,15 @@ export function startGame(planetId) {
   bootState(fresh, { intro: true });
 }
 
+// Start a Convoy Escort scenario on `planetId` at the chosen difficulty. Shares
+// the seed/boot machinery with a skirmish; the scenario state carries its own
+// objective (engine/scenarios.js), so bootState wires it the same way.
+export function startScenario(planetId) {
+  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const fresh = setupEscort({ planetId, seed, difficulty: setup.difficulty });
+  bootState(fresh, { intro: false });
+}
+
 // Re-open the map-select screen (the game-over "choose another battlefield"
 // button, passed into overlays' showGameOver so that module needn't import setup).
 function restartToMapSelect() {
@@ -94,11 +104,12 @@ export function bootState(newState, { intro }) {
   if (intro) showObjectives();
   game.input = attachInput(canvas, state, () => renderHUD());
   const input = game.input;
-  // Open on the player's own base, not the map centre — on a big map the base
-  // sits far off toward the edge and you'd otherwise start staring at nothing.
+  // Open on the convoy's start station (scenario) or the player's own base
+  // (skirmish) — never the map centre, which on a big map is empty space.
+  const openAt = state.scenario ? state.scenario.route[0] : state.map.bases.player;
   const cam = input.getCamera();
-  cam.x = state.map.bases.player.x;
-  cam.y = state.map.bases.player.y;
+  cam.x = openAt.x;
+  cam.y = openAt.y;
   clampCamera(cam, state.map, canvas.clientWidth, canvas.clientHeight);
   resetEffects();
   resetFacing();
@@ -120,7 +131,12 @@ export function bootState(newState, { intro }) {
       drawMinimap(minimapCtx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, MINIMAP_W, MINIMAP_H);
       processFrameEvents();
       if (now - lastHud > 150) { lastHud = now; renderHUD(); }
-      if (game.state.over && !announced) { announced = true; loop.stop(); showGameOver(game.state.winner, game.state.seed, restartToMapSelect); }
+      if (game.state.over && !announced) {
+        announced = true;
+        loop.stop();
+        if (game.state.scenario) showScenarioEnd(game.state, restartToMapSelect);
+        else showGameOver(game.state.winner, game.state.seed, restartToMapSelect);
+      }
     },
   });
   loop.start();

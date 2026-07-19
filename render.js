@@ -90,6 +90,7 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   // battlefield intel — they render at full visibility regardless of
   // fog, on top of the dimmed backdrop.
   drawNodes(ctx, state, view);
+  if (state.scenario) drawScenario(ctx, state);   // the convoy route + stations, under the units
   drawBuildings(ctx, state, view);
   drawUnits(ctx, state, view);
   drawEffects(ctx);
@@ -602,6 +603,7 @@ function drawUnits(ctx, state, view) {
     else if (u.type === "wraith") drawWraith(ctx, u, def, color);
     else if (u.type === "aegis") drawAegis(ctx, u, def, color);
     else if (u.type === "colossus") drawColossus(ctx, u, def, color);
+    else if (u.type === "freighter") drawFreighter(ctx, u, def, color);
     else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 
     if (u.cargo && u.cargo.qty > 0) {
@@ -1015,6 +1017,74 @@ function drawColossus(ctx, u, def, color) {
   ctx.beginPath(); ctx.arc(tx, ty, r * 0.2, 0, Math.PI * 2); ctx.fill();
   const [cxx, cyy] = toWorld(cx, cy, angle, -L * 0.15, 0);
   ctx.beginPath(); ctx.arc(cxx, cyy, r * 0.3, 0, Math.PI * 2); ctx.fill();
+}
+
+// The convoy route overlay (scenario mode): a dashed lane connecting the
+// stations, a muted ring at the start, cyan rings at the waypoint stations, and
+// a bright green gate at the destination. The station the convoy is currently
+// heading for gets a solid halo so the objective reads at a glance.
+function drawScenario(ctx, state) {
+  const sc = state.scenario;
+  if (!sc || !sc.route) return;
+  const route = sc.route;
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(79, 209, 255, 0.30)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([12, 10]);
+  ctx.beginPath();
+  ctx.moveTo(route[0].x, route[0].y);
+  for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const activeTarget = sc.phase === "travel" ? sc.legIndex + 1 : -1;
+  route.forEach((p, i) => {
+    const dest = i === route.length - 1;
+    const start = i === 0;
+    const col = dest ? "#4ade80" : start ? "#8593c4" : "#4fd1ff";
+    if (i === activeTarget) {                          // halo the station we're steering for
+      ctx.beginPath(); ctx.arc(p.x, p.y, 44, 0, Math.PI * 2);
+      ctx.fillStyle = dest ? "rgba(74,222,128,0.12)" : "rgba(79,209,255,0.12)";
+      ctx.fill();
+    }
+    ctx.beginPath(); ctx.arc(p.x, p.y, dest ? 38 : 32, 0, Math.PI * 2);
+    ctx.strokeStyle = col; ctx.lineWidth = dest ? 4 : 2.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.fill();
+  });
+  ctx.restore();
+}
+
+// Freighter — a slow, blocky cargo hauler for the convoy scenarios: a wide hull
+// stacked with darker container blocks and a lit bridge at the nose, so it reads
+// unmistakably as a civilian freighter to protect, not a warship.
+function drawFreighter(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.5, W = r * 0.95;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L, W * 0.45], [L, -W * 0.45],
+    [L * 0.6, -W], [-L, -W],
+    [-L, W], [L * 0.6, W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  // Cargo containers stacked down the hull.
+  ctx.fillStyle = shade(color, -30);
+  for (const fx of [0.35, -0.05, -0.45]) {
+    pathOriented(ctx, cx, cy, angle, [
+      [L * fx + r * 0.18, W * 0.72], [L * fx + r * 0.18, -W * 0.72],
+      [L * fx - r * 0.22, -W * 0.72], [L * fx - r * 0.22, W * 0.72],
+    ]);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = DETAIL;                                   // bridge light at the nose
+  const [bx, by] = toWorld(cx, cy, angle, L * 0.82, 0);
+  ctx.beginPath(); ctx.arc(bx, by, r * 0.18, 0, Math.PI * 2); ctx.fill();
 }
 
 function updateFacing(unit) {

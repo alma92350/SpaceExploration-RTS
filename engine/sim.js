@@ -19,11 +19,15 @@ import { UNITS } from "./entities.js";
 import { getEntity } from "./state.js";
 import { checkWinCondition } from "./victory.js";
 import { runAI } from "./ai.js";
+import { updateScenario } from "./scenarios.js";
 
 export function tick(state, dt) {
   if (state.over) return;
 
-  runAI(state, dt);
+  // Scenario mode drives the convoy/piracy/objective itself; the skirmish
+  // economy AI only runs in a normal match (see engine/scenarios.js).
+  if (state.scenario) updateScenario(state, dt);
+  else runAI(state, dt);
 
   // Broad-phase spatial index for this tick, shared by movement avoidance,
   // combat acquisition, and the separation pass below (see engine/grid.js).
@@ -47,7 +51,9 @@ export function tick(state, dt) {
   // for the tick, so a Mender patches the freshest wounds (see repair.js).
   updateRepair(state, dt);
 
-  checkWinCondition(state);
+  // Scenario mode settles its own win/lose inside updateScenario; the skirmish
+  // CC/score victory check only applies to a normal match.
+  if (!state.scenario) checkWinCondition(state);
   state.time += dt;
   state.tick++;
 }

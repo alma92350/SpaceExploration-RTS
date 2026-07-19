@@ -281,6 +281,18 @@ export const UNITS = {
     repairRate: 6, repairRange: 110,
   },
 
+  // The convoy freighter — a defenceless cargo hauler used only by the scenario
+  // modes (engine/scenarios.js), never trained at a building. Slow, no weapon
+  // (role "freighter" ⇒ it never auto-acquires and combat.js never arms it), but
+  // a big hull so it can survive a raid long enough for its escort to answer.
+  // supplyCost/sight satisfy the roster invariants; cost is empty (it's spawned,
+  // not bought).
+  freighter: {
+    id: "freighter", name: "Freighter", hp: 220, radius: 11, speed: 46,
+    cost: {}, buildTime: 0, supplyCost: 1,
+    role: "freighter", sight: 130,
+  },
+
   /* ---- Tier-3 SPECIALTY units: one per "rare" surface commodity, so a world's
      deposit specialty shapes which elite you can field (radioactives already
      give the balanced Dreadnought above). All Arsenal-gated, all deliberately

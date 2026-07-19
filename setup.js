@@ -14,7 +14,7 @@ import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame } from "./saveload.js";
-import { startGame } from "./boot.js";
+import { startGame, startScenario } from "./boot.js";
 import * as sound from "./sound.js";
 
 // The curated roster and its order both come from the AI archetype table, so
@@ -50,7 +50,13 @@ const FACTION_OPTIONS = PLAYABLE_FACTIONS.map(id => ({
   label: FACTIONS[id].short, mult: id,
   note: { frontier: "faster · sees farther", miners: "richer · builds faster", syndicate: "hits harder · lean economy" }[id],
 }));
-export const setup = { difficulty: "medium", faction: "frontier", sizeMult: 1, resourceMult: 1, seed: null };
+export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontier", sizeMult: 1, resourceMult: 1, seed: null };
+
+// The game modes the splash toggles between.
+const MODES = [
+  { key: "skirmish", label: "⚔ Skirmish", note: "Destroy the enemy base" },
+  { key: "escort", label: "🚚 Convoy Escort", note: "Protect freighters to the destination" },
+];
 
 // A one-of-N pick rendered as a row of buttons; clicking one selects it and
 // stores its value via onPick.
@@ -72,7 +78,7 @@ function optionGroup(current, options, onPick) {
   return wrap;
 }
 
-function renderSetupPanel() {
+function renderSetupPanel(scenario) {
   const panel = document.createElement("div");
   panel.className = "setup";
 
@@ -86,40 +92,46 @@ function renderSetupPanel() {
 
   const hint = document.createElement("p");
   hint.className = "setup-hint";
-  hint.textContent = "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger.";
+  hint.textContent = scenario
+    ? "Higher difficulty means heavier piracy, a leaner escort, a tighter clock and a smaller repair budget."
+    : "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger.";
   panel.appendChild(hint);
 
-  const facRow = document.createElement("div");
-  facRow.className = "setup-row";
-  const facLabel = document.createElement("span");
-  facLabel.className = "setup-label";
-  facLabel.textContent = "Faction";
-  facRow.append(facLabel, optionGroup(setup.faction, FACTION_OPTIONS, key => { setup.faction = key; renderFactionHint(); }));
-  panel.appendChild(facRow);
+  // Faction / map size / resources only shape a skirmish economy — a convoy
+  // escort has neither, so those rows are skipped in scenario mode.
+  if (!scenario) {
+    const facHint = document.createElement("p");
+    facHint.className = "setup-hint";
+    facHint.id = "factionHint";
+    // Filled now and on every faction pick, so the blurb tracks the selection.
+    const renderFactionHint = () => { facHint.textContent = FACTIONS[setup.faction].blurb; };
 
-  const facHint = document.createElement("p");
-  facHint.className = "setup-hint";
-  facHint.id = "factionHint";
-  panel.appendChild(facHint);
-  // Filled now and on every faction pick, so the blurb tracks the selection.
-  function renderFactionHint() { facHint.textContent = FACTIONS[setup.faction].blurb; }
-  renderFactionHint();
+    const facRow = document.createElement("div");
+    facRow.className = "setup-row";
+    const facLabel = document.createElement("span");
+    facLabel.className = "setup-label";
+    facLabel.textContent = "Faction";
+    facRow.append(facLabel, optionGroup(setup.faction, FACTION_OPTIONS, key => { setup.faction = key; renderFactionHint(); }));
+    panel.appendChild(facRow);
+    panel.appendChild(facHint);
+    renderFactionHint();
 
-  const sizeRow = document.createElement("div");
-  sizeRow.className = "setup-row";
-  const sizeLabel = document.createElement("span");
-  sizeLabel.className = "setup-label";
-  sizeLabel.textContent = "Map size";
-  sizeRow.append(sizeLabel, optionGroup(setup.sizeMult, SIZE_OPTIONS, m => { setup.sizeMult = m; }));
-  panel.appendChild(sizeRow);
+    const sizeRow = document.createElement("div");
+    sizeRow.className = "setup-row";
+    const sizeLabel = document.createElement("span");
+    sizeLabel.className = "setup-label";
+    sizeLabel.textContent = "Map size";
+    sizeRow.append(sizeLabel, optionGroup(setup.sizeMult, SIZE_OPTIONS, m => { setup.sizeMult = m; }));
+    panel.appendChild(sizeRow);
 
-  const resRow = document.createElement("div");
-  resRow.className = "setup-row";
-  const resLabel = document.createElement("span");
-  resLabel.className = "setup-label";
-  resLabel.textContent = "Resources";
-  resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
-  panel.appendChild(resRow);
+    const resRow = document.createElement("div");
+    resRow.className = "setup-row";
+    const resLabel = document.createElement("span");
+    resLabel.className = "setup-label";
+    resLabel.textContent = "Resources";
+    resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
+    panel.appendChild(resRow);
+  }
 
   // Optional seed: leave blank for a fresh random map, or enter a seed (shown on
   // the seed chip / game-over screen) to replay the exact same world.
@@ -144,13 +156,19 @@ function renderSetupPanel() {
 }
 
 export function renderMapSelect() {
+  const scenario = setup.mode === "escort";
   mapSelectEl.innerHTML = "";
   const title = document.createElement("h2");
-  title.textContent = "Configure the skirmish";
+  title.textContent = scenario ? "Convoy Escort" : "Configure the skirmish";
   mapSelectEl.appendChild(title);
 
-  // Offer to pick up a saved game before starting a fresh one.
-  if (hasSave()) {
+  // Mode toggle: skirmish vs the convoy-escort scenario. Picking one re-renders
+  // this screen so the setup rows + card actions match the mode.
+  mapSelectEl.appendChild(optionGroup(setup.mode, MODES.map(m => ({ label: m.label, mult: m.key, note: m.note })),
+    key => { setup.mode = key; renderMapSelect(); }));
+
+  // Offer to pick up a saved skirmish before starting a fresh one (skirmish only).
+  if (!scenario && hasSave()) {
     const resume = document.createElement("button");
     resume.className = "btn resume-btn";
     resume.textContent = "▶ Resume saved game";
@@ -158,11 +176,21 @@ export function renderMapSelect() {
     mapSelectEl.appendChild(resume);
   }
 
-  mapSelectEl.appendChild(renderSetupPanel());
+  if (scenario) {
+    const brief = document.createElement("p");
+    brief.className = "setup-hint";
+    brief.style.maxWidth = "560px";
+    brief.textContent = "Shepherd four freighters across a multi-leg route to the destination gate. "
+      + "Pirates raid each leg by its risk; dock at a station between legs to repair from your budget; "
+      + "beat the mission clock. Score rewards freighters delivered, legs survived, risk faced, and budget saved.";
+    mapSelectEl.appendChild(brief);
+  }
+
+  mapSelectEl.appendChild(renderSetupPanel(scenario));
 
   const subtitle = document.createElement("h3");
   subtitle.className = "cards-heading";
-  subtitle.textContent = "Then choose a battlefield";
+  subtitle.textContent = scenario ? "Choose the route (world to cross)" : "Then choose a battlefield";
   mapSelectEl.appendChild(subtitle);
 
   const cards = document.createElement("div");
@@ -172,16 +200,15 @@ export function renderMapSelect() {
     const mod = PLANET_MODIFIERS[id];
     const card = document.createElement("button");
     card.className = "map-card";
-    // Each card advertises who you're up against (the archetype's temperament)
-    // and how the world itself bends the fight (its modifier, if any), so the
-    // choice of battlefield is an informed one rather than just flavor text.
+    // Skirmish cards advertise the opponent + the world modifier; scenario cards
+    // just pick which world the convoy crosses.
     card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`
-      + `<span class="ai-note">Opponent doctrine: ${archetypeFor(id).name}</span>`
+      + (scenario ? "" : `<span class="ai-note">Opponent doctrine: ${archetypeFor(id).name}</span>`)
       + (mod ? `<span class="mod-note">${mod.label}</span>` : "");
     card.addEventListener("click", () => {
       sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
-      startGame(id);
+      if (scenario) startScenario(id); else startGame(id);
     });
     cards.appendChild(card);
   });

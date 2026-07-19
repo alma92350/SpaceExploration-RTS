@@ -148,3 +148,41 @@ export function showGameOver(winner, seed, onRestart) {
   });
   gameOverEl.appendChild(again);
 }
+
+// The mission-end screen for a scenario (engine/scenarios.js) — its own screen
+// rather than showGameOver, because it reports the objective + a score breakdown.
+export function showScenarioEnd(state, onRestart) {
+  const sc = state.scenario;
+  if (sc.outcome === "win") sound.playVictory(); else sound.playDefeat();
+
+  gameOverEl.classList.remove("hidden");
+  gameOverEl.innerHTML = "";
+
+  const title = document.createElement("div");
+  title.textContent = sc.outcome === "win" ? "Convoy Delivered" : "Convoy Lost";
+  gameOverEl.appendChild(title);
+
+  const banner = document.createElement("div");
+  banner.className = "gameover-seed";
+  banner.textContent = sc.banner;
+  gameOverEl.appendChild(banner);
+
+  const breakdown = document.createElement("div");
+  breakdown.className = "gameover-seed";
+  breakdown.innerHTML =
+    `Freighters delivered: ${sc.delivered}/${sc.freightersTotal} · Legs cleared: ${sc.legsDone}`
+    + ` · Budget left: ${Math.round(sc.budget)}<br>Final score: <b>${sc.score}</b>`;
+  gameOverEl.appendChild(breakdown);
+
+  const again = document.createElement("button");
+  again.className = "btn";
+  again.style.width = "auto";
+  again.style.padding = "10px 20px";
+  again.style.marginTop = "16px";
+  again.textContent = "Back to menu";
+  again.addEventListener("click", () => {
+    gameOverEl.classList.add("hidden");
+    onRestart();
+  });
+  gameOverEl.appendChild(again);
+}

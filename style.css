@@ -601,3 +601,41 @@ html, body { overscroll-behavior: none; }
   .sheet-toggle { display: flex; }
   body.sheet-collapsed #selectionPanel { display: none; }
 }
+
+/* ---------- scenario mode: the convoy status strip + dock actions ---------- */
+.scenario-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 94%;
+  background: rgba(14, 21, 48, 0.94);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 14px;
+  z-index: 5;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+.scenario-bar.hidden { display: none; }
+.scenario-banner { font-weight: 700; color: var(--accent); font-size: 0.9rem; }
+.scenario-status { color: var(--text); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.scenario-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.8rem;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.scenario-btn:hover { border-color: var(--accent); color: var(--accent); }
+.scenario-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+.scenario-btn.disabled:hover { border-color: var(--border); color: var(--text); }
+.scenario-btn.hidden { display: none; }
