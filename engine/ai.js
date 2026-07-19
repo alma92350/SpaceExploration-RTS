@@ -316,7 +316,22 @@ export function runAI(state, dt) {
   if (threats.length > 0) {
     if (nonScout.length > 0) {
       const focus = threatCentroid(threats);
-      issueAttackMove(nonScout, focus.x, focus.y);
+      if (state.aiMicro && nonScout.length > threats.length * 2) {
+        // FEINT-RESISTANT (Tactical): a small poke can no longer yank the whole
+        // army out of position. Commit only a proportionate defence — the closest
+        // units, ~2x the seen threat — and leave the rest on their assignment, so
+        // a one-unit feint costs the AI a couple of defenders, not its whole push.
+        // A genuinely large attack (threat >= half the army) falls through to the
+        // full recall below. Tactical-only, and a passive player never threatens,
+        // so the resolves-to-a-winner guarantee is untouched.
+        const need = Math.min(nonScout.length, threats.length * 2 + 1);
+        const defenders = nonScout.slice()
+          .sort((a, b) => Math.hypot(a.x - focus.x, a.y - focus.y) - Math.hypot(b.x - focus.x, b.y - focus.y))
+          .slice(0, need);
+        issueAttackMove(defenders, focus.x, focus.y);
+      } else {
+        issueAttackMove(nonScout, focus.x, focus.y);   // Standard (or a serious attack): the whole army rushes home
+      }
     }
   } else {
     // OFFENSE. "Home" army is whatever hasn't already been sent off to attack —
@@ -356,7 +371,14 @@ export function runAI(state, dt) {
       const garrison = timedOut ? 0 : (archetype.garrison || 0);
       const strike = withoutHomeGuard(homeArmy, cc, garrison);
       if (strike.length > 0) {
-        const target = chooseAttackTarget(state, cc);
+        // ECONOMY RAID (Tactical): every RAID_EVERY-th wave, if it can see the
+        // player's worker line, this one goes for the economy instead of grinding
+        // the defended main base — sniping production the way a human harasses.
+        // The other waves still assault the base, so the CC still falls and the
+        // game resolves; a desperation (timeout) commit always goes for the base.
+        state.aiWaveCount = (state.aiWaveCount || 0) + 1;
+        const raid = state.aiMicro && !timedOut && state.aiWaveCount % RAID_EVERY === 0 && raidTarget(state);
+        const target = raid || chooseAttackTarget(state, cc);
         issueAttackMove(strike, target.x, target.y);
         state.aiNextAttackAt = state.time + archetype.attackTimeout;
         // Reset the retreat baseline to the whole committed force (survivors of a
@@ -463,6 +485,24 @@ function withoutHomeGuard(homeArmy, cc, garrison) {
 // empty, it sweeps the nearest unexplored ground, attack-moving to reveal fog,
 // until it turns up a hidden expansion CC — instead of committing forever to a
 // start coordinate the player has long since left.
+const RAID_EVERY = 3;   // every Nth Tactical wave goes for the economy instead of the base
+
+// The player's economy to snipe: the nearest player WORKER the AI can see. A
+// Tactical raid peels a wave onto the worker line to cripple production rather
+// than grinding the defended main base. Null when no worker is in sight — nothing
+// to raid, so the caller falls back to the ordinary base assault.
+function raidTarget(state) {
+  const from = state.map.bases.ai;
+  let best = null, bestD = Infinity;
+  for (const u of state.units.values()) {
+    if (u.owner !== "player" || u.type !== "worker") continue;
+    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+    const d = Math.hypot(u.x - from.x, u.y - from.y);
+    if (d < bestD) { bestD = d; best = u; }
+  }
+  return best ? { x: best.x, y: best.y } : null;
+}
+
 function chooseAttackTarget(state, cc) {
   const from = cc || { x: state.map.bases.ai.x, y: state.map.bases.ai.y };
   const seen = e => e.owner === "player" && isVisibleAt(state.fogAI, e.x, e.y);

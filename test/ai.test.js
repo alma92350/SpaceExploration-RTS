@@ -665,3 +665,52 @@ test("the Standard AI builds no Ranger — the scout unit is a Tactical-only ext
   }
   assert.ok(!sawRanger, "the Standard AI never trains a Ranger — its opening is unchanged");
 });
+
+test("Tactical AI resists a feint: a lone attacker pulls only a proportionate defence", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, aiMicro: true });
+  const aiBase = state.map.bases.ai;
+  const squad = [];
+  for (let i = 0; i < 12; i++) { const u = makeUnit("skiff", "ai", aiBase.x - 20 - i * 4, aiBase.y); state.units.set(u.id, u); squad.push(u); }
+  const feint = makeUnit("skiff", "player", aiBase.x + 30, aiBase.y);   // one attacker pokes the base
+  state.units.set(feint.id, feint);
+  updateFog(state, state.fogAI, "ai");
+
+  runAI(state, THINK_INTERVAL);
+
+  const responding = squad.filter(u => u.order?.type === "attack-move").length;
+  assert.ok(responding > 0, "it still defends");
+  assert.ok(responding <= 3, `a 1-unit feint draws only ~2x its size (${responding}), not the whole army of 12`);
+});
+
+test("the Standard AI recalls the whole army to a threat — feint-resistance is Tactical-only", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });   // aiMicro off
+  const aiBase = state.map.bases.ai;
+  const squad = [];
+  for (let i = 0; i < 12; i++) { const u = makeUnit("skiff", "ai", aiBase.x - 20 - i * 4, aiBase.y); state.units.set(u.id, u); squad.push(u); }
+  const feint = makeUnit("skiff", "player", aiBase.x + 30, aiBase.y);
+  state.units.set(feint.id, feint);
+  updateFog(state, state.fogAI, "ai");
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(squad.filter(u => u.order?.type === "attack-move").length, 12, "Standard AI brings everyone home");
+});
+
+test("Tactical AI raids the economy: a raid wave targets a visible player worker, not the base", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, aiMicro: true });
+  state.time = 0;              // not a desperation timeout commit
+  state.aiWaveCount = 2;       // so this commit is the 3rd wave -> a raid
+  const aiBase = state.map.bases.ai;
+  const squad = [];
+  for (let i = 0; i < 12; i++) { const u = makeUnit("skiff", "ai", aiBase.x - 20 - i * 4, aiBase.y); state.units.set(u.id, u); squad.push(u); }
+  const worker = makeUnit("worker", "player", aiBase.x - 200, aiBase.y);   // a worker the AI can see
+  state.units.set(worker.id, worker);
+  updateFog(state, state.fogAI, "ai");
+
+  runAI(state, THINK_INTERVAL);
+
+  const attacker = squad.find(u => u.order?.type === "attack-move");
+  assert.ok(attacker, "the wave committed");
+  assert.ok(Math.hypot(attacker.order.x - worker.x, attacker.order.y - worker.y) < 60,
+    "the raid wave is aimed at the worker line, not the main base");
+});
