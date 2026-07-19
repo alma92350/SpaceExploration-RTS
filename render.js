@@ -318,6 +318,10 @@ function drawBuildings(ctx, state, view) {
     else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
 
     ctx.globalAlpha = 1;
+    // A foe marker under every enemy building, matching the one under enemy units:
+    // friend/foe is then a SHAPE cue, not colour alone, so a colourblind player can
+    // tell an enemy base from their own without relying on the cyan-vs-red hue.
+    if (b.owner !== "player") drawEnemyPip(ctx, b.x, b.y + b.radius + 8);
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
   }
 }

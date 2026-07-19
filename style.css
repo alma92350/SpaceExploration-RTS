@@ -144,8 +144,9 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.04em;
   animation: alert-pulse 0.9s ease-in-out infinite;
-  pointer-events: none;
+  cursor: pointer;   /* clickable — jumps the camera to the attack (main.js) */
 }
+.under-attack:hover { background: rgba(248, 113, 113, 0.28); }
 .under-attack.hidden { display: none; }
 
 @keyframes alert-pulse {

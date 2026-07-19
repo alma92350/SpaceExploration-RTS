@@ -54,6 +54,17 @@ const saveBtn = document.getElementById("saveBtn");
 const loadBtn = document.getElementById("loadBtn");
 const SAVE_KEY = "stellarfrontier.save.v1";
 
+// Where the last under-attack alert fired — clicking the banner jumps there, so a
+// raid on the far side of a big map is one click away instead of a frantic scroll.
+let lastAttackAt = null;
+underAttackEl.addEventListener("click", () => {
+  if (!lastAttackAt || !input || !state) return;
+  const cam = input.getCamera();
+  cam.x = lastAttackAt.x;
+  cam.y = lastAttackAt.y;
+  clampCamera(cam, state.map, canvas.clientWidth, canvas.clientHeight);
+});
+
 muteBtn.addEventListener("click", () => {
   const next = !sound.isMuted();
   sound.setMuted(next);
@@ -498,6 +509,7 @@ function processFrameEvents() {
 // stay in lockstep with each other during a sustained siege instead of
 // re-flashing on every single hit.
 function triggerUnderAttack(x, y) {
+  lastAttackAt = { x, y };   // remembered even while throttled, so a click always jumps to the freshest hit
   const now = performance.now();
   if (now - lastUnderAttackAt < UNDER_ATTACK_THROTTLE_MS) return;
   lastUnderAttackAt = now;
