@@ -44,7 +44,9 @@ const mapSelectEl = document.getElementById("mapSelect");
 const muteBtn = document.getElementById("muteBtn");
 const underAttackEl = document.getElementById("underAttackAlert");
 const seedChipEl = document.getElementById("seedChip");
+const idleWorkersEl = document.getElementById("idleWorkers");
 const objectivesEl = document.getElementById("objectives");
+idleWorkersEl.addEventListener("click", () => { if (input) input.focusIdleWorker(); });
 const helpOverlayEl = document.getElementById("helpOverlay");
 const helpBtn = document.getElementById("helpBtn");
 
@@ -371,6 +373,7 @@ const HELP_ROWS = [
   ["1–9 / Shift+1–9", "Recall / bind a control group"],
   ["Double-click", "Select every unit of that type on screen"],
   ["Q · E · X", "Select army · Ranger scout mode · stop"],
+  ["H", "Hold position — fire in range, don't chase"],
   ["`", "Jump to the next idle worker"],
   ["Right-click a node", "(building selected) rally new workers to mine it"],
   ["Minimap", "Left-click to jump · right-click to order"],
@@ -482,6 +485,15 @@ function renderHUD() {
   const mins = Math.floor(state.time / 60);
   const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
   clockEl.textContent = `${mins}:${secs}`;
+
+  // Idle-worker indicator: a lost worker on a big map is easy to miss, so surface
+  // the count in the topbar (click, or `, to jump to the next one).
+  let idle = 0;
+  for (const u of state.units.values()) {
+    if (u.owner === "player" && u.type === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length)) idle++;
+  }
+  idleWorkersEl.textContent = `⚒ ${idle} idle`;
+  idleWorkersEl.classList.toggle("hidden", idle === 0);
 
   renderSelectionPanel();
 }
@@ -701,6 +713,10 @@ function rebuildSelectionPanel(sel) {
   if (sel.some(e => e.kind === "unit")) {
     panelEl.appendChild(makeButton("Stop ( X )", () => input.stopSelected()));
   }
+  if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
+    panelEl.appendChild(makeButton("Hold Position ( H )", () => input.holdSelected(),
+      { tip: "Fire on anything in range, but hold ground — don't chase out of position" }));
+  }
   const hasRanger = sel.some(e => e.kind === "unit" && UNITS[e.type].role === "scout");
   if (hasRanger) {
     panelEl.appendChild(makeButton("Scout Mode ( E )", () => input.scoutSelected(),
@@ -748,7 +764,7 @@ function controlsLegend() {
     ["Ctrl+right", "queue a waypoint"],
     ["Shift+1–9", "set group · 1–9 recall"],
     ["Double-click", "select all of that type"],
-    ["Q · E · X", "army · scout · stop · ` idle worker"],
+    ["Q · E · X · H", "army · scout · stop · hold"],
     ["Minimap", "left jumps · right orders"],
     ["Wheel", "zoom · arrows / edge-scroll pan"],
     ["F1 / ?", "all controls"],

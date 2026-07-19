@@ -53,6 +53,25 @@ test("focus-fire falls back to normal acquire when the focus target is dead or o
   assert.ok(near.hp < nearHp, "a stale focus doesn't freeze the unit — it auto-acquires the real enemy");
 });
 
+test("Hold stance: a holding unit fires on an in-range enemy but won't chase one out of range", () => {
+  const s1 = createGameState({ planetId: "ferros" });
+  const holder = makeUnit("skiff", "player", 500, 500);   // range 40, aggro 120
+  const far = makeUnit("skiff", "ai", 590, 500);          // 90 away: inside aggro, outside range
+  s1.units.set(holder.id, holder); s1.units.set(far.id, far);
+  holder.hold = true;
+  updateCombat(s1, holder, 0.1);
+  assert.equal(holder.x, 500, "a holding unit stands its ground instead of chasing an out-of-range target");
+
+  const s2 = createGameState({ planetId: "ferros" });
+  const holder2 = makeUnit("skiff", "player", 500, 500);
+  const near = makeUnit("skiff", "ai", 520, 500);         // 20 away: already in range
+  s2.units.set(holder2.id, holder2); s2.units.set(near.id, near);
+  holder2.hold = true; holder2.attackTimer = 0;
+  const nearHp = near.hp;
+  updateCombat(s2, holder2, 0.1);
+  assert.ok(near.hp < nearHp, "but it still fires on anything that comes into range");
+});
+
 test("salvage: destroying a combat unit refunds a quarter of its cost to its owner (comeback softener)", () => {
   const state = createGameState({ planetId: "ferros" });
   const attacker = makeUnit("skiff", "ai", 500, 500);

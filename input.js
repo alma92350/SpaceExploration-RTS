@@ -8,7 +8,7 @@
 
 "use strict";
 
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold } from "./engine/commands.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera } from "./camera.js";
@@ -259,6 +259,10 @@ export function attachInput(canvas, state, onChange) {
   function scoutSelected() {
     issueScout(selectedUnits());
   }
+  // Put selected combat units into the Hold-position stance.
+  function holdSelected() {
+    issueHold(selectedUnits());
+  }
   function selectAllArmy() {
     state.selection = [...state.units.values()]
       .filter(u => u.owner === "player" && UNITS[u.type].role === "combat")
@@ -298,6 +302,7 @@ export function attachInput(canvas, state, onChange) {
     if (k === "q") { selectAllArmy(); onChange(); return; }
     if (k === "e") { scoutSelected(); onChange(); return; }   // send selected Rangers to auto-scout
     if (k === "a") { setArmed(true); return; }        // arm attack-move; next left-click commits it
+    if (k === "h") { holdSelected(); onChange(); return; }   // hold position
     if (k === "escape") { setArmed(false); buildMode = null; onChange(); return; }   // bail out of a pending action
     if (k === "`") { focusIdleWorker(); return; }   // it calls onChange itself
   }, { signal });
@@ -326,6 +331,7 @@ export function attachInput(canvas, state, onChange) {
     selectAllArmy: () => { selectAllArmy(); onChange(); },
     stopSelected: () => { stopSelected(); onChange(); },
     scoutSelected: () => { scoutSelected(); onChange(); },
+    holdSelected: () => { holdSelected(); onChange(); },
     tickCamera(dt) {
       let dx = edgePan[0], dy = edgePan[1];
       for (const key of heldKeys) {

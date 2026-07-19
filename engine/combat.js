@@ -59,7 +59,10 @@ export function updateCombat(state, unit, dt) {
     if (target && target.hp > 0) {
       const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
       if (dist > def.range) {
-        stepToward(state, unit, target.x, target.y, def.speed, dt);
+        // Hold stance: stand fast rather than chasing an out-of-range target —
+        // fire only once something comes to us (a player-set defensive stance;
+        // the AI never sets it, so this can't touch the resolve guarantee).
+        if (!unit.hold) stepToward(state, unit, target.x, target.y, def.speed, dt);
       } else if (unit.attackTimer <= 0) {
         const died = performAttack(state, unit, def, target);
         unit.attackTimer = def.cooldown;

@@ -434,3 +434,16 @@ html, body {
 .gameover-seed { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-top: 10px; }
 
 #field.aim-cursor { cursor: crosshair; }
+
+.idle-workers {
+  font-size: 0.72rem;
+  color: var(--gold);
+  background: rgba(255, 209, 102, 0.10);
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.idle-workers:hover { background: rgba(255, 209, 102, 0.20); }
+.idle-workers.hidden { display: none; }

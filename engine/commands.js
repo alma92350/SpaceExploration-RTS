@@ -36,6 +36,7 @@ function formationSpots(count, x, y) {
 // chain cleanly. sim.js pulls the next queued order in as soon as `order` clears.
 function dispatch(unit, order, queue) {
   if (!unit.orderQueue) unit.orderQueue = [];
+  unit.hold = false;   // any positive order (move/attack/gather/waypoint) cancels a Hold stance
   if (queue && (unit.order || unit.orderQueue.length)) {
     unit.orderQueue.push(order);
   } else {
@@ -94,7 +95,17 @@ export function issueAssistBuild(units, buildingId, queue = false) {
 // enemy that wanders into range next tick), but it won't chase or resume a
 // path — the standard RTS "stop" that pulls a unit out of a move or a chain.
 export function issueStop(units) {
-  units.forEach(u => { u.order = null; u.orderQueue = []; });
+  units.forEach(u => { u.order = null; u.orderQueue = []; u.hold = false; });
+}
+
+// Hold position: a combat unit stands its ground and fires on anything that
+// wanders into weapon range, but never CHASES an auto-acquired target out of
+// position (combat.js honours unit.hold) — the standard defensive stance for
+// holding a line or a choke. Any move/attack order, or Stop, clears it.
+export function issueHold(units) {
+  units.forEach(u => {
+    if (UNITS[u.type] && UNITS[u.type].role === "combat") { u.order = null; u.orderQueue = []; u.hold = true; }
+  });
 }
 
 // Put a Ranger into autonomous scout mode (order type "scout"): it ranges the

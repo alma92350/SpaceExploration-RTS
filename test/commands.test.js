@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally } from "../engine/commands.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold } from "../engine/commands.js";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 
@@ -216,4 +216,20 @@ test("issueSetRally can bind the rally to a resource node for rally-to-mine", ()
   const building = makeBuilding("command", "player", 500, 500);
   issueSetRally(building, 620, 480, "n7");
   assert.deepEqual(building.rally, { x: 620, y: 480, nodeId: "n7" });
+});
+
+test("issueHold sets the stance on combat units only; a move order or Stop clears it", () => {
+  const combat = { id: "u1", type: "skiff", order: null };
+  const worker = { id: "u2", type: "worker", order: null };
+
+  issueHold([combat, worker]);
+  assert.equal(combat.hold, true, "a combat unit takes the Hold stance");
+  assert.ok(!worker.hold, "a worker doesn't");
+
+  issueMove([combat], 100, 100);
+  assert.equal(combat.hold, false, "issuing a move cancels Hold");
+
+  combat.hold = true;
+  issueStop([combat]);
+  assert.equal(combat.hold, false, "Stop cancels Hold too");
 });
