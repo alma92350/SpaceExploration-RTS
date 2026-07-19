@@ -12,13 +12,16 @@
       <span class="title">STELLAR FRONTIER: RTS</span>
       <div id="resources" class="resources"></div>
       <div id="matchClock" class="clock">0:00</div>
+      <span id="seedChip" class="seed-chip hidden" title="Match seed — click to copy. Enter it on the setup screen to replay this map."></span>
       <input id="volume" class="volume" type="range" min="0" max="100" value="90" title="Sound volume" aria-label="Sound volume">
       <button id="muteBtn" class="mute-btn" title="Mute sound" aria-pressed="false">🔊</button>
+      <button id="helpBtn" class="help-btn" title="Controls &amp; help (F1)" aria-label="Help">?</button>
     </header>
     <main id="main">
       <div id="view">
         <canvas id="field"></canvas>
         <div id="underAttackAlert" class="under-attack hidden">⚠ Under Attack</div>
+        <div id="objectives" class="objectives hidden"></div>
         <canvas id="minimap" class="minimap"></canvas>
         <div id="gameOver" class="overlay hidden"></div>
       </div>
@@ -26,6 +29,7 @@
     </main>
   </div>
 
+  <div id="helpOverlay" class="overlay help-overlay hidden"></div>
   <div id="mapSelect" class="map-select"></div>
 
   <script type="module" src="main.js"></script>

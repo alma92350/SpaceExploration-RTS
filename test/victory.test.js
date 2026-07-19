@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
-import { checkWinCondition, DEFAULT_MATCH_TIME_LIMIT } from "../engine/victory.js";
+import { checkWinCondition, playerScore, DEFAULT_MATCH_TIME_LIMIT } from "../engine/victory.js";
 
 function commandCenterOf(state, owner) {
   return [...state.buildings.values()].find(b => b.owner === owner && b.type === "command");
@@ -65,6 +65,24 @@ test("a match that reaches the time limit with both bases intact is decided on s
 
   assert.equal(state.over, true, "the time limit ends an otherwise-endless stalemate");
   assert.equal(state.winner, "ai", "the side that out-massed and out-banked takes the tiebreak");
+});
+
+test("the score tiebreak values a fielded army over a hoarded bank", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear();
+  state.buildings.clear();
+  // Player: a big idle stockpile, nothing on the board.
+  state.players.player.resources = { ore: 2000, crystals: 0, radioactives: 0 };
+  // AI: an army worth only 500 ore (5 Skiffs), banked nothing.
+  state.players.ai.resources = { ore: 0, crystals: 0, radioactives: 0 };
+  for (let i = 0; i < 5; i++) {
+    const u = makeUnit("skiff", "ai", 100 + i, 100);
+    state.units.set(u.id, u);
+  }
+  // Under the OLD rule (raw bank + raw cost) the 2000-ore hoard would win outright.
+  // The reweight discounts the bank and rewards the fielded army, flipping it.
+  assert.ok(playerScore(state, "ai") > playerScore(state, "player"),
+    "500 ore of committed army out-scores a 2000-ore idle bank — turtling on resources shouldn't win");
 });
 
 test("before the time limit, an even, both-bases-standing match keeps running", () => {

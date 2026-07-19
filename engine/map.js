@@ -121,7 +121,7 @@ export function sampleTerrain(terrain, x, y) {
   return TERRAIN[terrain.type[gy * terrain.cols + gx]] || TERRAIN[0];
 }
 
-export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
+export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {   // deterministic-exempt: unseeded default rng
   const planet = PLANETS.find(p => p.id === planetId);
   if (!planet) throw new Error(`Unknown planet: ${planetId}`);
   const modifiers = PLANET_MODIFIERS[planetId] || {};

@@ -208,6 +208,12 @@ test("issueSetRally replaces a building's rally point", () => {
 
   issueSetRally(building, 900, 300);
 
-  assert.deepEqual(building.rally, { x: 900, y: 300 });
+  assert.deepEqual(building.rally, { x: 900, y: 300, nodeId: null });
   assert.notDeepEqual(building.rally, originalRally);
+});
+
+test("issueSetRally can bind the rally to a resource node for rally-to-mine", () => {
+  const building = makeBuilding("command", "player", 500, 500);
+  issueSetRally(building, 620, 480, "n7");
+  assert.deepEqual(building.rally, { x: 620, y: 480, nodeId: "n7" });
 });

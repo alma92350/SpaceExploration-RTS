@@ -11,7 +11,7 @@
 
 const MAX_SUBSTEPS = 5;   // most catch-up sim ticks to run in one animation frame
 
-export function createLoop({ update, render, hz = 20, now = () => performance.now() }) {
+export function createLoop({ update, render, hz = 20, now = () => performance.now() }) {   // deterministic-exempt: wall clock drives the render loop, not the sim
   const dtFixed = 1 / hz;
   let acc = 0;
   let last = null;

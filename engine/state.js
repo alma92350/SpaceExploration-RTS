@@ -49,7 +49,11 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
 export function createGameState(opts = {}) {
   nextEntityId = 1;   // fresh game -> deterministic ids from the seed (see newId above)
   const planetId = opts.planetId || "ferros";
-  const map = generateMap(planetId, opts.rng || Math.random, {
+  // The one sanctioned fallback: an UNSEEDED caller (a direct test, or a call
+  // that predates seeding) uses the platform PRNG for map generation only.
+  // Production always passes a seeded rng (see main.js), so this branch never
+  // runs in a real match — the engine-purity guard whitelists the marked line.
+  const map = generateMap(planetId, opts.rng || Math.random, {   // deterministic-exempt: unseeded default rng
     sizeMult: opts.sizeMult || 1,
     resourceMult: opts.resourceMult || 1,
   });
@@ -59,6 +63,7 @@ export function createGameState(opts = {}) {
     tick: 0,
     over: false,
     winner: null,
+    seed: opts.seed ?? null,   // the match seed, if one was supplied — reproduces this whole game
     map,
     players: {
       player: { id: "player", faction: "frontier", isAI: false, resources: startingResources(), color: "#4fd1ff", upgrades: {} },

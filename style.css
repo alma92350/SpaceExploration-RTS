@@ -346,3 +346,91 @@ html, body {
 .opt-btn.active { border-color: var(--accent); background: var(--panel-2); }
 .opt-btn .opt-label { display: block; font-weight: 600; font-size: 0.86rem; }
 .opt-btn .opt-note { display: block; font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
+
+/* ---------- Tier-1 UX: seed chip, help, objectives ---------- */
+.seed-chip {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seed-chip:hover { border-color: var(--accent-2); color: var(--text); }
+.seed-chip.copied { border-color: var(--accent); color: var(--accent); }
+.seed-chip.hidden { display: none; }
+
+.help-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 30px; height: 30px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+}
+.help-btn:hover { border-color: var(--accent); }
+
+.objectives {
+  position: absolute;
+  top: 48px; left: 50%;
+  transform: translateX(-50%);
+  width: min(720px, 92%);
+  background: rgba(14, 21, 48, 0.94);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 40px 10px 14px;
+  z-index: 4;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+}
+.objectives.hidden { display: none; }
+.obj-goal { display: block; font-weight: 700; color: var(--text); font-size: 0.86rem; }
+.obj-tip { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 4px; line-height: 1.4; }
+.obj-tip b { color: var(--accent); }
+.obj-close {
+  position: absolute; top: 6px; right: 10px;
+  background: transparent; border: none;
+  color: var(--muted); cursor: pointer;
+  font-size: 1.2rem; line-height: 1;
+}
+.obj-close:hover { color: var(--text); }
+
+.help-overlay { z-index: 50; cursor: pointer; }
+.help-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  max-width: 540px;
+  width: 90%;
+  cursor: default;
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.55);
+}
+.help-card h2 { margin: 0 0 12px; font-size: 1.1rem; color: var(--accent); }
+.help-row {
+  display: flex; gap: 12px;
+  font-size: 0.82rem; font-weight: 400;
+  color: var(--text);
+  padding: 5px 0;
+  border-top: 1px solid rgba(36, 49, 98, 0.5);
+  text-align: left;
+}
+.help-key { flex: 0 0 155px; color: var(--accent); font-weight: 600; }
+.help-dismiss { margin: 14px 0 0; font-size: 0.74rem; color: var(--muted); font-weight: 400; }
+
+.seed-input {
+  flex: 0 0 130px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.seed-input:focus { outline: none; border-color: var(--accent); }
+
+.gameover-seed { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-top: 10px; }
+
+#field.aim-cursor { cursor: crosshair; }

@@ -7,6 +7,7 @@
 "use strict";
 
 import { createGameState } from "./engine/state.js";
+import { mulberry32 } from "./engine/rng.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
@@ -42,6 +43,10 @@ const gameOverEl = document.getElementById("gameOver");
 const mapSelectEl = document.getElementById("mapSelect");
 const muteBtn = document.getElementById("muteBtn");
 const underAttackEl = document.getElementById("underAttackAlert");
+const seedChipEl = document.getElementById("seedChip");
+const objectivesEl = document.getElementById("objectives");
+const helpOverlayEl = document.getElementById("helpOverlay");
+const helpBtn = document.getElementById("helpBtn");
 
 muteBtn.addEventListener("click", () => {
   const next = !sound.isMuted();
@@ -129,7 +134,7 @@ const RESOURCE_OPTIONS = [
   { label: "Normal", mult: 1.0, note: "balanced" },
   { label: "Abundant", mult: 1.5, note: "rich deposits" },
 ];
-const setup = { aiApm: 60, sizeMult: 1, resourceMult: 1 };
+const setup = { aiApm: 60, sizeMult: 1, resourceMult: 1, seed: null };
 
 function apmDescriptor(apm) {
   if (apm <= 20) return "Sluggish";
@@ -199,6 +204,25 @@ function renderSetupPanel() {
   resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
   panel.appendChild(resRow);
 
+  // Optional seed: leave blank for a fresh random map, or enter a seed (shown on
+  // the seed chip / game-over screen) to replay the exact same world.
+  const seedRow = document.createElement("div");
+  seedRow.className = "setup-row";
+  const seedLabel = document.createElement("span");
+  seedLabel.className = "setup-label";
+  seedLabel.textContent = "Seed";
+  const seedInput = document.createElement("input");
+  seedInput.type = "text"; seedInput.inputMode = "numeric"; seedInput.className = "seed-input";
+  seedInput.placeholder = "random";
+  seedInput.value = setup.seed != null ? String(setup.seed) : "";
+  seedInput.addEventListener("input", () => {
+    const v = seedInput.value.trim();
+    const n = Number.parseInt(v, 10);
+    setup.seed = (v === "" || Number.isNaN(n)) ? null : (n >>> 0);
+  });
+  seedRow.append(seedLabel, seedInput);
+  panel.appendChild(seedRow);
+
   return panel;
 }
 
@@ -247,7 +271,15 @@ function startGame(planetId) {
   underAttackEl.classList.add("hidden");
   clearTimeout(underAttackTimer);
 
-  state = createGameState({ planetId, aiApm: setup.aiApm, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
+  // Seed the sim so the match is reproducible: a player can note the seed and
+  // re-enter it to replay the exact same map. The seed itself is drawn from the
+  // UI layer (Math.random is fine here — it's not the sim); everything downstream
+  // flows from the seeded mulberry32, so same seed ⇒ same world.
+  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  state = createGameState({ planetId, seed, rng: mulberry32(seed),
+    aiApm: setup.aiApm, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
+  showSeedChip(seed);
+  showObjectives();
   input = attachInput(canvas, state, () => renderHUD());
   // Open on the player's own base, not the map centre — on a big map the base
   // sits far off toward the edge and you'd otherwise start staring at nothing.
@@ -281,6 +313,74 @@ function startGame(planetId) {
   loop.start();
   renderHUD();
 }
+
+/* ---------- seed chip · objectives strip · help overlay ---------- */
+
+function showSeedChip(seed) {
+  seedChipEl.textContent = `Seed ${seed}`;
+  seedChipEl.dataset.seed = String(seed);
+  seedChipEl.classList.remove("hidden");
+}
+seedChipEl.addEventListener("click", () => {
+  const s = seedChipEl.dataset.seed;
+  if (s && navigator.clipboard) navigator.clipboard.writeText(s).catch(() => {});
+  seedChipEl.classList.add("copied");
+  setTimeout(() => seedChipEl.classList.remove("copied"), 900);
+});
+
+// A one-time, dismissible strip at match start stating the goal and the core
+// loop, so a first-time player isn't left guessing what to do. Auto-clears after
+// the opening; pressing ? opens the full control sheet.
+let objectivesTimer;
+function showObjectives() {
+  objectivesEl.innerHTML =
+    `<span class="obj-goal">Objective — destroy every enemy Command Center.</span>`
+    + `<span class="obj-tip">Workers gather ore → build a Barracks → train an army → <b>A</b> then click to attack-move it in. Press <b>?</b> for all controls.</span>`
+    + `<button class="obj-close" title="Dismiss" aria-label="Dismiss">×</button>`;
+  objectivesEl.classList.remove("hidden");
+  objectivesEl.querySelector(".obj-close").addEventListener("click", hideObjectives);
+  clearTimeout(objectivesTimer);
+  objectivesTimer = setTimeout(hideObjectives, 30000);
+}
+function hideObjectives() {
+  clearTimeout(objectivesTimer);
+  objectivesEl.classList.add("hidden");
+}
+
+// A persistent hotkey reference, openable at ANY time (unlike the selection-panel
+// legend, which is only there when nothing is selected).
+const HELP_ROWS = [
+  ["Left-drag", "Select units · Ctrl+drag adds to selection"],
+  ["Right-click", "Move · attack an enemy · gather a node"],
+  ["A, then click", "Attack-move — advance and engage on the way"],
+  ["Shift+right-click", "Queue a waypoint (chain a path)"],
+  ["1–9 / Shift+1–9", "Recall / bind a control group"],
+  ["Double-click", "Select every unit of that type on screen"],
+  ["Q · E · X", "Select army · Ranger scout mode · stop"],
+  ["`", "Jump to the next idle worker"],
+  ["Right-click a node", "(building selected) rally new workers to mine it"],
+  ["Minimap", "Left-click to jump · right-click to order"],
+  ["Wheel · arrows · edge", "Zoom · pan the camera"],
+  ["Esc", "Cancel build placement or a pending attack-move"],
+  ["F1 or ?", "Toggle this help"],
+];
+function buildHelpOverlay() {
+  const rows = HELP_ROWS.map(([k, v]) =>
+    `<div class="help-row"><span class="help-key">${k}</span><span>${v}</span></div>`).join("");
+  helpOverlayEl.innerHTML = `<div class="help-card"><h2>Controls &amp; Help</h2>${rows}`
+    + `<p class="help-dismiss">Press F1, ?, or Esc to close</p></div>`;
+}
+buildHelpOverlay();
+function toggleHelp(force) {
+  const show = force ?? helpOverlayEl.classList.contains("hidden");
+  helpOverlayEl.classList.toggle("hidden", !show);
+}
+helpBtn.addEventListener("click", () => toggleHelp());
+helpOverlayEl.addEventListener("click", () => toggleHelp(false));
+window.addEventListener("keydown", e => {
+  if (e.key === "F1" || e.key === "?") { e.preventDefault(); toggleHelp(); }
+  else if (e.key === "Escape" && !helpOverlayEl.classList.contains("hidden")) toggleHelp(false);
+});
 
 // Stereo pan (-1..1) for a world-x, relative to the camera: a fight off the
 // left edge of the view is heard on the left. Clamped, and flattened toward
@@ -606,12 +706,12 @@ function rebuildSelectionPanel(sel) {
   } else if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "Right-click to move (ignores enemies). Ctrl+right-click to queue a waypoint.";
+    hint.textContent = "A + click to attack-move. Right-click moves (ignores enemies). Shift+right-click queues a waypoint.";
     panelEl.appendChild(hint);
   } else if (sel.length === 1 && (cc || barracks)) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "Right-click the map to set its rally point.";
+    hint.textContent = "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it.";
     panelEl.appendChild(hint);
   }
 }
@@ -630,12 +730,14 @@ function controlsLegend() {
   box.innerHTML = [
     ["Left-drag", "select · Ctrl+drag adds"],
     ["Right-click", "move / attack / gather"],
-    ["Ctrl+right", "queue a waypoint"],
+    ["A + click", "attack-move"],
+    ["Shift+right", "queue a waypoint"],
     ["Shift+1–9", "set group · 1–9 recall"],
     ["Double-click", "select all of that type"],
-    ["Q", "select army · X stop · ` idle worker"],
+    ["Q · E · X", "army · scout · stop · ` idle worker"],
     ["Minimap", "left jumps · right orders"],
-    ["Wheel", "zoom · WASD / edge scroll to pan"],
+    ["Wheel", "zoom · arrows / edge-scroll pan"],
+    ["F1 / ?", "all controls"],
   ].map(([k, v]) => `<div class="legend-row"><span class="legend-key">${k}</span><span>${v}</span></div>`).join("");
   return box;
 }
@@ -686,6 +788,13 @@ function showGameOver(winner) {
     ? "Victory — the enemy's last Command Center is destroyed."
     : "Defeat — your last Command Center was destroyed.";
   gameOverEl.appendChild(msg);
+
+  if (state && state.seed != null) {
+    const seedLine = document.createElement("div");
+    seedLine.className = "gameover-seed";
+    seedLine.textContent = `Seed ${state.seed} — enter it on the setup screen to replay this map.`;
+    gameOverEl.appendChild(seedLine);
+  }
 
   const again = document.createElement("button");
   again.className = "btn";

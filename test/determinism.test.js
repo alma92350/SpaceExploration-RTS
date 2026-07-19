@@ -47,6 +47,18 @@ test("the sim is deterministic: two same-seed runs produce byte-identical state"
   assert.ok(a.tick > 100, "and the run must actually have progressed, not ended instantly");
 });
 
+test("createGameState stores the seed and the same seed reproduces the same world", () => {
+  // This is what makes a seed shareable/replayable: the seed is recorded on the
+  // state, and generating twice from it yields the identical map + starting layout.
+  const opts = { planetId: "ferros", seed: 987654, sizeMult: 2, resourceMult: 1.5 };
+  const a = createGameState({ ...opts, rng: mulberry32(opts.seed) });
+  const b = createGameState({ ...opts, rng: mulberry32(opts.seed) });
+  assert.equal(a.seed, 987654, "the seed is recorded on the state");
+  assert.deepEqual(a.map.nodes, b.map.nodes, "same seed -> same deposits");
+  assert.deepEqual(a.map.bases, b.map.bases, "same seed -> same bases");
+  assert.equal(snapshot(a), snapshot(b), "and the same starting entities");
+});
+
 test("different seeds diverge — the determinism above isn't just a frozen sim", () => {
   const a = snapshot(runTo("ferros", 1, 1500));
   const b = snapshot(runTo("ferros", 2, 1500));

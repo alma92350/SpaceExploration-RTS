@@ -19,8 +19,10 @@ const UNIT_PICK_RADIUS = 10;
 const NODE_PICK_RADIUS = 14;
 const ZOOM_STEP = 1.12;
 const EDGE_SCROLL_MARGIN = 20;   // px from a canvas edge that starts scrolling the camera
+// A is deliberately NOT a pan key — it's reserved for attack-move (the genre
+// standard). Pan left with the arrow key or edge-scroll.
 const PAN_KEYS = {
-  arrowleft: [-1, 0], a: [-1, 0],
+  arrowleft: [-1, 0],
   arrowright: [1, 0], d: [1, 0],
   arrowup: [0, -1], w: [0, -1],
   arrowdown: [0, 1], s: [0, 1],
@@ -34,6 +36,7 @@ export function attachInput(canvas, state, onChange) {
 
   let dragBox = null;
   let buildMode = null;
+  let attackMoveArmed = false;   // set by the A key; the next left-click issues an attack-move
   let lastWorldPos = { x: state.map.width / 2, y: state.map.height / 2 };
   const groups = new Map();          // control groups: digit -> [unit ids]
   let idleCycle = 0;                 // round-robins through idle workers on repeated presses
@@ -66,10 +69,34 @@ export function attachInput(canvas, state, onChange) {
       && Math.hypot(n.x - x, n.y - y) <= NODE_PICK_RADIUS) || null;
   }
 
+  // Attack-move to (x,y): combat units advance-and-engage anything met on the
+  // way; non-combat units (workers, the Ranger) can't attack-move, so they just
+  // move. Same split the Ctrl-queue and minimap-command paths use.
+  function aggressiveMove(units, x, y, queue = false) {
+    const combatants = units.filter(u => UNITS[u.type].role === "combat");
+    const others = units.filter(u => UNITS[u.type].role !== "combat");
+    if (combatants.length) issueAttackMove(combatants, x, y, queue);
+    if (others.length) issueMove(others, x, y, queue);
+  }
+
+  // The A key arms attack-move; the crosshair cursor shows it's armed.
+  function setArmed(v) {
+    attackMoveArmed = v;
+    canvas.classList.toggle("aim-cursor", v);
+  }
+
   canvas.addEventListener("mousedown", e => {
     if (e.button !== 0) return;
     const p = toWorld(e.clientX, e.clientY);
     if (buildMode) { placeBuildingAt(p); return; }
+    // Armed attack-move: this click commits the order instead of starting a
+    // selection drag. Consumes the arm, whether or not anything is selected.
+    if (attackMoveArmed) {
+      setArmed(false);
+      const selected = selectedUnits();
+      if (selected.length) { aggressiveMove(selected, p.x, p.y); sound.playOrder(); onChange(); }
+      return;
+    }
     dragBox = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
   }, { signal });
 
@@ -137,16 +164,19 @@ export function attachInput(canvas, state, onChange) {
   canvas.addEventListener("contextmenu", e => {
     e.preventDefault();
     if (buildMode) { buildMode = null; onChange(); return; }
+    if (attackMoveArmed) { setArmed(false); return; }   // right-click cancels a pending attack-move
 
     const p = toWorld(e.clientX, e.clientY);
 
     // A single selected production building sets its rally point instead
     // of the usual unit orders below (which need at least one unit
-    // selected and don't apply to buildings at all).
+    // selected and don't apply to buildings at all). Rally set ON a node
+    // carries the node id, so new workers spawn already gathering it.
     if (state.selection.length === 1) {
       const building = state.buildings.get(state.selection[0]);
       if (building && building.owner === "player" && BUILDINGS[building.type].produces) {
-        issueSetRally(building, p.x, p.y);
+        const node = nodeAt(p.x, p.y);
+        issueSetRally(building, p.x, p.y, node ? node.id : null);
         sound.playOrder();
         onChange();
         return;
@@ -156,11 +186,12 @@ export function attachInput(canvas, state, onChange) {
     const selected = state.selection.map(id => state.units.get(id)).filter(Boolean);
     if (!selected.length) return;
 
-    // Holding Ctrl queues the order as a waypoint instead of replacing what
-    // the units are doing, so a sequence of Ctrl+right-clicks lays down a
+    // Holding Shift queues the order as a waypoint instead of replacing what
+    // the units are doing, so a sequence of Shift+right-clicks lays down a
     // path (move/attack/gather steps) the units run through in order. A plain
-    // right-click issues immediately and clears any queued waypoints.
-    const queue = e.ctrlKey;
+    // right-click issues immediately and clears any queued waypoints. (Ctrl is
+    // add-to-selection; keeping queue on Shift frees the two from colliding.)
+    const queue = e.shiftKey;
 
     const target = entityAt(p.x, p.y);
     if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
@@ -190,10 +221,7 @@ export function attachInput(canvas, state, onChange) {
     // attack-move waypoint (they stop to fight anything met along the way),
     // workers a plain move, and each extra Ctrl+click extends the path.
     if (queue) {
-      const combatants = selected.filter(u => UNITS[u.type].role === "combat");
-      const others = selected.filter(u => UNITS[u.type].role !== "combat");
-      if (combatants.length) issueAttackMove(combatants, p.x, p.y, true);
-      if (others.length) issueMove(others, p.x, p.y, true);
+      aggressiveMove(selected, p.x, p.y, true);
     } else {
       issueMove(selected, p.x, p.y);
     }
@@ -268,6 +296,8 @@ export function attachInput(canvas, state, onChange) {
     if (k === "x") { stopSelected(); onChange(); return; }
     if (k === "q") { selectAllArmy(); onChange(); return; }
     if (k === "e") { scoutSelected(); onChange(); return; }   // send selected Rangers to auto-scout
+    if (k === "a") { setArmed(true); return; }        // arm attack-move; next left-click commits it
+    if (k === "escape") { setArmed(false); buildMode = null; onChange(); return; }   // bail out of a pending action
     if (k === "`") { focusIdleWorker(); return; }   // it calls onChange itself
   }, { signal });
   window.addEventListener("keyup", e => heldKeys.delete(e.key.toLowerCase()), { signal });

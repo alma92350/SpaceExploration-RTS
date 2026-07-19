@@ -37,17 +37,24 @@ function hasCommandCenter(state, owner) {
   return false;
 }
 
-// A side's "strength" for the tiebreak: banked resources plus the built cost of
-// everything it owns (units + buildings, construction counted at full value).
-// Deliberately simple and symmetric — it rewards the player who out-massed and
-// out-banked their opponent, which is what a stalled-out turtle game comes down
-// to. Exported so a HUD could show the running score.
+// A side's "strength" for the tiebreak, weighted toward what's ON THE BOARD
+// rather than what's hoarded in the bank. Committed value — the built cost of
+// every unit and building — counts at full; unspent resources count at only
+// BANK_WEIGHT, so a turtle that reaches the time limit sitting on a huge
+// stockpile can't out-score an opponent who actually spent it on army and
+// expansion. Combat units count a little extra (COMBAT_BONUS) so the side that
+// pressed the fight edges out one that merely out-massed on workers and static
+// defense. Still simple and symmetric. Exported so a HUD could show the score.
+const BANK_WEIGHT = 0.25;      // idle resources are worth far less than committed ones
+const COMBAT_BONUS = 1.35;     // an army in the field beats an equal-cost economy at the tiebreak
 export function playerScore(state, owner) {
   let score = 0;
   const res = state.players[owner].resources;
-  for (const com of Object.keys(res)) score += res[com] || 0;
+  for (const com of Object.keys(res)) score += (res[com] || 0) * BANK_WEIGHT;
   for (const u of state.units.values()) {
-    if (u.owner === owner) score += costValue(UNITS[u.type]?.cost);
+    if (u.owner !== owner) continue;
+    const def = UNITS[u.type];
+    score += costValue(def?.cost) * (def?.role === "combat" ? COMBAT_BONUS : 1);
   }
   for (const b of state.buildings.values()) {
     if (b.owner === owner) score += costValue(BUILDINGS[b.type]?.cost);

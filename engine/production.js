@@ -74,7 +74,17 @@ export function updateProductionQueue(state, building, dt) {
     building.queue.shift();
     const spawn = { x: building.x + building.radius + 10, y: building.y + building.radius + 10 };
     const u = makeUnit(job.unitType, building.owner, spawn.x, spawn.y);
-    u.order = { type: "move", x: building.rally.x, y: building.rally.y };
+    // Rally-to-resource: if the rally sits on a live node and this unit can
+    // gather (workers carry a cargo hold), it spawns already mining instead of
+    // idling at the point. Everything else — and a rally on a drained node —
+    // just walks to the rally point as before.
+    const rallyNode = building.rally.nodeId
+      ? (state.map.nodesById ? state.map.nodesById.get(building.rally.nodeId)
+                             : state.map.nodes.find(n => n.id === building.rally.nodeId))
+      : null;
+    u.order = rallyNode && rallyNode.amount > 0 && u.cargo
+      ? { type: "gather", nodeId: building.rally.nodeId }
+      : { type: "move", x: building.rally.x, y: building.rally.y };
     state.units.set(u.id, u);
     state.events.push({ type: "unitSpawned", x: u.x, y: u.y, owner: u.owner });
   }

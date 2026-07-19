@@ -108,10 +108,12 @@ export function issueScout(units) {
   });
 }
 
-// Every unit the building produces from now on walks to this point
-// instead of wherever the old rally was — production.js reads
-// building.rally fresh at spawn time, so this takes effect immediately
-// with no other plumbing needed.
-export function issueSetRally(building, x, y) {
-  building.rally = { x, y };
+// Every unit the building produces from now on walks to this point instead of
+// wherever the old rally was — production.js reads building.rally fresh at spawn
+// time, so this takes effect immediately with no other plumbing needed. If the
+// rally was set ON a resource node (nodeId given), new workers spawn already
+// gathering it instead of standing idle at the point — the standard "rally to
+// minerals" convenience. Non-workers just walk to the point.
+export function issueSetRally(building, x, y, nodeId = null) {
+  building.rally = { x, y, nodeId };
 }

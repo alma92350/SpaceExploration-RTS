@@ -195,6 +195,41 @@ test("a spawned Breacher rallies to the Barracks rally point like any other unit
   assert.deepEqual(spawned.order, { type: "move", x: barracks.rally.x, y: barracks.rally.y });
 });
 
+test("rally-to-resource: a worker rallied onto a live node spawns already gathering it", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cc = commandCenterOf(state, "player");
+  const node = state.map.nodes.find(n => n.com === "ore" && n.amount > 0);
+  cc.rally = { x: node.x, y: node.y, nodeId: node.id };   // rally set ON the node
+  const idsBefore = new Set(state.units.keys());
+  cc.queue.push({ unitType: "worker", progress: 0 });
+
+  for (let t = 0; t < UNITS.worker.buildTime + 1 && cc.queue.length; t += 0.5) {
+    updateProductionQueue(state, cc, 0.5);
+  }
+
+  const worker = state.units.get([...state.units.keys()].find(id => !idsBefore.has(id)));
+  assert.equal(worker.type, "worker");
+  assert.deepEqual(worker.order, { type: "gather", nodeId: node.id },
+    "it heads straight to mining the rallied node instead of idling at a point");
+});
+
+test("rally-to-resource falls back to a plain move when the rallied node is drained", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cc = commandCenterOf(state, "player");
+  const node = state.map.nodes.find(n => n.com === "ore" && n.amount > 0);
+  node.amount = 0;   // the seam ran dry before the worker popped
+  cc.rally = { x: node.x, y: node.y, nodeId: node.id };
+  const idsBefore = new Set(state.units.keys());
+  cc.queue.push({ unitType: "worker", progress: 0 });
+
+  for (let t = 0; t < UNITS.worker.buildTime + 1 && cc.queue.length; t += 0.5) {
+    updateProductionQueue(state, cc, 0.5);
+  }
+
+  const worker = state.units.get([...state.units.keys()].find(id => !idsBefore.has(id)));
+  assert.equal(worker.order.type, "move", "a drained rally node just sends the worker to the point");
+});
+
 test("updateBuildingConstruction advances hp with progress and finishes on schedule", () => {
   const state = { units: new Map(), events: [] };
   const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });
