@@ -14,7 +14,7 @@ import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame } from "./saveload.js";
-import { startGame, startScenario, startRaider } from "./boot.js";
+import { startGame, startScenario, startRaider, startBounty } from "./boot.js";
 import * as sound from "./sound.js";
 
 // The curated roster and its order both come from the AI archetype table, so
@@ -57,6 +57,7 @@ const MODES = [
   { key: "skirmish", label: "⚔ Skirmish", note: "Destroy the enemy base" },
   { key: "escort", label: "🚚 Convoy Escort", note: "Protect freighters to the destination" },
   { key: "raider", label: "🏴‍☠️ Pirate Raider", note: "Raid the convoy before it escapes" },
+  { key: "bounty", label: "⭐ Bounty Marshal", note: "Hunt pirate camps before the clock" },
 ];
 
 // The two scenarios' splash copy — the setup-panel difficulty hint, the brief
@@ -77,6 +78,14 @@ const SCENARIO_COPY = {
       + "lie in wait, then dive past the escort to sink freighters. Hit the kill quota before the convoy "
       + "escapes or the clock runs out. Score rewards freighters sunk, escorts destroyed, and raiders left alive.",
     subtitle: "Choose the route (world to raid)",
+  },
+  bounty: {
+    title: "Bounty Marshal",
+    diffHint: "Higher difficulty means a leaner posse, more and tougher camps, a higher clear quota, and less time.",
+    brief: "You are the law. Pirate camps are scattered across the sector, each marked with its bounty. "
+      + "Lead your posse from camp to camp and clear your quota before the clock runs out — pick your targets "
+      + "and your order carefully. Score rewards bounty banked, camps cleared fast, and posse left standing.",
+    subtitle: "Choose the sector (world to hunt)",
   },
 };
 
@@ -178,9 +187,11 @@ function renderSetupPanel(mode) {
   return panel;
 }
 
+// Which start function each scenario mode boots. Skirmish is handled separately.
+const SCENARIO_START = { escort: startScenario, raider: startRaider, bounty: startBounty };
+
 export function renderMapSelect() {
   const scenario = setup.mode !== "skirmish";
-  const raider = setup.mode === "raider";
   const copy = SCENARIO_COPY[setup.mode];
   mapSelectEl.innerHTML = "";
   const title = document.createElement("h2");
@@ -231,7 +242,7 @@ export function renderMapSelect() {
     card.addEventListener("click", () => {
       sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
-      if (raider) startRaider(id); else if (scenario) startScenario(id); else startGame(id);
+      if (scenario) SCENARIO_START[setup.mode](id); else startGame(id);
     });
     cards.appendChild(card);
   });

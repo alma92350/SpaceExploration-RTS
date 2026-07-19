@@ -25,7 +25,7 @@ import { addTracer, addDeathFlash, addUnderAttackPing, resetEffects } from "./ef
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
-import { setupEscort, setupRaider } from "./engine/scenarios.js";
+import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -83,6 +83,14 @@ export function startScenario(planetId) {
 export function startRaider(planetId) {
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
   const fresh = setupRaider({ planetId, seed, difficulty: setup.difficulty });
+  bootState(fresh, { intro: false });
+}
+
+// Start a Bounty Marshal scenario on `planetId` — hunt scattered pirate camps
+// across the sector against a clock. Same boot machinery.
+export function startBounty(planetId) {
+  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const fresh = setupBounty({ planetId, seed, difficulty: setup.difficulty });
   bootState(fresh, { intro: false });
 }
 

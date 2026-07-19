@@ -158,11 +158,14 @@ export function showScenarioEnd(state, onRestart) {
   gameOverEl.classList.remove("hidden");
   gameOverEl.innerHTML = "";
 
-  const raider = sc.type === "raider";
+  const win = sc.outcome === "win";
+  const TITLES = {
+    raider: win ? "Raid Successful" : "Convoy Escaped",
+    bounty: win ? "Bounties Claimed" : "Quota Not Met",
+    escort: win ? "Convoy Delivered" : "Convoy Lost",
+  };
   const title = document.createElement("div");
-  title.textContent = raider
-    ? (sc.outcome === "win" ? "Raid Successful" : "Convoy Escaped")
-    : (sc.outcome === "win" ? "Convoy Delivered" : "Convoy Lost");
+  title.textContent = TITLES[sc.type] || TITLES.escort;
   gameOverEl.appendChild(title);
 
   const banner = document.createElement("div");
@@ -170,13 +173,17 @@ export function showScenarioEnd(state, onRestart) {
   banner.textContent = sc.banner;
   gameOverEl.appendChild(banner);
 
+  const BREAKDOWNS = {
+    raider: `Freighters sunk: ${sc.destroyed}/${sc.freightersTotal} (quota ${sc.targetKills}) · Escorts destroyed: ${sc.escortsKilled}`
+      + ` · Raiders surviving: ${sc.survivors}<br>Final score: <b>${sc.score}</b>`,
+    bounty: `Camps cleared: ${sc.packsCleared}/${sc.totalPacks} (quota ${sc.targetPacks}) · Bounty banked: 💰 ${sc.bounty}`
+      + ` · Posse surviving: ${sc.survivors}<br>Final score: <b>${sc.score}</b>`,
+    escort: `Freighters delivered: ${sc.delivered}/${sc.freightersTotal} · Legs cleared: ${sc.legsDone}`
+      + ` · Budget left: ${Math.round(sc.budget)}<br>Final score: <b>${sc.score}</b>`,
+  };
   const breakdown = document.createElement("div");
   breakdown.className = "gameover-seed";
-  breakdown.innerHTML = raider
-    ? `Freighters sunk: ${sc.destroyed}/${sc.freightersTotal} (quota ${sc.targetKills}) · Escorts destroyed: ${sc.escortsKilled}`
-      + ` · Raiders surviving: ${sc.survivors}<br>Final score: <b>${sc.score}</b>`
-    : `Freighters delivered: ${sc.delivered}/${sc.freightersTotal} · Legs cleared: ${sc.legsDone}`
-      + ` · Budget left: ${Math.round(sc.budget)}<br>Final score: <b>${sc.score}</b>`;
+  breakdown.innerHTML = BREAKDOWNS[sc.type] || BREAKDOWNS.escort;
   gameOverEl.appendChild(breakdown);
 
   const again = document.createElement("button");

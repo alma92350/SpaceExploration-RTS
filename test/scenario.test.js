@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { setupEscort, setupRaider, ESCORT_DIFFICULTY, RAIDER_DIFFICULTY, repairCost, repairConvoy } from "../engine/scenarios.js";
+import { setupEscort, setupRaider, setupBounty, ESCORT_DIFFICULTY, RAIDER_DIFFICULTY, BOUNTY_DIFFICULTY, repairCost, repairConvoy } from "../engine/scenarios.js";
 import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
 
@@ -158,4 +158,98 @@ test("losing every raider ends the raid in defeat", () => {
   tick(s, 0.1);
   assert.equal(s.scenario.outcome, "loss", "no raiders left = a lost raid");
   assert.match(s.scenario.banner, /wiped out/);
+});
+
+/* ---------- Bounty Marshal ---------- */
+
+const posse = state => [...state.units.values()].filter(u => u.owner === "player" && UNITS[u.type].role === "combat");
+const camps = state => [...state.units.values()].filter(u => u.owner === "ai" && u.packId != null);
+
+// Clear the pirates belonging to `n` distinct packs outright (delete them), to
+// exercise the objective logic independently of combat balance.
+function wipePacks(state, n) {
+  const ids = [...new Set(camps(state).map(u => u.packId))].slice(0, n);
+  const target = new Set(ids);
+  for (const u of [...state.units.values()]) if (u.owner === "ai" && target.has(u.packId)) state.units.delete(u.id);
+}
+
+test("setupBounty scatters pirate camps and musters a posse", () => {
+  const s = setupBounty({ planetId: "ferros", seed: 7, difficulty: "medium" });
+  const diff = BOUNTY_DIFFICULTY.medium;
+  assert.equal(s.buildings.size, 0, "no economy in a scenario");
+  assert.equal(s.scenario.type, "bounty");
+  assert.equal(s.scenario.packs.length, diff.packs, "one marker per camp");
+  assert.equal(s.scenario.totalPacks, diff.packs);
+  assert.equal(new Set(camps(s).map(u => u.packId)).size, diff.packs, "every camp has its own pack");
+  assert.ok(posse(s).length >= 4, "the marshal has a posse");
+  assert.ok(s.scenario.packs.every(p => p.bounty > 0 && !p.cleared), "each camp carries an uncleared bounty");
+});
+
+test("a bounty mission always resolves to a win or loss within its time limit", () => {
+  for (const difficulty of ["easy", "medium", "hard"]) {
+    const s = setupBounty({ planetId: "ferros", seed: 3, difficulty });
+    runToEnd(s);
+    assert.equal(s.over, true, `${difficulty} should reach a terminal state`);
+    assert.ok(["win", "loss"].includes(s.scenario.outcome), `${difficulty} has an outcome`);
+    assert.ok(s.scenario.score >= 0, "a score is computed");
+  }
+});
+
+test("a bounty mission is deterministic: same seed replays identically", () => {
+  const run = () => {
+    const s = setupBounty({ planetId: "glacius", seed: 31337, difficulty: "medium" });
+    const ticks = runToEnd(s);
+    return `${s.scenario.outcome}|${s.scenario.score}|${s.tick}|${s.units.size}|${ticks}`;
+  };
+  assert.equal(run(), run(), "identical seed must replay identically");
+});
+
+test("with no hunting, the clock expires with nothing cleared — a loss", () => {
+  const s = setupBounty({ planetId: "ferros", seed: 11, difficulty: "easy" });
+  runToEnd(s);
+  assert.equal(s.scenario.outcome, "loss", "an idle posse clears no camps");
+  assert.equal(s.scenario.packsCleared, 0, "no camps were cleared");
+  assert.ok(s.time >= s.scenario.timeLimit, "the clock actually expired");
+});
+
+test("clearing the quota of camps wins and banks their bounty", () => {
+  const s = setupBounty({ planetId: "ferros", seed: 9, difficulty: "medium" });
+  wipePacks(s, s.scenario.targetPacks);   // clear exactly the quota
+  tick(s, 0.1);
+  assert.equal(s.scenario.outcome, "win", "meeting the quota wins immediately");
+  assert.equal(s.scenario.packsCleared, s.scenario.targetPacks);
+  assert.ok(s.scenario.bounty > 0, "cleared camps bank their bounty");
+  assert.ok(s.scenario.score > 0);
+});
+
+test("losing the whole posse ends the hunt in defeat", () => {
+  const s = setupBounty({ planetId: "ferros", seed: 6, difficulty: "medium" });
+  for (const u of [...s.units.values()]) if (u.owner === "player") s.units.delete(u.id);
+  tick(s, 0.1);
+  assert.equal(s.scenario.outcome, "loss", "no posse left = a lost hunt");
+  assert.match(s.scenario.banner, /wiped out/);
+});
+
+test("a posse that hunts down camps clears at least one through real combat", () => {
+  const s = setupBounty({ planetId: "ferros", seed: 8, difficulty: "easy" });
+  // Drive the posse camp to camp: attack-move the whole posse at the nearest
+  // live pirate, so it engages and wipes camps the way a player would.
+  let t = 0;
+  while (!s.over && t < 3000) {
+    const live = camps(s).filter(u => u.hp > 0);
+    if (live.length) {
+      const c = { x: 0, y: 0 };
+      for (const u of posse(s)) { c.x += u.x; c.y += u.y; }
+      const p = posse(s);
+      if (p.length) {
+        c.x /= p.length; c.y /= p.length;
+        let near = live[0], best = Infinity;
+        for (const u of live) { const d = Math.hypot(u.x - c.x, u.y - c.y); if (d < best) { best = d; near = u; } }
+        for (const u of p) u.order = { type: "attack-move", x: near.x, y: near.y };
+      }
+    }
+    tick(s, 0.1);
+    t++;
+  }
+  assert.ok(s.scenario.packsCleared >= 1, "the posse cleared at least one camp in real combat");
 });

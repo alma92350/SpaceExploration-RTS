@@ -84,9 +84,22 @@ function renderScenarioBar(state) {
   scenarioBarEl.classList.remove("hidden");
   scenarioBannerEl.textContent = sc.banner;
 
+  const remain = Math.max(0, sc.timeLimit - state.time);
+
+  // Bounty Marshal: a seek-and-destroy hunt — camps cleared toward the quota,
+  // bounty banked, and the clock. No route/legs, so this runs before any route
+  // access (a bounty scenario has no sc.route); no budget, no dock actions.
+  if (sc.type === "bounty") {
+    scenarioStatusEl.textContent =
+      `Camps ${sc.packsCleared}/${sc.totalPacks} · Quota ${sc.targetPacks} · ⏱ ${clockStr(remain)} · 💰 ${sc.bounty}`;
+    repairBtn.classList.add("hidden");
+    departBtn.classList.add("hidden");
+    return;
+  }
+
+  // The convoy scenarios (escort / raider) run a route of legs.
   const legs = sc.route.length - 1;
   const legNo = Math.min(sc.legIndex + 1, legs);
-  const remain = Math.max(0, sc.timeLimit - state.time);
 
   // Pirate Raider: you hunt the AI convoy, so the readout is kills-toward-quota,
   // convoy still afloat, and the clock — no budget, no dock actions.

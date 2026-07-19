@@ -1025,7 +1025,9 @@ function drawColossus(ctx, u, def, color) {
 // heading for gets a solid halo so the objective reads at a glance.
 function drawScenario(ctx, state) {
   const sc = state.scenario;
-  if (!sc || !sc.route) return;
+  if (!sc) return;
+  if (sc.type === "bounty") { drawBountyMarkers(ctx, sc); return; }
+  if (!sc.route) return;
   const route = sc.route;
 
   ctx.save();
@@ -1053,6 +1055,32 @@ function drawScenario(ctx, state) {
     ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
     ctx.fillStyle = col; ctx.fill();
   });
+  ctx.restore();
+}
+
+// Bounty Marshal has no route — it marks the scattered pirate camps instead. An
+// uncleared camp gets a dashed red "wanted" ring and its bounty value (a hunt
+// beacon that reads through fog, so the player always knows where to go); a
+// cleared camp fades to a faint green ring so progress is visible on the map.
+function drawBountyMarkers(ctx, sc) {
+  ctx.save();
+  ctx.textAlign = "center";
+  for (const pack of sc.packs) {
+    if (pack.cleared) {
+      ctx.strokeStyle = "rgba(74, 222, 128, 0.28)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(pack.x, pack.y, 30, 0, Math.PI * 2); ctx.stroke();
+      continue;
+    }
+    ctx.strokeStyle = "rgba(248, 113, 113, 0.6)";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([7, 7]);
+    ctx.beginPath(); ctx.arc(pack.x, pack.y, 48, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "12px sans-serif";
+    ctx.fillStyle = "#fca5a5";
+    ctx.fillText(`💰 ${pack.bounty}`, pack.x, pack.y - 56);
+  }
   ctx.restore();
 }
 
