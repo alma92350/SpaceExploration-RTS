@@ -7,10 +7,19 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The game targets Node >=20 (see package.json engines); run the suite on
+        # the current LTS lines so a version-specific regression can't slip through.
+        node-version: [20, 22]
+    name: tests (node ${{ matrix.node-version }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
+      # No dependencies to install — the game and its test suite run on the Node
+      # standard library alone, which is the whole point. Just run the tests.
       - name: Run the engine test suite
         run: npm test
