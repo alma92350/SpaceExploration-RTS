@@ -4,7 +4,7 @@ import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
-import { isNodeDiscovered, isExploredAt } from "../engine/fog.js";
+import { isNodeDiscovered, isExploredAt, updateFog } from "../engine/fog.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -596,4 +596,50 @@ test("a legacy archetype without the Tier 4 fields still runs without throwing",
 
   assert.doesNotThrow(() => { for (let i = 0; i < 5; i++) runAI(state, THINK_INTERVAL); });
   assert.ok(barracks.queue.length > 0 || state.aiUnitsBuilt > 0, "it still queues Skiffs from the bare mix");
+});
+
+test("the Tactical AI focus-fires: it points its army at the lowest-HP visible enemy", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, aiMicro: true });
+  const aiBase = state.map.bases.ai;
+  const a1 = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
+  const a2 = makeUnit("skiff", "ai", aiBase.x + 12, aiBase.y);
+  state.units.set(a1.id, a1); state.units.set(a2.id, a2);
+  // Two player combat units near the AI base (inside the CC's sight) — one nearly dead.
+  const healthy = makeUnit("bastion", "player", aiBase.x + 40, aiBase.y);
+  const wounded = makeUnit("skiff", "player", aiBase.x + 55, aiBase.y);
+  wounded.hp = 5;
+  state.units.set(healthy.id, healthy); state.units.set(wounded.id, wounded);
+  updateFog(state, state.fogAI, "ai");   // runAI doesn't reveal fog; make the enemies visible first
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(a1.focusId, wounded.id, "both attackers concentrate on the lowest-HP enemy");
+  assert.equal(a2.focusId, wounded.id);
+});
+
+test("focus-fire is inert with no enemy combat in sight — a stale focus is cleared", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, aiMicro: true });
+  const aiBase = state.map.bases.ai;
+  const a1 = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
+  a1.focusId = "stale-target";
+  state.units.set(a1.id, a1);
+  updateFog(state, state.fogAI, "ai");
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(a1.focusId, null, "no visible enemy combat -> focus cleared, ordinary targeting resumes (razing path untouched)");
+});
+
+test("the Standard AI never sets a focus (micro is opt-in)", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });   // aiMicro defaults false
+  const aiBase = state.map.bases.ai;
+  const a1 = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
+  state.units.set(a1.id, a1);
+  const enemy = makeUnit("skiff", "player", aiBase.x + 40, aiBase.y);
+  state.units.set(enemy.id, enemy);
+  updateFog(state, state.fogAI, "ai");
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.ok(!a1.focusId, "with tactics off, the AI leaves targeting to the dispersed auto-acquire");
 });

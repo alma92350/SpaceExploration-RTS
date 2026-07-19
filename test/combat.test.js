@@ -22,6 +22,37 @@ test("a combat unit auto-acquires and damages an enemy within aggro range with n
   assert.ok(b.hp < startHp);
 });
 
+test("focus-fire: a unit with a focusId concentrates on that target over a closer one", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "ai", 500, 500);
+  const closer = makeUnit("skiff", "player", 512, 500);   // nearest — the dispersed pick might otherwise take this
+  const focus = makeUnit("skiff", "player", 530, 500);    // the directed target, still inside skiff range/aggro
+  for (const u of [attacker, closer, focus]) state.units.set(u.id, u);
+  attacker.attackTimer = 0;
+  attacker.focusId = focus.id;
+  const focusHp = focus.hp, closerHp = closer.hp;
+
+  updateCombat(state, attacker, 0);   // dt 0 so only targeting + the ready shot happen
+
+  assert.ok(focus.hp < focusHp, "the directed (focus) target took the hit");
+  assert.equal(closer.hp, closerHp, "the closer enemy was ignored in favour of the focus target");
+});
+
+test("focus-fire falls back to normal acquire when the focus target is dead or out of reach", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "ai", 500, 500);
+  const near = makeUnit("skiff", "player", 515, 500);
+  state.units.set(attacker.id, attacker);
+  state.units.set(near.id, near);
+  attacker.attackTimer = 0;
+  attacker.focusId = "u-does-not-exist";   // stale focus
+  const nearHp = near.hp;
+
+  updateCombat(state, attacker, 0);
+
+  assert.ok(near.hp < nearHp, "a stale focus doesn't freeze the unit — it auto-acquires the real enemy");
+});
+
 test("a killed target is removed from state and the killer's explicit order clears", () => {
   const state = createGameState({ planetId: "ferros" });
   const [a, b] = faceOff(state);

@@ -33,6 +33,13 @@ export function updateCombat(state, unit, dt) {
 
   let targetId = unit.order && unit.order.type === "attack" ? unit.order.targetId : null;
   if (targetId && !isAlive(state, targetId)) { unit.order = null; targetId = null; }
+  // AI focus-fire (engine/ai.js sets focusId when the Tactical AI is directing a
+  // squad onto one target): concentrate on it while it's a live enemy inside this
+  // unit's aggro. If it's dead or out of reach we fall straight through to the
+  // normal dispersed auto-acquire, so a stale/too-far focus never freezes a unit.
+  if (!targetId && unit.focusId && stillEngageable(state, unit, def, unit.focusId)) {
+    targetId = unit.focusId;
+  }
   if (!targetId) {
     // Stick to last tick's auto-target while it's still a live enemy in aggro
     // range; only when it dies or slips away do we acquire a fresh (dispersed)

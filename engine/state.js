@@ -76,6 +76,7 @@ export function createGameState(opts = {}) {
     fogAI: createFog(map),  // the AI's own fog: it must scout for intel too, it's no longer omniscient (see engine/ai.js)
     aiScoutId: null,        // the unit currently out scouting for the AI, if any
     aiApm: opts.aiApm ?? null,   // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
+    aiMicro: opts.aiMicro ?? false,   // Tactical AI: unit-level micro (focus-fire, kiting). Off by default (and in tests).
     aiActionBudget: 0,      // accumulated action credits (see engine/ai.js's accrueActionBudget)
     aiAttackForce: 0,       // size of the current committed attack at its peak — drives the retreat check (ai.js)
     aiAttackDesperate: false, // whether the current attack is a fight-to-death timeout commit (never retreats)

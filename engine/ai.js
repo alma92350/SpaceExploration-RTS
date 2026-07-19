@@ -356,6 +356,39 @@ export function runAI(state, dt) {
       }
     }
   }
+
+  // TACTICAL micro (opt-in via aiMicro): concentrate the army's fire on one
+  // target so kills land faster and incoming damage drops sooner — a skilled
+  // player's focus-fire, layered on top of the wave logic above without touching
+  // it. Deliberately a no-op unless real enemy combat is in sight, so razing an
+  // undefended base (every resolve test) is unchanged and the resolve guarantee
+  // holds regardless of the setting.
+  if (state.aiMicro) applyFocusFire(state, army);
+}
+
+const FOCUS_RANGE = 340;   // only army units this close to the chosen target concentrate on it
+
+// Point every nearby AI combat unit's focus at a single best enemy: the lowest-HP
+// visible enemy combat unit (secure the kill, cut its DPS), tie-broken toward the
+// more dangerous one, then by id for determinism. combat.js reads unit.focusId
+// and prefers it while it's a live enemy in aggro (else falls back to the normal
+// dispersed acquire). Cleared when nothing hostile is in sight, so the razing
+// path uses ordinary targeting untouched.
+function applyFocusFire(state, army) {
+  const enemies = [];
+  for (const u of state.units.values()) {
+    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
+    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+    enemies.push(u);
+  }
+  if (!enemies.length) { for (const a of army) a.focusId = null; return; }
+  enemies.sort((a, b) => a.hp - b.hp
+    || (UNITS[b.type].attack - UNITS[a.type].attack)
+    || (a.id < b.id ? -1 : 1));
+  const focus = enemies[0];
+  for (const a of army) {
+    a.focusId = Math.hypot(a.x - focus.x, a.y - focus.y) <= FOCUS_RANGE ? focus.id : null;
+  }
 }
 
 const RETREAT_FRACTION = 0.4;   // a committed attack ground below this share of its launch size pulls back

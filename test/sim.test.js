@@ -20,6 +20,20 @@ for (const planetId of Object.keys(PLANET_ARCHETYPE)) {
   });
 }
 
+// The resolve guarantee must also hold with the Tactical AI (focus-fire/kiting)
+// enabled: its micro only ever engages VISIBLE enemy combat, so against a passive
+// player it should raze the base exactly as the Standard AI does. If micro ever
+// stalled the finish, one of these nine would blow past the ceiling.
+for (const planetId of Object.keys(PLANET_ARCHETYPE)) {
+  test(`a Tactical-AI skirmish still resolves to a winner on ${planetId}`, () => {
+    const state = createGameState({ planetId, aiMicro: true });
+    let ticks = 0;
+    while (!state.over && ticks < 20000) { tick(state, 0.1); ticks++; }
+    assert.equal(state.over, true, `${planetId} (Tactical AI) should reach a winner before the ceiling`);
+    assert.ok(["player", "ai"].includes(state.winner));
+  });
+}
+
 test("a full skirmish runs to a decisive winner without throwing", () => {
   const state = createGameState({ planetId: "ferros" });
   const dt = 0.1;

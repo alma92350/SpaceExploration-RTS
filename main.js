@@ -134,7 +134,11 @@ const RESOURCE_OPTIONS = [
   { label: "Normal", mult: 1.0, note: "balanced" },
   { label: "Abundant", mult: 1.5, note: "rich deposits" },
 ];
-const setup = { aiApm: 60, sizeMult: 1, resourceMult: 1, seed: null };
+const TACTICS_OPTIONS = [
+  { label: "Standard", mult: false, note: "holds formation" },
+  { label: "Tactical", mult: true, note: "focus-fires · kites" },
+];
+const setup = { aiApm: 60, sizeMult: 1, resourceMult: 1, seed: null, aiMicro: false };
 
 function apmDescriptor(apm) {
   if (apm <= 20) return "Sluggish";
@@ -203,6 +207,16 @@ function renderSetupPanel() {
   resLabel.textContent = "Resources";
   resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
   panel.appendChild(resRow);
+
+  // AI tactics — orthogonal to speed (APM): whether the opponent micros its army
+  // (focus-fire, kiting) like a skilled player, or just holds formation.
+  const tacRow = document.createElement("div");
+  tacRow.className = "setup-row";
+  const tacLabel = document.createElement("span");
+  tacLabel.className = "setup-label";
+  tacLabel.textContent = "AI tactics";
+  tacRow.append(tacLabel, optionGroup(setup.aiMicro, TACTICS_OPTIONS, v => { setup.aiMicro = v; }));
+  panel.appendChild(tacRow);
 
   // Optional seed: leave blank for a fresh random map, or enter a seed (shown on
   // the seed chip / game-over screen) to replay the exact same world.
@@ -277,7 +291,7 @@ function startGame(planetId) {
   // flows from the seeded mulberry32, so same seed ⇒ same world.
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
   state = createGameState({ planetId, seed, rng: mulberry32(seed),
-    aiApm: setup.aiApm, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
+    aiApm: setup.aiApm, aiMicro: setup.aiMicro, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
   showSeedChip(seed);
   showObjectives();
   input = attachInput(canvas, state, () => renderHUD());
