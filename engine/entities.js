@@ -51,7 +51,36 @@ export const BUILDINGS = {
     // rally-point UI and rally rendering automatically. Softest building
     // on the roster (hp 250): a legitimate raid target to choke supply.
   },
+  foundry: {
+    id: "foundry", name: "Foundry", hp: 450, radius: 18,
+    cost: { ore: 175 }, buildTime: 22, sight: 140,
+    // The military tech gate: a pure prerequisite building (no `produces`, so
+    // it stays out of the rally UI). It unlocks the Tier-2 combat units
+    // (Lancer, Breacher) — the Barracks still trains them. Ore-only on purpose,
+    // so the Tier-2 units stay reachable on every world (ore is guaranteed near
+    // every base) rather than being walled off on a crystal-poor map.
+    requires: ["barracks"],
+  },
 };
+
+// Prerequisites are satisfied for `owner` when: every building-type token in
+// `def.requires` has a COMPLETED (non-constructing) building of that type, and
+// every other token is a researched upgrade id. No `requires` field ⇒ always
+// available. Pure and state-reading — the single source of truth shared by the
+// production gate, the build gate, the AI, and the UI's locked buttons.
+export function prereqsMet(state, owner, def) {
+  const reqs = def.requires;
+  if (!reqs || reqs.length === 0) return true;
+  const player = state.players[owner];
+  return reqs.every(req => {
+    if (BUILDINGS[req]) {
+      for (const b of state.buildings.values())
+        if (b.owner === owner && b.type === req && !b.constructing) return true;
+      return false;
+    }
+    return !!(player && player.upgrades && player.upgrades[req]);
+  });
+}
 
 // One-time, player-wide purchases from a completed Refinery. Applied as
 // live multipliers in combat.js rather than baked into unit stats at
@@ -118,6 +147,7 @@ export const UNITS = {
     role: "combat", attack: 16, range: 55, cooldown: 1.4,
     sight: 170, aggroRange: 130,
     bonusVs: { bastion: 20 },
+    requires: ["foundry"],   // Tier-2: the answer to a massed Bastion ball, but you must tech to it
   },
   breacher: {
     id: "breacher", name: "Breacher", hp: 130, radius: 10, speed: 50,
@@ -129,6 +159,7 @@ export const UNITS = {
     // is the class-wide structure bonus below plus outranging the turret.
     bonusVsBuildings: 30,
     prefersBuildings: true,
+    requires: ["foundry"],   // Tier-2 siege: a tech investment, not a turn-one option
   },
 };
 

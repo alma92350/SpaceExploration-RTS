@@ -80,6 +80,20 @@ test("issueBuild pays the cost, founds a constructing site, and puts the worker 
   assert.deepEqual(worker.order, { type: "build", buildingId: id });
 });
 
+test("issueBuild gates a Foundry on a completed Barracks", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = playerWorker(state);
+  state.players.player.resources.ore = 1000;
+
+  // No Barracks yet -> the Foundry's prereq is unmet, so founding is refused.
+  assert.equal(issueBuild(state, worker.id, "foundry", 800, 500), null, "no Barracks -> Foundry refused");
+
+  const barracks = makeBuilding("barracks", "player", 700, 500);   // completed
+  state.buildings.set(barracks.id, barracks);
+  const id = issueBuild(state, worker.id, "foundry", 820, 520);
+  assert.ok(id, "with a completed Barracks, the Foundry can be founded");
+});
+
 test("issueBuild refuses when the player can't afford it: no site, no charge", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const worker = playerWorker(state);

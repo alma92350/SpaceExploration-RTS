@@ -1,6 +1,36 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canAfford, payCost, UNITS, BUILDINGS } from "../engine/entities.js";
+import { canAfford, payCost, prereqsMet, UNITS, BUILDINGS } from "../engine/entities.js";
+
+// Minimal state stub for prereqsMet: it only reads state.buildings and
+// state.players[owner].upgrades.
+function stubState(buildings = [], upgrades = {}) {
+  return {
+    buildings: new Map(buildings.map((b, i) => [b.id || `b${i}`, { id: b.id || `b${i}`, ...b }])),
+    players: { player: { upgrades } },
+  };
+}
+
+test("the Tier-2 units are gated behind the Foundry; the Foundry behind the Barracks", () => {
+  assert.deepEqual(UNITS.lancer.requires, ["foundry"]);
+  assert.deepEqual(UNITS.breacher.requires, ["foundry"]);
+  assert.deepEqual(BUILDINGS.foundry.requires, ["barracks"]);
+  assert.equal(UNITS.skiff.requires, undefined, "Skiff is the ungated fallback");
+  assert.equal(UNITS.bastion.requires, undefined, "Bastion is ungated");
+  assert.deepEqual(Object.keys(BUILDINGS.foundry.cost), ["ore"], "Foundry is ore-only so Tier-2 stays reachable everywhere");
+});
+
+test("prereqsMet: no requires is always met; a building token needs a COMPLETED building", () => {
+  assert.equal(prereqsMet(stubState(), "player", UNITS.skiff), true, "no requires -> available");
+  // Lancer needs a foundry.
+  assert.equal(prereqsMet(stubState([]), "player", UNITS.lancer), false, "no foundry -> locked");
+  assert.equal(prereqsMet(stubState([{ owner: "player", type: "foundry", constructing: true }]), "player", UNITS.lancer),
+    false, "a still-constructing foundry doesn't unlock it");
+  assert.equal(prereqsMet(stubState([{ owner: "player", type: "foundry", constructing: false }]), "player", UNITS.lancer),
+    true, "a completed foundry unlocks it");
+  assert.equal(prereqsMet(stubState([{ owner: "ai", type: "foundry", constructing: false }]), "player", UNITS.lancer),
+    false, "the enemy's foundry doesn't unlock yours");
+});
 
 test("canAfford is true only when every cost commodity is covered", () => {
   assert.equal(canAfford({ ore: 50 }, { ore: 50 }), true);

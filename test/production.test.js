@@ -9,6 +9,14 @@ function commandCenterOf(state, owner) {
   return [...state.buildings.values()].find(b => b.owner === owner && b.type === "command");
 }
 
+// A completed Foundry so Tier-2 units (Lancer/Breacher) are unlocked — lets a
+// test exercise the queue/cost/spawn paths for them without the tech gate.
+function withFoundry(state, owner = "player") {
+  const f = makeBuilding("foundry", owner, 560, 540);
+  state.buildings.set(f.id, f);
+  return f;
+}
+
 test("queueProduction pays the cost and enqueues the job", () => {
   const state = createGameState({ planetId: "ferros" });
   const cc = commandCenterOf(state, "player");
@@ -68,6 +76,7 @@ test("cancelProduction can remove a job further back in the queue, leaving the r
   const state = createGameState({ planetId: "ferros" });
   const barracks = makeBuilding("barracks", "player", 500, 500);
   state.buildings.set(barracks.id, barracks);
+  withFoundry(state);   // unlock the Lancer queued below
   state.players.player.resources.ore = 1000;
   queueProduction(state, barracks.id, "skiff");
   queueProduction(state, barracks.id, "bastion");
@@ -113,6 +122,7 @@ test("a multi-resource unit deducts every commodity in its cost, not just ore", 
   const state = createGameState({ planetId: "ferros" });
   const barracks = makeBuilding("barracks", "player", 500, 500);
   state.buildings.set(barracks.id, barracks);
+  withFoundry(state);
   state.players.player.resources.ore = 500;
   state.players.player.resources.radioactives = 500;
 
@@ -123,10 +133,25 @@ test("a multi-resource unit deducts every commodity in its cost, not just ore", 
   assert.equal(state.players.player.resources.radioactives, 500 - UNITS.breacher.cost.radioactives);
 });
 
+test("a Tier-2 unit can't be queued without its tech building; a completed Foundry unlocks it", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.players.player.resources.ore = 1000;
+
+  assert.equal(queueProduction(state, barracks.id, "lancer"), false, "no Foundry -> the Lancer is locked");
+  assert.equal(barracks.queue.length, 0, "and nothing is queued or charged");
+  assert.equal(queueProduction(state, barracks.id, "skiff"), true, "the ungated Skiff still queues fine");
+
+  withFoundry(state);
+  assert.equal(queueProduction(state, barracks.id, "lancer"), true, "with the Foundry up, the Lancer unlocks");
+});
+
 test("a Breacher can't be built on ore alone with no radioactives banked", () => {
   const state = createGameState({ planetId: "ferros" });
   const barracks = makeBuilding("barracks", "player", 500, 500);
   state.buildings.set(barracks.id, barracks);
+  withFoundry(state);   // Foundry present, so the radioactives shortfall is the sole reason it's blocked
   state.players.player.resources.ore = 1000;
   state.players.player.resources.radioactives = 0;
 
@@ -138,6 +163,7 @@ test("a spawned Breacher rallies to the Barracks rally point like any other unit
   const state = createGameState({ planetId: "ferros" });
   const barracks = makeBuilding("barracks", "player", 500, 500);
   state.buildings.set(barracks.id, barracks);
+  withFoundry(state);
   state.players.player.resources.ore = 500;
   state.players.player.resources.radioactives = 500;
   const idsBefore = new Set(state.units.keys());

@@ -12,7 +12,7 @@ import { tick } from "./engine/sim.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { issueMove, issueAttackMove } from "./engine/commands.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./engine/entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet } from "./engine/entities.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { PLANETS } from "./data.js";
@@ -398,6 +398,21 @@ function queueSignature(sel) {
   return b && b.queue ? b.queue.map(j => j.unitType).join(",") : "";
 }
 
+// Fingerprint of what the player can currently afford and which completed
+// buildings they hold — the two inputs to every button's greyed/locked state.
+function availabilitySignature() {
+  const res = state.players.player.resources;
+  const costs = [
+    ...Object.values(UNITS).map(u => u.cost),
+    ...Object.values(BUILDINGS).map(b => b.cost),
+    ...Object.values(UPGRADES).map(u => u.cost),
+  ];
+  const afford = costs.map(c => (canAfford(res, c) ? 1 : 0)).join("");
+  const built = [...new Set([...state.buildings.values()]
+    .filter(b => b.owner === "player" && !b.constructing).map(b => b.type))].sort().join(",");
+  return afford + "|" + built;
+}
+
 function renderSelectionPanel() {
   const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
   const aggregated = sel.length > 1 && sel.every(e => e.kind === "unit");
@@ -415,7 +430,12 @@ function renderSelectionPanel() {
     + "|" + (input.building ? input.building.buildingType : "")
     + "|" + Object.keys(state.players.player.upgrades).sort().join(",")
     + "|" + aggregated
-    + "|" + queueSignature(sel);
+    + "|" + queueSignature(sel)
+    // Rebuild when any button's enabled state would flip: an option crossing the
+    // affordability line, or a completed building unlocking a tech option (e.g.
+    // the Foundry un-greying Lancer/Breacher). Keeps the greying live without
+    // rebuilding every HUD tick.
+    + "|" + availabilitySignature();
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -517,8 +537,11 @@ function rebuildSelectionPanel(sel) {
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
   if (barracks) {
     for (const t of ["skiff", "bastion", "lancer", "breacher"]) {
-      panelEl.appendChild(makeButton(`Produce ${UNITS[t].name} (${costText(UNITS[t].cost)})`,
-        () => queueProduction(state, barracks.id, t), { cost: UNITS[t].cost, tip: unitTip(UNITS[t]) }));
+      const def = UNITS[t];
+      const locked = !prereqsMet(state, "player", def);
+      panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
+        () => queueProduction(state, barracks.id, t),
+        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null }));
     }
     if (barracks.queue.length) renderQueueRows(barracks);
   }
@@ -541,9 +564,12 @@ function rebuildSelectionPanel(sel) {
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
-    for (const t of ["barracks", "refinery", "turret", "habitat", "command"]) {
-      panelEl.appendChild(makeButton(`Build ${BUILDINGS[t].name} (${costText(BUILDINGS[t].cost)})`,
-        () => input.startBuild(t), { cost: BUILDINGS[t].cost, tip: unitTip(BUILDINGS[t]) }));
+    for (const t of ["barracks", "foundry", "refinery", "turret", "habitat", "command"]) {
+      const def = BUILDINGS[t];
+      const locked = !prereqsMet(state, "player", def);
+      panelEl.appendChild(makeButton(`Build ${def.name} (${costText(def.cost)})`,
+        () => input.startBuild(t),
+        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null }));
     }
   }
 
@@ -597,19 +623,24 @@ function controlsLegend() {
 // afford it, the button greys out and a click just plays the denied buzz — so a
 // broke click gives feedback instead of silently doing nothing (previously the
 // only "can't" feedback was the supply block). `tip` becomes a hover tooltip.
-function makeButton(label, onClick, { cost = null, tip = null } = {}) {
+function makeButton(label, onClick, { cost = null, tip = null, locked = false, lockTip = null } = {}) {
   const btn = document.createElement("button");
   btn.className = "btn";
   btn.textContent = label;
-  if (tip) btn.title = tip;
+  btn.title = locked && lockTip ? lockTip : (tip || "");
   const affordable = !cost || canAfford(state.players.player.resources, cost);
-  if (!affordable) {
-    btn.classList.add("disabled");
+  if (locked || !affordable) {
+    btn.classList.add("disabled");   // a tech-locked or unaffordable option greys and just buzzes on click
     btn.addEventListener("click", () => sound.playProductionBlocked());
   } else {
     btn.addEventListener("click", () => { onClick(); renderHUD(); });
   }
   return btn;
+}
+
+// "Requires Foundry" style tooltip listing a def's unmet prerequisites by name.
+function lockTipFor(def) {
+  return `Requires ${(def.requires || []).map(r => BUILDINGS[r]?.name || UPGRADES[r]?.name || r).join(", ")}`;
 }
 
 // A compact stat line for a unit/building button tooltip.

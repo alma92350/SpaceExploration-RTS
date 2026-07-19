@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
+import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
 import { isNodeDiscovered } from "../engine/fog.js";
 
@@ -12,6 +13,7 @@ test("the AI cycles through its archetype's exact unit mix instead of pure Skiff
   const mix = state.aiArchetype.unitMix;
   const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
   state.buildings.set(barracks.id, barracks);
+  stockedFoundry(state);   // Tier-2 units unlocked so the full mix cycles (this drives the mix directly, not the AI's tech-up)
   // Fund every commodity: ferros has radioactive nodes, so effectiveMix keeps
   // the economist's Breacher entry — funding only ore would stall the cycle on
   // it (queueProduction fails for lack of radioactives, and the AI retries the
@@ -123,6 +125,7 @@ test("the AI does NOT counter a player army it hasn't seen — no free intel", (
   const state = createGameState({ planetId: "ferros" });
   const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
   state.buildings.set(barracks.id, barracks);
+  stockedFoundry(state);   // Tier-2 units unlocked, so the plain mix is what remains to be checked (fog gating, not tech gating)
   fundAll(state);   // fund every commodity so the plain mix (Breacher and all) completes
 
   // The same Skiff flood, but tucked in the player's own corner, far outside
@@ -149,6 +152,13 @@ function stockedBarracks(state, dy = -100) {
   const b = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y + dy);
   state.buildings.set(b.id, b);
   return b;
+}
+// A completed Foundry, so the Tier-2 units (Lancer/Breacher) are unlocked in a
+// fixture that drives the mix directly without waiting for the AI to tech up.
+function stockedFoundry(state) {
+  const f = makeBuilding("foundry", "ai", state.map.bases.ai.x, state.map.bases.ai.y + 140);
+  state.buildings.set(f.id, f);
+  return f;
 }
 function fundAll(state) {
   Object.assign(state.players.ai.resources, { ore: 100000, crystals: 100000, radioactives: 100000 });
@@ -177,6 +187,7 @@ test("two completed Barracks drain a single shared mix cycle", () => {
   const mix = state.aiArchetype.unitMix;   // ferros has every commodity, so the full economist mix survives
   const b1 = stockedBarracks(state, -100);
   const b2 = stockedBarracks(state, 100);
+  stockedFoundry(state);   // unlock Tier-2 so the full shared cycle (incl. lancer/breacher) is what's under test
 
   const built = [];
   const rounds = mix.length * 2;
@@ -199,6 +210,7 @@ test("with radioactives guaranteed on every world, the Breacher is buildable eve
   const state = createGameState({ planetId: "vesper", rng: () => 0.5 });
   fundAll(state);
   const barracks = stockedBarracks(state);
+  stockedFoundry(state);   // Tier-2 unlocked, isolating the resource guarantee (not the tech gate) as what's under test
   const mix = state.aiArchetype.unitMix;   // [skiff, bastion, lancer, breacher]
 
   const built = [];
@@ -342,6 +354,34 @@ test("the AI marches on a SEEN enemy building rather than the fixed start coordi
   assert.equal(u.order?.type, "attack-move");
   assert.ok(Math.hypot(u.order.x - seenCC.x, u.order.y - seenCC.y) < 1,
     "it targets the enemy building it can see, not state.map.bases.player");
+});
+
+test("without a completed Foundry the AI trains only Tier-1 units and never stalls the cycle", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
+  state.buildings.set(barracks.id, barracks);
+  fundAll(state);   // resources are ample; the ONLY thing gating Lancer/Breacher is the missing (completed) Foundry
+  const built = [];
+  for (let i = 0; i < 10; i++) {
+    runAI(state, THINK_INTERVAL);
+    if (barracks.queue.length) { built.push(barracks.queue[barracks.queue.length - 1].unitType); barracks.queue.length = 0; }
+  }
+  assert.equal(built.length, 10, "it queues a unit every cycle — never stalls re-picking a locked entry");
+  assert.ok(built.every(t => t === "skiff" || t === "bastion"), "and only the Tier-1 units the tech allows");
+  assert.ok(!built.includes("lancer") && !built.includes("breacher"),
+    "the Foundry it starts is still constructing, so Tier-2 stays locked");
+});
+
+test("the AI teches up: over a match it builds a Foundry and then fields Tier-2 units", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  let sawFoundry = false, sawTier2 = false;
+  for (let i = 0; i < 4000 && !state.over; i++) {
+    tick(state, 0.1);
+    if (!sawFoundry && [...state.buildings.values()].some(b => b.owner === "ai" && b.type === "foundry" && !b.constructing)) sawFoundry = true;
+    if (!sawTier2 && [...state.units.values()].some(u => u.owner === "ai" && (u.type === "lancer" || u.type === "breacher"))) sawTier2 = true;
+  }
+  assert.ok(sawFoundry, "the AI builds and completes a Foundry");
+  assert.ok(sawTier2, "and then fields the Tier-2 units it unlocks");
 });
 
 test("the AI spreads workers across ore nodes instead of over-piling one under saturation", () => {

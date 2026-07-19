@@ -33,7 +33,7 @@
 import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueAttackMove, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
-import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet } from "./entities.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { isVisibleAt, isNodeDiscovered } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
@@ -149,6 +149,33 @@ export function runAI(state, dt) {
     if (spot && canAct(state) && issueBuild(state, workers[0].id, "barracks", spot.x, spot.y)) spend(state);
   }
 
+  // FOUNDRY — the military tech gate for the Tier-2 units (Lancer/Breacher).
+  // Built only if this archetype's mix actually wants a gated unit, so a
+  // rush/legacy profile never wastes the build. Placed BEFORE the unit cycle so
+  // the one-time tech investment isn't perpetually starved by the ungated unit
+  // stream (which would otherwise eat every spare bit of ore); it's still
+  // expansion-reserve-aware. Units keep flowing while it constructs, and
+  // effectiveMix keeps the Tier-2 units out of the cycle until it completes —
+  // so this reliably teches a patient AI up without ever stalling. Ore-only, so
+  // it's affordable on every world.
+  const wantsFoundry = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("foundry"));
+  let hasFoundry = buildings.some(b => b.type === "foundry");   // built or still constructing
+  if (wantsFoundry && !hasFoundry && barracks && !barracks.constructing && cc && workers.length > 0
+      && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, oreReserve)) {
+    const spot = findPlacement(state, "foundry", cc.x - 90, cc.y + 90);
+    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "foundry", spot.x, spot.y)) {
+      spend(state);
+      hasFoundry = true;
+    }
+  }
+  // While teching, reserve the Foundry's ore from unit production so the AI
+  // actually banks its cost instead of spending every spare 100 on another
+  // Skiff and never reaching it. Cleared the instant it's founded (constructing
+  // counts), so the pause is only the brief banking window — then units resume
+  // at full flow while it builds. Zero for a rusher/legacy profile that doesn't
+  // want a Foundry, so their army is never gated.
+  const foundryReserve = wantsFoundry && !hasFoundry ? BUILDINGS.foundry.cost.ore : 0;
+
   // One shared production cycle across every completed Barracks: consecutive
   // barracks pick up consecutive mix entries, so two of them drain the same
   // sequence twice as fast rather than each running its own. Map insertion
@@ -161,7 +188,7 @@ export function runAI(state, dt) {
     if (b.constructing || b.queue.length > 0) continue;
     if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
     const nextType = pickNextUnitType(state, archetype);
-    if (!canAfford(ai.resources, UNITS[nextType].cost)) continue;
+    if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, foundryReserve)) continue;   // hold back ore while banking the Foundry
     if (queueProduction(state, b.id, nextType)) {
       spend(state);
       state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
@@ -516,10 +543,17 @@ function canAffordKeeping(resources, cost, oreReserve) {
 // amount, is checked, so the surviving cycle is constant for the whole match
 // (nodes drain, they never vanish) and the sequence stays deterministic. Falls
 // back to plain Skiffs if the filter empties the mix entirely.
+// Also drops any unit whose TECH prereqs aren't met yet (Lancer/Breacher before
+// the Foundry is up), so the cycle runs Skiff/Bastion only until then and never
+// stalls on a locked entry — pickNextUnitType can only ever return an unlocked,
+// affordable unit. This makes the mix change ONCE, deterministically, the tick
+// the Foundry completes; both the base cycle and the counter-pick (which only
+// adopts a counter that mix.includes) are prereq-safe through this one filter.
 function effectiveMix(state, archetype) {
   const mix = (archetype.unitMix || []).filter(t =>
     UNITS[t]
     && BUILDINGS.barracks.produces?.includes(t)
+    && prereqsMet(state, "ai", UNITS[t])
     && Object.keys(UNITS[t].cost).every(com => state.map.nodes.some(n => n.com === com && !n.hidden)));
   return mix.length ? mix : ["skiff"];
 }

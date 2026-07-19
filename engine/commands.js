@@ -6,7 +6,7 @@
 
 "use strict";
 
-import { BUILDINGS, canAfford, payCost } from "./entities.js";
+import { BUILDINGS, canAfford, payCost, prereqsMet } from "./entities.js";
 import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
 
@@ -73,6 +73,7 @@ export function issueBuild(state, workerId, buildingType, x, y) {
   const player = state.players[worker.owner];
   const def = BUILDINGS[buildingType];
   if (!def || !canAfford(player.resources, def.cost)) return null;
+  if (!prereqsMet(state, worker.owner, def)) return null;   // e.g. no founding a Foundry without a completed Barracks
   if (!canPlaceBuilding(state, buildingType, x, y)) return null;
   payCost(player.resources, def.cost);
   const building = makeBuilding(buildingType, worker.owner, x, y, { constructing: true });

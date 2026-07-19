@@ -4,7 +4,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 
@@ -85,6 +85,13 @@ export function queueProduction(state, buildingId, unitType) {
   const def = UNITS[unitType];
   const producable = def && BUILDINGS[building.type].produces?.includes(unitType);
   if (!producable) return false;
+  // Tech gate: a locked unit (its prereq building not yet completed) can't be
+  // queued. Checked before affordability so "locked" outranks "too expensive".
+  if (!prereqsMet(state, building.owner, def)) {
+    state.events.push({ type: "productionBlocked", reason: "prereq",
+                        x: building.x, y: building.y, owner: building.owner });
+    return false;
+  }
   const player = state.players[building.owner];
   if (!canAfford(player.resources, def.cost)) return false;
   // Supply check sits AFTER canAfford (so being broke stays the silent
