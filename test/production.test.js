@@ -371,3 +371,26 @@ test("researchUpgrade refuses when the player can't afford it", () => {
 
   assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), false);
 });
+
+test("upgrade doctrines are mutually exclusive: committing to one locks the other", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const refinery = makeBuilding("refinery", "player", 500, 500);
+  state.buildings.set(refinery.id, refinery);
+  Object.assign(state.players.player.resources, { ore: 2000, crystals: 2000, radioactives: 2000 });
+
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), true, "commit to Assault");
+  assert.equal(researchUpgrade(state, refinery.id, "reinforcedPlating"), false, "the Bulwark path is now locked out");
+  assert.equal(state.players.player.upgrades.reinforcedPlating, undefined, "and nothing of the other doctrine is set/charged");
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), true, "but deepening the chosen doctrine is fine");
+});
+
+test("a Tier-2 upgrade needs its Tier-1 first", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const refinery = makeBuilding("refinery", "player", 500, 500);
+  state.buildings.set(refinery.id, refinery);
+  Object.assign(state.players.player.resources, { ore: 2000, radioactives: 2000 });
+
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), false, "Tier-2 locked without Tier-1");
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), true, "research Tier-1...");
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), true, "...now Tier-2 unlocks");
+});

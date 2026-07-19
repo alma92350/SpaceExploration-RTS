@@ -111,11 +111,19 @@ function attackDamage(state, unit, def, target) {
   const structureBonus = target.kind === "building" ? (def.bonusVsBuildings || 0) : 0;
   let dmg = def.attack + bonus + structureBonus;
 
+  // Every researched Assault upgrade (attacker side) stacks its damage-dealt
+  // multiplier; every Bulwark upgrade (defender side) stacks its damage-taken
+  // multiplier. Data-driven, so the doctrine tiers just work.
   const attackerUpgrades = state.players[unit.owner].upgrades;
-  if (attackerUpgrades.overchargedWeapons) dmg *= UPGRADES.overchargedWeapons.damageDealtMult;
-
+  for (const id of Object.keys(attackerUpgrades)) {
+    if (attackerUpgrades[id] && UPGRADES[id]?.damageDealtMult) dmg *= UPGRADES[id].damageDealtMult;
+  }
   const defenderUpgrades = state.players[target.owner]?.upgrades;
-  if (defenderUpgrades?.reinforcedPlating) dmg *= UPGRADES.reinforcedPlating.damageTakenMult;
+  if (defenderUpgrades) {
+    for (const id of Object.keys(defenderUpgrades)) {
+      if (defenderUpgrades[id] && UPGRADES[id]?.damageTakenMult) dmg *= UPGRADES[id].damageTakenMult;
+    }
+  }
 
   // A positional edge, not a counter: an attacker firing from high ground hits
   // for a flat bonus (terrain combatMult). Situational and symmetric, so the RPS

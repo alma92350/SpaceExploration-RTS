@@ -262,6 +262,19 @@ test("both upgrades stack: attacker's damage bonus and defender's damage reducti
   assert.ok(Math.abs((startHp - b.hp) - expected) < 1e-9);
 });
 
+test("the two Assault tiers stack multiplicatively on damage dealt", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  state.players.player.upgrades.overchargedWeapons = true;   // Assault I
+  state.players.player.upgrades.overchargedCore = true;      // Assault II
+  const startHp = b.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const mult = UPGRADES.overchargedWeapons.damageDealtMult * UPGRADES.overchargedCore.damageDealtMult;
+  assert.ok(Math.abs((startHp - b.hp) - UNITS.skiff.attack * mult) < 1e-9, "both tiers multiply the base damage");
+});
+
 test("a player's own upgrades don't affect damage against their own side", () => {
   const state = createGameState({ planetId: "ferros" });
   const [a, b] = faceOff(state);

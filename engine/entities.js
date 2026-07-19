@@ -82,20 +82,44 @@ export function prereqsMet(state, owner, def) {
   });
 }
 
-// One-time, player-wide purchases from a completed Refinery. Applied as
-// live multipliers in combat.js rather than baked into unit stats at
-// spawn, so they affect a player's whole army immediately — including
-// units already on the field — not just future production.
+// One-time, player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE
+// doctrines of two tiers each. You commit to Assault (offense) OR Bulwark
+// (defense) — researching any upgrade of one doctrine locks the other — and can
+// then deepen your chosen path with its Tier-2 upgrade (which requires the
+// Tier-1, via the same prereqsMet machinery the tech tree uses). So "which
+// upgrade" is a real strategic fork with an opportunity cost, not a buy-both
+// no-brainer. Multipliers stack multiplicatively in combat.js and apply live to
+// the whole army. Assault costs radioactives, Bulwark crystals — so a world's
+// deposit specialty tilts which doctrine comes easier.
 export const UPGRADES = {
-  reinforcedPlating: {
-    id: "reinforcedPlating", name: "Reinforced Plating", cost: { crystals: 150 },
-    desc: "-15% damage taken by all combat units", damageTakenMult: 0.85,
-  },
   overchargedWeapons: {
-    id: "overchargedWeapons", name: "Overcharged Weapons", cost: { radioactives: 150 },
-    desc: "+20% damage dealt by all combat units", damageDealtMult: 1.2,
+    id: "overchargedWeapons", name: "Overcharged Weapons", doctrine: "assault", tier: 1,
+    cost: { radioactives: 150 }, desc: "+15% damage dealt by all combat units", damageDealtMult: 1.15,
+  },
+  overchargedCore: {
+    id: "overchargedCore", name: "Overcharged Core", doctrine: "assault", tier: 2,
+    cost: { radioactives: 200, ore: 120 }, requires: ["overchargedWeapons"],
+    desc: "+15% more damage dealt (stacks with Overcharged Weapons)", damageDealtMult: 1.15,
+  },
+  reinforcedPlating: {
+    id: "reinforcedPlating", name: "Reinforced Plating", doctrine: "bulwark", tier: 1,
+    cost: { crystals: 150 }, desc: "-12% damage taken by all combat units", damageTakenMult: 0.88,
+  },
+  reinforcedBulwark: {
+    id: "reinforcedBulwark", name: "Reinforced Bulwark", doctrine: "bulwark", tier: 2,
+    cost: { crystals: 200, ore: 120 }, requires: ["reinforcedPlating"],
+    desc: "-12% more damage taken (stacks with Reinforced Plating)", damageTakenMult: 0.88,
   },
 };
+
+// The doctrine a player has committed to — the doctrine of any upgrade they've
+// researched — or null if they haven't picked one yet. Researching an upgrade of
+// the other doctrine is then locked out (see production.js's researchUpgrade).
+export function committedDoctrine(state, owner) {
+  const ups = state.players[owner].upgrades;
+  for (const id of Object.keys(ups)) if (ups[id] && UPGRADES[id]) return UPGRADES[id].doctrine;
+  return null;
+}
 
 // Skiff, Bastion and Lancer form a deliberate rock-paper-scissors: each
 // one's bonusVs targets exactly the unit that would otherwise be its

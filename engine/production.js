@@ -4,7 +4,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 
@@ -140,7 +140,14 @@ export function researchUpgrade(state, buildingId, upgradeId) {
   const player = state.players[building.owner];
   if (player.upgrades[upgradeId]) return false;
   const def = UPGRADES[upgradeId];
-  if (!def || !canAfford(player.resources, def.cost)) return false;
+  if (!def) return false;
+  // Doctrine lock: once committed to one doctrine, the other is off-limits.
+  const chosen = committedDoctrine(state, building.owner);
+  if (chosen && def.doctrine && chosen !== def.doctrine) return false;
+  // Tier gate: a Tier-2 upgrade needs its Tier-1 already researched (prereqsMet
+  // reads the requires upgrade token, same as the tech tree).
+  if (!prereqsMet(state, building.owner, def)) return false;
+  if (!canAfford(player.resources, def.cost)) return false;
   payCost(player.resources, def.cost);
   player.upgrades[upgradeId] = true;
   return true;

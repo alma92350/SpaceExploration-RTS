@@ -12,7 +12,7 @@ import { tick } from "./engine/sim.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { issueMove, issueAttackMove } from "./engine/commands.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet } from "./engine/entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { PLANETS } from "./data.js";
@@ -549,16 +549,24 @@ function rebuildSelectionPanel(sel) {
   const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);
   if (refinery) {
     const upgrades = state.players.player.upgrades;
+    const chosen = committedDoctrine(state, "player");   // null until the first research commits a doctrine
+    const label = { assault: "Assault", bulwark: "Bulwark" };
     Object.values(UPGRADES).forEach(u => {
       if (upgrades[u.id]) {
         const row = document.createElement("div");
         row.className = "sel-row";
-        row.textContent = `${u.name} — researched`;
+        row.textContent = `${u.name} (${label[u.doctrine]}) — researched`;
         panelEl.appendChild(row);
-      } else {
-        panelEl.appendChild(makeButton(`Research ${u.name} (${costText(u.cost)})`,
-          () => researchUpgrade(state, refinery.id, u.id), { cost: u.cost, tip: u.desc }));
+        return;
       }
+      const doctrineLocked = chosen && chosen !== u.doctrine;
+      const tierLocked = !prereqsMet(state, "player", u);
+      const locked = doctrineLocked || tierLocked;
+      const lockTip = doctrineLocked ? `Locked — committed to the ${label[chosen]} doctrine`
+        : tierLocked ? `Requires ${UPGRADES[(u.requires || [])[0]]?.name || "its Tier 1"}` : null;
+      panelEl.appendChild(makeButton(`Research ${u.name} · ${label[u.doctrine]} (${costText(u.cost)})`,
+        () => researchUpgrade(state, refinery.id, u.id),
+        { cost: u.cost, tip: u.desc, locked, lockTip }));
     });
   }
 

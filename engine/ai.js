@@ -232,10 +232,16 @@ export function runAI(state, dt) {
     if (spot && canAct(state) && issueBuild(state, workers[0].id, "refinery", spot.x, spot.y)) spend(state);
   }
 
+  // Research along this archetype's chosen doctrine only (rusher/balanced go
+  // Assault, economist Bulwark), lowest tier first — so it commits to one path
+  // and deepens it (T1 then T2) instead of dabbling in both. The doctrine lock
+  // in researchUpgrade backs this up. One purchase per think cycle is plenty.
   if (refinery && !refinery.constructing && canAct(state)) {
-    for (const upgradeId of Object.keys(UPGRADES)) {
-      if (ai.upgrades[upgradeId]) continue;
-      if (researchUpgrade(state, refinery.id, upgradeId)) { spend(state); break; }   // one purchase per think cycle is plenty
+    const doctrine = archetype.doctrine || "assault";
+    const path = Object.values(UPGRADES).filter(u => u.doctrine === doctrine).sort((a, b) => a.tier - b.tier);
+    for (const u of path) {
+      if (ai.upgrades[u.id]) continue;
+      if (researchUpgrade(state, refinery.id, u.id)) { spend(state); break; }
     }
   }
 
