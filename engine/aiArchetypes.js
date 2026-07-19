@@ -18,6 +18,7 @@ export const ARCHETYPES = {
     turretCount: 0,        // no time or crystals to spare on static defense...
     maxBarracks: 1,        // ...and 4 workers can't even feed a second one;
     expandWhenNodesBelow: 0,   // its plan resolves long before home ore runs dry, so it never expands.
+    garrison: 0,           // all-in: keeps nothing back, every unit joins the push.
   },
   economist: {
     name: "Economist",
@@ -30,6 +31,7 @@ export const ARCHETYPES = {
     turretCount: 2,
     maxBarracks: 2,
     expandWhenNodesBelow: 0.4,   // grabs a second field while the first still has 40% left
+    garrison: 3,           // turtles: holds three back to defend home while the surplus attacks.
   },
   balanced: {
     name: "Balanced",
@@ -40,6 +42,7 @@ export const ARCHETYPES = {
     turretCount: 1,
     maxBarracks: 2,
     expandWhenNodesBelow: 0.25,   // expands later than the Economist, but still does
+    garrison: 2,           // keeps a small home guard back on a massed attack.
   },
 };
 

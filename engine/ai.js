@@ -84,7 +84,11 @@ export function runAI(state, dt) {
   const allBarracks = buildings.filter(b => b.type === "barracks");
   let oreReserve = 0;
 
-  updateScout(state, army);   // before worker assignment, so a worker-turned-scout isn't re-tasked to gather
+  // Computed once and reused by the attack block below: enemy combat units the
+  // AI can see pressing its base. Under threat it won't lend a new scout — every
+  // unit is needed at home.
+  const threats = visibleThreatsNearHome(state);
+  updateScout(state, army, threats.length > 0);   // before worker assignment, so a worker-turned-scout isn't re-tasked to gather
   assignIdleWorkers(state, workers);
 
   // EXPANSION: once home ore runs thin, plant a second Command Center on the
@@ -207,25 +211,103 @@ export function runAI(state, dt) {
     }
   }
 
-  // "Home" army is whatever hasn't already been sent off to attack — a
-  // freshly produced or still-idle unit has order null/'move' (its walk
-  // to the rally point), while a committed one is mid attack-move (see
-  // combat.js: an attack-move order survives fighting along the way, and
-  // only clears once the unit truly arrives with nothing left to fight).
-  // Filtering on that instead of a one-shot flag means each new batch of
-  // units automatically forms the next wave once the threshold is met
-  // again, so the AI keeps attacking instead of throwing exactly one
-  // army at the player for the whole match.
-  // The lone scout is kept out of the wave (it's off revealing the map on a
-  // 'move' order, which would otherwise read as "home army").
-  const homeArmy = army.filter(u => u.id !== state.aiScoutId && (!u.order || u.order.type === "move"));
-  const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
-  const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || state.time >= nextAttackAt);
-  if (readyToAttack) {
-    const target = state.map.bases.player;
-    issueAttackMove(homeArmy, target.x, target.y);
-    state.aiNextAttackAt = state.time + archetype.attackTimeout;
+  // DEFENSE first: if the AI can SEE enemy combat units pressing one of its
+  // buildings, the whole army (bar the scout) drops what it's doing and rushes
+  // that spot — including units already committed forward. This is the recall
+  // that makes "absorb the wave, then counter" no longer a free win: hit the
+  // AI's base and it brings its force home to meet you, instead of marching on
+  // regardless while its economy burns. Exempt from the APM budget, same as the
+  // attack commit, so a slow AI still always defends. Once the threat clears
+  // vision, the army re-forms at home and the offensive logic below takes over.
+  const nonScout = army.filter(u => u.id !== state.aiScoutId);
+  if (threats.length > 0) {
+    if (nonScout.length > 0) {
+      const focus = threatCentroid(threats);
+      issueAttackMove(nonScout, focus.x, focus.y);
+    }
+  } else {
+    // OFFENSE. "Home" army is whatever hasn't already been sent off to attack —
+    // a freshly produced or still-idle unit has order null/'move' (its walk to
+    // the rally point), while a committed one is mid attack-move (see combat.js).
+    // Filtering on that means each new batch automatically forms the next wave
+    // once the threshold is met again, so the AI keeps attacking in waves.
+    const homeArmy = nonScout.filter(u => !u.order || u.order.type === "move");
+    const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
+    const timedOut = state.time >= nextAttackAt;
+    const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || timedOut);
+    if (readyToAttack) {
+      // A massed (size-triggered) attack keeps a home guard back; a timeout
+      // commit is desperation and throws everything, so the game always resolves
+      // even for a turtle that never quite reaches its attack size.
+      const garrison = timedOut ? 0 : (archetype.garrison || 0);
+      const cc = buildings.find(b => b.type === "command" && !b.constructing) || buildings[0];
+      const strike = withoutHomeGuard(homeArmy, cc, garrison);
+      if (strike.length > 0) {
+        const target = chooseAttackTarget(state, cc);
+        issueAttackMove(strike, target.x, target.y);
+        state.aiNextAttackAt = state.time + archetype.attackTimeout;
+      }
+    }
   }
+}
+
+const DEFEND_RADIUS = 340;   // enemy combat units this close to an AI building trigger a recall
+
+// Enemy combat units the AI can currently SEE (its own fog) sitting within
+// DEFEND_RADIUS of any building it owns. A lone scouting worker doesn't count —
+// only real combat threats pull the army home, so the AI isn't yanked off an
+// attack by a single drone. What it can't see, it can't react to.
+function visibleThreatsNearHome(state) {
+  const myBuildings = [...state.buildings.values()].filter(b => b.owner === "ai");
+  if (!myBuildings.length) return [];
+  const threats = [];
+  for (const u of state.units.values()) {
+    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
+    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+    if (myBuildings.some(b => Math.hypot(b.x - u.x, b.y - u.y) <= DEFEND_RADIUS)) threats.push(u);
+  }
+  return threats;
+}
+
+function threatCentroid(threats) {
+  let x = 0, y = 0;
+  for (const t of threats) { x += t.x; y += t.y; }
+  return { x: x / threats.length, y: y / threats.length };
+}
+
+// Hold back the `garrison` units closest to home; return the rest as the strike
+// force. The near-home units make the standing defense, the forward ones push.
+function withoutHomeGuard(homeArmy, cc, garrison) {
+  if (!garrison || !cc || homeArmy.length <= garrison) {
+    return homeArmy.length > garrison ? homeArmy.slice() : [];
+  }
+  const byDistHome = homeArmy.slice().sort((a, b) =>
+    Math.hypot(a.x - cc.x, a.y - cc.y) - Math.hypot(b.x - cc.x, b.y - cc.y));
+  return byDistHome.slice(garrison);   // drop the closest `garrison` — they stay home
+}
+
+// Where to send the wave. Prefer a seen enemy Command Center (the win
+// condition), then any seen enemy building, then a seen enemy unit (raid the
+// army or worker line). Only when it has spotted nothing does it march on the
+// player's start position — attack-move reveals fog on the way, so it still
+// finds and engages them there instead of committing to a coordinate that may
+// no longer hold anything.
+function chooseAttackTarget(state, cc) {
+  const from = cc || { x: state.map.bases.ai.x, y: state.map.bases.ai.y };
+  const seen = e => e.owner === "player" && isVisibleAt(state.fogAI, e.x, e.y);
+  const seenBuildings = [...state.buildings.values()].filter(seen);
+  const ccs = seenBuildings.filter(b => b.type === "command");
+  const nearestOf = list => {
+    let best = null, bestD = Infinity;
+    for (const e of list) {
+      const d = Math.hypot(e.x - from.x, e.y - from.y);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    return best;
+  };
+  return nearestOf(ccs) || nearestOf(seenBuildings)
+      || nearestOf([...state.units.values()].filter(seen))
+      || state.map.bases.player;
 }
 
 // The next unit to build: normally the next entry in the archetype's mix,
@@ -293,7 +375,8 @@ function spend(state) {
 // a box sweep of the centre laid down as plain-move waypoints (it reveals fog
 // rather than diving into a fight), re-issued whenever the scout falls idle or
 // dies. Runs before assignIdleWorkers so a scout is never re-tasked to gather.
-function updateScout(state, army) {
+function updateScout(state, army, defending = false) {
+  if (defending) return;   // base under attack — hold every unit home, don't lend a scout
   const current = state.aiScoutId ? state.units.get(state.aiScoutId) : null;
   if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;   // still sweeping
   if (army.length < 4) { state.aiScoutId = null; return; }   // need a genuine spare to lend
@@ -302,11 +385,17 @@ function updateScout(state, army) {
   spend(state);
   state.aiScoutId = scout.id;
   const w = state.map.width, h = state.map.height;
+  const home = { x: scout.x, y: scout.y };
+  const pb = state.map.bases.player;
   issueMove([scout], w * 0.42, h * 0.22);
   issueMove([scout], w * 0.58, h * 0.22, true);
   issueMove([scout], w * 0.58, h * 0.78, true);
   issueMove([scout], w * 0.42, h * 0.78, true);
-  issueMove([scout], scout.x, scout.y, true);   // and head home to fold back into the army
+  // ...then swing toward the player's side to actually see the army it needs to
+  // counter (a pure centre sweep can miss what's massing at the enemy base),
+  // stopping short of diving into the base itself, before folding back home.
+  issueMove([scout], home.x + (pb.x - home.x) * 0.6, home.y + (pb.y - home.y) * 0.6, true);
+  issueMove([scout], home.x, home.y, true);   // and head home to fold back into the army
 }
 
 function assignIdleWorkers(state, workers) {

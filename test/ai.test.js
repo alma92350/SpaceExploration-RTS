@@ -267,6 +267,81 @@ test("the Economist fortifies with turrets on the approach vector, up to its tur
   }
 });
 
+test("the AI recalls its army to defend when it SEES an attack on its base", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const aiBase = state.map.bases.ai;
+  // An AI army already committed forward (mid attack-move toward the player).
+  const forward = [];
+  for (let i = 0; i < 4; i++) {
+    const u = makeUnit("skiff", "ai", aiBase.x - 40 - i * 8, aiBase.y);
+    u.order = { type: "attack-move", x: state.map.bases.player.x, y: state.map.bases.player.y };
+    state.units.set(u.id, u);
+    forward.push(u);
+  }
+  // A player raid parked right on the AI's doorstep, inside its Command Center's
+  // vision (the initial fog pass marks these cells seen).
+  const raiders = [];
+  for (let i = 0; i < 3; i++) {
+    const r = makeUnit("lancer", "player", aiBase.x - 120, aiBase.y + i * 8);
+    state.units.set(r.id, r);
+    raiders.push(r);
+  }
+
+  runAI(state, THINK_INTERVAL);
+
+  const cx = raiders.reduce((s, r) => s + r.x, 0) / raiders.length;
+  const cy = raiders.reduce((s, r) => s + r.y, 0) / raiders.length;
+  for (const u of forward) {
+    assert.equal(u.order?.type, "attack-move", "the recalled units still attack-move...");
+    assert.ok(Math.hypot(u.order.x - cx, u.order.y - cy) < 30, "...but now toward the raid at home, not the far player base");
+  }
+});
+
+test("a size-triggered attack keeps a home guard back; a timeout commit throws everything", () => {
+  // economist: armyAttackSize 9, garrison 3. Twelve idle units at home, well
+  // before any timeout -> nine push, three stay to defend.
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.time = 0;   // nowhere near the 200s attackTimeout
+  const cc = [...state.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  // A dedicated scout already out sweeping, so updateScout doesn't pull one of
+  // the squad below and skew the counts — we're isolating the garrison split.
+  const scout = makeUnit("skiff", "ai", cc.x, cc.y - 200);
+  scout.order = { type: "move", x: 100, y: 100 };
+  state.units.set(scout.id, scout);
+  state.aiScoutId = scout.id;
+  const squad = [];
+  for (let i = 0; i < 12; i++) {
+    const u = makeUnit("skiff", "ai", cc.x - 30 - i * 4, cc.y);
+    state.units.set(u.id, u);
+    squad.push(u);
+  }
+
+  runAI(state, THINK_INTERVAL);
+
+  const attacking = squad.filter(u => u.order?.type === "attack-move").length;
+  const home = squad.filter(u => !u.order).length;
+  assert.equal(home, 3, "the Economist holds its garrison of three back");
+  assert.equal(attacking, 9, "and sends the surplus");
+});
+
+test("the AI marches on a SEEN enemy building rather than the fixed start coordinate", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.time = state.aiArchetype.attackTimeout + 50;   // force a commit
+  const aiBase = state.map.bases.ai;
+  // A player expansion the AI has vision of, placed away from the player's
+  // start. Sits just inside the AI CC's sight so it counts as "seen".
+  const seenCC = makeBuilding("command", "player", aiBase.x - 180, aiBase.y);
+  state.buildings.set(seenCC.id, seenCC);
+  const u = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
+  state.units.set(u.id, u);
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(u.order?.type, "attack-move");
+  assert.ok(Math.hypot(u.order.x - seenCC.x, u.order.y - seenCC.y) < 1,
+    "it targets the enemy building it can see, not state.map.bases.player");
+});
+
 test("a legacy archetype without the Tier 4 fields still runs without throwing", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   state.aiArchetype = { name: "Legacy", workerTarget: 4, armyAttackSize: 4, attackTimeout: 90, unitMix: ["skiff"] };
