@@ -436,13 +436,35 @@ const HELP_ROWS = [
   ["Esc", "Cancel build placement or a pending attack-move"],
   ["F1 or ?", "Toggle this help"],
 ];
-function buildHelpOverlay() {
-  const rows = HELP_ROWS.map(([k, v]) =>
+// The finger-only control scheme (see input.js's touch handlers).
+const TOUCH_HELP_ROWS = [
+  ["Tap your unit", "Select it · double-tap grabs all of that type on screen"],
+  ["Tap elsewhere", "Order the selection — move · tap a foe to attack · tap a node to gather"],
+  ["One-finger drag", "Box-select your units"],
+  ["Two fingers", "Drag to pan · pinch to zoom"],
+  ["Attack-Move button", "Arm it, then tap the map to advance-and-engage"],
+  ["Tap a node (building selected)", "Rally new workers to mine it"],
+  ["Minimap", "Tap to jump the view"],
+];
+function helpRows(rows) {
+  return rows.map(([k, v]) =>
     `<div class="help-row"><span class="help-key">${k}</span><span>${v}</span></div>`).join("");
-  helpOverlayEl.innerHTML = `<div class="help-card"><h2>Controls &amp; Help</h2>${rows}`
+}
+function buildHelpOverlay() {
+  helpOverlayEl.innerHTML = `<div class="help-card"><h2>Controls &amp; Help</h2>`
+    + `<h3 class="help-sub">Mouse &amp; keyboard</h3>${helpRows(HELP_ROWS)}`
+    + `<h3 class="help-sub">Touch</h3>${helpRows(TOUCH_HELP_ROWS)}`
     + `<p class="help-dismiss">Press F1, ?, or Esc to close</p></div>`;
 }
 buildHelpOverlay();
+
+// Touch mode: the first finger anywhere grows the tap targets (style.css) and
+// switches the HUD hints to touch phrasing. input.js sets the class on a canvas
+// touch too; doing it here covers a first touch that lands on a HUD button.
+function isTouchMode() { return document.body.classList.contains("touch"); }
+window.addEventListener("touchstart", () => {
+  if (!isTouchMode()) { document.body.classList.add("touch"); if (input) renderHUD(); }
+}, { passive: true });
 function toggleHelp(force) {
   const show = force ?? helpOverlayEl.classList.contains("hidden");
   helpOverlayEl.classList.toggle("hidden", !show);
@@ -770,6 +792,13 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(makeButton("Stop ( X )", () => input.stopSelected()));
   }
   if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
+    // Attack-move as a button — the only way to arm it on touch (no A key), and a
+    // discoverable one on desktop. Shows ARMED while waiting for the target tap.
+    const amBtn = makeButton(input.attackArmed ? "Attack-Move: ARMED ( A )" : "Attack-Move ( A )",
+      () => input.toggleAttackMove(),
+      { tip: "Then tap the map: units advance and engage anything met on the way" });
+    if (input.attackArmed) amBtn.classList.add("armed");
+    panelEl.appendChild(amBtn);
     panelEl.appendChild(makeButton("Hold Position ( H )", () => input.holdSelected(),
       { tip: "Fire on anything in range, but hold ground — don't chase out of position" }));
   }
@@ -779,25 +808,30 @@ function rebuildSelectionPanel(sel) {
       { tip: "Auto-explore: the Ranger ranges toward the nearest unexplored ground on its own" }));
   }
 
+  const touch = isTouchMode();
   if (input.building) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "Click the map to place it. Right-click to cancel.";
+    hint.textContent = touch ? "Tap the map to place it. Tap Build again to cancel."
+                             : "Click the map to place it. Right-click to cancel.";
     panelEl.appendChild(hint);
   } else if (hasRanger) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "Ranger: all-terrain, far sight. E to auto-scout; right-click to move it yourself.";
+    hint.textContent = touch ? "Ranger: all-terrain, far sight. E / Scout Mode to auto-explore; tap the map to move it."
+                             : "Ranger: all-terrain, far sight. E to auto-scout; right-click to move it yourself.";
     panelEl.appendChild(hint);
   } else if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "A + click to attack-move. Right-click moves (ignores enemies). Ctrl+right-click queues a waypoint.";
+    hint.textContent = touch ? "Tap the map to move. Tap a foe to attack. Attack-Move advances and engages."
+                             : "A + click to attack-move. Right-click moves (ignores enemies). Ctrl+right-click queues a waypoint.";
     panelEl.appendChild(hint);
   } else if (sel.length === 1 && (cc || barracks)) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it.";
+    hint.textContent = touch ? "Tap the map to set a rally point — tap a resource node to rally new workers onto it."
+                             : "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it.";
     panelEl.appendChild(hint);
   }
 }

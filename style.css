@@ -469,3 +469,58 @@ html, body {
   font-weight: 600;
   margin: 0;
 }
+
+/* ---------- touch / mobile controls ----------
+   The field owns every gesture on it (tap / drag / two-finger pan-zoom — see
+   input.js), so tell the browser to keep its hands off: no page scroll, no
+   pinch-zoom-the-page, no long-press text selection / callout stealing a drag.
+   The minimap likewise consumes its taps. Everything ELSE (the panel, the setup
+   screen) keeps normal touch scrolling. */
+#field {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.minimap { touch-action: none; }
+/* Stop iOS/Android rubber-band bounce dragging the whole game around. */
+html, body { overscroll-behavior: none; }
+
+/* Attack-move armed: the Attack-Move HUD button waits for the target tap. */
+.btn.armed { border-color: var(--warn); color: var(--warn); background: rgba(251, 191, 36, 0.12); }
+.btn.armed:hover { border-color: var(--warn); color: var(--warn); }
+
+/* Help overlay section headings (mouse/keyboard vs touch). */
+.help-sub { margin: 16px 0 2px; font-size: 0.85rem; color: var(--accent-2); font-weight: 600; letter-spacing: 0.02em; }
+.help-card h2 + .help-sub { margin-top: 2px; }
+
+/* Coarse pointer (finger): grow every tap target to a comfortable size,
+   independent of screen width, so a phone and a touch-laptop both get big hit
+   areas without changing the desktop mouse layout. */
+@media (pointer: coarse) {
+  .btn { padding: 12px 12px; font-size: 0.9rem; }
+  .opt-btn { padding: 11px 14px; min-width: 104px; }
+  .chip-btn, .mute-btn { padding: 8px 12px; font-size: 0.8rem; }
+  .help-btn { width: 40px; height: 40px; }
+  .queue-cancel { padding: 6px 12px; font-size: 0.9rem; }
+  .idle-workers, .seed-chip { padding: 7px 11px; }
+  .obj-close { font-size: 1.5rem; padding: 4px; }
+  .map-card { width: 260px; }
+}
+
+/* Narrow screens (phones/tablets in landscape — the natural RTS orientation):
+   trim the side panel and chrome so the battlefield keeps most of the width. */
+@media (max-width: 820px) {
+  #topbar { gap: 10px; padding: 6px 10px; flex-wrap: wrap; }
+  #topbar .title { font-size: 0.9rem; }
+  .resources { gap: 10px; font-size: 0.78rem; }
+  #view { padding: 6px; }
+  #selectionPanel { width: 200px; padding: 8px; }
+  .minimap { width: 150px; height: 94px; left: 12px; bottom: 12px; }
+  .help-key { flex-basis: 130px; }
+}
+@media (max-width: 600px) {
+  #topbar .title { display: none; }   /* reclaim the width for the resource readout */
+  #selectionPanel { width: 168px; }
+  .minimap { width: 118px; height: 74px; }
+}

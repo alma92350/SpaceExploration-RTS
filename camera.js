@@ -70,3 +70,36 @@ export function panCamera(camera, map, vw, vh, dx, dy, dt) {
   camera.y += (dy / len) * PAN_SPEED * dt / camera.zoom;
   clampCamera(camera, map, vw, vh);
 }
+
+// Drag the camera by a raw screen-space delta (touch two-finger pan, or a
+// drag-pan): move the view so the world stays glued to the fingers. dsx/dsy is
+// the finger movement in CSS pixels; dividing by zoom converts it to world
+// units, and the sign is inverted because dragging content right (positive dsx)
+// must decrease camera.x to bring the left-of-view world into frame.
+export function dragCamera(camera, map, vw, vh, dsx, dsy) {
+  camera.x -= dsx / camera.zoom;
+  camera.y -= dsy / camera.zoom;
+  clampCamera(camera, map, vw, vh);
+}
+
+// One combined two-finger gesture step. `prev`/`cur` each hold the two touch
+// points in screen space ({ ax, ay, bx, by }); this pinch-zooms by how their
+// spread changed and pans by how their midpoint moved — with the zoom anchored
+// on the current midpoint so the world under the pinch stays put. Pure view
+// math (same clamps as the wheel), so a test can assert it without a browser.
+export function pinchZoomPan(camera, map, vw, vh, prev, cur) {
+  const prevMidX = (prev.ax + prev.bx) / 2, prevMidY = (prev.ay + prev.by) / 2;
+  const curMidX = (cur.ax + cur.bx) / 2, curMidY = (cur.ay + cur.by) / 2;
+  const prevDist = Math.hypot(prev.ax - prev.bx, prev.ay - prev.by) || 1;
+  const curDist = Math.hypot(cur.ax - cur.bx, cur.ay - cur.by) || 1;
+
+  // Zoom about the current midpoint (keep that world point fixed on screen).
+  const before = screenToWorld(camera, vw, vh, curMidX, curMidY);
+  camera.zoom = Math.min(MAX_ZOOM, Math.max(minZoomFor(map, vw, vh), camera.zoom * (curDist / prevDist)));
+  const after = screenToWorld(camera, vw, vh, curMidX, curMidY);
+  camera.x += before.x - after.x;
+  camera.y += before.y - after.y;
+
+  // ...then pan by the midpoint's own movement.
+  dragCamera(camera, map, vw, vh, curMidX - prevMidX, curMidY - prevMidY);
+}
