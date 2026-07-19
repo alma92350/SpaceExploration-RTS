@@ -11,6 +11,14 @@ export const MIN_ZOOM = 0.6;
 export const MAX_ZOOM = 2.5;
 const PAN_SPEED = 900;   // world units/sec of keyboard pan at zoom 1
 
+// How far out the wheel can zoom: the usual MIN_ZOOM, but never so tight that
+// a big map can't be pulled fully into view. On a Small map this is just
+// MIN_ZOOM; on a Gigantic one it drops low enough to fit the whole thing.
+function minZoomFor(map, vw, vh) {
+  if (!vw || !vh) return MIN_ZOOM;
+  return Math.min(MIN_ZOOM, vw / map.width, vh / map.height);
+}
+
 export function createCamera(map) {
   return { x: map.width / 2, y: map.height / 2, zoom: 1 };
 }
@@ -45,7 +53,7 @@ export function clampCamera(camera, map, vw, vh) {
 // cursor instead of the map drifting out from under it.
 export function zoomAt(camera, map, vw, vh, sx, sy, factor) {
   const before = screenToWorld(camera, vw, vh, sx, sy);
-  camera.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.zoom * factor));
+  camera.zoom = Math.min(MAX_ZOOM, Math.max(minZoomFor(map, vw, vh), camera.zoom * factor));
   const after = screenToWorld(camera, vw, vh, sx, sy);
   camera.x += before.x - after.x;
   camera.y += before.y - after.y;

@@ -93,13 +93,107 @@ minimapCanvas.addEventListener("click", e => {
   clampCamera(camera, state.map, canvas.clientWidth, canvas.clientHeight);
 });
 
+// Splash-screen game setup, carried across "choose another battlefield"
+// restarts. sizeMult scales the map (map.js); resourceMult scales every
+// deposit's amount; aiApm caps the opponent's actions per minute (ai.js).
+const SIZE_OPTIONS = [
+  { label: "Small", mult: 1, note: "1600×1000" },
+  { label: "Standard", mult: 2, note: "2× · room to expand" },
+  { label: "Large", mult: 3, note: "3× · long game" },
+  { label: "Gigantic", mult: 4, note: "4× · sprawling war" },
+];
+const RESOURCE_OPTIONS = [
+  { label: "Rare", mult: 0.6, note: "lean deposits" },
+  { label: "Normal", mult: 1.0, note: "balanced" },
+  { label: "Abundant", mult: 1.5, note: "rich deposits" },
+];
+const setup = { aiApm: 60, sizeMult: 1, resourceMult: 1 };
+
+function apmDescriptor(apm) {
+  if (apm <= 20) return "Sluggish";
+  if (apm <= 55) return "Casual";
+  if (apm <= 100) return "Sharp";
+  return "Relentless";
+}
+
+// A one-of-N pick rendered as a row of buttons; clicking one selects it and
+// stores its value via onPick.
+function optionGroup(current, options, onPick) {
+  const wrap = document.createElement("div");
+  wrap.className = "opt-group";
+  options.forEach(opt => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "opt-btn" + (opt.mult === current ? " active" : "");
+    btn.innerHTML = `<span class="opt-label">${opt.label}</span><span class="opt-note">${opt.note}</span>`;
+    btn.addEventListener("click", () => {
+      onPick(opt.mult);
+      wrap.querySelectorAll(".opt-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
+function renderSetupPanel() {
+  const panel = document.createElement("div");
+  panel.className = "setup";
+
+  const apmRow = document.createElement("div");
+  apmRow.className = "setup-row";
+  const apmLabel = document.createElement("span");
+  apmLabel.className = "setup-label";
+  apmLabel.textContent = "AI speed";
+  const slider = document.createElement("input");
+  slider.type = "range"; slider.min = "1"; slider.max = "150"; slider.step = "1";
+  slider.value = String(setup.aiApm); slider.className = "apm-slider";
+  const apmValue = document.createElement("span");
+  apmValue.className = "setup-value";
+  const showApm = () => { apmValue.textContent = `${setup.aiApm} APM · ${apmDescriptor(setup.aiApm)}`; };
+  showApm();
+  slider.addEventListener("input", () => { setup.aiApm = Number(slider.value); showApm(); });
+  apmRow.append(apmLabel, slider, apmValue);
+  panel.appendChild(apmRow);
+
+  const hint = document.createElement("p");
+  hint.className = "setup-hint";
+  hint.textContent = "Actions per minute the opponent can take — a click, a selection, a command. 1 is a crawl; 150 is relentless.";
+  panel.appendChild(hint);
+
+  const sizeRow = document.createElement("div");
+  sizeRow.className = "setup-row";
+  const sizeLabel = document.createElement("span");
+  sizeLabel.className = "setup-label";
+  sizeLabel.textContent = "Map size";
+  sizeRow.append(sizeLabel, optionGroup(setup.sizeMult, SIZE_OPTIONS, m => { setup.sizeMult = m; }));
+  panel.appendChild(sizeRow);
+
+  const resRow = document.createElement("div");
+  resRow.className = "setup-row";
+  const resLabel = document.createElement("span");
+  resLabel.className = "setup-label";
+  resLabel.textContent = "Resources";
+  resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
+  panel.appendChild(resRow);
+
+  return panel;
+}
+
 renderMapSelect();
 
 function renderMapSelect() {
   mapSelectEl.innerHTML = "";
   const title = document.createElement("h2");
-  title.textContent = "Choose a battlefield";
+  title.textContent = "Configure the skirmish";
   mapSelectEl.appendChild(title);
+
+  mapSelectEl.appendChild(renderSetupPanel());
+
+  const subtitle = document.createElement("h3");
+  subtitle.className = "cards-heading";
+  subtitle.textContent = "Then choose a battlefield";
+  mapSelectEl.appendChild(subtitle);
 
   const cards = document.createElement("div");
   cards.className = "cards";
@@ -131,8 +225,14 @@ function startGame(planetId) {
   underAttackEl.classList.add("hidden");
   clearTimeout(underAttackTimer);
 
-  state = createGameState({ planetId });
+  state = createGameState({ planetId, aiApm: setup.aiApm, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
   input = attachInput(canvas, state, () => renderHUD());
+  // Open on the player's own base, not the map centre — on a big map the base
+  // sits far off toward the edge and you'd otherwise start staring at nothing.
+  const cam = input.getCamera();
+  cam.x = state.map.bases.player.x;
+  cam.y = state.map.bases.player.y;
+  clampCamera(cam, state.map, canvas.clientWidth, canvas.clientHeight);
   resetEffects();
   announced = false;
   lastHud = 0;

@@ -40,6 +40,7 @@ import { playerBuildings, playerUnits } from "./state.js";
 
 const THINK_INTERVAL = 1.5;
 const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
+const APM_BURST_FRAC = 1 / 15;   // a busy AI can bank at most ~4 seconds' worth of unspent actions
 
 // Derived once from each unit's bonusVs table (entities.js), rather than
 // hardcoded here, so this stays correct automatically if the roster or
@@ -67,6 +68,7 @@ const SPENDABLE = (() => {
 })();
 
 export function runAI(state, dt) {
+  accrueActionBudget(state, dt);   // every tick, so credits build up between think cycles
   state.aiThink = (state.aiThink || 0) - dt;
   if (state.aiThink > 0) return;
   state.aiThink = THINK_INTERVAL;
@@ -107,14 +109,17 @@ export function runAI(state, dt) {
           const spot = findPlacement(state, "command",
             anchor.x + Math.cos(toward) * EXPANSION_STANDOFF,
             anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
-          if (spot) { issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y); oreReserve = 0; }
+          if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y)) {
+            spend(state);
+            oreReserve = 0;
+          }
         }
       }
     }
   }
 
-  if (cc && workers.length < archetype.workerTarget && cc.queue.length === 0) {
-    queueProduction(state, cc.id, "worker");
+  if (cc && workers.length < archetype.workerTarget && cc.queue.length === 0 && canAct(state)) {
+    if (queueProduction(state, cc.id, "worker")) spend(state);
   }
 
   // Near the cap (or over it after losing a Habitat) with none already
@@ -127,7 +132,7 @@ export function runAI(state, dt) {
   if (cc && workers.length > 0 && used >= cap - 2 && !habitatConstructing
       && canAfford(ai.resources, BUILDINGS.habitat.cost)) {
     const spot = findPlacement(state, "habitat", cc.x, cc.y + 90);
-    if (spot) issueBuild(state, workers[0].id, "habitat", spot.x, spot.y);
+    if (spot && canAct(state) && issueBuild(state, workers[0].id, "habitat", spot.x, spot.y)) spend(state);
   }
 
   // First Barracks. Build spots are fixed offsets from the CC, so anything
@@ -136,7 +141,7 @@ export function runAI(state, dt) {
   // findPlacement slides the request to the nearest valid ground instead.
   if (!barracks && cc && workers.length > 0 && canAfford(ai.resources, BUILDINGS.barracks.cost)) {
     const spot = findPlacement(state, "barracks", cc.x + 90, cc.y - 90);
-    if (spot) issueBuild(state, workers[0].id, "barracks", spot.x, spot.y);
+    if (spot && canAct(state) && issueBuild(state, workers[0].id, "barracks", spot.x, spot.y)) spend(state);
   }
 
   // One shared production cycle across every completed Barracks: consecutive
@@ -149,9 +154,11 @@ export function runAI(state, dt) {
   // world.
   for (const b of allBarracks) {
     if (b.constructing || b.queue.length > 0) continue;
+    if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
     const nextType = pickNextUnitType(state, archetype);
     if (!canAfford(ai.resources, UNITS[nextType].cost)) continue;
     if (queueProduction(state, b.id, nextType)) {
+      spend(state);
       state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
     }
   }
@@ -170,7 +177,7 @@ export function runAI(state, dt) {
       const spot = findPlacement(state, "turret",
         cc.x + dx * (140 + 80 * i) - dy * 30 * side,
         cc.y + dy * (140 + 80 * i) + dx * 30 * side);
-      if (spot) issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "turret", spot.x, spot.y);
+      if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "turret", spot.x, spot.y)) spend(state);
     }
   }
 
@@ -181,7 +188,7 @@ export function runAI(state, dt) {
       && allBarracks.length < (archetype.maxBarracks || 1)
       && canAffordKeeping(ai.resources, BUILDINGS.barracks.cost, oreReserve + BARRACKS_BUFFER)) {
     const spot = findPlacement(state, "barracks", cc.x + 90, cc.y + 90);
-    if (spot) issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y);
+    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y)) spend(state);
   }
 
   // Refinery — reserve-aware, and cc-guarded: cc is the completed-only find,
@@ -190,13 +197,13 @@ export function runAI(state, dt) {
   if (!refinery && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.refinery.cost, oreReserve)) {
     const spot = findPlacement(state, "refinery", cc.x - 90, cc.y - 90);
-    if (spot) issueBuild(state, workers[0].id, "refinery", spot.x, spot.y);
+    if (spot && canAct(state) && issueBuild(state, workers[0].id, "refinery", spot.x, spot.y)) spend(state);
   }
 
-  if (refinery && !refinery.constructing) {
+  if (refinery && !refinery.constructing && canAct(state)) {
     for (const upgradeId of Object.keys(UPGRADES)) {
       if (ai.upgrades[upgradeId]) continue;
-      if (researchUpgrade(state, refinery.id, upgradeId)) break;   // one purchase per think cycle is plenty
+      if (researchUpgrade(state, refinery.id, upgradeId)) { spend(state); break; }   // one purchase per think cycle is plenty
     }
   }
 
@@ -257,6 +264,29 @@ function counterToPlayerArmy(state) {
   return best ? COUNTER_OF[best] : null;
 }
 
+/* ---------- action budget (the configurable AI speed / APM) ---------- */
+
+// The AI's "speed" is an actions-per-minute allowance, set from the splash
+// screen (state.aiApm). Every command it issues — produce, build, expand,
+// research, send the scout — costs one action; the attack commit is the one
+// exemption, so a slow AI still throws whatever it has at you and the game
+// always resolves. Credits accrue continuously and cap at a few seconds' worth,
+// so a busy AI can't hoard a giant burst. When aiApm is null (the default, and
+// every headless test) the AI is unthrottled — behaviour is exactly as before.
+function accrueActionBudget(state, dt) {
+  if (state.aiApm == null) return;
+  const cap = Math.max(2, state.aiApm * APM_BURST_FRAC);
+  state.aiActionBudget = Math.min((state.aiActionBudget || 0) + (state.aiApm / 60) * dt, cap);
+}
+
+function canAct(state) {
+  return state.aiApm == null || (state.aiActionBudget || 0) >= 1;
+}
+
+function spend(state) {
+  if (state.aiApm != null) state.aiActionBudget -= 1;
+}
+
 // Keep one spare unit ranging across the contested middle so the AI earns its
 // intel — uncovering hidden caches and spotting the player's forces — instead
 // of knowing the map for free. Only lends a scout once the army can spare one;
@@ -268,7 +298,8 @@ function updateScout(state, army) {
   if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;   // still sweeping
   if (army.length < 4) { state.aiScoutId = null; return; }   // need a genuine spare to lend
   const scout = army.find(u => u.id !== state.aiScoutId);
-  if (!scout) { state.aiScoutId = null; return; }
+  if (!scout || !canAct(state)) return;   // no spare, or no action budget to send one out yet
+  spend(state);
   state.aiScoutId = scout.id;
   const w = state.map.width, h = state.map.height;
   issueMove([scout], w * 0.42, h * 0.22);

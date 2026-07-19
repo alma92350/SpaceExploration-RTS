@@ -92,6 +92,20 @@ test("the AI is not omniscient: it scouts, revealing the map and discovering cac
     "and turned up at least one hidden cache by exploring, rather than knowing it for free");
 });
 
+test("AI speed scales with its APM setting: a slow AI builds far less during ramp-up", () => {
+  // Measured during ramp-up (2 min): above a moderate APM the AI becomes
+  // resource-limited rather than action-limited and counts converge, so the
+  // throttle is clearest early and with a wide gap.
+  const output = apm => {
+    const s = createGameState({ planetId: "ferros", rng: () => 0.5, aiApm: apm });
+    for (let i = 0; i < 1200; i++) tick(s, 0.1);
+    return [...s.units.values()].filter(u => u.owner === "ai").length
+         + [...s.buildings.values()].filter(b => b.owner === "ai").length;
+  };
+  const slow = output(2), fast = output(150);
+  assert.ok(slow < fast * 0.75, `a 2-APM AI (${slow} things) should build far less than a 150-APM one (${fast})`);
+});
+
 test("tick() is a no-op once the game is already over", () => {
   const state = createGameState({ planetId: "ferros" });
   state.over = true;

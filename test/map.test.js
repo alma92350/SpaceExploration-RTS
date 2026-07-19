@@ -143,13 +143,64 @@ test("every world seeds hidden caches out in the field, away from both bases", (
   }
 });
 
-test("hidden caches can hold a commodity the planet's surface lacks — exploration unlocks it", () => {
-  // Korrath deposits no crystals on the surface (so no turrets/plating without them).
-  const map = generateMap("korrath", () => 0.5);
-  const surfaceCrystals = map.nodes.filter(n => n.com === "crystals" && !n.hidden);
-  const cacheCrystals = map.nodes.filter(n => n.com === "crystals" && n.hidden);
-  assert.equal(surfaceCrystals.length, 0, "korrath's surface truly has no crystals");
-  assert.ok(cacheCrystals.length > 0, "but a scouted cache can still yield them");
+test("every world guarantees a near-base surface source of every build-critical resource", () => {
+  // ore (all units/buildings), crystals (Turret, Reinforced Plating) and
+  // radioactives (Breacher, Overcharged Weapons) must be buildable on any
+  // world — even ones whose deposit table lacks them (korrath has no crystals,
+  // vesper no radioactives) get a lean guaranteed seam near the base. The
+  // planet's own deposits still shape how *much* of each there is.
+  const near = 500 + 60;   // the near-base radius, plus slack for overlap relaxation
+  for (const id of ["korrath", "vesper", "glacius", "nimbus", "ferros", "forge"]) {
+    const map = generateMap(id, () => 0.5);
+    for (const com of ["ore", "crystals", "radioactives"]) {
+      const nearBase = map.nodes.some(n => n.com === com && !n.hidden &&
+        Math.hypot(n.x - map.bases.player.x, n.y - map.bases.player.y) <= near);
+      assert.ok(nearBase, `${id}: needs a surface ${com} source near the base for its builds`);
+    }
+  }
+});
+
+test("a world rich in a commodity keeps its big deposits; a world without it gets only the minimum", () => {
+  // helix deposits crystals heavily; korrath deposits none. Both are buildable,
+  // but helix's surface crystal total should dwarf korrath's guaranteed floor.
+  const total = (id, com) => generateMap(id, () => 0.5).nodes
+    .filter(n => n.com === com && !n.hidden).reduce((s, n) => s + n.amount, 0);
+  assert.ok(total("helix", "crystals") > total("korrath", "crystals") * 2,
+    "the planet's deposit table still drives how much of a resource it holds");
+});
+
+test("map size scales the dimensions, bases, and node bounds; sizeMult 1 is the Small default", () => {
+  const small = generateMap("ferros", () => 0.5);
+  assert.equal(small.width, MAP_WIDTH);
+  assert.equal(small.height, MAP_HEIGHT);
+
+  const big = generateMap("ferros", () => 0.5, { sizeMult: 3 });
+  assert.equal(big.width, MAP_WIDTH * 3);
+  assert.equal(big.height, MAP_HEIGHT * 3);
+  assert.ok(Math.abs(big.bases.player.x - big.width * 0.1) < 1e-6, "player base stays at 10% in");
+  assert.ok(Math.abs(big.bases.ai.x - big.width * 0.9) < 1e-6, "AI base stays at 90% in");
+  for (const n of big.nodes) {
+    assert.ok(n.x >= 0 && n.x <= big.width && n.y >= 0 && n.y <= big.height, "every node stays inside the bigger map");
+  }
+});
+
+test("sizeMult 1 / resourceMult 1 reproduces the original map byte-for-byte", () => {
+  const a = generateMap("ferros", lcg(99));
+  const b = generateMap("ferros", lcg(99), { sizeMult: 1, resourceMult: 1 });
+  assert.deepEqual(a.nodes, b.nodes, "explicit defaults must match the implicit ones exactly");
+});
+
+test("the resource multiplier scales deposit amounts up (abundant) and down (rare)", () => {
+  const oreTotal = mult => generateMap("ferros", () => 0.5, { resourceMult: mult }).nodes
+    .filter(n => n.com === "ore").reduce((s, n) => s + n.amount, 0);
+  const rare = oreTotal(0.6), normal = oreTotal(1), abundant = oreTotal(1.5);
+  assert.ok(rare < normal && normal < abundant, "Rare < Normal < Abundant ore on the same world");
+  assert.ok(Math.abs(abundant / normal - 1.5) < 0.05, "abundant is ~1.5x normal");
+});
+
+test("bigger maps seed more hidden caches to fill the larger contested space", () => {
+  const caches = size => generateMap("ferros", () => 0.5, { sizeMult: size }).nodes.filter(n => n.hidden).length;
+  assert.ok(caches(4) > caches(1), "a Gigantic map should hide more caches than a Small one");
 });
 
 test("every modified world is a real planet with a nonempty label, and has an archetype", () => {

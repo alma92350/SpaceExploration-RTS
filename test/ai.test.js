@@ -50,6 +50,19 @@ test("the AI's attack wave includes all three combat types, not just Skiffs", ()
   assert.equal(lancer.order?.type, "attack-move");
 });
 
+test("a throttled AI still commits its attack — the wave is exempt from the APM budget", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.aiApm = 1;            // slowed to a crawl...
+  state.aiActionBudget = 0;   // ...with no action credits banked
+  state.time = state.aiArchetype.attackTimeout + 50;
+  const skiff = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
+  state.units.set(skiff.id, skiff);
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(skiff.order?.type, "attack-move", "the wave commits despite zero action budget, so the game still resolves");
+});
+
 test("the AI launches repeated attack waves, not just one", () => {
   const state = createGameState({ planetId: "ferros" });
   const archetype = state.aiArchetype;
@@ -177,21 +190,23 @@ test("two completed Barracks drain a single shared mix cycle", () => {
   assert.deepEqual(built, expected, "consecutive barracks pick up consecutive mix entries, one sequence");
 });
 
-test("a mix entry this map can't pay for is skipped, not stalled", () => {
-  const state = createGameState({ planetId: "vesper", rng: () => 0.5 });   // vesper deposits no radioactives
-  fundAll(state);   // even fully funded, there's simply no radioactive node to draw a Breacher's cost from
+test("with radioactives guaranteed on every world, the Breacher is buildable even on vesper", () => {
+  // Vesper's surface deposits no radioactives, but the build-critical minimum
+  // seams the map with a little, so the full balanced mix — Breacher and all —
+  // cycles without stalling on an unbuildable entry.
+  const state = createGameState({ planetId: "vesper", rng: () => 0.5 });
+  fundAll(state);
   const barracks = stockedBarracks(state);
+  const mix = state.aiArchetype.unitMix;   // [skiff, bastion, lancer, breacher]
 
   const built = [];
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < mix.length * 2; i++) {
     runAI(state, THINK_INTERVAL);
     if (barracks.queue.length) { built.push(barracks.queue[barracks.queue.length - 1].unitType); barracks.queue.length = 0; }
   }
 
-  // balanced mix is [skiff, bastion, lancer, breacher]; vesper drops the
-  // Breacher, leaving a clean three-unit cycle that never stalls on it.
-  assert.deepEqual(built.slice(0, 6), ["skiff", "bastion", "lancer", "skiff", "bastion", "lancer"]);
-  assert.ok(!built.includes("breacher"), "the unbuildable Breacher never enters the cycle");
+  assert.deepEqual(built, Array.from({ length: mix.length * 2 }, (_, i) => mix[i % mix.length]));
+  assert.ok(built.includes("breacher"), "the Breacher enters the cycle now that radioactives are guaranteed");
 });
 
 // Zeros every ore node within HOME_RADIUS of the AI base, dropping the

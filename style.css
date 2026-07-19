@@ -217,10 +217,11 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 20px;
-  /* The roster is nine worlds now, so the grid can outgrow the viewport —
-     let the whole screen scroll rather than clipping the bottom cards. */
+  /* The setup panel plus nine world cards outgrow the viewport, so align to
+     the top and let the whole screen scroll — centering would clip the title
+     and bottom cards on shorter windows. */
   overflow-y: auto;
   padding: 24px 16px;
   background: radial-gradient(ellipse at top, var(--bg-grad-1), var(--bg-grad-2));
@@ -257,3 +258,69 @@ html, body {
    line warns amber like every other "this changes the rules" cue. */
 .map-card .ai-note { display: block; margin-top: 8px; font-size: 0.78rem; color: var(--accent-2); }
 .map-card .mod-note { display: block; margin-top: 4px; font-size: 0.78rem; color: var(--warn); }
+
+/* ---- splash-screen game setup (AI speed / map size / resources) ---- */
+.map-select h3.cards-heading {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+.setup {
+  width: min(720px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.setup-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.setup-label {
+  flex: 0 0 84px;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.setup-value {
+  color: var(--gold);
+  font-size: 0.85rem;
+  min-width: 140px;
+}
+.setup-hint {
+  margin: -6px 0 2px;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.apm-slider {
+  flex: 1 1 240px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.opt-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+.opt-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+  min-width: 96px;
+}
+.opt-btn:hover { border-color: var(--accent-2); }
+.opt-btn.active { border-color: var(--accent); background: var(--panel-2); }
+.opt-btn .opt-label { display: block; font-weight: 600; font-size: 0.86rem; }
+.opt-btn .opt-note { display: block; font-size: 0.7rem; color: var(--muted); margin-top: 2px; }

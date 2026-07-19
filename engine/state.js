@@ -41,7 +41,10 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
 
 export function createGameState(opts = {}) {
   const planetId = opts.planetId || "ferros";
-  const map = generateMap(planetId, opts.rng || Math.random);
+  const map = generateMap(planetId, opts.rng || Math.random, {
+    sizeMult: opts.sizeMult || 1,
+    resourceMult: opts.resourceMult || 1,
+  });
 
   const state = {
     time: 0,
@@ -59,6 +62,8 @@ export function createGameState(opts = {}) {
     fog: createFog(map),    // the player's fog of war — see engine/fog.js
     fogAI: createFog(map),  // the AI's own fog: it must scout for intel too, it's no longer omniscient (see engine/ai.js)
     aiScoutId: null,        // the unit currently out scouting for the AI, if any
+    aiApm: opts.aiApm ?? null,   // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
+    aiActionBudget: 0,      // accumulated action credits (see engine/ai.js's accrueActionBudget)
     aiArchetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
     events: [],              // sim events this tick (unitSpawned/attackHit/entityKilled/buildingComplete) — pushed by
                               // production.js/combat.js, drained and turned into sound by main.js each render frame
