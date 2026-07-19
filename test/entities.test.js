@@ -38,6 +38,14 @@ test("committedDoctrine reports the chosen path, and is null before any research
   assert.equal(committedDoctrine(s, "player"), "bulwark", "a Bulwark upgrade commits the Bulwark doctrine");
 });
 
+test("the tech tree extends past the Foundry: Arsenal (needs Foundry) -> Dreadnought", () => {
+  assert.deepEqual(BUILDINGS.arsenal.requires, ["foundry"], "Arsenal is gated behind the Foundry");
+  assert.deepEqual(UNITS.dreadnought.requires, ["arsenal"], "the Dreadnought is gated behind the Arsenal");
+  assert.deepEqual(Object.keys(BUILDINGS.arsenal.cost), ["ore"], "Arsenal is ore-only so the path stays reachable everywhere");
+  assert.ok(!UNITS.dreadnought.bonusVs, "the Dreadnought sits OUTSIDE the rock-paper-scissors triangle");
+  assert.ok(BUILDINGS.barracks.produces.includes("dreadnought"), "the Barracks trains it once unlocked");
+});
+
 test("prereqsMet: no requires is always met; a building token needs a COMPLETED building", () => {
   assert.equal(prereqsMet(stubState(), "player", UNITS.skiff), true, "no requires -> available");
   // Lancer needs a foundry.

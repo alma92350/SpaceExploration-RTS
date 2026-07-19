@@ -47,6 +47,22 @@ function beats(attacker, defender) {
   return r.a > r.b;
 }
 
+// A supply-parity auto-battle (army size scaled by supply cost), for judging a
+// capital unit whose value is per-supply in a supply-capped late game, not per-cost.
+function supplyDuel(typeA, typeB, supply = 20, maxTicks = 3000) {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear(); state.buildings.clear();
+  place(state, typeA, "player", Math.round(supply / UNITS[typeA].supplyCost), 600, 460, 980, 520);
+  place(state, typeB, "ai", Math.round(supply / UNITS[typeB].supplyCost), 980, 460, 600, 520);
+  for (let t = 0; t < maxTicks; t++) {
+    state.unitGrid = buildUnitGrid(state);
+    for (const u of [...state.units.values()]) updateCombat(state, u, 0.1);
+    applySeparation(state, 0.1);
+    if (!aliveCount(state, "player") || !aliveCount(state, "ai")) break;
+  }
+  return { a: aliveCount(state, "player"), b: aliveCount(state, "ai") };
+}
+
 test("the rock-paper-scissors triangle holds in actual auto-battle", () => {
   assert.ok(beats("bastion", "skiff"), "Bastion should beat Skiff");
   assert.ok(beats("skiff", "lancer"), "Skiff should beat Lancer");
@@ -83,6 +99,17 @@ function cracksBase(type, turrets, budget = 800, maxTicks = 6000) {
   }
   return !state.buildings.has(cc.id);
 }
+
+test("the Dreadnought is a supply-efficient capital unit, but hard-countered by mass Skiff", () => {
+  // Its value is per-supply in a supply-capped late game: it out-values the
+  // heavier line units at equal supply...
+  assert.ok(supplyDuel("dreadnought", "bastion").a > supplyDuel("dreadnought", "bastion").b, "beats Bastion per supply");
+  assert.ok(supplyDuel("dreadnought", "lancer").a > supplyDuel("dreadnought", "lancer").b, "beats Lancer per supply");
+  // ...but a cheap Skiff swarm overwhelms the capital ship, so it can't be
+  // massed uncounterably and light units stay relevant.
+  const vsSkiff = supplyDuel("dreadnought", "skiff");
+  assert.ok(vsSkiff.b > vsSkiff.a, "mass Skiff overwhelms it — its counter");
+});
 
 test("the Breacher is the turtle-breaker: it cracks a turret line that stops the line units", () => {
   // It out-ranges the Sentinel Turret (150 vs 130), so it razes a fortified base

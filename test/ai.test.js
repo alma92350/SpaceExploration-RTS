@@ -13,7 +13,7 @@ test("the AI cycles through its archetype's exact unit mix instead of pure Skiff
   const mix = state.aiArchetype.unitMix;
   const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
   state.buildings.set(barracks.id, barracks);
-  stockedFoundry(state);   // Tier-2 units unlocked so the full mix cycles (this drives the mix directly, not the AI's tech-up)
+  stockedFoundry(state); stockedArsenal(state);   // Tier-2 + Tier-3 unlocked so the full mix cycles (drives the mix directly, not the AI's tech-up)
   // Fund every commodity: ferros has radioactive nodes, so effectiveMix keeps
   // the economist's Breacher entry — funding only ore would stall the cycle on
   // it (queueProduction fails for lack of radioactives, and the AI retries the
@@ -160,6 +160,13 @@ function stockedFoundry(state) {
   state.buildings.set(f.id, f);
   return f;
 }
+// A completed Arsenal too, so the Tier-3 Dreadnought is unlocked when a fixture
+// drives the full mix directly.
+function stockedArsenal(state) {
+  const a = makeBuilding("arsenal", "ai", state.map.bases.ai.x, state.map.bases.ai.y + 180);
+  state.buildings.set(a.id, a);
+  return a;
+}
 function fundAll(state) {
   Object.assign(state.players.ai.resources, { ore: 100000, crystals: 100000, radioactives: 100000 });
 }
@@ -187,7 +194,7 @@ test("two completed Barracks drain a single shared mix cycle", () => {
   const mix = state.aiArchetype.unitMix;   // ferros has every commodity, so the full economist mix survives
   const b1 = stockedBarracks(state, -100);
   const b2 = stockedBarracks(state, 100);
-  stockedFoundry(state);   // unlock Tier-2 so the full shared cycle (incl. lancer/breacher) is what's under test
+  stockedFoundry(state); stockedArsenal(state);   // unlock Tier-2 + Tier-3 so the full shared cycle is what's under test
 
   const built = [];
   const rounds = mix.length * 2;

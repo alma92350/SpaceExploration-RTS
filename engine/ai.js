@@ -175,16 +175,22 @@ export function runAI(state, dt) {
   // at full flow while it builds. Zero for a rusher/legacy profile that doesn't
   // want a Foundry, so their army is never gated.
   const foundryReserve = wantsFoundry && !hasFoundry ? BUILDINGS.foundry.cost.ore : 0;
-  // Once the Foundry is up (or not wanted), a macro archetype likewise banks for
-  // a Refinery so it actually teches its doctrine instead of letting the ungated
-  // unit stream eat every spare bit of ore — the same reserve trick, sequenced
-  // AFTER the Foundry so units only ever pause for one investment at a time.
-  // Rushers leave wantsRefinery unset (their game resolves before an upgrade
-  // would pay off), so their army is never gated.
   const foundryHandled = !wantsFoundry || hasFoundry;
-  // ...but not while banking for an expansion (higher priority) — the Refinery
-  // couldn't be paid for during that window anyway, so pausing units for it
-  // would just waste the pause.
+
+  // ARSENAL — the Tier-3 gate, one step past the Foundry (unlocks the
+  // Dreadnought). Built OPPORTUNISTICALLY from genuine surplus (no reserve
+  // pausing the army for it), so it stays the Economist's late out-scaling
+  // flourish without slowing its core timing — the deep Tier-3 path is primarily
+  // a strategic option for the human player. Only archetypes whose mix wants a
+  // Tier-3 unit build it.
+  const wantsArsenal = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("arsenal"));
+  const hasArsenal = buildings.some(b => b.type === "arsenal");
+  if (wantsArsenal && !hasArsenal && foundryHandled && barracks && !barracks.constructing && cc && workers.length > 0
+      && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, oreReserve + BARRACKS_BUFFER)) {
+    const spot = findPlacement(state, "arsenal", cc.x - 90, cc.y - 30);
+    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "arsenal", spot.x, spot.y)) spend(state);
+  }
+  // Refinery reserve, sequenced after the Foundry (Arsenal is unreserved above).
   const refineryReserve = archetype.wantsRefinery && !refinery && foundryHandled && oreReserve === 0
     ? BUILDINGS.refinery.cost.ore : 0;
 

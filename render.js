@@ -507,6 +507,7 @@ function drawUnits(ctx, state, view) {
     else if (u.type === "bastion") drawBastion(ctx, u, def, color);
     else if (u.type === "lancer") drawLancer(ctx, u, def, color);
     else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
+    else if (u.type === "dreadnought") drawDreadnought(ctx, u, def, color);
 
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
@@ -710,6 +711,49 @@ function drawBreacher(ctx, u, def, color) {
   ctx.beginPath();
   ctx.arc(tipX, tipY, r * 0.16, 0, Math.PI * 2);
   ctx.fill();
+}
+
+// Dreadnought — the Tier-3 capital ship: a big, broad, armoured hull with a
+// spinal cannon, four side batteries and a bright command bridge, so it reads
+// as a fortress that dwarfs the line units even at a glance.
+function drawDreadnought(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.5, W = r * 1.15;
+  const cx = u.x, cy = u.y;
+
+  // Broad angular hull.
+  pathOriented(ctx, cx, cy, angle, [
+    [L, 0],
+    [L * 0.55, W],
+    [-L * 0.65, W],
+    [-L, W * 0.5],
+    [-L, -W * 0.5],
+    [-L * 0.65, -W],
+    [L * 0.55, -W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  // Spinal cannon down the centreline.
+  ctx.strokeStyle = shade(color, -30);
+  ctx.lineWidth = r * 0.35;
+  const [sx1, sy1] = toWorld(cx, cy, angle, -L * 0.4, 0);
+  const [sx2, sy2] = toWorld(cx, cy, angle, L * 1.35, 0);
+  ctx.beginPath(); ctx.moveTo(sx1, sy1); ctx.lineTo(sx2, sy2); ctx.stroke();
+
+  // Four side battery pods.
+  ctx.fillStyle = shade(color, -25);
+  for (const side of [1, -1]) {
+    for (const fx of [0.15, -0.5]) {
+      const [px, py] = toWorld(cx, cy, angle, L * fx, side * W * 0.8);
+      ctx.beginPath(); ctx.arc(px, py, r * 0.26, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Command bridge glow.
+  ctx.fillStyle = DETAIL;
+  const [bx, by] = toWorld(cx, cy, angle, -L * 0.25, 0);
+  ctx.beginPath(); ctx.arc(bx, by, r * 0.32, 0, Math.PI * 2); ctx.fill();
 }
 
 function updateFacing(unit) {

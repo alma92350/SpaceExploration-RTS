@@ -28,7 +28,7 @@ export const ARCHETYPES = {
     attackTimeout: 200,    // ...and is patient about it.
     // Its out-scale identity spelled out: siege in the mix, proactive
     // expansion, two barracks feeding one cycle, and two turrets to hold home.
-    unitMix: ["skiff", "skiff", "bastion", "skiff", "lancer", "bastion", "breacher"],
+    unitMix: ["skiff", "skiff", "bastion", "skiff", "lancer", "bastion", "breacher", "dreadnought"],
     turretCount: 2,
     maxBarracks: 2,
     expandWhenNodesBelow: 0.4,   // grabs a second field while the first still has 40% left

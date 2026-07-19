@@ -536,7 +536,7 @@ function rebuildSelectionPanel(sel) {
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
   if (barracks) {
-    for (const t of ["skiff", "bastion", "lancer", "breacher"]) {
+    for (const t of ["skiff", "bastion", "lancer", "breacher", "dreadnought"]) {
       const def = UNITS[t];
       const locked = !prereqsMet(state, "player", def);
       panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
@@ -572,7 +572,7 @@ function rebuildSelectionPanel(sel) {
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
-    for (const t of ["barracks", "foundry", "refinery", "turret", "habitat", "command"]) {
+    for (const t of ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"]) {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);
       panelEl.appendChild(makeButton(`Build ${def.name} (${costText(def.cost)})`,

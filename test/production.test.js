@@ -147,6 +147,21 @@ test("a Tier-2 unit can't be queued without its tech building; a completed Found
   assert.equal(queueProduction(state, barracks.id, "lancer"), true, "with the Foundry up, the Lancer unlocks");
 });
 
+test("the Tier-3 Dreadnought needs the Arsenal (which needs the Foundry)", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  Object.assign(state.players.player.resources, { ore: 3000, radioactives: 3000 });
+
+  withFoundry(state);   // Tier-2 unlocked, but not Tier-3
+  assert.equal(queueProduction(state, barracks.id, "dreadnought"), false, "no Arsenal -> Dreadnought locked");
+  assert.equal(queueProduction(state, barracks.id, "lancer"), true, "the Tier-2 Lancer is fine");
+
+  const ars = makeBuilding("arsenal", "player", 640, 560);   // completed Arsenal
+  state.buildings.set(ars.id, ars);
+  assert.equal(queueProduction(state, barracks.id, "dreadnought"), true, "with the Arsenal up, the Dreadnought unlocks");
+});
+
 test("a Breacher can't be built on ore alone with no radioactives banked", () => {
   const state = createGameState({ planetId: "ferros" });
   const barracks = makeBuilding("barracks", "player", 500, 500);

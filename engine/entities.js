@@ -22,7 +22,7 @@ export const BUILDINGS = {
   barracks: {
     id: "barracks", name: "Barracks", hp: 500, radius: 20,
     cost: { ore: 150 }, buildTime: 20,
-    produces: ["skiff", "bastion", "lancer", "breacher"],
+    produces: ["skiff", "bastion", "lancer", "breacher", "dreadnought"],
     sight: 150,
   },
   refinery: {
@@ -60,6 +60,14 @@ export const BUILDINGS = {
     // so the Tier-2 units stay reachable on every world (ore is guaranteed near
     // every base) rather than being walled off on a crystal-poor map.
     requires: ["barracks"],
+  },
+  arsenal: {
+    id: "arsenal", name: "Arsenal", hp: 550, radius: 18,
+    cost: { ore: 220 }, buildTime: 26, sight: 140,
+    // The Tier-3 gate, one step past the Foundry: unlocks the Dreadnought
+    // capital unit. Also a pure gate (no `produces`), ore-only so the tech path
+    // stays reachable on every world.
+    requires: ["foundry"],
   },
 };
 
@@ -184,6 +192,19 @@ export const UNITS = {
     bonusVsBuildings: 30,
     prefersBuildings: true,
     requires: ["foundry"],   // Tier-2 siege: a tech investment, not a turn-one option
+  },
+  dreadnought: {
+    id: "dreadnought", name: "Dreadnought", hp: 340, radius: 12, speed: 42,
+    cost: { ore: 240, radioactives: 100 }, buildTime: 30, supplyCost: 4,
+    role: "combat", attack: 26, range: 68, cooldown: 1.6,
+    sight: 190, aggroRange: 150,
+    // Tier-3 capital platform: tanky, long-reaching, heavy-hitting — a real
+    // power spike you tech to (Barracks -> Foundry -> Arsenal). Deliberately
+    // OUTSIDE the rock-paper-scissors triangle, like the Breacher: no bonusVs
+    // any type and nothing bonuses against it, and its steep cost + 4 supply
+    // mean cheaper massed units still trade cost-effectively into it — so it
+    // anchors an army rather than hard-countering it.
+    requires: ["arsenal"],
   },
 };
 
