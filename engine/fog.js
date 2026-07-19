@@ -42,6 +42,15 @@ export function isExploredAt(fog, wx, wy) {
   return inBounds(fog, cx, cy) && fog.explored[cy * fog.cols + cx] === 1;
 }
 
+// Ordinary charted deposits are always known; a hidden cache (map.js) only
+// exists for the player once they've scouted its cell. The permanent explored
+// memory doubles as the discovery record, so a found cache stays on the map
+// even after the scout moves on. Used by render/minimap/input alike so what
+// shows, what the minimap dots, and what a right-click can target all agree.
+export function isNodeDiscovered(fog, node) {
+  return !node.hidden || isExploredAt(fog, node.x, node.y);
+}
+
 function reveal(fog, x, y, sight) {
   const { cx, cy } = cellOf(fog, x, y);
   const reach = Math.ceil(sight / FOG_CELL_SIZE);

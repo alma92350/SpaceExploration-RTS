@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createFog, updateFog, isVisibleAt, isExploredAt, FOG_CELL_SIZE } from "../engine/fog.js";
+import { createFog, updateFog, isVisibleAt, isExploredAt, isNodeDiscovered, FOG_CELL_SIZE } from "../engine/fog.js";
 import { makeUnit, makeBuilding } from "../engine/state.js";
 
 function mapStub(width = 800, height = 600) {
@@ -74,6 +74,26 @@ test("cells outside the map bounds are neither visible nor explored, not a crash
 
 test("FOG_CELL_SIZE is a sane positive grid resolution", () => {
   assert.ok(FOG_CELL_SIZE > 0);
+});
+
+test("a charted deposit is always discovered; a hidden cache only after its cell is scouted", () => {
+  const map = mapStub();
+  const fog = createFog(map);
+  const charted = { com: "ore", x: 400, y: 300 };            // an ordinary surface node
+  const cache = { com: "crystals", x: 400, y: 300, hidden: true };
+
+  assert.equal(isNodeDiscovered(fog, charted), true, "surface deposits are known from the start");
+  assert.equal(isNodeDiscovered(fog, cache), false, "a hidden cache stays undiscovered until scouted");
+
+  // Send a unit to that spot; once its cell is explored the cache is revealed
+  // — and stays revealed after the scout leaves (explored memory is permanent).
+  const worker = makeUnit("worker", "player", 400, 300);
+  updateFog({ map, units: new Map([[worker.id, worker]]), buildings: new Map() }, fog, "player");
+  assert.equal(isNodeDiscovered(fog, cache), true, "scouting its cell discovers the cache");
+
+  worker.x = 400 + 1000;
+  updateFog({ map, units: new Map([[worker.id, worker]]), buildings: new Map() }, fog, "player");
+  assert.equal(isNodeDiscovered(fog, cache), true, "and it stays discovered after the scout moves on");
 });
 
 test("a planet sight modifier shrinks how far a unit reveals fog", () => {

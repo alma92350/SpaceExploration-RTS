@@ -7,7 +7,7 @@
 
 "use strict";
 
-import { isVisibleAt, FOG_CELL_SIZE } from "./engine/fog.js";
+import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 
 export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH) {
   const { map } = state;
@@ -35,6 +35,7 @@ export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH) 
   ctx.globalAlpha = 0.7;
   for (const n of map.nodes) {
     if (n.amount <= 0) continue;
+    if (!isNodeDiscovered(fog, n)) continue;   // undiscovered caches don't dot the minimap either
     ctx.fillRect(n.x * sx - 1, n.y * sy - 1, 2, 2);
   }
   ctx.globalAlpha = 1;

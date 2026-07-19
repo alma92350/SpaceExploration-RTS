@@ -10,7 +10,7 @@
 
 import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally } from "./engine/commands.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
-import { isVisibleAt } from "./engine/fog.js";
+import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera } from "./camera.js";
 
 const CLICK_THRESHOLD = 4;
@@ -57,7 +57,8 @@ export function attachInput(canvas, state, onChange) {
   }
 
   function nodeAt(x, y) {
-    return state.map.nodes.find(n => n.amount > 0 && Math.hypot(n.x - x, n.y - y) <= NODE_PICK_RADIUS) || null;
+    return state.map.nodes.find(n => n.amount > 0 && isNodeDiscovered(state.fog, n)
+      && Math.hypot(n.x - x, n.y - y) <= NODE_PICK_RADIUS) || null;
   }
 
   canvas.addEventListener("mousedown", e => {

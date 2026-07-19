@@ -82,9 +82,40 @@ export function generateMap(planetId = "ferros", rng = Math.random) {
     }
   });
 
+  // Hidden resource caches: extra deposits the initial survey missed, out in
+  // the contested middle and along the vertical extremes, well away from
+  // either base. They stay invisible until a unit scouts their cell — the
+  // fog's permanent "explored" memory is the discovery record (see fog.js's
+  // isNodeDiscovered), so pushing out to explore is rewarded with resources,
+  // often the crystals or radioactives a world's surface deposits lack. Added
+  // AFTER the ore guarantee (so a hidden cache can never satisfy it and rob a
+  // no-ore world of its near-base seam) and before resolveNodeOverlaps, so
+  // they get spread apart like everything else. Fixed positions — the find is
+  // gated by fog, not by placement luck — mirrored left/right for fairness.
+  const cacheAmount = Math.round(CACHE_BASE_AMOUNT * (modifiers.nodeAmountMult || 1));
+  for (const [cx, cy, com, mirror] of HIDDEN_CACHES) {
+    nodes.push({ id: `n${nid++}`, com, amount: cacheAmount, max: cacheAmount, x: cx, y: cy, hidden: true });
+    if (mirror) nodes.push({ id: `n${nid++}`, com, amount: cacheAmount, max: cacheAmount, x: MAP_WIDTH - cx, y: cy, hidden: true });
+  }
+
   resolveNodeOverlaps(nodes);
   return { planet, width: MAP_WIDTH, height: MAP_HEIGHT, bases, nodes, modifiers };
 }
+
+// Scattered hidden caches, the same on every world (the reward for scouting is
+// baked in regardless of the planet's surface economy). [x, y, commodity,
+// mirror?]: mirror pairs the spot across the map's vertical centerline for
+// fairness; centerline spots (x = MAP_WIDTH/2) are left single (equidistant
+// from both bases). All sit clear of the base-side deposit clusters (~x 320-480
+// and 1120-1280), out where you have to explore to find them.
+const CACHE_BASE_AMOUNT = 360;   // ~0.6x a normal 600 cluster — a real bonus, not a second economy
+const HIDDEN_CACHES = [
+  [600, 200, "crystals",     true],   // upper flanks
+  [600, 800, "radioactives", true],   // lower flanks
+  [700, 500, "ore",          true],   // the contested centre lane
+  [800, 150, "radioactives", false],  // top centre, equidistant
+  [800, 850, "crystals",     false],  // bottom centre, equidistant
+];
 
 // Each commodity picks its cluster spots independently, so two different
 // deposit types can land on (or right next to) the same point — same

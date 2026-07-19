@@ -333,17 +333,20 @@ function canAffordKeeping(resources, cost, oreReserve) {
 }
 
 // The archetype's unit mix with entries this map can never pay for dropped —
-// a cost commodity that no node on the map produces (Vesper has no
+// a cost commodity no SURFACE deposit produces (Vesper's surface has no
 // radioactives, so its Breacher entry is skipped, leaving today's exact
-// three-unit cycle). EXISTENCE, not remaining amount, is checked, so the
-// surviving cycle is constant for the whole match (nodes drain, they never
-// vanish) and the sequence stays deterministic. Falls back to plain Skiffs if
-// the filter empties the mix entirely.
+// three-unit cycle). Hidden caches are deliberately excluded: they can hold a
+// commodity the surface lacks, but they're far, contested, and may never be
+// mined, so planning the whole cycle around one would just re-stall the mix on
+// a unit the AI has no steady income for. Surface EXISTENCE, not remaining
+// amount, is checked, so the surviving cycle is constant for the whole match
+// (nodes drain, they never vanish) and the sequence stays deterministic. Falls
+// back to plain Skiffs if the filter empties the mix entirely.
 function effectiveMix(state, archetype) {
   const mix = (archetype.unitMix || []).filter(t =>
     UNITS[t]
     && BUILDINGS.barracks.produces?.includes(t)
-    && Object.keys(UNITS[t].cost).every(com => state.map.nodes.some(n => n.com === com)));
+    && Object.keys(UNITS[t].cost).every(com => state.map.nodes.some(n => n.com === com && !n.hidden)));
   return mix.length ? mix : ["skiff"];
 }
 

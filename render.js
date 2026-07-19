@@ -15,7 +15,7 @@
 
 import { COM } from "./data.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
-import { isVisibleAt, FOG_CELL_SIZE } from "./engine/fog.js";
+import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects } from "./effects.js";
 
@@ -138,6 +138,7 @@ function pathOriented(ctx, cx, cy, angle, localPts) {
 function drawNodes(ctx, state) {
   for (const n of state.map.nodes) {
     if (n.amount <= 0) continue;
+    if (!isNodeDiscovered(state.fog, n)) continue;   // a hidden cache stays dark until scouted
     const r = 7 + 9 * (n.amount / n.max);
     const extract = COM[n.com]?.extract;
     if (extract === "forage") drawOrganicNode(ctx, n, r);

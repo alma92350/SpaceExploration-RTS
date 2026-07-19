@@ -14,9 +14,9 @@ function lcg(seed) {
   };
 }
 
-test("generateMap only scatters nodes for commodities the planet actually deposits", () => {
+test("generateMap only scatters surface nodes for commodities the planet actually deposits", () => {
   const map = generateMap("ferros", () => 0.5);
-  const coms = new Set(map.nodes.map(n => n.com));
+  const coms = new Set(map.nodes.filter(n => !n.hidden).map(n => n.com));   // hidden caches can add others
   assert.deepEqual([...coms].sort(), ["crystals", "ore", "radioactives"]);
 });
 
@@ -92,7 +92,7 @@ test("every charted world yields ore within reach of both bases", () => {
 
 test("the ore guarantee never fires on an ore-bearing world: ferros keeps its deposit-table node count", () => {
   const map = generateMap("ferros", () => 0.5);
-  const oreNodes = map.nodes.filter(n => n.com === "ore");
+  const oreNodes = map.nodes.filter(n => n.com === "ore" && !n.hidden);   // surface ore only; caches are separate
   assert.equal(oreNodes.length, Math.round(2.0 * 1.5) * 2);   // ferros' ore yieldMult drives exactly 3 mirrored clusters
 });
 
@@ -109,7 +109,7 @@ test("generateMap attaches the planet's modifiers (empty for the unmodified worl
 
 test("helix's dense belt adds one extra crystal cluster per side, on top of its deposit table", () => {
   const map = generateMap("helix", () => 0.5);
-  const crystals = map.nodes.filter(n => n.com === "crystals");
+  const crystals = map.nodes.filter(n => n.com === "crystals" && !n.hidden);   // surface crystals only
   const left = crystals.filter(n => n.x < MAP_WIDTH / 2).length;
   const right = crystals.filter(n => n.x >= MAP_WIDTH / 2).length;
   // helix crystals yieldMult 1.4 -> round(1.4 * 1.5) = 2 deposit clusters per side, + 1 belt cluster.
@@ -119,13 +119,37 @@ test("helix's dense belt adds one extra crystal cluster per side, on top of its 
 
 test("oort's rich frontier makes its deposits hold 30% more", () => {
   const map = generateMap("oort", () => 0.5);
-  const oreNodes = map.nodes.filter(n => n.com === "ore");
+  const oreNodes = map.nodes.filter(n => n.com === "ore" && !n.hidden);   // surface ore; hidden caches size differently
   assert.ok(oreNodes.length > 0);
   // oort deposits ore at 1.2, so the ore guarantee never fires here — every
-  // ore node is a deposit-table node scaled by the 1.3 nodeAmountMult.
+  // surface ore node is a deposit-table node scaled by the 1.3 nodeAmountMult.
   for (const n of oreNodes) {
     assert.equal(n.max, Math.round(600 * 1.2 * 1.3));
   }
+});
+
+test("every world seeds hidden caches out in the field, away from both bases", () => {
+  for (const id of ["ferros", "korrath", "glacius"]) {
+    const map = generateMap(id, () => 0.5);
+    const caches = map.nodes.filter(n => n.hidden);
+    assert.ok(caches.length >= 6, `${id}: should scatter several discoverable caches`);
+    for (const c of caches) {
+      assert.ok(c.amount > 0 && c.max > 0, "a cache holds a real amount");
+      assert.ok(["ore", "crystals", "radioactives"].includes(c.com), "caches hold spendable commodities");
+      for (const base of Object.values(map.bases)) {
+        assert.ok(Math.hypot(c.x - base.x, c.y - base.y) > 300, `${id}: a cache must sit out where you have to explore for it`);
+      }
+    }
+  }
+});
+
+test("hidden caches can hold a commodity the planet's surface lacks — exploration unlocks it", () => {
+  // Korrath deposits no crystals on the surface (so no turrets/plating without them).
+  const map = generateMap("korrath", () => 0.5);
+  const surfaceCrystals = map.nodes.filter(n => n.com === "crystals" && !n.hidden);
+  const cacheCrystals = map.nodes.filter(n => n.com === "crystals" && n.hidden);
+  assert.equal(surfaceCrystals.length, 0, "korrath's surface truly has no crystals");
+  assert.ok(cacheCrystals.length > 0, "but a scouted cache can still yield them");
 });
 
 test("every modified world is a real planet with a nonempty label, and has an archetype", () => {
