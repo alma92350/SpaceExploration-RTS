@@ -16,7 +16,7 @@
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS, BUILDINGS, UPGRADES } from "./entities.js";
+import { UNITS, BUILDINGS, upgradeMult } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
 import { sampleTerrain, sideMod } from "./map.js";
@@ -191,18 +191,10 @@ function attackDamage(state, unit, def, target) {
   let dmg = def.attack + bonus + structureBonus;
 
   // Every researched Assault upgrade (attacker side) stacks its damage-dealt
-  // multiplier; every Bulwark upgrade (defender side) stacks its damage-taken
-  // multiplier. Data-driven, so the doctrine tiers just work.
-  const attackerUpgrades = state.players[unit.owner].upgrades;
-  for (const id of Object.keys(attackerUpgrades)) {
-    if (attackerUpgrades[id] && UPGRADES[id]?.damageDealtMult) dmg *= UPGRADES[id].damageDealtMult;
-  }
-  const defenderUpgrades = state.players[target.owner]?.upgrades;
-  if (defenderUpgrades) {
-    for (const id of Object.keys(defenderUpgrades)) {
-      if (defenderUpgrades[id] && UPGRADES[id]?.damageTakenMult) dmg *= UPGRADES[id].damageTakenMult;
-    }
-  }
+  // multiplier; every Bulwark upgrade (defender side) its damage-taken multiplier.
+  // Data-driven via upgradeMult, so the doctrine tiers just work.
+  dmg *= upgradeMult(state.players[unit.owner].upgrades, "damageDealtMult");
+  dmg *= upgradeMult(state.players[target.owner]?.upgrades, "damageTakenMult");
 
   // A positional edge, not a counter: an attacker firing from high ground hits
   // for a flat bonus (terrain combatMult). Situational and symmetric, so the RPS

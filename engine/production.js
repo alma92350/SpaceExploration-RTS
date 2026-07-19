@@ -4,7 +4,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { sideMod } from "./map.js";
@@ -40,8 +40,10 @@ export function updateBuildingConstruction(state, building, dt) {
     return;
   }
   // A world's build-time modifier speeds (or slows) construction; per-side on an
-  // asymmetric world (sideMod reads the default 1 for map-less test states).
-  const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult");
+  // asymmetric world (sideMod reads the default 1 for map-less test states). The
+  // Logistics doctrine's production-speed upgrade compounds on top.
+  const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult")
+    * upgradeMult(state.players?.[building.owner]?.upgrades, "produceTimeMult");
   // The founding worker alone still builds at the original pace even if
   // it wanders off or dies — extra workers on-site are a bonus, not a
   // requirement.
@@ -67,8 +69,10 @@ export function updateProductionQueue(state, building, dt) {
   const job = building.queue[0];
   const def = UNITS[job.unitType];
   // Same build-time modifier applies to unit production (a factory world trains
-  // faster too), per-side on an asymmetric world.
-  const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult");
+  // faster too), per-side on an asymmetric world — and the same Logistics
+  // production-speed upgrade compounds here too.
+  const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult")
+    * upgradeMult(state.players?.[building.owner]?.upgrades, "produceTimeMult");
   job.progress += dt / bt;
   if (job.progress >= 1) {
     building.queue.shift();

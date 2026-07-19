@@ -444,3 +444,27 @@ test("a Tier-2 upgrade needs its Tier-1 first", () => {
   assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), true, "research Tier-1...");
   assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), true, "...now Tier-2 unlocks");
 });
+
+test("Logistics locks the combat doctrines: after Logistics Network, an Assault upgrade is refused", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const refinery = makeBuilding("refinery", "player", 500, 500);
+  state.buildings.set(refinery.id, refinery);
+  state.players.player.resources = { ore: 1000, crystals: 1000, radioactives: 1000 };
+
+  assert.equal(researchUpgrade(state, refinery.id, "logisticsNetwork"), true);
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), false, "committed to Logistics -> Assault locked");
+  assert.equal(researchUpgrade(state, refinery.id, "rapidFabrication"), true, "but its own Tier-2 is allowed");
+});
+
+test("Rapid Fabrication (Logistics T2) cuts production time", () => {
+  const timeToBuild = withUpgrade => {
+    const state = createGameState({ planetId: "ferros" });
+    if (withUpgrade) Object.assign(state.players.player.upgrades, { logisticsNetwork: true, rapidFabrication: true });
+    const cc = commandCenterOf(state, "player");
+    cc.queue.push({ unitType: "worker", progress: 0 });
+    let t = 0;
+    while (cc.queue.length && t < 100) { updateProductionQueue(state, cc, 0.1); t += 0.1; }
+    return t;
+  };
+  assert.ok(timeToBuild(true) < timeToBuild(false), "a worker builds faster with Rapid Fabrication");
+});

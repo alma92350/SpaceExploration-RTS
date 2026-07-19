@@ -133,7 +133,36 @@ export const UPGRADES = {
     cost: { crystals: 200, ore: 120 }, requires: ["reinforcedPlating"],
     desc: "-12% more damage taken (stacks with Reinforced Plating)", damageTakenMult: 0.88,
   },
+  // A third doctrine that isn't about the fight at all: Logistics trades combat
+  // upgrades for economy and tempo. Committing to it locks Assault AND Bulwark
+  // (and vice-versa) through the same committedDoctrine machinery, so "out-macro
+  // them" is a real, mutually-exclusive plan against "out-fight them" — not a
+  // free third buy. gatherYieldMult/produceTimeMult are read by gather.js and
+  // production.js the same data-driven way the damage mults are read by combat.js.
+  logisticsNetwork: {
+    id: "logisticsNetwork", name: "Logistics Network", doctrine: "logistics", tier: 1,
+    cost: { crystals: 140 }, desc: "+25% resource yield from every haul", gatherYieldMult: 1.25,
+  },
+  rapidFabrication: {
+    id: "rapidFabrication", name: "Rapid Fabrication", doctrine: "logistics", tier: 2,
+    cost: { crystals: 160, ore: 120 }, requires: ["logisticsNetwork"],
+    desc: "-20% unit & building production time", produceTimeMult: 0.8,
+  },
 };
+
+// Product of a multiplier field across a player's RESEARCHED upgrades (1 when
+// none apply) — the single place combat/gather/production read upgrade effects.
+// A new upgrade is then pure data: give it a field, and its multiplier is picked
+// up wherever that field is consumed (damageDealtMult, damageTakenMult,
+// gatherYieldMult, produceTimeMult, ...).
+export function upgradeMult(upgrades, field) {
+  let m = 1;
+  if (!upgrades) return m;
+  for (const id of Object.keys(upgrades)) {
+    if (upgrades[id] && UPGRADES[id] && UPGRADES[id][field]) m *= UPGRADES[id][field];
+  }
+  return m;
+}
 
 // The doctrine a player has committed to — the doctrine of any upgrade they've
 // researched — or null if they haven't picked one yet. Researching an upgrade of

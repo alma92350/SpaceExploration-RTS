@@ -164,3 +164,20 @@ test("a still-constructing Refinery is not yet a drop-off", () => {
   updateGather(state, worker, 0.05);
   assert.equal(state.players.player.resources.ore, before, "an unfinished Refinery banks nothing — the worker heads for the distant CC");
 });
+
+test("Logistics Network (+25% yield) banks more per haul", () => {
+  const bank = withUpgrade => {
+    const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+    if (withUpgrade) state.players.player.upgrades.logisticsNetwork = true;
+    const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+    const cc = [...state.buildings.values()].find(b => b.type === "command" && b.owner === "player");
+    worker.x = cc.x; worker.y = cc.y;                     // on the drop-off, so one tick deposits
+    worker.cargo = { com: "ore", qty: 10 };
+    worker.order = { type: "gather", nodeId: firstNode(state, "ore").id, phase: "toDrop" };
+    const before = state.players.player.resources.ore;
+    updateGather(state, worker, 0.05);
+    return state.players.player.resources.ore - before;
+  };
+  const base = bank(false), boosted = bank(true);
+  assert.ok(Math.abs(boosted - base * 1.25) < 1e-6, `+25% yield: ${boosted} vs ${base}`);
+});

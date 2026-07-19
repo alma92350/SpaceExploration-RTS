@@ -9,7 +9,7 @@
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS, isDropOff } from "./entities.js";
+import { UNITS, isDropOff, upgradeMult } from "./entities.js";
 import { sideMod } from "./map.js";
 
 const ORBIT_RADIUS = 16;   // workers ring the node instead of stacking on its exact center
@@ -79,8 +79,11 @@ export function updateGather(state, unit, dt) {
     if (dist <= DROP_REACH) {
       const player = state.players[unit.owner];
       // Per-side economy modifier for an asymmetric world (default 1 elsewhere):
-      // a richer claim banks more per haul.
-      const banked = unit.cargo.qty * sideMod(state, unit.owner, "gatherMult", 1);
+      // a richer claim banks more per haul. The Logistics doctrine's yield upgrade
+      // stacks on top (upgradeMult reads the researched upgrades).
+      const banked = unit.cargo.qty
+        * sideMod(state, unit.owner, "gatherMult", 1)
+        * upgradeMult(player.upgrades, "gatherYieldMult");
       player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + banked;
       unit.cargo.qty = 0;
       order.phase = node.amount > 0 ? "toNode" : null;

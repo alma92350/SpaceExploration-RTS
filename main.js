@@ -664,7 +664,7 @@ function rebuildSelectionPanel(sel) {
   if (refinery) {
     const upgrades = state.players.player.upgrades;
     const chosen = committedDoctrine(state, "player");   // null until the first research commits a doctrine
-    const label = { assault: "Assault", bulwark: "Bulwark" };
+    const label = { assault: "Assault", bulwark: "Bulwark", logistics: "Logistics" };
     Object.values(UPGRADES).forEach(u => {
       if (upgrades[u.id]) {
         const row = document.createElement("div");

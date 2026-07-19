@@ -20,15 +20,40 @@ test("the Tier-2 units are gated behind the Foundry; the Foundry behind the Barr
   assert.deepEqual(Object.keys(BUILDINGS.foundry.cost), ["ore"], "Foundry is ore-only so Tier-2 stays reachable everywhere");
 });
 
-test("upgrades form two mutually-exclusive doctrines of two tiers each", () => {
+test("upgrades form three mutually-exclusive doctrines of two tiers each", () => {
   assert.equal(UPGRADES.overchargedWeapons.doctrine, "assault");
   assert.equal(UPGRADES.overchargedCore.doctrine, "assault");
   assert.equal(UPGRADES.reinforcedPlating.doctrine, "bulwark");
   assert.equal(UPGRADES.reinforcedBulwark.doctrine, "bulwark");
+  assert.equal(UPGRADES.logisticsNetwork.doctrine, "logistics");
+  assert.equal(UPGRADES.rapidFabrication.doctrine, "logistics");
   assert.equal(UPGRADES.overchargedWeapons.tier, 1);
   assert.equal(UPGRADES.overchargedCore.tier, 2);
+  assert.equal(UPGRADES.logisticsNetwork.tier, 1);
+  assert.equal(UPGRADES.rapidFabrication.tier, 2);
   assert.deepEqual(UPGRADES.overchargedCore.requires, ["overchargedWeapons"], "T2 requires T1");
   assert.deepEqual(UPGRADES.reinforcedBulwark.requires, ["reinforcedPlating"]);
+  assert.deepEqual(UPGRADES.rapidFabrication.requires, ["logisticsNetwork"]);
+  // Each doctrine is exactly two tiers, and every tier-2 requires its tier-1.
+  const byDoctrine = {};
+  for (const u of Object.values(UPGRADES)) (byDoctrine[u.doctrine] ??= []).push(u);
+  assert.deepEqual(Object.keys(byDoctrine).sort(), ["assault", "bulwark", "logistics"]);
+  for (const ups of Object.values(byDoctrine)) assert.equal(ups.length, 2);
+});
+
+test("the Logistics doctrine is a macro path, not a combat one: economy + tempo, no damage mults", () => {
+  assert.equal(UPGRADES.logisticsNetwork.gatherYieldMult, 1.25, "T1 boosts haul yield");
+  assert.equal(UPGRADES.rapidFabrication.produceTimeMult, 0.8, "T2 cuts production time");
+  for (const id of ["logisticsNetwork", "rapidFabrication"]) {
+    assert.ok(!UPGRADES[id].damageDealtMult && !UPGRADES[id].damageTakenMult,
+      `${id} touches the economy, not the fight`);
+  }
+});
+
+test("committing to Logistics locks the combat doctrines, and vice-versa", () => {
+  assert.equal(committedDoctrine({ players: { player: { upgrades: {} } } }, "player"), null);
+  const s = { players: { player: { upgrades: { logisticsNetwork: true } } } };
+  assert.equal(committedDoctrine(s, "player"), "logistics", "a Logistics research commits the Logistics doctrine");
 });
 
 test("committedDoctrine reports the chosen path, and is null before any research", () => {
