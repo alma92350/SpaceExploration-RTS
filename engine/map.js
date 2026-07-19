@@ -223,15 +223,31 @@ export const PLANET_MODIFIERS = {
     // open central corridor — a soft choke on top of the world's global slow.
     terrain: [[0.5, 0.13, 0.34, 0.2, 1, false], [0.5, 0.87, 0.34, 0.2, 1, false]],
   },
-  nimbus:  { sightMult: 0.75,                label: "Storm bands: sight and aggro ranges 25% shorter" },
+  nimbus:  {
+    sightMult: 0.75, label: "Storm bands: sight 25% shorter; two high vantages rise above the murk",
+    // On a short-sight world, high ground (which extends sight) is doubly worth
+    // taking — a way to see over the storm. Two vantages, north and south of
+    // the midline, kept off the centre so neither base overlooks the field.
+    terrain: [[0.5, 0.28, 0.12, 0.14, 2, false], [0.5, 0.72, 0.12, 0.14, 2, false]],
+  },
   pyralis: {
     sightMult: 1.15, label: "Open dunes: long sightlines, and a central mesa worth holding",
     // High-ground mesa in the contested middle: extra sight and a damage edge
     // for whoever seizes it — a real objective on an otherwise open field.
     terrain: [[0.5, 0.5, 0.16, 0.26, 2, false]],
   },
-  helix:   { extraClusters: { crystals: 1 }, label: "Dense belt: one extra crystal cluster per side" },
-  oort:    { nodeAmountMult: 1.3,            label: "Rich frontier: deposits hold 30% more" },
+  helix:   {
+    extraClusters: { crystals: 1 }, label: "Dense belt: an extra crystal field per side, and a central ridge to hold",
+    // A crystalline high-ground ridge down the centreline — the contested spine
+    // of the belt, giving sight and a combat edge to whoever seizes the middle.
+    terrain: [[0.5, 0.5, 0.1, 0.38, 2, false]],
+  },
+  oort:    {
+    nodeAmountMult: 1.3, label: "Rich frontier: deposits hold 30% more, but rugged ground breaks up the flanks",
+    // Rugged rough ground on the flanks funnels the fight through the open
+    // centre — the price of the world's rich but broken frontier.
+    terrain: [[0.4, 0.28, 0.12, 0.18, 1, true], [0.4, 0.72, 0.12, 0.18, 1, true]],
+  },
   forge:   {
     buildTimeMult: 0.85, label: "Factory world: 15% faster construction; rough industrial sprawl midfield",
     // Scattered rough ground on the approach makes the flanks slow going and

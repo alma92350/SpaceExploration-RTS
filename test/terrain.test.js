@@ -21,6 +21,16 @@ test("the original worlds are all-open; a terrain world has non-open cells", () 
   assert.ok(p.type.some(c => c !== 0), "pyralis stamps a terrain feature");
 });
 
+test("six worlds carry terrain; the three original worlds stay open plains", () => {
+  const hasTerrain = id => generateMap(id, () => 0.5).terrain.type.some(c => c !== 0);
+  for (const id of ["glacius", "nimbus", "pyralis", "helix", "oort", "forge"]) {
+    assert.ok(hasTerrain(id), `${id} should carry terrain`);
+  }
+  for (const id of ["korrath", "ferros", "vesper"]) {
+    assert.ok(!hasTerrain(id), `${id} should stay open plains (clean baseline)`);
+  }
+});
+
 test("sampleTerrain returns OPEN out of bounds and for a missing grid", () => {
   const p = pyralis().terrain;
   assert.equal(sampleTerrain(p, -50, -50).name, "open");
