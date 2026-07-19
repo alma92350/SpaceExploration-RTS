@@ -13,13 +13,18 @@
 "use strict";
 
 let ctx = null;
+let master = null;
 let muted = false;
+let volume = 0.9;
 const lastPlayed = {};
 
 function ensureContext() {
   if (!ctx) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     ctx = new AudioContextClass();
+    master = ctx.createGain();
+    master.gain.value = volume;
+    master.connect(ctx.destination);   // one master bus so every effect shares a level (and future mixing)
   }
   if (ctx.state === "suspended") ctx.resume();
   return ctx;
@@ -37,6 +42,16 @@ export function isMuted() {
   return muted;
 }
 
+// 0..1 master level. Kept separate from mute so a future volume slider can
+// ride on top of the mute toggle.
+export function setVolume(v) {
+  volume = Math.max(0, Math.min(1, v));
+  if (master) master.gain.value = volume;
+}
+export function getVolume() {
+  return volume;
+}
+
 function throttled(key, minGapMs, fn) {
   const now = performance.now();
   if (lastPlayed[key] !== undefined && now - lastPlayed[key] < minGapMs) return;
@@ -44,42 +59,65 @@ function throttled(key, minGapMs, fn) {
   fn();
 }
 
-function tone({ freq, duration, type = "sine", gain = 0.15, sweep = 0 }) {
+// `pan` (-1 left .. +1 right) positions the sound in the stereo field, so you
+// can hear which flank a fight is on. `jitter` detunes the base frequency a
+// little each play, so repeated hits/spawns don't sound mechanically identical.
+function tone({ freq, duration, type = "sine", gain = 0.15, sweep = 0, pan = 0, jitter = 0.05 }) {
   if (muted) return;
   const audio = ensureContext();
   const osc = audio.createOscillator();
   const g = audio.createGain();
+  const f = freq * (1 + (Math.random() - 0.5) * 2 * jitter);
   osc.type = type;
-  osc.frequency.setValueAtTime(freq, audio.currentTime);
-  if (sweep) osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq + sweep), audio.currentTime + duration);
+  osc.frequency.setValueAtTime(f, audio.currentTime);
+  if (sweep) osc.frequency.exponentialRampToValueAtTime(Math.max(20, f + sweep), audio.currentTime + duration);
   g.gain.setValueAtTime(gain, audio.currentTime);
   g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + duration);
   osc.connect(g);
-  g.connect(audio.destination);
+  if (pan && audio.createStereoPanner) {
+    const p = audio.createStereoPanner();
+    p.pan.value = Math.max(-1, Math.min(1, pan));
+    g.connect(p);
+    p.connect(master);
+  } else {
+    g.connect(master);
+  }
   osc.start();
   osc.stop(audio.currentTime + duration);
 }
 
-export function playUnitSpawned() {
-  throttled("spawn", 120, () => tone({ freq: 520, duration: 0.1, type: "triangle", gain: 0.12, sweep: 200 }));
+export function playUnitSpawned(pan = 0) {
+  throttled("spawn", 120, () => tone({ freq: 520, duration: 0.1, type: "triangle", gain: 0.12, sweep: 200, pan }));
 }
 
-export function playAttackHit() {
-  throttled("hit", 70, () => tone({ freq: 180, duration: 0.06, type: "square", gain: 0.07, sweep: -60 }));
+export function playAttackHit(pan = 0) {
+  throttled("hit", 70, () => tone({ freq: 180, duration: 0.06, type: "square", gain: 0.07, sweep: -60, pan }));
 }
 
 // Heavier, lower thud for siege rounds landing on a structure — a deeper
 // "crump" the ear reads as bigger ordnance than the Skiff-scale attack hit.
-export function playHeavyHit() {
-  throttled("heavyHit", 120, () => tone({ freq: 90, duration: 0.14, type: "sawtooth", gain: 0.11, sweep: -40 }));
+export function playHeavyHit(pan = 0) {
+  throttled("heavyHit", 120, () => tone({ freq: 90, duration: 0.14, type: "sawtooth", gain: 0.11, sweep: -40, pan }));
 }
 
-export function playEntityKilled() {
-  throttled("kill", 150, () => tone({ freq: 140, duration: 0.28, type: "sawtooth", gain: 0.13, sweep: -100 }));
+export function playEntityKilled(pan = 0) {
+  throttled("kill", 150, () => tone({ freq: 140, duration: 0.28, type: "sawtooth", gain: 0.13, sweep: -100, pan }));
 }
 
-export function playBuildingComplete() {
-  throttled("building", 200, () => tone({ freq: 400, duration: 0.18, type: "sine", gain: 0.13, sweep: 260 }));
+export function playBuildingComplete(pan = 0) {
+  throttled("building", 200, () => tone({ freq: 400, duration: 0.18, type: "sine", gain: 0.13, sweep: 260, pan }));
+}
+
+// Short, bright acknowledgement that an order landed — the single most-missed
+// cue. Kept quiet and heavily throttled so a rapid string of orders reads as
+// one soft click, not a machine-gun.
+export function playOrder() {
+  throttled("order", 60, () => tone({ freq: 680, duration: 0.05, type: "triangle", gain: 0.05, sweep: 120, jitter: 0.02 }));
+}
+
+// A softer, higher blip when you select something.
+export function playSelect() {
+  throttled("select", 60, () => tone({ freq: 900, duration: 0.04, type: "sine", gain: 0.045, jitter: 0.02 }));
 }
 
 // A distinct two-blip alarm, heavily throttled at the module level (on

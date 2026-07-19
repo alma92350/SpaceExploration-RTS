@@ -31,6 +31,17 @@ const DETAIL = "#dce6ff";
 // point the way the unit is actually moving.
 const facing = new Map();
 
+// Cached once: whether the viewer asked the OS to reduce motion. Used to swap
+// the repeating alert pulses for a static cue (see drawEffects).
+let _reducedMotion = null;
+function prefersReducedMotion() {
+  if (_reducedMotion === null) {
+    _reducedMotion = typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false;
+  }
+  return _reducedMotion;
+}
+
 // Drop facing entries for entities that no longer exist, so a long match with
 // heavy unit churn (or repeated restarts) doesn't grow the Map without bound.
 // Cheap: one Map.has per live-or-dead key, and after pruning the Map holds at
@@ -479,8 +490,25 @@ function drawUnits(ctx, state, view) {
       ctx.fillStyle = "#ffd166";
       ctx.fill();
     }
+    // A small downward pip marks hostile units — a SHAPE cue, so telling friend
+    // from foe in a melee doesn't rely on the cyan-vs-red colour alone (which a
+    // colourblind player can't count on). Friendlies carry no marker.
+    if (u.owner !== "player") drawEnemyPip(ctx, u.x, u.y + def.radius + 6);
     drawHealthBar(ctx, u.x, u.y - def.radius - 9, 16, u.hp, u.maxHp, selSet.has(u.id));
   }
+}
+
+function drawEnemyPip(ctx, x, y) {
+  ctx.beginPath();
+  ctx.moveTo(x - 4, y - 4);
+  ctx.lineTo(x + 4, y - 4);
+  ctx.lineTo(x, y + 1);
+  ctx.closePath();
+  ctx.fillStyle = "#f87171";
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "#05070f";
+  ctx.stroke();
 }
 
 // Worker — a small hex-bodied utility pod with two stub grabber arms and a
@@ -688,13 +716,22 @@ function drawEffects(ctx) {
   const { tracers, deaths, pings } = activeEffects();
 
   for (const t of tracers) {
+    const color = tracerColor(t.unitType);
     ctx.globalAlpha = Math.max(0, 1 - t.age);
-    ctx.strokeStyle = tracerColor(t.unitType);
+    ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(t.fromX, t.fromY);
     ctx.lineTo(t.toX, t.toY);
     ctx.stroke();
+    // A small impact spark where the round lands — a quick bright flash that
+    // fades faster than the tracer, so a hit reads as connecting, not just a
+    // line drawn through the target.
+    ctx.globalAlpha = Math.max(0, 1 - t.age * 1.6);
+    ctx.fillStyle = "#ffe9c2";
+    ctx.beginPath();
+    ctx.arc(t.toX, t.toY, 2.5 + (1 - t.age) * 1.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   for (const d of deaths) {
@@ -707,7 +744,19 @@ function drawEffects(ctx) {
     ctx.stroke();
   }
 
+  const reduced = prefersReducedMotion();
   for (const p of pings) {
+    if (reduced) {
+      // Motion-sensitive players get a steady ring that just fades out, instead
+      // of the repeating expanding pulse.
+      ctx.globalAlpha = Math.max(0, 0.6 * (1 - p.age));
+      ctx.strokeStyle = "#f87171";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 24, 0, Math.PI * 2);
+      ctx.stroke();
+      continue;
+    }
     // Two expanding rings on a repeating pulse read as an alarm rather
     // than a one-shot flash, matching a ping's much longer lifetime.
     const pulse = (p.age * 2.5) % 1;

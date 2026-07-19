@@ -50,6 +50,11 @@ muteBtn.addEventListener("click", () => {
   muteBtn.textContent = next ? "🔇" : "🔊";
 });
 
+const volumeEl = document.getElementById("volume");
+if (volumeEl) {
+  volumeEl.addEventListener("input", () => sound.setVolume(Number(volumeEl.value) / 100));
+}
+
 // Right-click is a game command (move / attack / gather / queue a waypoint),
 // so the browser's own context menu must never pop over the game. The canvas
 // already suppresses it for clicks that land squarely on it, but the view has
@@ -277,6 +282,16 @@ function startGame(planetId) {
   renderHUD();
 }
 
+// Stereo pan (-1..1) for a world-x, relative to the camera: a fight off the
+// left edge of the view is heard on the left. Clamped, and flattened toward
+// center for things near the middle so it isn't distractingly hard-panned.
+function panFor(worldX) {
+  if (!state || !input) return 0;
+  const cam = input.getCamera();
+  const halfW = canvas.clientWidth / (2 * cam.zoom) || 1;
+  return Math.max(-1, Math.min(1, (worldX - cam.x) / halfW)) * 0.85;
+}
+
 // A sim event plays a sound (and spawns a matching visual effect — see
 // effects.js) if it's the player's own, or if it happened somewhere
 // currently visible — same "you can hear what you can see" rule as fog
@@ -287,21 +302,22 @@ function startGame(planetId) {
 function processFrameEvents() {
   for (const ev of state.events) {
     if (ev.owner !== "player" && !isVisibleAt(state.fog, ev.x, ev.y)) continue;
+    const pan = panFor(ev.x);   // stereo-place the sound by where it happened on screen
     switch (ev.type) {
       case "unitSpawned":
-        sound.playUnitSpawned();
+        sound.playUnitSpawned(pan);
         break;
       case "attackHit":
-        (ev.heavy ? sound.playHeavyHit : sound.playAttackHit)();
+        (ev.heavy ? sound.playHeavyHit : sound.playAttackHit)(pan);
         addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType);
         if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
       case "entityKilled":
-        sound.playEntityKilled();
+        sound.playEntityKilled(pan);
         addDeathFlash(ev.x, ev.y);
         break;
       case "buildingComplete":
-        sound.playBuildingComplete();
+        sound.playBuildingComplete(pan);
         break;
       // Only the player's own supply block beeps and flashes — a visible
       // enemy stalling on supply is their problem, not a HUD alert of ours.

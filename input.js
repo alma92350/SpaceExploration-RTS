@@ -12,6 +12,7 @@ import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issue
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera } from "./camera.js";
+import * as sound from "./sound.js";
 
 const CLICK_THRESHOLD = 4;
 const UNIT_PICK_RADIUS = 10;
@@ -113,6 +114,7 @@ export function attachInput(canvas, state, onChange) {
     } else {
       state.selection = picks;
     }
+    if (picks.length) sound.playSelect();
     onChange();
   }, { signal });
 
@@ -145,6 +147,7 @@ export function attachInput(canvas, state, onChange) {
       const building = state.buildings.get(state.selection[0]);
       if (building && building.owner === "player" && BUILDINGS[building.type].produces) {
         issueSetRally(building, p.x, p.y);
+        sound.playOrder();
         onChange();
         return;
       }
@@ -162,7 +165,7 @@ export function attachInput(canvas, state, onChange) {
     const target = entityAt(p.x, p.y);
     if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
       const workers = selected.filter(u => u.cargo);
-      if (workers.length) issueAssistBuild(workers, target.id, queue);
+      if (workers.length) { issueAssistBuild(workers, target.id, queue); sound.playOrder(); }
       return;
     }
 
@@ -170,14 +173,14 @@ export function attachInput(canvas, state, onChange) {
       // Anything with an attack stat can be sent in — combat units, and now
       // workers too (weakly). Non-combatants without a weapon are left out.
       const attackers = selected.filter(u => UNITS[u.type].attack);
-      if (attackers.length) issueAttack(attackers, target.id, queue);
+      if (attackers.length) { issueAttack(attackers, target.id, queue); sound.playOrder(); }
       return;
     }
 
     const node = nodeAt(p.x, p.y);
     if (node) {
       const workers = selected.filter(u => u.cargo);
-      if (workers.length) issueGather(workers, node.id, queue);
+      if (workers.length) { issueGather(workers, node.id, queue); sound.playOrder(); }
       return;
     }
 
@@ -194,6 +197,7 @@ export function attachInput(canvas, state, onChange) {
     } else {
       issueMove(selected, p.x, p.y);
     }
+    sound.playOrder();
   }, { signal });
 
   canvas.addEventListener("wheel", e => {

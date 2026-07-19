@@ -82,6 +82,19 @@ html, body {
 .mute-btn:hover { border-color: var(--accent); }
 .mute-btn[aria-pressed="true"] { color: var(--muted); }
 
+.volume {
+  width: 90px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Respect a viewer's reduced-motion preference: hold the under-attack banner
+   steady instead of pulsing it (the world/minimap pings are also de-animated in
+   render.js's drawEffects). */
+@media (prefers-reduced-motion: reduce) {
+  .under-attack { animation: none; }
+}
+
 #main {
   flex: 1;
   display: flex;
