@@ -46,8 +46,15 @@ export function updateBuildingConstruction(state, building, dt) {
   // requirement.
   const builders = Math.min(countBuilders(state, building), MAX_BUILDERS);
   const rate = Math.max(1, builders);
-  building.buildProgress = Math.min(1, building.buildProgress + (rate * dt) / bt);
-  building.hp = Math.round(def.hp * building.buildProgress);
+  const before = building.buildProgress;
+  building.buildProgress = Math.min(1, before + (rate * dt) / bt);
+  // Construction ADDS the hp built this tick (a ceiling of def.hp * progress),
+  // it never overwrites hp downward — so damage taken mid-build persists and a
+  // building under sustained fire can actually be destroyed before it finishes,
+  // instead of healing every hit away each tick. A building that survives to
+  // completion while damaged finishes at def.hp minus the damage it soaked.
+  const gain = def.hp * (building.buildProgress - before);
+  building.hp = Math.min(building.hp + gain, def.hp * building.buildProgress);
   if (building.buildProgress >= 1) {
     building.constructing = false;
     state.events.push({ type: "buildingComplete", x: building.x, y: building.y, owner: building.owner });

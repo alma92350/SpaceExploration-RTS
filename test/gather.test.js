@@ -51,6 +51,27 @@ test("a fully depleted node leaves the worker idle after its final deposit", () 
   assert.ok(node.amount <= 0);
 });
 
+test("a worker re-tasked to a different commodity keeps its load and hauls it home first", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const oreNode = firstNode(state, "ore");
+  worker.cargo = { com: "crystals", qty: 7 };   // already carrying a partial crystal load
+  worker.x = oreNode.x; worker.y = oreNode.y;
+  worker.order = { type: "gather", nodeId: oreNode.id, phase: "mining" };
+  const startCrystals = state.players.player.resources.crystals;
+
+  // One mining-phase tick should NOT zero the cargo — it should route to drop.
+  updateGather(state, worker, 0.05);
+  assert.equal(worker.cargo.qty, 7, "the already-mined crystals are not thrown away");
+  assert.equal(worker.order.phase, "toDrop", "instead the worker heads home to deposit them first");
+
+  // Let it finish: it deposits the crystals, then returns to mine the ore node.
+  for (let i = 0; i < 4000 && state.players.player.resources.crystals === startCrystals; i++) {
+    updateGather(state, worker, 0.05);
+  }
+  assert.ok(state.players.player.resources.crystals >= startCrystals + 7, "the carried crystals reach the bank");
+});
+
 test("a constructing expansion Command Center only becomes a dropoff once it completes", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");

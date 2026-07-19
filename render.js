@@ -31,7 +31,23 @@ const DETAIL = "#dce6ff";
 // point the way the unit is actually moving.
 const facing = new Map();
 
+// Drop facing entries for entities that no longer exist, so a long match with
+// heavy unit churn (or repeated restarts) doesn't grow the Map without bound.
+// Cheap: one Map.has per live-or-dead key, and after pruning the Map holds at
+// most one entry per currently-live oriented entity.
+function pruneFacing(state) {
+  for (const id of facing.keys()) {
+    if (!state.units.has(id) && !state.buildings.has(id)) facing.delete(id);
+  }
+}
+
+// Cleared on a fresh game so orientations from a previous match don't linger.
+export function resetFacing() {
+  facing.clear();
+}
+
 export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost) {
+  pruneFacing(state);
   ctx.save();
   ctx.fillStyle = "#05070f";
   ctx.fillRect(0, 0, viewportW, viewportH);

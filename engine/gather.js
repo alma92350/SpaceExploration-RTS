@@ -38,7 +38,13 @@ export function updateGather(state, unit, dt) {
   }
 
   if (order.phase === "mining") {
-    if (unit.cargo.com && unit.cargo.com !== node.com) unit.cargo.qty = 0;
+    // Re-tasked mid-carry to a node of a DIFFERENT commodity: don't throw the
+    // load away — haul it home and deposit it first, then come back to mine
+    // the new node. (Same commodity just tops off the existing cargo.)
+    if (unit.cargo.qty > 0 && unit.cargo.com && unit.cargo.com !== node.com) {
+      order.phase = "toDrop";
+      return;
+    }
     unit.cargo.com = node.com;
     const room = def.cargoCap - unit.cargo.qty;
     const take = Math.min(def.gatherRate * dt, node.amount, room);

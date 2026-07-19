@@ -15,7 +15,7 @@ import { BUILDINGS, UNITS, UPGRADES } from "./engine/entities.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { PLANETS } from "./data.js";
-import { drawFrame } from "./render.js";
+import { drawFrame, resetFacing } from "./render.js";
 import { attachInput } from "./input.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { clampCamera } from "./camera.js";
@@ -234,6 +234,7 @@ function startGame(planetId) {
   cam.y = state.map.bases.player.y;
   clampCamera(cam, state.map, canvas.clientWidth, canvas.clientHeight);
   resetEffects();
+  resetFacing();
   announced = false;
   lastHud = 0;
   lastPanelSignature = null;

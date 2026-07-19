@@ -11,6 +11,12 @@ import { BUILDINGS, UNITS } from "./entities.js";
 import { createFog, updateFog } from "./fog.js";
 import { archetypeFor } from "./aiArchetypes.js";
 
+// Entity-id counter. Reset to 1 at the start of every createGameState (below)
+// so a fresh game is a pure function of its seed: two same-seed runs mint the
+// same ids, and since ids feed the deterministic tie-breaks in movement /
+// separation / gather, the whole sim replays identically. IDs are only ever
+// compared within one state's own Maps, so two live games sharing id strings
+// is harmless.
 let nextEntityId = 1;
 function newId(prefix) { return `${prefix}${nextEntityId++}`; }
 
@@ -40,6 +46,7 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
 }
 
 export function createGameState(opts = {}) {
+  nextEntityId = 1;   // fresh game -> deterministic ids from the seed (see newId above)
   const planetId = opts.planetId || "ferros";
   const map = generateMap(planetId, opts.rng || Math.random, {
     sizeMult: opts.sizeMult || 1,

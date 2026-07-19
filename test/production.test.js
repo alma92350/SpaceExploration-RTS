@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { queueProduction, cancelProduction, updateProductionQueue, updateBuildingConstruction, researchUpgrade } from "../engine/production.js";
 import { UNITS, UPGRADES } from "../engine/entities.js";
+import { tick } from "../engine/sim.js";
 
 function commandCenterOf(state, owner) {
   return [...state.buildings.values()].find(b => b.owner === owner && b.type === "command");
@@ -164,6 +165,40 @@ test("updateBuildingConstruction advances hp with progress and finishes on sched
   updateBuildingConstruction(state, barracks, 100);
   assert.equal(barracks.constructing, false);
   assert.equal(barracks.hp, barracks.maxHp);
+});
+
+test("damage to a building under construction persists — construction never heals it away", () => {
+  // The tick runs combat before construction, so a hit lands and then
+  // updateBuildingConstruction runs. It must ADD only the sliver it built this
+  // tick, not overwrite hp back up to the full progress ceiling.
+  const state = { units: new Map(), events: [] };
+  const b = makeBuilding("barracks", "player", 500, 500, { constructing: true });
+  updateBuildingConstruction(state, b, 5);       // ~25% built
+  const ceilingBefore = b.hp;
+  b.hp -= 30;                                     // an enemy hit lands this tick
+  updateBuildingConstruction(state, b, 0.1);     // a sliver more construction
+  assert.ok(b.hp < ceilingBefore, "the hit is not erased back up to the pre-damage ceiling");
+  assert.ok(b.hp <= (ceilingBefore - 30) + 5, "construction only adds the little it built, it does not refill");
+});
+
+test("sustained fire can destroy a building before it finishes constructing", () => {
+  // Out-DPS the build rate and the foundation should die, not climb to full HP
+  // hit-after-hit. Uses the full tick so the real combat->construction order runs.
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear();
+  const site = makeBuilding("barracks", "player", 700, 400, { constructing: true });
+  state.buildings.set(site.id, site);
+  // A pack of enemy skiffs parked in weapon range, continuously firing.
+  for (let i = 0; i < 6; i++) {
+    const s = makeUnit("skiff", "ai", 700 + (i - 3) * 8, 430);
+    state.units.set(s.id, s);
+  }
+  let killed = false;
+  for (let i = 0; i < 400 && !killed; i++) {
+    tick(state, 0.1);
+    if (!state.buildings.has(site.id)) killed = true;
+  }
+  assert.ok(killed, "sustained fire should raze the half-built barracks");
 });
 
 test("with no worker on-site, construction still proceeds at the original (one-builder) pace", () => {
