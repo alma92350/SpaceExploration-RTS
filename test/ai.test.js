@@ -454,6 +454,68 @@ test("a macro AI teches its doctrine: it builds a Refinery and researches an upg
   assert.ok(sawUpgrade, "and researches its doctrine instead of leaving the Refinery idle");
 });
 
+test("on a big map the macro AI plants a forward Refinery as a drop-off to shorten a long ore haul", () => {
+  // On a Gigantic map the deposit seams sit far from the base, so a long haul is
+  // exactly what the drop-off mechanic is for: the AI should plant a Refinery out
+  // by the far ore it's working, not tuck another one behind the CC.
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, sizeMult: 3 });
+  fundAll(state);
+  const barracks = stockedBarracks(state);          // completed Barracks at the AI base
+  const cc = aiBuildings(state, "command")[0];
+  // Its home research Refinery already stands, so the new path under test is the
+  // FORWARD drop-off (the block only adds forward ones past the first).
+  const home = makeBuilding("refinery", "ai", cc.x - 90, cc.y - 90);
+  state.buildings.set(home.id, home);
+  // A far AI-side ore seam — well beyond any drop-off's haul — that workers mine.
+  const farOre = state.map.nodes
+    .filter(n => n.com === "ore" && n.amount > 0 && n.x >= state.map.width / 2)
+    .filter(n => Math.hypot(n.x - cc.x, n.y - cc.y) > 500)
+    .sort((a, b) => Math.hypot(a.x - cc.x, a.y - cc.y) - Math.hypot(b.x - cc.x, b.y - cc.y))[0];
+  assert.ok(farOre, "fixture: the 3x map has an AI-side ore seam far from the base");
+  for (let i = 0; i < 3; i++) {
+    const w = makeUnit("worker", "ai", farOre.x, farOre.y);
+    w.order = { type: "gather", nodeId: farOre.id, phase: "mining" };
+    state.units.set(w.id, w);
+  }
+
+  for (let i = 0; i < 4; i++) runAI(state, THINK_INTERVAL);
+
+  const refineries = aiBuildings(state, "refinery");
+  assert.ok(refineries.length >= 2, "the AI added a forward Refinery on top of its home research one");
+  const forward = refineries.find(r => r.id !== home.id);
+  assert.ok(forward, "a forward Refinery exists");
+  const dNode = Math.hypot(forward.x - farOre.x, forward.y - farOre.y);
+  const dCC = Math.hypot(forward.x - cc.x, forward.y - cc.y);
+  assert.ok(dNode < dCC, "the forward Refinery sits out by the far ore, not back at the base");
+  assert.ok(dNode <= 120, "and close enough to the seam to actually serve as its drop-off");
+  // The cap holds: no runaway third Refinery while the forward one is still going up.
+  assert.ok(refineries.length <= 3, "forward drop-offs stay capped");
+});
+
+test("the forward drop-off never fires on a small map — every home seam is already in reach", () => {
+  // The same setup on a 1x map: no seam is far enough from a drop-off, so the AI
+  // keeps its single home Refinery and doesn't scatter forward ones.
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  fundAll(state);
+  stockedBarracks(state);
+  const cc = aiBuildings(state, "command")[0];
+  const home = makeBuilding("refinery", "ai", cc.x - 90, cc.y - 90);
+  state.buildings.set(home.id, home);
+  // Put workers on the AI's own home ore (as they would be) — all within reach.
+  const oreSeams = state.map.nodes.filter(n => n.com === "ore" && n.amount > 0 &&
+    Math.hypot(n.x - cc.x, n.y - cc.y) < 360);
+  assert.ok(oreSeams.length > 0, "fixture: home ore is within a drop-off's reach on a small map");
+  for (const seam of oreSeams) {
+    const w = makeUnit("worker", "ai", seam.x, seam.y);
+    w.order = { type: "gather", nodeId: seam.id, phase: "mining" };
+    state.units.set(w.id, w);
+  }
+
+  for (let i = 0; i < 4; i++) runAI(state, THINK_INTERVAL);
+
+  assert.equal(aiBuildings(state, "refinery").length, 1, "no forward Refinery — the home one already reaches every worked seam");
+});
+
 test("the AI spreads workers across ore nodes instead of over-piling one under saturation", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const cap = UNITS.worker.minerSoftCap;
