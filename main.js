@@ -47,6 +47,7 @@ const muteBtn = document.getElementById("muteBtn");
 const underAttackEl = document.getElementById("underAttackAlert");
 const seedChipEl = document.getElementById("seedChip");
 const factionChipEl = document.getElementById("factionChip");
+const sheetToggleEl = document.getElementById("sheetToggle");
 const idleWorkersEl = document.getElementById("idleWorkers");
 const objectivesEl = document.getElementById("objectives");
 idleWorkersEl.addEventListener("click", () => { if (input) input.focusIdleWorker(); });
@@ -95,6 +96,16 @@ function resizeCanvas() {
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
+
+// Portrait bottom-sheet collapse: hide the panel to reclaim the whole screen,
+// then resize the canvas into the freed space. The button only shows in the
+// portrait layout (style.css); the class is scoped to that layout too, so it's
+// inert on desktop/landscape.
+sheetToggleEl.addEventListener("click", () => {
+  const collapsed = document.body.classList.toggle("sheet-collapsed");
+  sheetToggleEl.textContent = collapsed ? "▴" : "▾";
+  requestAnimationFrame(resizeCanvas);   // the view grew/shrank — refit the backing store
+});
 
 function resizeMinimap() {
   const dpr = window.devicePixelRatio || 1;
@@ -502,8 +513,11 @@ buildHelpOverlay();
 // switches the HUD hints to touch phrasing. input.js sets the class on a canvas
 // touch too; doing it here covers a first touch that lands on a HUD button.
 function isTouchMode() { return document.body.classList.contains("touch"); }
+// Covers a first touch that lands on a HUD button (input.js sets the class on a
+// canvas touch). The panel signature includes isTouchMode(), so the loop's next
+// renderHUD rebuilds the legend/hints in touch phrasing on its own.
 window.addEventListener("touchstart", () => {
-  if (!isTouchMode()) { document.body.classList.add("touch"); if (input) renderHUD(); }
+  if (!isTouchMode()) document.body.classList.add("touch");
 }, { passive: true });
 function toggleHelp(force) {
   const show = force ?? helpOverlayEl.classList.contains("hidden");
@@ -679,7 +693,10 @@ function renderSelectionPanel() {
     // affordability line, or a completed building unlocking a tech option (e.g.
     // the Foundry un-greying Lancer/Breacher). Keeps the greying live without
     // rebuilding every HUD tick.
-    + "|" + availabilitySignature();
+    + "|" + availabilitySignature()
+    // Rebuild when the app flips into touch mode, so the panel's legend + hints
+    // swap from mouse/keyboard to finger phrasing on the first touch.
+    + "|" + isTouchMode();
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -887,7 +904,17 @@ function costText(cost) {
 function controlsLegend() {
   const box = document.createElement("div");
   box.className = "legend";
-  box.innerHTML = [
+  // Touch mode gets the finger legend; mouse/keyboard the desktop one.
+  const rows = isTouchMode() ? [
+    ["Tap unit", "select · double-tap = all of type"],
+    ["Tap map", "move / attack / gather"],
+    ["Drag", "box-select your units"],
+    ["Two fingers", "pan · pinch to zoom"],
+    ["Buttons", "Attack-Move · Stop · Hold · Scout"],
+    ["Minimap", "tap to jump the view"],
+    ["▾ handle", "hide / show this panel"],
+    ["?", "all controls"],
+  ] : [
     ["Left-drag", "select · Ctrl+drag adds"],
     ["Right-click", "move / attack / gather"],
     ["A + click", "attack-move"],
@@ -898,7 +925,9 @@ function controlsLegend() {
     ["Minimap", "left jumps · right orders"],
     ["Wheel", "zoom · arrows / edge-scroll pan"],
     ["F1 / ?", "all controls"],
-  ].map(([k, v]) => `<div class="legend-row"><span class="legend-key">${k}</span><span>${v}</span></div>`).join("");
+  ];
+  box.innerHTML = rows
+    .map(([k, v]) => `<div class="legend-row"><span class="legend-key">${k}</span><span>${v}</span></div>`).join("");
   return box;
 }
 

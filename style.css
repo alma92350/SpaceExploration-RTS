@@ -540,3 +540,64 @@ html, body { overscroll-behavior: none; }
   #selectionPanel { width: 168px; }
   .minimap { width: 118px; height: 74px; }
 }
+
+/* A floating handle that collapses the bottom sheet in portrait (wired in
+   main.js). Hidden everywhere except the portrait layout below. Anchored to the
+   bottom-right of #view, which sits directly above the sheet, so it rides the
+   boundary and follows the view when the sheet hides. */
+.sheet-toggle {
+  display: none;
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  z-index: 6;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.sheet-toggle:hover { border-color: var(--accent); }
+
+/* Portrait phones / small tablets held upright: stack the layout so the
+   battlefield spans the full width and the selection panel becomes a BOTTOM
+   SHEET — the standard one-handed mobile shape. The sheet is height-adaptive
+   (as tall as its content, capped), pairs its buttons two-per-row, and can be
+   collapsed to reclaim the whole screen with the floating handle. */
+@media (orientation: portrait) and (max-width: 820px) {
+  #main { flex-direction: column; }
+  /* min-height:0 lets the view shrink below the canvas's intrinsic height so the
+     bottom sheet gets its share of the column — without it the canvas forces the
+     view full-height and pushes the sheet off the bottom of the screen. */
+  #view { padding: 4px; min-height: 0; }
+
+  #selectionPanel {
+    width: auto;                 /* full width instead of a fixed side column */
+    max-height: 42vh;            /* the battlefield keeps the majority of the screen */
+    flex-shrink: 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 6px 8px;
+    padding: 10px 10px 14px;
+  }
+  /* Text rows / legend span the sheet; buttons pair up two-per-row so it shows
+     more at a glance and scrolls less. margin:0 — the flex `gap` spaces them. */
+  #selectionPanel > * { flex-basis: 100%; margin: 0; }
+  #selectionPanel .btn { flex: 1 1 44%; }
+
+  .minimap { width: 112px; height: 70px; left: 8px; bottom: 8px; }
+
+  .sheet-toggle { display: flex; }
+  body.sheet-collapsed #selectionPanel { display: none; }
+}
