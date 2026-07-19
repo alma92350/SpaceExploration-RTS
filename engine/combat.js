@@ -19,7 +19,7 @@ import { stepToward } from "./movement.js";
 import { UNITS, BUILDINGS, UPGRADES } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
-import { sampleTerrain } from "./map.js";
+import { sampleTerrain, sideMod } from "./map.js";
 
 export function updateCombat(state, unit, dt) {
   const def = UNITS[unit.type];
@@ -161,7 +161,7 @@ function isAlive(state, id) {
 function stillEngageable(state, unit, def, id) {
   const e = getEntity(state, id);
   if (!e || e.hp <= 0) return false;
-  const aggro = def.aggroRange * (state.map?.modifiers?.sightMult ?? 1);
+  const aggro = def.aggroRange * sideMod(state, unit.owner, "sightMult");
   return Math.hypot(e.x - unit.x, e.y - unit.y) <= aggro;
 }
 
@@ -218,7 +218,7 @@ function acquireTarget(state, unit, def) {
   // The same sight modifier that scales fog reveal also scales how far a unit
   // (or turret) reaches out to acquire — so a storm-shortened world bites both
   // sides' aggro symmetrically. Optional-chained for map-less test states.
-  const aggro = def.aggroRange * (state.map?.modifiers?.sightMult ?? 1);
+  const aggro = def.aggroRange * sideMod(state, unit.owner, "sightMult");
   // Units through the broad-phase grid (there can be hundreds); buildings stay a
   // straight scan since there are only ever a handful. Full-scan fallback when
   // no grid is present (direct combat tests).

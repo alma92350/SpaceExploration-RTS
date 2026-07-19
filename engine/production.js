@@ -7,6 +7,7 @@
 import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
+import { sideMod } from "./map.js";
 
 // How close a worker has to stand to actually count as building, not just
 // walking over. Shared with sim.js's arrival check for the 'build' order.
@@ -38,9 +39,9 @@ export function updateBuildingConstruction(state, building, dt) {
     building.hp = def.hp;
     return;
   }
-  // A world's build-time modifier speeds (or slows) construction; optional-
-  // chained so production tests' map-less states read the default 1.
-  const bt = def.buildTime * (state.map?.modifiers?.buildTimeMult ?? 1);
+  // A world's build-time modifier speeds (or slows) construction; per-side on an
+  // asymmetric world (sideMod reads the default 1 for map-less test states).
+  const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult");
   // The founding worker alone still builds at the original pace even if
   // it wanders off or dies — extra workers on-site are a bonus, not a
   // requirement.
@@ -65,9 +66,9 @@ export function updateProductionQueue(state, building, dt) {
   if (building.constructing || building.queue.length === 0) return;
   const job = building.queue[0];
   const def = UNITS[job.unitType];
-  // Same build-time modifier applies to unit production (a factory world
-  // trains faster too); optional-chained for map-less test states.
-  const bt = def.buildTime * (state.map?.modifiers?.buildTimeMult ?? 1);
+  // Same build-time modifier applies to unit production (a factory world trains
+  // faster too), per-side on an asymmetric world.
+  const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult");
   job.progress += dt / bt;
   if (job.progress >= 1) {
     building.queue.shift();

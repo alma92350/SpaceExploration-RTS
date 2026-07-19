@@ -17,7 +17,7 @@
 "use strict";
 
 import { UNITS, BUILDINGS } from "./entities.js";
-import { sampleTerrain } from "./map.js";
+import { sampleTerrain, sideMod } from "./map.js";
 
 export const FOG_CELL_SIZE = 40;
 
@@ -75,7 +75,7 @@ export function updateFog(state, fog, owner) {
   fog.visible.fill(0);
   // A world's sight modifier scales every reveal radius (see PLANET_MODIFIERS).
   // Optional-chained so the fog tests' map-less stubs read the default 1.
-  const sightMult = state.map?.modifiers?.sightMult ?? 1;
+  const sightMult = sideMod(state, owner, "sightMult");   // per-side on an asymmetric world (updateFog is already called per owner)
   // A source standing on high ground sees farther (terrain sightMult); OPEN and
   // the map-less test stubs read 1. One sample per source per tick.
   const terr = state.map?.terrain;

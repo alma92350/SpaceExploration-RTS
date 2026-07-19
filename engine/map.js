@@ -80,6 +80,20 @@ function generateTerrain(width, height, specs) {
   return { cols, rows, cell: TERRAIN_CELL_SIZE, type };
 }
 
+// A world modifier as seen by ONE side. Most worlds tilt both sides equally
+// (a plain `modifiers[key]`), but a world may carry an `asym: { player, ai }`
+// block that overrides a key for just one owner — an asymmetric matchup where
+// the two starts differ. Lookup order: the owner's asym override, then the
+// shared modifier, then the default. Owner-less / map-less test stubs read the
+// shared value (or the default), so existing symmetric behaviour is unchanged.
+export function sideMod(state, owner, key, dflt = 1) {
+  const m = state && state.map && state.map.modifiers;
+  if (!m) return dflt;
+  const a = m.asym && m.asym[owner];
+  if (a && a[key] != null) return a[key];
+  return m[key] ?? dflt;
+}
+
 // The TERRAIN entry at a world point. Returns OPEN for a missing grid or an
 // out-of-bounds point, so every consumer degrades to "no terrain effect"
 // safely (map-less test stubs, off-map coords).
@@ -224,11 +238,15 @@ export const PLANET_MODIFIERS = {
     terrain: [[0.5, 0.13, 0.34, 0.2, 1, false], [0.5, 0.87, 0.34, 0.2, 1, false]],
   },
   nimbus:  {
-    sightMult: 0.75, label: "Storm bands: sight 25% shorter; two high vantages rise above the murk",
+    sightMult: 0.75, label: "Storm front (asymmetric): your skies are clearer; the enemy surges out of the murk",
     // On a short-sight world, high ground (which extends sight) is doubly worth
     // taking — a way to see over the storm. Two vantages, north and south of
     // the midline, kept off the centre so neither base overlooks the field.
     terrain: [[0.5, 0.28, 0.12, 0.14, 2, false], [0.5, 0.72, 0.12, 0.14, 2, false]],
+    // Asymmetric matchup: the storm has half-cleared YOUR side (you see almost
+    // normally, 0.95 vs the enemy's 0.75), but the enemy strikes fast out of it
+    // (units 12% quicker). You out-scout; they out-tempo.
+    asym: { player: { sightMult: 0.95 }, ai: { speedMult: 1.12 } },
   },
   pyralis: {
     sightMult: 1.15, label: "Open dunes: long sightlines, and a central mesa worth holding",
@@ -243,10 +261,14 @@ export const PLANET_MODIFIERS = {
     terrain: [[0.5, 0.5, 0.1, 0.38, 2, false]],
   },
   oort:    {
-    nodeAmountMult: 1.3, label: "Rich frontier: deposits hold 30% more, but rugged ground breaks up the flanks",
+    nodeAmountMult: 1.3, label: "Contested frontier (asymmetric): your claim is richer; the enemy's foundry runs hotter",
     // Rugged rough ground on the flanks funnels the fight through the open
     // centre — the price of the world's rich but broken frontier.
     terrain: [[0.4, 0.28, 0.12, 0.18, 1, true], [0.4, 0.72, 0.12, 0.18, 1, true]],
+    // Asymmetric matchup: YOUR claim struck a rich vein (every haul banks 20%
+    // more), while the enemy's forward base is a war factory (18% faster
+    // construction and production). You out-mine; they out-build.
+    asym: { player: { gatherMult: 1.2 }, ai: { buildTimeMult: 0.82 } },
   },
   forge:   {
     buildTimeMult: 0.85, label: "Factory world: 15% faster construction; rough industrial sprawl midfield",

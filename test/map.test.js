@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateMap, MAP_WIDTH, MAP_HEIGHT, PLANET_MODIFIERS } from "../engine/map.js";
+import { generateMap, MAP_WIDTH, MAP_HEIGHT, PLANET_MODIFIERS, sideMod } from "../engine/map.js";
 import { PLANET_ARCHETYPE } from "../engine/aiArchetypes.js";
 import { PLANETS } from "../data.js";
 
@@ -100,6 +100,25 @@ test("generateMap is deterministic: the same planet and rng seed reproduce the s
   const a = generateMap("glacius", lcg(42));
   const b = generateMap("glacius", lcg(42));
   assert.deepEqual(a.nodes, b.nodes);
+});
+
+test("asymmetric worlds apply per-side modifiers; symmetric worlds tilt both sides equally", () => {
+  const oort = { map: generateMap("oort", () => 0.5) };
+  assert.equal(sideMod(oort, "player", "gatherMult"), 1.2, "the player's richer claim banks more");
+  assert.equal(sideMod(oort, "ai", "gatherMult", 1), 1, "the enemy gets no gather bonus");
+  assert.equal(sideMod(oort, "ai", "buildTimeMult"), 0.82, "the enemy's factory builds faster");
+  assert.equal(sideMod(oort, "player", "buildTimeMult"), 1, "the player builds at the normal rate");
+
+  const nimbus = { map: generateMap("nimbus", () => 0.5) };
+  assert.equal(sideMod(nimbus, "player", "sightMult"), 0.95, "the player sees through the thinning storm");
+  assert.equal(sideMod(nimbus, "ai", "sightMult"), 0.75, "the enemy stays in the murk (the world's shared value)");
+  assert.equal(sideMod(nimbus, "ai", "speedMult"), 1.12, "but the enemy strikes faster out of it");
+
+  // A symmetric world tilts both sides equally, and an unmodified one is neutral.
+  const glacius = { map: generateMap("glacius", () => 0.5) };
+  assert.equal(sideMod(glacius, "player", "speedMult"), sideMod(glacius, "ai", "speedMult"), "glacius slows both sides the same");
+  const ferros = { map: generateMap("ferros", () => 0.5) };
+  assert.equal(sideMod(ferros, "player", "speedMult"), 1, "ferros has no modifier -> default");
 });
 
 test("generateMap attaches the planet's modifiers (empty for the unmodified worlds)", () => {

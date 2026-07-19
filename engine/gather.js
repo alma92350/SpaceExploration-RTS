@@ -8,6 +8,7 @@
 
 import { stepToward } from "./movement.js";
 import { UNITS } from "./entities.js";
+import { sideMod } from "./map.js";
 
 const ORBIT_RADIUS = 16;   // workers ring the node instead of stacking on its exact center
 const ARRIVE_REACH = 4;
@@ -75,7 +76,10 @@ export function updateGather(state, unit, dt) {
     const dist = Math.hypot(drop.x - unit.x, drop.y - unit.y);
     if (dist <= DROP_REACH) {
       const player = state.players[unit.owner];
-      player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + unit.cargo.qty;
+      // Per-side economy modifier for an asymmetric world (default 1 elsewhere):
+      // a richer claim banks more per haul.
+      const banked = unit.cargo.qty * sideMod(state, unit.owner, "gatherMult", 1);
+      player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + banked;
       unit.cargo.qty = 0;
       order.phase = node.amount > 0 ? "toNode" : null;
       if (!order.phase) unit.order = null;

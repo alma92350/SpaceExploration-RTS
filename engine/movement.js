@@ -18,7 +18,7 @@
 
 import { UNITS } from "./entities.js";
 import { queryNeighbors } from "./grid.js";
-import { sampleTerrain } from "./map.js";
+import { sampleTerrain, sideMod } from "./map.js";
 
 const AVOID_RANGE = 30;     // how far out a unit senses neighbors to steer around, beyond their combined radii
 const AVOID_WEIGHT = 1.6;   // how strongly a sensed neighbor bends the seek direction
@@ -53,7 +53,7 @@ export function stepToward(state, unit, tx, ty, speed, dt) {
   // slow-down only (rough ground), never zero, so a unit always makes forward
   // progress — nothing can be trapped. Optional-chained so map-less test stubs
   // read the default 1; `allTerrain` on a def opts a unit out (forward-compat).
-  const speedMult = state.map?.modifiers?.speedMult ?? 1;
+  const speedMult = sideMod(state, unit.owner, "speedMult");
   const def = UNITS[unit.type];
   const terrainMult = state.map?.terrain && !(def && def.allTerrain)
     ? sampleTerrain(state.map.terrain, unit.x, unit.y).speedMult : 1;
