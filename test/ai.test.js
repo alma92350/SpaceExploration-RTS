@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
+import { UNITS } from "../engine/entities.js";
+import { isNodeDiscovered } from "../engine/fog.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -340,6 +342,41 @@ test("the AI marches on a SEEN enemy building rather than the fixed start coordi
   assert.equal(u.order?.type, "attack-move");
   assert.ok(Math.hypot(u.order.x - seenCC.x, u.order.y - seenCC.y) < 1,
     "it targets the enemy building it can see, not state.map.bases.player");
+});
+
+test("the AI spreads workers across ore nodes instead of over-piling one under saturation", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cap = UNITS.worker.minerSoftCap;
+  // Only the seams the AI can actually assign to — the ones in its own fog. The
+  // mirrored player-side ore is undiscovered and would sit at zero, which isn't
+  // over-piling, it's just out of reach.
+  const oreNodes = state.map.nodes.filter(n => n.com === "ore" && !n.hidden && isNodeDiscovered(state.fogAI, n));
+  assert.ok(oreNodes.length >= 2, "fixture sanity: the AI sees multiple ore seams at home");
+  // Replace the AI's economy with a controlled pool of idle workers — enough
+  // that piling them all on the nearest seam would blow well past the cap.
+  [...state.units.values()].filter(u => u.owner === "ai").forEach(u => state.units.delete(u.id));
+  for (let i = 0; i < oreNodes.length * cap + oreNodes.length; i++) {
+    const w = makeUnit("worker", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
+    state.units.set(w.id, w);
+  }
+
+  runAI(state, THINK_INTERVAL);
+
+  const counts = new Map();
+  for (const u of state.units.values()) {
+    if (u.owner === "ai" && u.order?.type === "gather") counts.set(u.order.nodeId, (counts.get(u.order.nodeId) || 0) + 1);
+  }
+  // Spreading is about the seams at comparable distance (the home cluster) — the
+  // AI rightly won't march workers across the map to the enemy's ore just to
+  // dodge mild saturation, so we only judge even-ness among the near seams.
+  const aiBase = state.map.bases.ai;
+  const near = oreNodes.filter(n => Math.hypot(n.x - aiBase.x, n.y - aiBase.y) < 500);
+  assert.ok(near.length >= 2, "sanity: the AI has several ore seams at home");
+  const nearCounts = near.map(n => counts.get(n.id) || 0);
+  assert.ok(nearCounts.filter(c => c >= cap).length >= 2,
+    "it fills more than one home seam to the cap instead of dumping every worker on the nearest");
+  assert.ok(Math.max(...nearCounts) - Math.min(...nearCounts) <= 2,
+    "and fills the home seams roughly evenly rather than piling one high");
 });
 
 test("a legacy archetype without the Tier 4 fields still runs without throwing", () => {

@@ -25,6 +25,10 @@ export function tick(state, dt) {
   // Broad-phase spatial index for this tick, shared by movement avoidance,
   // combat acquisition, and the separation pass below (see engine/grid.js).
   state.unitGrid = buildUnitGrid(state);
+  // Per-node miner count for this tick, read by gather.js's saturation falloff.
+  // Frozen before any worker mines so every miner on a node sees the same count
+  // regardless of Map iteration order (determinism).
+  countMiners(state);
 
   for (const unit of state.units.values()) updateUnit(state, unit, dt);
   applySeparation(state, dt);
@@ -39,6 +43,22 @@ export function tick(state, dt) {
   checkWinCondition(state);
   state.time += dt;
   state.tick++;
+}
+
+// Tally how many workers (both sides) are assigned to gather each node this
+// tick — the single source of truth for gather.js's saturation efficiency.
+// Counts every worker on a `gather` order, not just those physically at the
+// rock, so the "~3 workers per node" rule reads by intent rather than by who
+// happens to be mid-haul. Recomputed from scratch each tick — never accumulates.
+function countMiners(state) {
+  for (const n of state.map.nodes) n.miners = 0;
+  for (const u of state.units.values()) {
+    const o = u.order;
+    if (o && o.type === "gather") {
+      const n = state.map.nodesById ? state.map.nodesById.get(o.nodeId) : null;
+      if (n) n.miners++;
+    }
+  }
 }
 
 function updateUnit(state, unit, dt) {

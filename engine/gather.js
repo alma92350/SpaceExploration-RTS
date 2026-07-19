@@ -13,6 +13,19 @@ const ORBIT_RADIUS = 16;   // workers ring the node instead of stacking on its e
 const ARRIVE_REACH = 4;
 const DROP_REACH = 30;
 
+// Saturation: with `m` workers assigned to a node, the first `minerSoftCap`
+// each mine at full rate and every extra at `minerFalloff` of a share, so the
+// node's per-worker efficiency is the average. Floors above 0 (never softlocks
+// a lone remaining seam). No cap field on the def (or no miner count, as in the
+// direct-call unit tests) means no penalty — full rate, exactly as before.
+function miningEfficiency(node, def) {
+  const cap = def.minerSoftCap ?? Infinity;
+  const m = node.miners || 0;
+  if (m <= cap) return 1;
+  const extra = def.minerFalloff ?? 1;
+  return (cap + (m - cap) * extra) / m;
+}
+
 // Stable per-worker angle around the node, so a group sent to the same
 // node spreads out around it instead of converging on one point.
 function orbitSpot(node, unitId) {
@@ -49,7 +62,7 @@ export function updateGather(state, unit, dt) {
     }
     unit.cargo.com = node.com;
     const room = def.cargoCap - unit.cargo.qty;
-    const take = Math.min(def.gatherRate * dt, node.amount, room);
+    const take = Math.min(def.gatherRate * miningEfficiency(node, def) * dt, node.amount, room);
     unit.cargo.qty += take;
     node.amount -= take;
     if (unit.cargo.qty >= def.cargoCap - 1e-6 || node.amount <= 0) order.phase = "toDrop";

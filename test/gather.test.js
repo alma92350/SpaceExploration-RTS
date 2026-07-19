@@ -2,9 +2,25 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { updateGather } from "../engine/gather.js";
+import { UNITS } from "../engine/entities.js";
 
 function firstNode(state, com) {
   return state.map.nodes.find(n => n.com === com);
+}
+
+// Cargo gained in one small mining tick with `miners` workers on the node —
+// small dt so neither the node amount nor the cargo cap is the binding limit,
+// leaving the take equal to gatherRate * efficiency * dt.
+function takeWithMiners(miners) {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  worker.x = node.x; worker.y = node.y;
+  worker.cargo = { com: "ore", qty: 0 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+  if (miners !== undefined) node.miners = miners;
+  updateGather(state, worker, 0.1);
+  return worker.cargo.qty;
 }
 
 test("a worker walks to its node, fills cargo, then walks back and deposits", () => {
@@ -49,6 +65,25 @@ test("a fully depleted node leaves the worker idle after its final deposit", () 
 
   assert.equal(worker.order, null);
   assert.ok(node.amount <= 0);
+});
+
+test("mining saturates: workers past the soft cap pull a diminishing share, never zero", () => {
+  const rate = UNITS.worker.gatherRate, cap = UNITS.worker.minerSoftCap, fall = UNITS.worker.minerFalloff;
+  const full = rate * 0.1;
+  // At or below the soft cap: full rate.
+  assert.ok(Math.abs(takeWithMiners(1) - full) < 1e-9, "one miner mines at full rate");
+  assert.ok(Math.abs(takeWithMiners(cap) - full) < 1e-9, "at the soft cap, still full rate");
+  // Past it: the per-worker share is the node average (cap + extra*fall)/m.
+  const eff6 = (cap + (6 - cap) * fall) / 6;
+  assert.ok(Math.abs(takeWithMiners(6) - full * eff6) < 1e-9, "six miners each pull the averaged share");
+  // Monotonically diminishing, but always above the floor.
+  assert.ok(takeWithMiners(4) > takeWithMiners(6) && takeWithMiners(6) > takeWithMiners(10), "more miners -> less each");
+  assert.ok(takeWithMiners(20) > full * fall * 0.99, "efficiency never drops below the falloff floor");
+});
+
+test("no miner count set (a direct-call test or legacy state) means no penalty — full rate", () => {
+  const rate = UNITS.worker.gatherRate;
+  assert.ok(Math.abs(takeWithMiners(undefined) - rate * 0.1) < 1e-9, "unset node.miners reads as full rate");
 });
 
 test("a worker re-tasked to a different commodity keeps its load and hauls it home first", () => {

@@ -56,6 +56,7 @@ const CLAIM_RADIUS = 260;         // a cluster with any CC this close is already
 const CLUSTER_RADIUS = 160;       // nodes within this of an anchor sum into its cluster score
 const EXPANSION_STANDOFF = 70;    // CC-to-anchor-node placement distance (26 CC radius + 16 node radius + clearance)
 const BARRACKS_BUFFER = 150;      // bank kept when adding a barracks so the mix doesn't starve
+const SATURATION_STEER = 250;     // distance-equivalent penalty per worker a node is over the soft cap
 
 // Every commodity that anything the AI builds actually costs — computed once.
 // assignIdleWorkers prefers nodes of these types so a poor-economy world's AI
@@ -422,6 +423,17 @@ function assignIdleWorkers(state, workers) {
   // onto crystals and starving the ore the army needs.
   const secondaryCap = Math.min(2, Math.floor(workers.length / 3));
 
+  // Projected miner tally per node, so the AI fills a node to the soft cap and
+  // then hops to the next-nearest instead of piling everyone on one seam (which
+  // saturation would drop to ~0.7 efficiency, slowing the tuned economy). Seeds
+  // from workers already on a gather order, and counts each assignment made in
+  // this same pass so consecutive idle workers spread across nodes.
+  const softCap = UNITS.worker.minerSoftCap ?? Infinity;
+  const projected = new Map();
+  for (const w of workers) {
+    if (w.order && w.order.type === "gather") projected.set(w.order.nodeId, (projected.get(w.order.nodeId) || 0) + 1);
+  }
+
   workers.forEach(w => {
     if (w.order) return;
     let pool;
@@ -432,12 +444,17 @@ function assignIdleWorkers(state, workers) {
     } else {
       pool = otherLive.length ? otherLive : live;   // ore's gone — take spendable, else any live node
     }
-    let best = null, bestD = Infinity;
+    let best = null, bestScore = Infinity;
     for (const n of pool) {
-      const d = Math.hypot(n.x - w.x, n.y - w.y);
-      if (d < bestD) { bestD = d; best = n; }
+      const m = projected.get(n.id) || 0;
+      const over = Math.max(0, m + 1 - softCap);   // penalty kicks in once the node is already at the cap
+      const score = Math.hypot(n.x - w.x, n.y - w.y) + over * SATURATION_STEER;
+      if (score < bestScore) { bestScore = score; best = n; }
     }
-    if (best) w.order = { type: "gather", nodeId: best.id };
+    if (best) {
+      w.order = { type: "gather", nodeId: best.id };
+      projected.set(best.id, (projected.get(best.id) || 0) + 1);
+    }
   });
 }
 

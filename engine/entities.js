@@ -79,6 +79,13 @@ export const UNITS = {
     id: "worker", name: "Worker", hp: 40, radius: 6, speed: 60,
     cost: { ore: 50 }, buildTime: 8, supplyCost: 1,
     role: "worker", gatherRate: 10, cargoCap: 10,
+    // Saturation: the first `minerSoftCap` workers on a deposit mine at full
+    // rate; each one past that pulls only `minerFalloff` of a full share (see
+    // gather.js's miningEfficiency), so over-piling a node has diminishing
+    // returns and spreading out / expanding to a fresh field is a real call.
+    // The cap matches the ~3 home seams and the 3 starting workers, so the
+    // opening economy is never penalised.
+    minerSoftCap: 3, minerFalloff: 0.4,
     sight: 110,
     // Can defend itself in a pinch — a weak short-range strike — but only when
     // explicitly ordered to attack. Workers never auto-acquire, so they don't

@@ -4,6 +4,21 @@ import { createGameState, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { issueMove } from "../engine/commands.js";
 import { isNodeDiscovered } from "../engine/fog.js";
+import { PLANET_ARCHETYPE } from "../engine/aiArchetypes.js";
+
+// The load-bearing invariant for every economy/tech/terrain change: the scripted
+// AI must still drive every world to a decisive finish. A stalled economy, a
+// tech-gate deadlock, or terrain that traps a wave would show up here as a
+// non-resolving world. Runs the whole roster, not just ferros/glacius.
+for (const planetId of Object.keys(PLANET_ARCHETYPE)) {
+  test(`a full skirmish resolves to a winner on ${planetId}`, () => {
+    const state = createGameState({ planetId });
+    let ticks = 0;
+    while (!state.over && ticks < 20000) { tick(state, 0.1); ticks++; }
+    assert.equal(state.over, true, `${planetId} should reach a winner before the ceiling`);
+    assert.ok(["player", "ai"].includes(state.winner));
+  });
+}
 
 test("a full skirmish runs to a decisive winner without throwing", () => {
   const state = createGameState({ planetId: "ferros" });
