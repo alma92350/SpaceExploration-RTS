@@ -406,7 +406,7 @@ function assignIdleWorkers(state, workers) {
   if (!live.length) return;
   const oreLive = live.filter(n => n.com === "ore");
   const otherLive = live.filter(n => n.com !== "ore" && SPENDABLE.has(n.com));
-  const nodeById = new Map(state.map.nodes.map(n => [n.id, n]));
+  const nodeById = state.map.nodesById || new Map(state.map.nodes.map(n => [n.id, n]));
   let secondaryMiners = 0;
   for (const w of workers) {
     const n = w.order && w.order.type === "gather" ? nodeById.get(w.order.nodeId) : null;

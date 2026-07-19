@@ -114,7 +114,12 @@ export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
   }
 
   resolveNodeOverlaps(nodes, width, height);
-  return { planet, width, height, bases, nodes, modifiers };
+  // Index by id so the per-tick node lookups (gather, render, AI) are O(1)
+  // instead of a linear .find over a node list that grows with map size. Nodes
+  // are never added or removed after generation (they deplete in place), so the
+  // Map stays valid for the whole match and holds live references.
+  const nodesById = new Map(nodes.map(n => [n.id, n]));
+  return { planet, width, height, bases, nodes, nodesById, modifiers };
 }
 
 // Hidden-cache placements as [xFrac, yFrac, commodity, mirror?]: mirror pairs

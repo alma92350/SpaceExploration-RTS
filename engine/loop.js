@@ -9,6 +9,8 @@
 
 "use strict";
 
+const MAX_SUBSTEPS = 5;   // most catch-up sim ticks to run in one animation frame
+
 export function createLoop({ update, render, hz = 20, now = () => performance.now() }) {
   const dtFixed = 1 / hz;
   let acc = 0;
@@ -23,10 +25,18 @@ export function createLoop({ update, render, hz = 20, now = () => performance.no
     last = t;
     if (delta > 0.25) delta = 0.25;   // clamp so a backgrounded tab doesn't spiral on return
     acc += delta;
-    while (acc >= dtFixed) {
+    // Cap catch-up substeps per frame. If a single update ever runs longer than
+    // the fixed step (plausible on a Gigantic map once armies are huge), the
+    // accumulator would otherwise grow every frame and the sim spirals into an
+    // ever-deepening backlog. Capping lets it degrade to slow-motion — dropping
+    // sim time — instead, which stays responsive and recovers.
+    let steps = 0;
+    while (acc >= dtFixed && steps < MAX_SUBSTEPS) {
       update(dtFixed);
       acc -= dtFixed;
+      steps++;
     }
+    if (acc > dtFixed) acc = 0;   // over the cap: drop the backlog rather than carry it forward
     render(acc / dtFixed);
     rafId = requestAnimationFrame(frame);
   }

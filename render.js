@@ -46,6 +46,22 @@ export function resetFacing() {
   facing.clear();
 }
 
+// The world-space rectangle currently on screen, padded so an entity straddling
+// an edge still draws. Everything outside it is skipped — on a Gigantic (4x)
+// map the vast majority of the field, its fog cells, and its entities are
+// off-screen every frame, so culling is what keeps the draw cost bounded by
+// what's visible rather than by total map size.
+function viewBounds(camera, vw, vh, pad = 0) {
+  const halfW = vw / (2 * camera.zoom), halfH = vh / (2 * camera.zoom);
+  return {
+    minX: camera.x - halfW - pad, maxX: camera.x + halfW + pad,
+    minY: camera.y - halfH - pad, maxY: camera.y + halfH + pad,
+  };
+}
+function inView(view, x, y, r = 0) {
+  return x + r >= view.minX && x - r <= view.maxX && y + r >= view.minY && y - r <= view.maxY;
+}
+
 export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost) {
   pruneFacing(state);
   ctx.save();
@@ -56,13 +72,14 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   ctx.scale(camera.zoom, camera.zoom);
   ctx.translate(-camera.x, -camera.y);
 
-  drawFogBase(ctx, state);
+  const view = viewBounds(camera, viewportW, viewportH, 40);   // 40px pad ≥ largest entity radius
+  drawFogBase(ctx, state, view);
   // Resource deposits are charted map knowledge (see data.js), not
   // battlefield intel — they render at full visibility regardless of
   // fog, on top of the dimmed backdrop.
-  drawNodes(ctx, state);
-  drawBuildings(ctx, state);
-  drawUnits(ctx, state);
+  drawNodes(ctx, state, view);
+  drawBuildings(ctx, state, view);
+  drawUnits(ctx, state, view);
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
   drawWaypoints(ctx, state);
@@ -77,11 +94,17 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
 // cells get a dimming overlay so the player can see where they've
 // scouted before without it looking fully lit. Currently-visible cells
 // get nothing — the world underneath already reads at full brightness.
-function drawFogBase(ctx, state) {
+function drawFogBase(ctx, state, view) {
   const fog = state.fog;
   if (!fog) return;
-  for (let gy = 0; gy < fog.rows; gy++) {
-    for (let gx = 0; gx < fog.cols; gx++) {
+  // Only the cells overlapping the viewport — clamped to the grid — instead of
+  // all rows*cols every frame (16k+ on a 4x map).
+  const gx0 = view ? Math.max(0, Math.floor(view.minX / FOG_CELL_SIZE)) : 0;
+  const gx1 = view ? Math.min(fog.cols - 1, Math.floor(view.maxX / FOG_CELL_SIZE)) : fog.cols - 1;
+  const gy0 = view ? Math.max(0, Math.floor(view.minY / FOG_CELL_SIZE)) : 0;
+  const gy1 = view ? Math.min(fog.rows - 1, Math.floor(view.maxY / FOG_CELL_SIZE)) : fog.rows - 1;
+  for (let gy = gy0; gy <= gy1; gy++) {
+    for (let gx = gx0; gx <= gx1; gx++) {
       const idx = gy * fog.cols + gx;
       if (fog.visible[idx]) continue;
       ctx.fillStyle = fog.explored[idx] ? "rgba(5, 7, 15, 0.55)" : "#05070f";
@@ -151,9 +174,10 @@ function pathOriented(ctx, cx, cy, angle, localPts) {
   pathPoints(ctx, localPts.map(([lx, ly]) => toWorld(cx, cy, angle, lx, ly)));
 }
 
-function drawNodes(ctx, state) {
+function drawNodes(ctx, state, view) {
   for (const n of state.map.nodes) {
     if (n.amount <= 0) continue;
+    if (view && !inView(view, n.x, n.y, 20)) continue;   // off-screen deposit
     if (!isNodeDiscovered(state.fog, n)) continue;   // a hidden cache stays dark until scouted
     const r = 7 + 9 * (n.amount / n.max);
     const extract = COM[n.com]?.extract;
@@ -168,15 +192,31 @@ function drawNodes(ctx, state) {
   }
 }
 
+// Cached per-node unit silhouette (offsets at radius 1), so the seeded-PRNG
+// polygon jitter is computed once per node instead of every single frame — the
+// shape is static, only its radius changes as the deposit depletes.
+const nodeShapeCache = new Map();
+function rockyShape(id) {
+  let shape = nodeShapeCache.get(id);
+  if (!shape) {
+    const rng = seededRng(hashStr(id));
+    const rot = rng() * Math.PI * 2;   // same rng draw order as the original, so silhouettes are unchanged
+    shape = [];
+    for (let i = 0; i < 8; i++) {
+      const a = rot + (i / 8) * Math.PI * 2;
+      const jitter = 0.72 + rng() * 0.5;
+      shape.push([Math.cos(a) * jitter, Math.sin(a) * jitter]);
+    }
+    nodeShapeCache.set(id, shape);
+  }
+  return shape;
+}
+
 // Mined/exploited deposits (ore, crystals, radioactives, ice, relics) read
 // as a faceted asteroid chunk — an irregular polygon beats a perfect circle
 // at selling "rock" at a glance, and the per-node seed keeps it stable.
 function drawRockyNode(ctx, n, r) {
-  const rng = seededRng(hashStr(n.id));
-  const pts = polygonPoints(n.x, n.y, r, 8, rng() * Math.PI * 2).map(([x, y]) => {
-    const jitter = 0.72 + rng() * 0.5;
-    return [n.x + (x - n.x) * jitter, n.y + (y - n.y) * jitter];
-  });
+  const pts = rockyShape(n.id).map(([ux, uy]) => [n.x + ux * r, n.y + uy * r]);
   pathPoints(ctx, pts);
   ctx.fillStyle = "#ffd166";
   ctx.globalAlpha = 0.85;
@@ -225,8 +265,9 @@ function drawGasNode(ctx, n, r) {
 
 /* ---------- buildings ---------- */
 
-function drawBuildings(ctx, state) {
+function drawBuildings(ctx, state, view) {
   for (const b of state.buildings.values()) {
+    if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;   // off-screen (pad for the hp bar above it)
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
     const color = state.players[b.owner].color;
     ctx.globalAlpha = b.constructing ? 0.5 : 1;
@@ -409,8 +450,9 @@ function turretFacing(state, b) {
 
 /* ---------- units ---------- */
 
-function drawUnits(ctx, state) {
+function drawUnits(ctx, state, view) {
   for (const u of state.units.values()) {
+    if (view && !inView(view, u.x, u.y, 16)) continue;   // off-screen unit
     if (u.owner !== "player" && !isVisibleAt(state.fog, u.x, u.y)) continue;
     const def = UNITS[u.type];
     const color = state.players[u.owner].color;

@@ -14,14 +14,29 @@
 "use strict";
 
 import { UNITS } from "./entities.js";
+import { queryNeighbors } from "./grid.js";
 
 const PUSH_SPEED = 60;   // units/sec of separation at full overlap
+const SEP_RADIUS = 20;   // 2 * the largest unit radius (Breacher 10) — covers every possible minDist
 
 export function applySeparation(state, dt) {
-  const units = [...state.units.values()];
-  for (let i = 0; i < units.length; i++) {
-    for (let j = i + 1; j < units.length; j++) {
-      separatePair(units[i], units[j], dt);
+  const grid = state.unitGrid;
+  if (!grid) {
+    // No broad-phase index (a direct unit test, not a full tick): exact original
+    // all-pairs pass, so those tests stay byte-for-byte unchanged.
+    const units = [...state.units.values()];
+    for (let i = 0; i < units.length; i++) {
+      for (let j = i + 1; j < units.length; j++) separatePair(units[i], units[j], dt);
+    }
+    return;
+  }
+  // Grid broad phase: for each unit, only test the handful of units in nearby
+  // cells, and only the higher-indexed one of each pair so every pair resolves
+  // exactly once (matching the i<j semantics above).
+  for (const a of state.units.values()) {
+    const near = queryNeighbors(grid, a.x, a.y, SEP_RADIUS);
+    for (const b of near) {
+      if (b._gi > a._gi && b.hp > 0) separatePair(a, b, dt);
     }
   }
 }

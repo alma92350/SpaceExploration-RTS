@@ -7,6 +7,7 @@
 "use strict";
 
 import { stepToward } from "./movement.js";
+import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
@@ -20,6 +21,10 @@ export function tick(state, dt) {
   if (state.over) return;
 
   runAI(state, dt);
+
+  // Broad-phase spatial index for this tick, shared by movement avoidance,
+  // combat acquisition, and the separation pass below (see engine/grid.js).
+  state.unitGrid = buildUnitGrid(state);
 
   for (const unit of state.units.values()) updateUnit(state, unit, dt);
   applySeparation(state, dt);

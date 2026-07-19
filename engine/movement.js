@@ -17,9 +17,11 @@
 "use strict";
 
 import { UNITS } from "./entities.js";
+import { queryNeighbors } from "./grid.js";
 
 const AVOID_RANGE = 30;     // how far out a unit senses neighbors to steer around, beyond their combined radii
 const AVOID_WEIGHT = 1.6;   // how strongly a sensed neighbor bends the seek direction
+const MAX_UNIT_RADIUS = 10; // largest unit radius (Breacher) — the widest a neighbor's own body reaches
 
 function radiusOf(entity) {
   return UNITS[entity.type] ? UNITS[entity.type].radius : 9;
@@ -62,9 +64,14 @@ export function stepToward(state, unit, tx, ty, speed, dt) {
 function senseLateralAvoidance(state, unit, seekX, seekY) {
   const perpX = -seekY, perpY = seekX;
   const selfR = radiusOf(unit);
+  // Broad phase: only same-owner neighbours in nearby cells can be within sense
+  // range. Falls back to the full unit list when there's no grid (direct tests).
+  const others = state.unitGrid
+    ? queryNeighbors(state.unitGrid, unit.x, unit.y, selfR + MAX_UNIT_RADIUS + AVOID_RANGE)
+    : state.units.values();
   let lateral = 0;
-  for (const other of state.units.values()) {
-    if (other === unit || other.owner !== unit.owner) continue;
+  for (const other of others) {
+    if (other === unit || other.owner !== unit.owner || other.hp <= 0) continue;
     const dx = other.x - unit.x, dy = other.y - unit.y;
     const dist = Math.hypot(dx, dy);
     const detectRange = selfR + radiusOf(other) + AVOID_RANGE;

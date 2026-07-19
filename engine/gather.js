@@ -25,7 +25,9 @@ function orbitSpot(node, unitId) {
 export function updateGather(state, unit, dt) {
   const def = UNITS.worker;
   const order = unit.order;
-  const node = state.map.nodes.find(n => n.id === order.nodeId);
+  const node = state.map.nodesById
+    ? state.map.nodesById.get(order.nodeId)
+    : state.map.nodes.find(n => n.id === order.nodeId);
   if (!node || node.amount <= 0) { unit.order = null; return; }
   if (!order.phase) order.phase = "toNode";
 

@@ -18,6 +18,7 @@
 import { stepToward } from "./movement.js";
 import { UNITS, BUILDINGS, UPGRADES } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
+import { queryNeighbors } from "./grid.js";
 
 export function updateCombat(state, unit, dt) {
   const def = UNITS[unit.type];
@@ -126,7 +127,7 @@ function isAlive(state, id) {
 function nearestEnemy(entities, unit, maxRange) {
   let best = null, bestD = Infinity;
   for (const e of entities) {
-    if (e.owner === unit.owner) continue;
+    if (e.owner === unit.owner || e.hp <= 0) continue;   // hp>0 also skips stale dead refs a grid bucket may still hold
     const d = Math.hypot(e.x - unit.x, e.y - unit.y);
     if (d <= maxRange && d < bestD) { bestD = d; best = e; }
   }
@@ -143,7 +144,13 @@ function acquireTarget(state, unit, def) {
   // (or turret) reaches out to acquire — so a storm-shortened world bites both
   // sides' aggro symmetrically. Optional-chained for map-less test states.
   const aggro = def.aggroRange * (state.map?.modifiers?.sightMult ?? 1);
-  const u = nearestEnemy(state.units.values(), unit, aggro);
+  // Units through the broad-phase grid (there can be hundreds); buildings stay a
+  // straight scan since there are only ever a handful. Full-scan fallback when
+  // no grid is present (direct combat tests).
+  const unitCandidates = state.unitGrid
+    ? queryNeighbors(state.unitGrid, unit.x, unit.y, aggro)
+    : state.units.values();
+  const u = nearestEnemy(unitCandidates, unit, aggro);
   const b = nearestEnemy(state.buildings.values(), unit, aggro);
   if (def.prefersBuildings && b) return b.id;
   if (!u) return b ? b.id : null;
