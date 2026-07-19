@@ -44,10 +44,12 @@ seedChipEl.addEventListener("click", () => {
 // loop, so a first-time player isn't left guessing what to do. Auto-clears after
 // the opening; pressing ? opens the full control sheet.
 let objectivesTimer;
-export function showObjectives() {
-  objectivesEl.innerHTML =
-    `<span class="obj-goal">Objective — destroy every enemy Command Center.</span>`
-    + `<span class="obj-tip">Workers gather ore → build a Barracks → train an army → <b>A</b> then click to attack-move it in. Press <b>?</b> for all controls.</span>`
+export function showObjectives(endless = false) {
+  objectivesEl.innerHTML = (endless
+    ? `<span class="obj-goal">Odyssey — settle this world and grow your economy.</span>`
+      + `<span class="obj-tip">You have one Command Center — your capital. Gather, expand, and hold your ground against your neighbours (in peace or war). No clock, no victory screen. Press <b>?</b> for all controls.</span>`
+    : `<span class="obj-goal">Objective — destroy every enemy Command Center.</span>`
+      + `<span class="obj-tip">Workers gather ore → build a Barracks → train an army → <b>A</b> then click to attack-move it in. Press <b>?</b> for all controls.</span>`)
     + `<button class="obj-close" title="Dismiss" aria-label="Dismiss">×</button>`;
   objectivesEl.classList.remove("hidden");
   objectivesEl.querySelector(".obj-close").addEventListener("click", hideObjectives);

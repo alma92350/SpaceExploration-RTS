@@ -26,6 +26,7 @@ import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
+import { createGalaxy, activeState } from "./engine/galaxy.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -94,6 +95,20 @@ export function startBounty(planetId) {
   bootState(fresh, { intro: false });
 }
 
+// Start an Odyssey — the open-world campaign. Builds a galaxy (Phase 1: one
+// randomly-chosen starting world), boots its active planet, and parks the galaxy
+// on the session so the HUD/credits and the later jump machinery can reach it.
+export function startOdyssey() {
+  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const diff = DIFFICULTY[setup.difficulty] || DIFFICULTY.medium;
+  const galaxy = createGalaxy({
+    seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
+    playerFaction: setup.faction, aiApm: diff.aiApm, aiMicro: diff.aiMicro,
+  });
+  bootState(activeState(galaxy), { intro: true });   // bootState clears game.galaxy; set it just after
+  game.galaxy = galaxy;
+}
+
 // Re-open the map-select screen (the game-over "choose another battlefield"
 // button, passed into overlays' showGameOver so that module needn't import setup).
 function restartToMapSelect() {
@@ -113,11 +128,12 @@ export function bootState(newState, { intro }) {
   clearTimeout(underAttackTimer);
   hideObjectives();
 
+  game.galaxy = null;   // cleared by default; startOdyssey re-sets it right after this returns
   game.state = newState;
   const state = newState;   // alias for the synchronous setup below (identical to the original)
   showSeedChip(state.seed);
   showFactionChip(state);
-  if (intro) showObjectives();
+  if (intro) showObjectives(state.endless);
   game.input = attachInput(canvas, state, () => renderHUD());
   const input = game.input;
   // Open on the player's own ships — the escort/convoy start station, the raider

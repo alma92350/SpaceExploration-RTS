@@ -17,7 +17,7 @@ import { applySeparation } from "./separation.js";
 import { updateFog } from "./fog.js";
 import { UNITS } from "./entities.js";
 import { getEntity } from "./state.js";
-import { checkWinCondition } from "./victory.js";
+import { checkWinCondition, checkEndlessLoss } from "./victory.js";
 import { runAI } from "./ai.js";
 import { updateScenario } from "./scenarios.js";
 
@@ -51,9 +51,12 @@ export function tick(state, dt) {
   // for the tick, so a Mender patches the freshest wounds (see repair.js).
   updateRepair(state, dt);
 
-  // Scenario mode settles its own win/lose inside updateScenario; the skirmish
-  // CC/score victory check only applies to a normal match.
-  if (!state.scenario) checkWinCondition(state);
+  // Scenario mode settles its own win/lose inside updateScenario; Odyssey
+  // (endless) only ends on losing the player's Command Center; a normal match
+  // uses the CC/score victory check.
+  if (state.scenario) { /* updateScenario already set state.over if finished */ }
+  else if (state.endless) checkEndlessLoss(state);
+  else checkWinCondition(state);
   state.time += dt;
   state.tick++;
 }

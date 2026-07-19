@@ -68,6 +68,8 @@ html, body {
    supply-blocked production attempt (see main.js's supplyBlockedUntil). */
 .resources .supply.at-cap { color: var(--warn); }
 .resources .supply.blocked { color: var(--bad); }
+/* Odyssey universal-credit balance — galaxy-wide, so it reads gold like the clock. */
+.resources .credits { color: var(--gold); font-variant-numeric: tabular-nums; }
 
 .clock {
   font-variant-numeric: tabular-nums;

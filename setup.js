@@ -14,7 +14,7 @@ import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame } from "./saveload.js";
-import { startGame, startScenario, startRaider, startBounty } from "./boot.js";
+import { startGame, startScenario, startRaider, startBounty, startOdyssey } from "./boot.js";
 import * as sound from "./sound.js";
 
 // The curated roster and its order both come from the AI archetype table, so
@@ -55,10 +55,15 @@ export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontie
 // The game modes the splash toggles between.
 const MODES = [
   { key: "skirmish", label: "⚔ Skirmish", note: "Destroy the enemy base" },
+  { key: "odyssey", label: "🌌 Odyssey", note: "Open world — settle and grow, endlessly" },
   { key: "escort", label: "🚚 Convoy Escort", note: "Protect freighters to the destination" },
   { key: "raider", label: "🏴‍☠️ Pirate Raider", note: "Raid the convoy before it escapes" },
   { key: "bounty", label: "⭐ Bounty Marshal", note: "Hunt pirate camps before the clock" },
 ];
+
+// The scenario modes that pick a world from the card grid (Odyssey lands on a
+// random world instead, and skirmish is a normal match).
+const SCENARIOS = ["escort", "raider", "bounty"];
 
 // The two scenarios' splash copy — the setup-panel difficulty hint, the brief
 // blurb above the cards, and the screen title/subtitle. Keyed by setup.mode.
@@ -87,6 +92,13 @@ const SCENARIO_COPY = {
       + "and your order carefully. Score rewards bounty banked, camps cleared fast, and posse left standing.",
     subtitle: "Choose the sector (world to hunt)",
   },
+  odyssey: {
+    title: "Odyssey — open world",
+    diffHint: "Difficulty sets how fast and fiercely your neighbours expand — from a calm frontier to a hostile sector.",
+    brief: "The open-world campaign. Settle a random world with a single Command Center — your one, relocatable "
+      + "capital — and build your economy beside your neighbours, in peace or war. No clock and no victory screen: "
+      + "you play on for as long as your capital stands.",
+  },
 };
 
 // A one-of-N pick rendered as a row of buttons; clicking one selects it and
@@ -110,7 +122,9 @@ function optionGroup(current, options, onPick) {
 }
 
 function renderSetupPanel(mode) {
-  const scenario = mode !== "skirmish";
+  // Economy modes (skirmish + Odyssey) run a full base economy, so they get the
+  // faction and resource dials; the scripted scenarios have neither.
+  const economy = mode === "skirmish" || mode === "odyssey";
   const panel = document.createElement("div");
   panel.className = "setup";
 
@@ -124,14 +138,14 @@ function renderSetupPanel(mode) {
 
   const hint = document.createElement("p");
   hint.className = "setup-hint";
-  hint.textContent = scenario
-    ? SCENARIO_COPY[mode].diffHint
-    : "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger.";
+  hint.textContent = mode === "skirmish"
+    ? "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger."
+    : SCENARIO_COPY[mode].diffHint;
   panel.appendChild(hint);
 
-  // Faction and resources only shape a skirmish economy — a scenario has
-  // neither, so those rows are skipped in scenario mode.
-  if (!scenario) {
+  // Faction and resources shape a base economy — offered in the economy modes
+  // (skirmish + Odyssey), skipped in the scripted scenarios.
+  if (economy) {
     const facHint = document.createElement("p");
     facHint.className = "setup-hint";
     facHint.id = "factionHint";
@@ -160,7 +174,7 @@ function renderSetupPanel(mode) {
   sizeRow.append(sizeLabel, optionGroup(setup.sizeMult, SIZE_OPTIONS, m => { setup.sizeMult = m; }));
   panel.appendChild(sizeRow);
 
-  if (!scenario) {
+  if (economy) {
     const resRow = document.createElement("div");
     resRow.className = "setup-row";
     const resLabel = document.createElement("span");
@@ -196,20 +210,21 @@ function renderSetupPanel(mode) {
 const SCENARIO_START = { escort: startScenario, raider: startRaider, bounty: startBounty };
 
 export function renderMapSelect() {
-  const scenario = setup.mode !== "skirmish";
-  const copy = SCENARIO_COPY[setup.mode];
+  const isScenario = SCENARIOS.includes(setup.mode);
+  const odyssey = setup.mode === "odyssey";
+  const copy = SCENARIO_COPY[setup.mode];   // defined for scenarios + Odyssey; undefined for skirmish
   mapSelectEl.innerHTML = "";
   const title = document.createElement("h2");
-  title.textContent = scenario ? copy.title : "Configure the skirmish";
+  title.textContent = copy ? copy.title : "Configure the skirmish";
   mapSelectEl.appendChild(title);
 
-  // Mode toggle: skirmish vs the convoy-escort scenario. Picking one re-renders
-  // this screen so the setup rows + card actions match the mode.
+  // Mode toggle: skirmish, the open-world Odyssey, or a scripted scenario.
+  // Picking one re-renders this screen so the setup rows + start action match.
   mapSelectEl.appendChild(optionGroup(setup.mode, MODES.map(m => ({ label: m.label, mult: m.key, note: m.note })),
     key => { setup.mode = key; renderMapSelect(); }));
 
   // Offer to pick up a saved skirmish before starting a fresh one (skirmish only).
-  if (!scenario && hasSave()) {
+  if (setup.mode === "skirmish" && hasSave()) {
     const resume = document.createElement("button");
     resume.className = "btn resume-btn";
     resume.textContent = "▶ Resume saved game";
@@ -217,7 +232,8 @@ export function renderMapSelect() {
     mapSelectEl.appendChild(resume);
   }
 
-  if (scenario) {
+  // Scenarios and Odyssey get a brief blurb above the setup.
+  if (copy) {
     const brief = document.createElement("p");
     brief.className = "setup-hint";
     brief.style.maxWidth = "560px";
@@ -227,9 +243,23 @@ export function renderMapSelect() {
 
   mapSelectEl.appendChild(renderSetupPanel(setup.mode));
 
+  // Odyssey lands on a random world — one Begin button instead of the card grid.
+  if (odyssey) {
+    const begin = document.createElement("button");
+    begin.className = "btn resume-btn";
+    begin.textContent = "⏵ Begin Odyssey — land on a random world";
+    begin.addEventListener("click", () => {
+      sound.unlockAudio();
+      mapSelectEl.classList.add("hidden");
+      startOdyssey();
+    });
+    mapSelectEl.appendChild(begin);
+    return;
+  }
+
   const subtitle = document.createElement("h3");
   subtitle.className = "cards-heading";
-  subtitle.textContent = scenario ? copy.subtitle : "Then choose a battlefield";
+  subtitle.textContent = isScenario ? copy.subtitle : "Then choose a battlefield";
   mapSelectEl.appendChild(subtitle);
 
   const cards = document.createElement("div");
@@ -242,12 +272,12 @@ export function renderMapSelect() {
     // Skirmish cards advertise the opponent + the world modifier; scenario cards
     // just pick which world the convoy crosses.
     card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`
-      + (scenario ? "" : `<span class="ai-note">Opponent doctrine: ${archetypeFor(id).name}</span>`)
+      + (isScenario ? "" : `<span class="ai-note">Opponent doctrine: ${archetypeFor(id).name}</span>`)
       + (mod ? `<span class="mod-note">${mod.label}</span>` : "");
     card.addEventListener("click", () => {
       sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
-      if (scenario) SCENARIO_START[setup.mode](id); else startGame(id);
+      if (isScenario) SCENARIO_START[setup.mode](id); else startGame(id);
     });
     cards.appendChild(card);
   });

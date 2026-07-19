@@ -25,6 +25,16 @@ export function checkWinCondition(state) {
   if (state.time >= limit) finish(state, scoreLeader(state));
 }
 
+// Odyssey (open-world) terminal check: there is no victory by conquest and no
+// time limit — the sandbox only ends when the player loses their single
+// Command Center (their capital seat). Razing a neighbour's CC never ends the
+// game; that world simply keeps evolving. Used in place of checkWinCondition
+// for an endless state (see sim.js).
+export function checkEndlessLoss(state) {
+  if (state.over) return;
+  if (!hasCommandCenter(state, "player")) finish(state, "ai");
+}
+
 function finish(state, winner) {
   state.over = true;
   state.winner = winner;

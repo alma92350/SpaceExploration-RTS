@@ -74,6 +74,10 @@ export function createGameState(opts = {}) {
     planetId,
     sizeMult: opts.sizeMult || 1,
     resourceMult: opts.resourceMult || 1,
+    // Odyssey (open-world) mode: no skirmish victory — the match never ends by
+    // razing the enemy, only when the player loses their single Command Center
+    // (see engine/victory.js checkEndlessLoss + engine/galaxy.js).
+    endless: !!opts.endless,
     map,
     players: {
       // Faction is a passive-trait bundle (engine/factions.js). It defaults to

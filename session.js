@@ -15,6 +15,10 @@
 export const game = {
   state: null,   // the current engine game state (engine/state.js), or null on the splash screen
   input: null,   // the current input controller (input.js attachInput), or null before a game
+  // The Odyssey galaxy (engine/galaxy.js) when in open-world mode, else null. In
+  // Odyssey `state` is the active planet's state = galaxy.planets.get(activeId);
+  // credits + the other planets live on the galaxy. Read at call time like the rest.
+  galaxy: null,
   // Timestamp until which the supply readout flashes red after a blocked
   // production attempt: written by boot.js's frame-event pump, read by hud.js's
   // renderHUD. Kept here because it crosses that module boundary.

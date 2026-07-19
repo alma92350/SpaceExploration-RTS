@@ -57,6 +57,16 @@ export function renderHUD() {
     supplySpan.textContent = `supply: ${used}/${cap}`;
     resourcesEl.appendChild(supplySpan);
 
+    // Odyssey: your universal credit balance lives on the galaxy, not the planet
+    // — shown alongside the local economy (spent on jumps and the market later).
+    if (game.galaxy) {
+      const creditsSpan = document.createElement("span");
+      creditsSpan.className = "credits";
+      creditsSpan.textContent = `◈ ${Math.floor(game.galaxy.credits)}`;
+      creditsSpan.title = "Universal credits — galaxy-wide, carried between planets";
+      resourcesEl.appendChild(creditsSpan);
+    }
+
     const mins = Math.floor(state.time / 60);
     const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
     clockEl.textContent = `${mins}:${secs}`;
@@ -354,7 +364,11 @@ function rebuildSelectionPanel(sel) {
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
-    for (const t of ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"]) {
+    // Odyssey gives you one Command Center — your single relocatable capital — so
+    // a second can't be built there; a skirmish still allows expansion CCs.
+    const buildables = ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat"];
+    if (!state.endless) buildables.push("command");
+    for (const t of buildables) {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);
       panelEl.appendChild(makeButton(`Build ${def.name} (${costText(def.cost)})`,
