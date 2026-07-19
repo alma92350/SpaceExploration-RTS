@@ -39,8 +39,13 @@ html, body {
 #topbar {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 8px 16px;
+  /* Wrap rather than clip: the row carries a lot (resources, clock, idle/faction/
+     seed chips, volume, mute, save, load, help), so on a narrower window the
+     controls flow to a second line instead of the right-hand buttons (Save /
+     Load / Help) sliding off the edge under the app's overflow:hidden. */
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
@@ -83,7 +88,7 @@ html, body {
 .mute-btn[aria-pressed="true"] { color: var(--muted); }
 
 .volume {
-  width: 90px;
+  width: 74px;
   accent-color: var(--accent);
   cursor: pointer;
 }
