@@ -16,6 +16,7 @@ import { issueMove, issueAttackMove } from "./engine/commands.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
+import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { PLANETS } from "./data.js";
 import { drawFrame, resetFacing } from "./render.js";
@@ -45,6 +46,7 @@ const mapSelectEl = document.getElementById("mapSelect");
 const muteBtn = document.getElementById("muteBtn");
 const underAttackEl = document.getElementById("underAttackAlert");
 const seedChipEl = document.getElementById("seedChip");
+const factionChipEl = document.getElementById("factionChip");
 const idleWorkersEl = document.getElementById("idleWorkers");
 const objectivesEl = document.getElementById("objectives");
 idleWorkersEl.addEventListener("click", () => { if (input) input.focusIdleWorker(); });
@@ -164,7 +166,14 @@ const DIFFICULTY = {
   medium: { aiApm: 65, aiMicro: false },
   hard: { aiApm: 140, aiMicro: true },
 };
-const setup = { difficulty: "medium", sizeMult: 1, resourceMult: 1, seed: null };
+// Playable factions for the setup picker — a passive-trait identity for your side
+// (engine/factions.js). Each option's `mult` is the faction id, its note the short
+// tagline of its edge. The AI's faction comes from the world's archetype instead.
+const FACTION_OPTIONS = PLAYABLE_FACTIONS.map(id => ({
+  label: FACTIONS[id].short, mult: id,
+  note: { frontier: "faster · sees farther", miners: "richer · builds faster", syndicate: "hits harder · lean economy" }[id],
+}));
+const setup = { difficulty: "medium", faction: "frontier", sizeMult: 1, resourceMult: 1, seed: null };
 
 // A one-of-N pick rendered as a row of buttons; clicking one selects it and
 // stores its value via onPick.
@@ -202,6 +211,22 @@ function renderSetupPanel() {
   hint.className = "setup-hint";
   hint.textContent = "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger.";
   panel.appendChild(hint);
+
+  const facRow = document.createElement("div");
+  facRow.className = "setup-row";
+  const facLabel = document.createElement("span");
+  facLabel.className = "setup-label";
+  facLabel.textContent = "Faction";
+  facRow.append(facLabel, optionGroup(setup.faction, FACTION_OPTIONS, key => { setup.faction = key; renderFactionHint(); }));
+  panel.appendChild(facRow);
+
+  const facHint = document.createElement("p");
+  facHint.className = "setup-hint";
+  facHint.id = "factionHint";
+  panel.appendChild(facHint);
+  // Filled now and on every faction pick, so the blurb tracks the selection.
+  function renderFactionHint() { facHint.textContent = FACTIONS[setup.faction].blurb; }
+  renderFactionHint();
 
   const sizeRow = document.createElement("div");
   sizeRow.className = "setup-row";
@@ -295,8 +320,12 @@ function startGame(planetId) {
   // flows from the seeded mulberry32, so same seed ⇒ same world.
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
   const diff = DIFFICULTY[setup.difficulty] || DIFFICULTY.medium;
+  // The player picks their faction; the AI's comes from this world's archetype
+  // (aiArchetypes.js), so the opponent's identity is part of the world's character.
+  const aiFaction = archetypeFor(planetId).faction || "neutral";
   const fresh = createGameState({ planetId, seed, rng: mulberry32(seed),
-    aiApm: diff.aiApm, aiMicro: diff.aiMicro, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
+    aiApm: diff.aiApm, aiMicro: diff.aiMicro, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
+    playerFaction: setup.faction, aiFaction });
   bootState(fresh, { intro: true });
 }
 
@@ -314,6 +343,7 @@ function bootState(newState, { intro }) {
 
   state = newState;
   showSeedChip(state.seed);
+  showFactionChip(state);
   if (intro) showObjectives();
   input = attachInput(canvas, state, () => renderHUD());
   // Open on the player's own base, not the map centre — on a big map the base
@@ -391,6 +421,16 @@ function showSeedChip(seed) {
   seedChipEl.textContent = `Seed ${seed}`;
   seedChipEl.dataset.seed = String(seed);
   seedChipEl.classList.remove("hidden");
+}
+
+// "You: Frontier ⚔ Miners" — your faction vs the opponent's. Hidden for a
+// neutral-vs-neutral match (a bare state with no factions picked).
+function showFactionChip(st) {
+  const you = FACTIONS[st.players.player.faction], foe = FACTIONS[st.players.ai.faction];
+  if (!you || you.id === "neutral") { factionChipEl.classList.add("hidden"); return; }
+  factionChipEl.textContent = `You: ${you.short} ⚔ ${foe && foe.id !== "neutral" ? foe.short : "Foe"}`;
+  factionChipEl.title = `You — ${you.name}: ${you.blurb}` + (foe && foe.id !== "neutral" ? `\nFoe — ${foe.name}: ${foe.blurb}` : "");
+  factionChipEl.classList.remove("hidden");
 }
 seedChipEl.addEventListener("click", () => {
   const s = seedChipEl.dataset.seed;

@@ -76,8 +76,12 @@ export function createGameState(opts = {}) {
     resourceMult: opts.resourceMult || 1,
     map,
     players: {
-      player: { id: "player", faction: "frontier", isAI: false, resources: startingResources(), color: "#4fd1ff", upgrades: {} },
-      ai: { id: "ai", faction: "miners", isAI: true, resources: startingResources(), color: "#f87171", upgrades: {} },
+      // Faction is a passive-trait bundle (engine/factions.js). It defaults to
+      // "neutral" (no traits) so a bare createGameState — every engine test —
+      // behaves exactly as before; the setup screen (main.js) passes the real
+      // pick for the player and the archetype's faction for the AI.
+      player: { id: "player", faction: opts.playerFaction || "neutral", isAI: false, resources: startingResources(), color: "#4fd1ff", upgrades: {} },
+      ai: { id: "ai", faction: opts.aiFaction || "neutral", isAI: true, resources: startingResources(), color: "#f87171", upgrades: {} },
     },
     units: new Map(),
     buildings: new Map(),

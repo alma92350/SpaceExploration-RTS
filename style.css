@@ -362,6 +362,17 @@ html, body {
 .seed-chip.copied { border-color: var(--accent); color: var(--accent); }
 .seed-chip.hidden { display: none; }
 
+.faction-chip {
+  font-size: 0.7rem;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  cursor: default;
+}
+.faction-chip.hidden { display: none; }
+
 .help-btn {
   background: var(--panel-2);
   border: 1px solid var(--border);

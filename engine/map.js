@@ -14,6 +14,7 @@
 "use strict";
 
 import { PLANETS } from "../data.js";
+import { factionTrait } from "./factions.js";
 
 // The "Small" map — every other size is a whole-number multiple of this.
 export const MAP_WIDTH = 1600;
@@ -97,18 +98,26 @@ function generateTerrain(width, height, specs) {
   return { cols, rows, cell: TERRAIN_CELL_SIZE, type };
 }
 
-// A world modifier as seen by ONE side. Most worlds tilt both sides equally
-// (a plain `modifiers[key]`), but a world may carry an `asym: { player, ai }`
-// block that overrides a key for just one owner — an asymmetric matchup where
-// the two starts differ. Lookup order: the owner's asym override, then the
-// shared modifier, then the default. Owner-less / map-less test stubs read the
-// shared value (or the default), so existing symmetric behaviour is unchanged.
+// A world-and-faction modifier as seen by ONE side. Two independent layers,
+// multiplied together:
+//   1. The WORLD. Most worlds tilt both sides equally (a plain `modifiers[key]`),
+//      but a world may carry an `asym: { player, ai }` block that overrides a key
+//      for just one owner. Lookup: the owner's asym override, then the shared
+//      modifier, then the default.
+//   2. The FACTION (factions.js). The owner's chosen faction contributes its own
+//      trait multiplier for the same key (1 when it has none, or on a map-less /
+//      player-less test stub) — so a faction's edge lands exactly where a world's
+//      does, through this one seam, and every existing consumer picks it up for
+//      free. `neutral` (the test/default faction) contributes 1, leaving the
+//      long-standing symmetric behaviour and every exact-value test unchanged.
 export function sideMod(state, owner, key, dflt = 1) {
   const m = state && state.map && state.map.modifiers;
-  if (!m) return dflt;
-  const a = m.asym && m.asym[owner];
-  if (a && a[key] != null) return a[key];
-  return m[key] ?? dflt;
+  let world = dflt;
+  if (m) {
+    const a = m.asym && m.asym[owner];
+    world = a && a[key] != null ? a[key] : (m[key] ?? dflt);
+  }
+  return world * factionTrait(state, owner, key);
 }
 
 // The TERRAIN entry at a world point. Returns OPEN for a missing grid or an

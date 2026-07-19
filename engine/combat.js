@@ -196,6 +196,11 @@ function attackDamage(state, unit, def, target) {
   dmg *= upgradeMult(state.players[unit.owner].upgrades, "damageDealtMult");
   dmg *= upgradeMult(state.players[target.owner]?.upgrades, "damageTakenMult");
 
+  // The attacker's faction (and any future world) damage edge, through the same
+  // sideMod seam as every other side modifier. 1 for a neutral/economy/mobility
+  // faction; the Syndicate's firepower trait multiplies here (see factions.js).
+  dmg *= sideMod(state, unit.owner, "damageDealtMult");
+
   // A positional edge, not a counter: an attacker firing from high ground hits
   // for a flat bonus (terrain combatMult). Situational and symmetric, so the RPS
   // triangle is untouched. OPEN / map-less states read 1.

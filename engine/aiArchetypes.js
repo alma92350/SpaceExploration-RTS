@@ -20,6 +20,7 @@ export const ARCHETYPES = {
     expandWhenNodesBelow: 0,   // its plan resolves long before home ore runs dry, so it never expands.
     garrison: 0,           // all-in: keeps nothing back, every unit joins the push.
     doctrine: "assault",   // all-in aggression favours the offensive upgrade path.
+    faction: "syndicate",  // all-in firepower on a lean economy — the rush hits harder (factions.js)
   },
   economist: {
     name: "Economist",
@@ -35,6 +36,7 @@ export const ARCHETYPES = {
     garrison: 3,           // turtles: holds three back to defend home while the surplus attacks.
     doctrine: "bulwark",   // out-scales and turtles behind turrets — the defensive path suits it.
     wantsRefinery: true,   // patient enough to bank for a Refinery and research its doctrine.
+    faction: "miners",     // industry to reinforce the out-scale plan (factions.js)
   },
   balanced: {
     name: "Balanced",
@@ -48,6 +50,7 @@ export const ARCHETYPES = {
     garrison: 2,           // keeps a small home guard back on a massed attack.
     doctrine: "assault",   // leans aggressive once its army is up.
     wantsRefinery: true,   // builds a Refinery and researches its doctrine once teched.
+    faction: "frontier",   // mobility & vision for even, map-controlling play (factions.js)
   },
 };
 
