@@ -20,6 +20,11 @@ import { archetypeFor } from "./aiArchetypes.js";
 let nextEntityId = 1;
 function newId(prefix) { return `${prefix}${nextEntityId++}`; }
 
+// Save/load (engine/persist.js) needs to snapshot and restore the id counter so a
+// loaded game keeps minting fresh, non-colliding ids from where it left off.
+export function peekEntityId() { return nextEntityId; }
+export function restoreEntityId(n) { nextEntityId = n; }
+
 export function makeUnit(type, owner, x, y) {
   const def = UNITS[type];
   return {
@@ -64,6 +69,11 @@ export function createGameState(opts = {}) {
     over: false,
     winner: null,
     seed: opts.seed ?? null,   // the match seed, if one was supplied — reproduces this whole game
+    // The generation inputs, kept so a save can regenerate the (deterministic)
+    // map from the seed instead of serialising the whole terrain/node table.
+    planetId,
+    sizeMult: opts.sizeMult || 1,
+    resourceMult: opts.resourceMult || 1,
     map,
     players: {
       player: { id: "player", faction: "frontier", isAI: false, resources: startingResources(), color: "#4fd1ff", upgrades: {} },

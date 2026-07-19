@@ -8,6 +8,7 @@
 
 import { createGameState } from "./engine/state.js";
 import { mulberry32 } from "./engine/rng.js";
+import { serializeGame, deserializeGame } from "./engine/persist.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
@@ -49,6 +50,9 @@ const objectivesEl = document.getElementById("objectives");
 idleWorkersEl.addEventListener("click", () => { if (input) input.focusIdleWorker(); });
 const helpOverlayEl = document.getElementById("helpOverlay");
 const helpBtn = document.getElementById("helpBtn");
+const saveBtn = document.getElementById("saveBtn");
+const loadBtn = document.getElementById("loadBtn");
+const SAVE_KEY = "stellarfrontier.save.v1";
 
 muteBtn.addEventListener("click", () => {
   const next = !sound.isMuted();
@@ -234,6 +238,15 @@ function renderMapSelect() {
   title.textContent = "Configure the skirmish";
   mapSelectEl.appendChild(title);
 
+  // Offer to pick up a saved game before starting a fresh one.
+  if (hasSave()) {
+    const resume = document.createElement("button");
+    resume.className = "btn resume-btn";
+    resume.textContent = "▶ Resume saved game";
+    resume.addEventListener("click", loadGame);
+    mapSelectEl.appendChild(resume);
+  }
+
   mapSelectEl.appendChild(renderSetupPanel());
 
   const subtitle = document.createElement("h3");
@@ -265,22 +278,32 @@ function renderMapSelect() {
 }
 
 function startGame(planetId) {
-  if (loop) loop.stop();
-  if (input) input.destroy();
-  gameOverEl.classList.add("hidden");
-  underAttackEl.classList.add("hidden");
-  clearTimeout(underAttackTimer);
-
   // Seed the sim so the match is reproducible: a player can note the seed and
   // re-enter it to replay the exact same map. The seed itself is drawn from the
   // UI layer (Math.random is fine here — it's not the sim); everything downstream
   // flows from the seeded mulberry32, so same seed ⇒ same world.
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
   const diff = DIFFICULTY[setup.difficulty] || DIFFICULTY.medium;
-  state = createGameState({ planetId, seed, rng: mulberry32(seed),
+  const fresh = createGameState({ planetId, seed, rng: mulberry32(seed),
     aiApm: diff.aiApm, aiMicro: diff.aiMicro, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
-  showSeedChip(seed);
-  showObjectives();
+  bootState(fresh, { intro: true });
+}
+
+// Wire a state — freshly created OR loaded from a save — to input, camera, the
+// fixed-timestep loop, and the HUD. The single boot path both startGame and
+// loadGame funnel through.
+function bootState(newState, { intro }) {
+  if (loop) loop.stop();
+  if (input) input.destroy();
+  mapSelectEl.classList.add("hidden");
+  gameOverEl.classList.add("hidden");
+  underAttackEl.classList.add("hidden");
+  clearTimeout(underAttackTimer);
+  hideObjectives();
+
+  state = newState;
+  showSeedChip(state.seed);
+  if (intro) showObjectives();
   input = attachInput(canvas, state, () => renderHUD());
   // Open on the player's own base, not the map centre — on a big map the base
   // sits far off toward the edge and you'd otherwise start staring at nothing.
@@ -314,6 +337,42 @@ function startGame(planetId) {
   loop.start();
   renderHUD();
 }
+
+/* ---------- save / load (localStorage; the seed regenerates the map) ---------- */
+
+function hasSave() {
+  try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+}
+function saveGame() {
+  if (!state) return;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(serializeGame(state)));
+    flashButton(saveBtn, "Saved ✓");
+  } catch (e) {
+    flashButton(saveBtn, "Save failed");
+  }
+}
+function loadGame() {
+  let raw = null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { /* storage blocked */ }
+  if (!raw) { flashButton(loadBtn, "No save"); return; }
+  try {
+    sound.unlockAudio();
+    bootState(deserializeGame(JSON.parse(raw)), { intro: false });
+  } catch (e) {
+    flashButton(loadBtn, "Load failed");
+  }
+}
+function flashButton(btn, msg) {
+  if (!btn) return;
+  const original = btn.dataset.label || btn.textContent;
+  btn.dataset.label = original;
+  btn.textContent = msg;
+  clearTimeout(btn._flashTimer);
+  btn._flashTimer = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1100);
+}
+if (saveBtn) saveBtn.addEventListener("click", saveGame);
+if (loadBtn) loadBtn.addEventListener("click", loadGame);
 
 /* ---------- seed chip · objectives strip · help overlay ---------- */
 

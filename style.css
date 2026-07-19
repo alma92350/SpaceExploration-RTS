@@ -447,3 +447,24 @@ html, body {
 }
 .idle-workers:hover { background: rgba(255, 209, 102, 0.20); }
 .idle-workers.hidden { display: none; }
+
+.chip-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.72rem;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.btn.resume-btn {
+  width: auto;
+  padding: 10px 22px;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0;
+}
