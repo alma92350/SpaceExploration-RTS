@@ -1,13 +1,20 @@
 /* ============================================================
    Scenario / mission mode — a real-time layer over the skirmish engine that
    swaps the "raze the enemy Command Center" objective for a scripted mission.
-   This file hosts the CONVOY ESCORT scenario: a convoy of defenceless freighters
-   travels a multi-leg route across the map, docking at stations between legs;
-   the player controls a small escort fleet and must keep the freighters alive
-   through pirate raids (spawned per leg by that leg's risk) before a global
-   mission clock runs out. Repairing at a station costs from a mission budget,
-   and the score rewards freighters delivered, legs survived, risk faced, and
-   the budget left unspent.
+   Two scenarios share one convoy-along-a-route simulation, differing only by
+   which side the player commands and what the win condition is:
+
+   • CONVOY ESCORT — you control a small escort fleet and must keep a convoy of
+     defenceless freighters alive across a multi-leg route, through pirate raids
+     (spawned per leg by that leg's risk), before a mission clock runs out.
+     Repairs at a station cost from a budget; the score rewards freighters
+     delivered, legs survived, risk faced, and budget left unspent.
+
+   • PIRATE RAIDER — the roles flip: an AI convoy (freighters + escort) runs the
+     same route toward the gate, and you command the raiders, sinking enough
+     freighters to hit a kill quota before the convoy escapes or the clock runs
+     out. The score rewards freighters sunk, escorts destroyed, and raiders left
+     alive.
 
    Determinism: all randomness (pirate counts, spawn positions, compositions)
    flows through a seeded RNG stored on the scenario, so the same seed replays
@@ -21,6 +28,7 @@
 import { createGameState, makeUnit } from "./state.js";
 import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
+import { UNITS } from "./entities.js";
 
 /* ---------- tuning ---------- */
 const PREP_TIME = 12;          // seconds to position escorts before the convoy departs
@@ -40,6 +48,20 @@ export const ESCORT_DIFFICULTY = {
   easy:   { escorts: { skiff: 3, bastion: 1, mender: 1 }, legRisk: [0.3, 0.5, 0.7], timeLimit: 320, budget: 520, dockTime: 16 },
   medium: { escorts: { skiff: 2, bastion: 1, mender: 1 }, legRisk: [0.4, 0.7, 1.0], timeLimit: 280, budget: 420, dockTime: 14 },
   hard:   { escorts: { skiff: 2, lancer: 1 },             legRisk: [0.6, 1.0, 1.4], timeLimit: 240, budget: 300, dockTime: 12 },
+};
+
+/* ---------- Pirate Raider tuning ---------- */
+const RAIDER_DOCK_TIME = 6;         // seconds the AI convoy pauses at each station (a window to strike)
+const PIRATE_AMBUSH_OFFSET = 200;   // how far off the convoy lane the raider fleet lies in wait
+const RAIDER_SCORE = { perFreighter: 350, perEscort: 60, perSurvivor: 35, winBonus: 400, timeDivisor: 8 };
+
+// Pirate Raider difficulty: your raider fleet, the AI convoy's escort, how many
+// freighters you must sink to win, and the clock. Harder = a tougher, better
+// escorted convoy, a leaner raider fleet, and a higher kill quota.
+export const RAIDER_DIFFICULTY = {
+  easy:   { pirates: { skiff: 4, lancer: 1 }, escort: { skiff: 2 },                                  legs: 3, targetKills: 2, timeLimit: 300 },
+  medium: { pirates: { skiff: 3, lancer: 1 }, escort: { skiff: 2, bastion: 1, mender: 1 },           legs: 3, targetKills: 3, timeLimit: 280 },
+  hard:   { pirates: { skiff: 3 },            escort: { skiff: 3, bastion: 1, lancer: 1, mender: 1 }, legs: 3, targetKills: 3, timeLimit: 260 },
 };
 
 /* ---------- setup ---------- */
@@ -87,6 +109,7 @@ export function setupEscort({ planetId = "ferros", seed = 1, difficulty = "mediu
     timeLimit: diff.timeLimit,
     dockTime: diff.dockTime,
     budget: diff.budget,
+    freighterOwner: "player",      // whose freighters these are (player's to protect in Escort)
     freightersTotal: 4,
     delivered: 0,
     legsDone: 0,
@@ -107,9 +130,18 @@ export function setupEscort({ planetId = "ferros", seed = 1, difficulty = "mediu
 
 /* ---------- per-tick brain (called in place of runAI) ---------- */
 
+// Dispatch the live scenario to its own updater. Both drive the *non-player*
+// side of the convoy and settle the objective themselves; combat/movement/fog
+// are the shared skirmish sim.
 export function updateScenario(state, dt) {
   const sc = state.scenario;
   if (!sc || sc.outcome) return;
+  if (sc.type === "raider") updateRaider(state, dt);
+  else updateEscort(state, dt);
+}
+
+function updateEscort(state, dt) {
+  const sc = state.scenario;
 
   const freighters = liveFreighters(state);
 
@@ -187,13 +219,13 @@ function endScenario(state, outcome, banner) {
   sc.outcome = outcome;
   sc.banner = banner;
   sc.timeUsed = state.time;
-  sc.score = computeScore(sc);
+  sc.score = sc.type === "raider" ? computeRaiderScore(state, sc) : computeEscortScore(sc);
   sc.phase = "done";
   state.over = true;
   state.winner = outcome === "win" ? "player" : "ai";
 }
 
-function computeScore(sc) {
+function computeEscortScore(sc) {
   const s = sc.delivered * SCORE.perFreighter
     + sc.legsDone * SCORE.perLeg
     + sc.riskFaced * SCORE.perRisk
@@ -263,6 +295,194 @@ function steerPirates(state, freighters, dt) {
   }
 }
 
+/* ============================================================
+   PIRATE RAIDER — the mirror scenario. The convoy (freighters + escort) is now
+   AI-owned and drives itself to the gate; the player commands the raiders. The
+   scenario force-drives only the convoy (like Escort force-drives the freighters)
+   and leaves the player's raiders entirely to the player — so with no input the
+   convoy simply reaches the gate and escapes (a loss), which also guarantees the
+   mission always terminates.
+   ============================================================ */
+
+// Build a Pirate Raider game state on `planetId`. Same route scaffold as Escort,
+// but the convoy is the enemy and the player starts with a raider fleet lying in
+// wait off the convoy lane near mid-route.
+export function setupRaider({ planetId = "ferros", seed = 1, difficulty = "medium" } = {}) {
+  const diff = RAIDER_DIFFICULTY[difficulty] || RAIDER_DIFFICULTY.medium;
+  const state = createGameState({ planetId, seed, rng: mulberry32(seed >>> 0) });
+  state.units.clear();
+  state.buildings.clear();
+
+  const { width, height } = state.map;
+  const y = height * 0.5;
+  const n = diff.legs;
+  const route = [];
+  for (let i = 0; i <= n; i++) route.push({ x: width * (0.08 + (0.86 * i) / n), y });
+
+  const start = route[0];
+  // The AI convoy: four freighters plus its escort, clustered at the start gate.
+  // Nothing is ordered yet — the convoy holds until prep ends (updateRaider).
+  for (let i = 0; i < 4; i++) {
+    const f = makeUnit("freighter", "ai", start.x + (i % 2) * 26 - 13, start.y + Math.floor(i / 2) * 30 - 15);
+    state.units.set(f.id, f);
+  }
+  let ei = 0, escortsTotal = 0;
+  for (const [type, count] of Object.entries(diff.escort)) {
+    for (let k = 0; k < count; k++) {
+      const u = makeUnit(type, "ai", start.x - 55 - (ei % 3) * 22, start.y + (ei - 2) * 26);
+      state.units.set(u.id, u);
+      if (UNITS[type].role === "combat") escortsTotal++;
+      ei++;
+    }
+  }
+
+  // The player's raider fleet, off the lane near the middle of the route.
+  const mid = route[Math.max(1, Math.floor(n / 2))];
+  const ambush = { x: mid.x, y: Math.min(height - 40, y + PIRATE_AMBUSH_OFFSET) };
+  let pi = 0;
+  for (const [type, count] of Object.entries(diff.pirates)) {
+    for (let k = 0; k < count; k++) {
+      const u = makeUnit(type, "player", ambush.x + (pi % 3) * 26 - 26, ambush.y + Math.floor(pi / 3) * 26);
+      state.units.set(u.id, u);
+      pi++;
+    }
+  }
+
+  state.scenario = {
+    type: "raider",
+    difficulty,
+    phase: "prep",                 // prep → travel ⇄ docked → done
+    phaseTimer: PREP_TIME,
+    route,
+    legs: n,
+    legIndex: 0,
+    timeLimit: diff.timeLimit,
+    freighterOwner: "ai",          // the convoy is the enemy in Raider
+    freightersTotal: 4,
+    targetKills: diff.targetKills,
+    destroyed: 0,
+    delivered: 0,
+    legsDone: 0,
+    escortsTotal,
+    escortsKilled: 0,
+    survivors: 0,
+    score: 0,
+    outcome: null,                 // null | "win" | "loss"
+    rng: mulberry32((seed ^ 0x9e3779b9) >>> 0),
+    playerStart: ambush,           // where boot.js opens the camera (on your fleet, not the convoy)
+    banner: "Prep — position your raiders. The convoy departs soon.",
+  };
+
+  updateFog(state, state.fog, "player");
+  updateFog(state, state.fogAI, "ai");
+  return state;
+}
+
+function updateRaider(state, dt) {
+  const sc = state.scenario;
+  const live = liveFreighters(state);                       // AI freighters still en route
+  sc.destroyed = sc.freightersTotal - live.length - sc.delivered;
+
+  // Terminal checks. Read live counts first so a kill from the previous tick lands.
+  if (sc.destroyed >= sc.targetKills) {
+    endScenario(state, "win", `Raid successful — ${sc.destroyed} of ${sc.freightersTotal} freighters sent to the deep.`);
+    return;
+  }
+  if (combatCount(state, "player") === 0) {
+    endScenario(state, "loss", "Your raiders were wiped out — the convoy sails on.");
+    return;
+  }
+  if (state.time >= sc.timeLimit) {
+    endScenario(state, "loss", "Out of time — the convoy slipped through your net.");
+    return;
+  }
+
+  switch (sc.phase) {
+    case "prep":
+      sc.phaseTimer -= dt;
+      if (sc.phaseTimer <= 0) startRaiderLeg(state, 0);
+      break;
+
+    case "travel": {
+      const target = sc.route[sc.legIndex + 1];
+      driveConvoy(state, live, target);
+      // Arrived when every surviving freighter reaches the station.
+      if (live.length && live.every(f => Math.hypot(f.x - target.x, f.y - target.y) <= STATION_RADIUS)) {
+        sc.legsDone += 1;
+        if (sc.legIndex + 1 >= sc.route.length - 1) {
+          deliverRaiderConvoy(state, live);
+        } else {
+          sc.legIndex += 1;
+          sc.phase = "docked";
+          sc.phaseTimer = RAIDER_DOCK_TIME;
+          sc.banner = `The convoy docks at station ${sc.legIndex} — hit it while it's stopped.`;
+        }
+      }
+      break;
+    }
+
+    case "docked":
+      for (const f of live) f.order = null;   // freighters hold; the escort still defends them
+      sc.phaseTimer -= dt;
+      if (sc.phaseTimer <= 0) startRaiderLeg(state, sc.legIndex);
+      break;
+  }
+}
+
+function startRaiderLeg(state, i) {
+  const sc = state.scenario;
+  sc.legIndex = i;
+  sc.phase = "travel";
+  const legNo = i + 1, legs = sc.route.length - 1;
+  sc.banner = `Leg ${legNo}/${legs} — the convoy runs for the gate. Sink ${sc.targetKills} to win.`;
+}
+
+// Force-drive the AI convoy toward the next station: freighters plain-move (they
+// never fight), escorts + support attack-move so they engage raiders met en route
+// while staying with the convoy. Only (re)issue an order when it actually changed,
+// so an escort mid-engagement isn't reset every tick.
+function driveConvoy(state, freighters, target) {
+  for (const f of freighters) {
+    const o = f.order;
+    if (!o || o.type !== "move" || o.x !== target.x || o.y !== target.y) f.order = { type: "move", x: target.x, y: target.y };
+  }
+  for (const u of state.units.values()) {
+    if (u.owner !== "ai" || u.type === "freighter") continue;
+    const role = UNITS[u.type].role;
+    if (role !== "combat" && role !== "support") continue;
+    const o = u.order;
+    if (!o || o.type !== "attack-move" || o.x !== target.x || o.y !== target.y) {
+      u.order = { type: "attack-move", x: target.x, y: target.y };
+    }
+  }
+}
+
+// The convoy reached the final gate: whatever survived escapes (delivered), and
+// the mission settles on whether the kill quota was met. In practice a met quota
+// already won above, so reaching the gate is the raider's loss condition.
+function deliverRaiderConvoy(state, live) {
+  const sc = state.scenario;
+  sc.delivered = live.length;
+  for (const f of live) state.units.delete(f.id);
+  sc.destroyed = sc.freightersTotal - sc.delivered;
+  const won = sc.destroyed >= sc.targetKills;
+  endScenario(state, won ? "win" : "loss",
+    won ? `The gate opens too late — ${sc.destroyed} freighters already lost.`
+        : `The convoy reaches the gate — ${sc.delivered}/${sc.freightersTotal} freighters escaped you.`);
+}
+
+function computeRaiderScore(state, sc) {
+  sc.escortsKilled = Math.max(0, sc.escortsTotal - combatCount(state, "ai"));
+  sc.survivors = combatCount(state, "player");
+  const won = sc.destroyed >= sc.targetKills;
+  const s = sc.destroyed * RAIDER_SCORE.perFreighter
+    + sc.escortsKilled * RAIDER_SCORE.perEscort
+    + sc.survivors * RAIDER_SCORE.perSurvivor
+    + (won ? RAIDER_SCORE.winBonus : 0)
+    - Math.floor((sc.timeUsed || 0) / RAIDER_SCORE.timeDivisor);
+  return Math.max(0, Math.round(s));
+}
+
 /* ---------- player actions (wired to the HUD) ---------- */
 
 // Credits to fully repair every surviving player ship right now.
@@ -293,14 +513,20 @@ export function departNow(state) {
 /* ---------- helpers ---------- */
 
 function liveFreighters(state) {
+  const owner = state.scenario.freighterOwner;   // "player" in Escort, "ai" in Raider
   const out = [];
-  for (const u of state.units.values()) if (u.owner === "player" && u.type === "freighter") out.push(u);
+  for (const u of state.units.values()) if (u.owner === owner && u.type === "freighter") out.push(u);
   return out;
 }
 function playerShips(state) {
   const out = [];
   for (const u of state.units.values()) if (u.owner === "player") out.push(u);
   return out;
+}
+function combatCount(state, owner) {
+  let n = 0;
+  for (const u of state.units.values()) if (u.owner === owner && UNITS[u.type].role === "combat") n++;
+  return n;
 }
 function centroid(list) {
   if (!list.length) return null;

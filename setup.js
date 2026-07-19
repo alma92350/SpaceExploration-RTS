@@ -14,7 +14,7 @@ import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame } from "./saveload.js";
-import { startGame, startScenario } from "./boot.js";
+import { startGame, startScenario, startRaider } from "./boot.js";
 import * as sound from "./sound.js";
 
 // The curated roster and its order both come from the AI archetype table, so
@@ -56,7 +56,29 @@ export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontie
 const MODES = [
   { key: "skirmish", label: "⚔ Skirmish", note: "Destroy the enemy base" },
   { key: "escort", label: "🚚 Convoy Escort", note: "Protect freighters to the destination" },
+  { key: "raider", label: "🏴‍☠️ Pirate Raider", note: "Raid the convoy before it escapes" },
 ];
+
+// The two scenarios' splash copy — the setup-panel difficulty hint, the brief
+// blurb above the cards, and the screen title/subtitle. Keyed by setup.mode.
+const SCENARIO_COPY = {
+  escort: {
+    title: "Convoy Escort",
+    diffHint: "Higher difficulty means heavier piracy, a leaner escort, a tighter clock and a smaller repair budget.",
+    brief: "Shepherd four freighters across a multi-leg route to the destination gate. "
+      + "Pirates raid each leg by its risk; dock at a station between legs to repair from your budget; "
+      + "beat the mission clock. Score rewards freighters delivered, legs survived, risk faced, and budget saved.",
+    subtitle: "Choose the route (world to cross)",
+  },
+  raider: {
+    title: "Pirate Raider",
+    diffHint: "Higher difficulty means a tougher, better-escorted convoy, a leaner raider fleet, and a higher kill quota.",
+    brief: "You are the pirates. An AI convoy runs a multi-leg route for the gate under escort; "
+      + "lie in wait, then dive past the escort to sink freighters. Hit the kill quota before the convoy "
+      + "escapes or the clock runs out. Score rewards freighters sunk, escorts destroyed, and raiders left alive.",
+    subtitle: "Choose the route (world to raid)",
+  },
+};
 
 // A one-of-N pick rendered as a row of buttons; clicking one selects it and
 // stores its value via onPick.
@@ -78,7 +100,8 @@ function optionGroup(current, options, onPick) {
   return wrap;
 }
 
-function renderSetupPanel(scenario) {
+function renderSetupPanel(mode) {
+  const scenario = mode !== "skirmish";
   const panel = document.createElement("div");
   panel.className = "setup";
 
@@ -93,7 +116,7 @@ function renderSetupPanel(scenario) {
   const hint = document.createElement("p");
   hint.className = "setup-hint";
   hint.textContent = scenario
-    ? "Higher difficulty means heavier piracy, a leaner escort, a tighter clock and a smaller repair budget."
+    ? SCENARIO_COPY[mode].diffHint
     : "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger.";
   panel.appendChild(hint);
 
@@ -156,10 +179,12 @@ function renderSetupPanel(scenario) {
 }
 
 export function renderMapSelect() {
-  const scenario = setup.mode === "escort";
+  const scenario = setup.mode !== "skirmish";
+  const raider = setup.mode === "raider";
+  const copy = SCENARIO_COPY[setup.mode];
   mapSelectEl.innerHTML = "";
   const title = document.createElement("h2");
-  title.textContent = scenario ? "Convoy Escort" : "Configure the skirmish";
+  title.textContent = scenario ? copy.title : "Configure the skirmish";
   mapSelectEl.appendChild(title);
 
   // Mode toggle: skirmish vs the convoy-escort scenario. Picking one re-renders
@@ -180,17 +205,15 @@ export function renderMapSelect() {
     const brief = document.createElement("p");
     brief.className = "setup-hint";
     brief.style.maxWidth = "560px";
-    brief.textContent = "Shepherd four freighters across a multi-leg route to the destination gate. "
-      + "Pirates raid each leg by its risk; dock at a station between legs to repair from your budget; "
-      + "beat the mission clock. Score rewards freighters delivered, legs survived, risk faced, and budget saved.";
+    brief.textContent = copy.brief;
     mapSelectEl.appendChild(brief);
   }
 
-  mapSelectEl.appendChild(renderSetupPanel(scenario));
+  mapSelectEl.appendChild(renderSetupPanel(setup.mode));
 
   const subtitle = document.createElement("h3");
   subtitle.className = "cards-heading";
-  subtitle.textContent = scenario ? "Choose the route (world to cross)" : "Then choose a battlefield";
+  subtitle.textContent = scenario ? copy.subtitle : "Then choose a battlefield";
   mapSelectEl.appendChild(subtitle);
 
   const cards = document.createElement("div");
@@ -208,7 +231,7 @@ export function renderMapSelect() {
     card.addEventListener("click", () => {
       sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
-      if (scenario) startScenario(id); else startGame(id);
+      if (raider) startRaider(id); else if (scenario) startScenario(id); else startGame(id);
     });
     cards.appendChild(card);
   });

@@ -25,7 +25,7 @@ import { addTracer, addDeathFlash, addUnderAttackPing, resetEffects } from "./ef
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
-import { setupEscort } from "./engine/scenarios.js";
+import { setupEscort, setupRaider } from "./engine/scenarios.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -78,6 +78,14 @@ export function startScenario(planetId) {
   bootState(fresh, { intro: false });
 }
 
+// Start a Pirate Raider scenario on `planetId` — the mirror of Escort (you raid
+// the AI convoy). Same boot machinery; the scenario carries its own objective.
+export function startRaider(planetId) {
+  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const fresh = setupRaider({ planetId, seed, difficulty: setup.difficulty });
+  bootState(fresh, { intro: false });
+}
+
 // Re-open the map-select screen (the game-over "choose another battlefield"
 // button, passed into overlays' showGameOver so that module needn't import setup).
 function restartToMapSelect() {
@@ -104,9 +112,10 @@ export function bootState(newState, { intro }) {
   if (intro) showObjectives();
   game.input = attachInput(canvas, state, () => renderHUD());
   const input = game.input;
-  // Open on the convoy's start station (scenario) or the player's own base
-  // (skirmish) — never the map centre, which on a big map is empty space.
-  const openAt = state.scenario ? state.scenario.route[0] : state.map.bases.player;
+  // Open on the player's own ships — the escort/convoy start station, the raider
+  // fleet's ambush point, or the player's base in a skirmish — never the map
+  // centre, which on a big map is empty space.
+  const openAt = state.scenario ? (state.scenario.playerStart || state.scenario.route[0]) : state.map.bases.player;
   const cam = input.getCamera();
   cam.x = openAt.x;
   cam.y = openAt.y;

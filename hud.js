@@ -84,10 +84,23 @@ function renderScenarioBar(state) {
   scenarioBarEl.classList.remove("hidden");
   scenarioBannerEl.textContent = sc.banner;
 
-  const alive = [...state.units.values()].filter(u => u.owner === "player" && u.type === "freighter").length;
   const legs = sc.route.length - 1;
   const legNo = Math.min(sc.legIndex + 1, legs);
   const remain = Math.max(0, sc.timeLimit - state.time);
+
+  // Pirate Raider: you hunt the AI convoy, so the readout is kills-toward-quota,
+  // convoy still afloat, and the clock — no budget, no dock actions.
+  if (sc.type === "raider") {
+    const afloat = [...state.units.values()].filter(u => u.owner === sc.freighterOwner && u.type === "freighter").length;
+    const sunk = sc.outcome ? sc.destroyed : (sc.freightersTotal - afloat - (sc.delivered || 0));
+    scenarioStatusEl.textContent =
+      `Leg ${legNo}/${legs} · Sunk ${sunk}/${sc.targetKills} · Convoy ${afloat} afloat · ⏱ ${clockStr(remain)}`;
+    repairBtn.classList.add("hidden");
+    departBtn.classList.add("hidden");
+    return;
+  }
+
+  const alive = [...state.units.values()].filter(u => u.owner === "player" && u.type === "freighter").length;
   const shown = sc.outcome ? sc.delivered : alive;
   scenarioStatusEl.textContent =
     `Leg ${legNo}/${legs} · Freighters ${shown}/${sc.freightersTotal} · ⏱ ${clockStr(remain)} · 💰 ${Math.round(sc.budget)}`;

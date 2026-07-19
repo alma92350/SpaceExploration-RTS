@@ -158,8 +158,11 @@ export function showScenarioEnd(state, onRestart) {
   gameOverEl.classList.remove("hidden");
   gameOverEl.innerHTML = "";
 
+  const raider = sc.type === "raider";
   const title = document.createElement("div");
-  title.textContent = sc.outcome === "win" ? "Convoy Delivered" : "Convoy Lost";
+  title.textContent = raider
+    ? (sc.outcome === "win" ? "Raid Successful" : "Convoy Escaped")
+    : (sc.outcome === "win" ? "Convoy Delivered" : "Convoy Lost");
   gameOverEl.appendChild(title);
 
   const banner = document.createElement("div");
@@ -169,9 +172,11 @@ export function showScenarioEnd(state, onRestart) {
 
   const breakdown = document.createElement("div");
   breakdown.className = "gameover-seed";
-  breakdown.innerHTML =
-    `Freighters delivered: ${sc.delivered}/${sc.freightersTotal} · Legs cleared: ${sc.legsDone}`
-    + ` · Budget left: ${Math.round(sc.budget)}<br>Final score: <b>${sc.score}</b>`;
+  breakdown.innerHTML = raider
+    ? `Freighters sunk: ${sc.destroyed}/${sc.freightersTotal} (quota ${sc.targetKills}) · Escorts destroyed: ${sc.escortsKilled}`
+      + ` · Raiders surviving: ${sc.survivors}<br>Final score: <b>${sc.score}</b>`
+    : `Freighters delivered: ${sc.delivered}/${sc.freightersTotal} · Legs cleared: ${sc.legsDone}`
+      + ` · Budget left: ${Math.round(sc.budget)}<br>Final score: <b>${sc.score}</b>`;
   gameOverEl.appendChild(breakdown);
 
   const again = document.createElement("button");
