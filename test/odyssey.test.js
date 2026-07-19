@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, addPlanet, jumpCapital, ODYSSEY_WORLDS } from "../engine/galaxy.js";
+import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, ODYSSEY_WORLDS } from "../engine/galaxy.js";
 import { checkEndlessLoss } from "../engine/victory.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
@@ -132,6 +132,25 @@ test("after a jump the abandoned colony keeps evolving and never ends the game",
   for (let i = 0; i < 100; i++) for (const s of g.planets.values()) tick(s, 0.1);
   assert.equal(from.over, false, "a colony with no capital is not 'over'");
   assert.equal(activeState(g).over, false, "the active seat with its capital keeps running");
+});
+
+test("galaxyStatus reports one seat and the rest unexplored, then a colony after a jump", () => {
+  const g = createGalaxy({ seed: 21 });
+  let st = galaxyStatus(g);
+  assert.equal(st.total, ODYSSEY_WORLDS.length);
+  assert.equal(st.visited, 1);
+  assert.equal(st.worlds.filter(w => w.status === "seat").length, 1, "exactly one active seat");
+  assert.equal(st.worlds.filter(w => w.status === "unexplored").length, ODYSSEY_WORLDS.length - 1, "everything else unexplored");
+  assert.equal(st.worlds.find(w => w.status === "seat").id, g.activeId);
+
+  addSpaceport(activeState(g));
+  g.credits = 1000;
+  const dest = g.worlds.find(w => w !== g.activeId);
+  jumpCapital(g, dest);
+  st = galaxyStatus(g);
+  assert.equal(st.visited, 2);
+  assert.equal(st.worlds.find(w => w.id === dest).status, "seat", "the destination is the new seat");
+  assert.ok(st.worlds.some(w => w.status === "colony"), "the world left behind is a colony");
 });
 
 test("the galaxy jump is deterministic", () => {

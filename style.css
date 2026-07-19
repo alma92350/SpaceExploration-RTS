@@ -87,6 +87,35 @@ html, body {
 .galaxy-toast.warn { border-color: var(--warn); color: var(--warn); }
 .galaxy-toast.bad  { border-color: var(--bad); color: var(--bad); }
 
+/* Starmap overlay (starmap.js): a full-screen galaxy map with world nodes on a
+   ring, coloured by your relationship to each. */
+.starmap-overlay {
+  position: absolute; inset: 0; z-index: 30;
+  background: rgba(3, 6, 15, 0.92);
+  display: flex; flex-direction: column; align-items: center;
+}
+.starmap-overlay.hidden { display: none; }
+.chip-btn.hidden { display: none; }
+.starmap-head { text-align: center; margin-top: 24px; }
+.starmap-head h2 { margin: 0 0 4px; color: var(--accent); letter-spacing: 0.08em; }
+.starmap-head p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.starmap-field { position: relative; flex: 1; width: min(760px, 92%); align-self: center; }
+.starmap-world {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 96px; padding: 8px 10px; cursor: pointer;
+  background: #0e1830; border: 2px solid #2b3a5e; border-radius: 10px;
+  color: var(--text); box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+}
+.starmap-world:hover { border-color: var(--accent); }
+.starmap-world .sm-name { font-weight: 600; font-size: 0.9rem; }
+.starmap-world .sm-sub { font-size: 0.72rem; color: var(--muted); }
+.starmap-world.seat   { border-color: var(--accent); box-shadow: 0 0 14px rgba(79,209,255,0.5); }
+.starmap-world.seat .sm-sub   { color: var(--accent); }
+.starmap-world.colony { border-color: var(--good, #4ade80); }
+.starmap-world.colony .sm-sub { color: var(--good, #4ade80); }
+.starmap-foot { color: var(--muted); font-size: 0.8rem; margin-bottom: 18px; }
+
 /* Odyssey market panel (hud.js renderMarket): a header plus a compact
    commodity/price + Sell/Buy row per tradeable good. */
 .market-head { margin: 8px 0 4px; font-size: 0.8rem; color: var(--gold); letter-spacing: 0.03em; }

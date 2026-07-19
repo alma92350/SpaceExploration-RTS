@@ -12,6 +12,7 @@ import { game } from "./session.js";
 import {
   resourcesEl, clockEl, panelEl, idleWorkersEl, isTouchMode,
   scenarioBarEl, scenarioBannerEl, scenarioStatusEl, repairBtn, departBtn,
+  starmapBtn, saveBtn, loadBtn,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
@@ -38,6 +39,12 @@ export function resetPanelSignature() { lastPanelSignature = null; }
 
 export function renderHUD() {
   const { state } = game;
+
+  // Odyssey shows the galaxy-map button and hides skirmish save/load (galaxy
+  // persistence isn't supported, so a skirmish save here would be misleading).
+  starmapBtn.classList.toggle("hidden", !game.galaxy);
+  saveBtn.classList.toggle("hidden", !!game.galaxy);
+  loadBtn.classList.toggle("hidden", !!game.galaxy);
 
   if (state.scenario) {
     // A scenario has no economy: its budget + clock live in the scenario bar,

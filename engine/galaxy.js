@@ -125,6 +125,26 @@ export function activeState(galaxy) {
   return galaxy.planets.get(galaxy.activeId);
 }
 
+// A pure snapshot of the galaxy for the starmap: per-world status (your active
+// seat / a colony you hold / unexplored) and, for worlds you've been to, the
+// neighbour's stance. Plus the visited count and credits.
+export function galaxyStatus(galaxy) {
+  return {
+    credits: galaxy.credits,
+    activeId: galaxy.activeId,
+    visited: galaxy.planets.size,
+    total: galaxy.worlds.length,
+    worlds: galaxy.worlds.map(id => {
+      const s = galaxy.planets.get(id);
+      return {
+        id,
+        status: id === galaxy.activeId ? "seat" : s ? "colony" : "unexplored",
+        stance: s && s.diplomacy ? s.diplomacy.stance : null,
+      };
+    }),
+  };
+}
+
 // Can the player launch a jump from this world? — a completed player Spaceport.
 export function canJump(state) {
   for (const b of state.buildings.values())
