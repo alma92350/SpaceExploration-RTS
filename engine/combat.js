@@ -64,6 +64,8 @@ export function updateCombat(state, unit, dt) {
         const died = performAttack(state, unit, def, target);
         unit.attackTimer = def.cooldown;
         if (died && unit.order && unit.order.targetId === target.id) unit.order = null;
+      } else if (state.aiMicro && unit.owner === "ai" && def.range >= KITE_MIN_RANGE) {
+        maybeKite(state, unit, def, dt);   // in range but reloading — a Tactical ranged unit stutter-steps back
       }
       return;
     }
@@ -73,6 +75,42 @@ export function updateCombat(state, unit, dt) {
     const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
     if (arrived) unit.order = null;
   }
+}
+
+// Only genuinely ranged units kite (Lancer 55 / Breacher 150 / Dreadnought 68);
+// short-range brawlers (Skiff 40, Bastion 24) stand and trade.
+const KITE_MIN_RANGE = 50;
+
+// Stutter-step kiting: while a ranged unit is reloading and an enemy UNIT has
+// closed inside 0.75x its weapon range, it steps directly away to keep the
+// distance advantage, then stops to fire the instant its weapon is ready (that's
+// the branch above this one). Only ever reacts to enemy UNITS — never buildings —
+// so a ranged unit shelling an undefended base never backs off, keeping the
+// resolves-to-a-winner guarantee intact. The retreat point is clamped to the map
+// so a cornered kiter can't walk off the edge.
+function maybeKite(state, unit, def, dt) {
+  const danger = def.range * 0.75;
+  const threat = nearestEnemyUnitWithin(state, unit, danger);
+  if (!threat) return;
+  const dx = unit.x - threat.x, dy = unit.y - threat.y;
+  const len = Math.hypot(dx, dy) || 1;
+  let tx = unit.x + (dx / len) * 40, ty = unit.y + (dy / len) * 40;
+  if (state.map) {
+    tx = Math.max(0, Math.min(state.map.width, tx));
+    ty = Math.max(0, Math.min(state.map.height, ty));
+  }
+  stepToward(state, unit, tx, ty, def.speed, dt);
+}
+
+function nearestEnemyUnitWithin(state, unit, radius) {
+  const cands = state.unitGrid ? queryNeighbors(state.unitGrid, unit.x, unit.y, radius) : state.units.values();
+  let best = null, bestD = Infinity;
+  for (const e of cands) {
+    if (e.owner === unit.owner || e.hp <= 0 || UNITS[e.type].role !== "combat") continue;
+    const d = Math.hypot(e.x - unit.x, e.y - unit.y);
+    if (d <= radius && d < bestD) { bestD = d; best = e; }
+  }
+  return best;
 }
 
 // Returns true if the target died. Shared by mobile units and turrets so

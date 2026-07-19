@@ -53,6 +53,41 @@ test("focus-fire falls back to normal acquire when the focus target is dead or o
   assert.ok(near.hp < nearHp, "a stale focus doesn't freeze the unit — it auto-acquires the real enemy");
 });
 
+test("kiting: a reloading Tactical ranged unit steps away from a closed-in enemy without firing", () => {
+  const state = createGameState({ planetId: "ferros", aiMicro: true });
+  const lancer = makeUnit("lancer", "ai", 500, 500);        // range 55, so danger band ~41
+  const enemy = makeUnit("bastion", "player", 520, 500);    // 20 away — well inside the danger band
+  state.units.set(lancer.id, lancer); state.units.set(enemy.id, enemy);
+  lancer.order = { type: "attack", targetId: enemy.id };
+  lancer.attackTimer = 1;   // reloading — should kite, not shoot
+  const enemyHp = enemy.hp;
+
+  updateCombat(state, lancer, 0.1);
+
+  assert.ok(lancer.x < 500, "the lancer backed away from the enemy on its right");
+  assert.equal(enemy.hp, enemyHp, "and held its fire while reloading (no shot this tick)");
+});
+
+test("kiting is Tactical-only and ranged-only: a Standard ranged unit and a melee unit both hold ground", () => {
+  // Standard AI (micro off): a reloading lancer stands.
+  const std = createGameState({ planetId: "ferros" });
+  const l1 = makeUnit("lancer", "ai", 500, 500);
+  const e1 = makeUnit("bastion", "player", 520, 500);
+  std.units.set(l1.id, l1); std.units.set(e1.id, e1);
+  l1.order = { type: "attack", targetId: e1.id }; l1.attackTimer = 1;
+  updateCombat(std, l1, 0.1);
+  assert.equal(l1.x, 500, "Standard AI never kites");
+
+  // Tactical, but a melee brawler (range < 50) doesn't kite either.
+  const tac = createGameState({ planetId: "ferros", aiMicro: true });
+  const b1 = makeUnit("bastion", "ai", 500, 500);   // range 24 — too short to kite
+  const e2 = makeUnit("skiff", "player", 512, 500);
+  tac.units.set(b1.id, b1); tac.units.set(e2.id, e2);
+  b1.order = { type: "attack", targetId: e2.id }; b1.attackTimer = 1;
+  updateCombat(tac, b1, 0.1);
+  assert.equal(b1.x, 500, "a short-range brawler stands and trades, it doesn't kite");
+});
+
 test("a killed target is removed from state and the killer's explicit order clears", () => {
   const state = createGameState({ planetId: "ferros" });
   const [a, b] = faceOff(state);
