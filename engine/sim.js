@@ -55,7 +55,7 @@ export function tick(state, dt) {
   // (endless) only ends on losing the player's Command Center; a normal match
   // uses the CC/score victory check.
   if (state.scenario) { /* updateScenario already set state.over if finished */ }
-  else if (state.endless) checkEndlessLoss(state);
+  else if (state.endless) { if (!state.background) checkEndlessLoss(state); }   // a colony with no capital isn't "over" — only your active seat can be lost
   else checkWinCondition(state);
   state.time += dt;
   state.tick++;

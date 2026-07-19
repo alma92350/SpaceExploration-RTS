@@ -72,6 +72,15 @@ export const BUILDINGS = {
     // stays reachable on every world.
     requires: ["foundry"],
   },
+  spaceport: {
+    id: "spaceport", name: "Spaceport", hp: 600, radius: 22,
+    cost: { ore: 300 }, buildTime: 30, sight: 160,
+    // Odyssey only (offered in the Odyssey build menu): the interplanetary launch
+    // pad. Selecting a finished Spaceport lets you relocate your single Command
+    // Center — plus the units staged nearby — to another world (engine/galaxy.js).
+    // Gated behind the Foundry so leaving the planet is a mid-game milestone.
+    requires: ["foundry"],
+  },
 };
 
 // Prerequisites are satisfied for `owner` when: every building-type token in

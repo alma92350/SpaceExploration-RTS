@@ -26,7 +26,7 @@ import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
-import { createGalaxy, activeState } from "./engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital } from "./engine/galaxy.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -109,6 +109,39 @@ export function startOdyssey() {
   game.galaxy = galaxy;
 }
 
+// Launch an interplanetary jump to `destId` — relocate the capital + staged
+// units (engine/galaxy.js), then repoint the running loop at the new world. The
+// loop keeps running and keeps ticking the world you left (now a background
+// colony), so this only swaps what's rendered and controlled.
+export function performJump(destId) {
+  if (!game.galaxy) return;
+  const result = jumpCapital(game.galaxy, destId);
+  if (!result) return;
+  focusActivePlanet();
+}
+
+// Repoint the view/input at the galaxy's active planet without restarting the
+// loop (used after a jump). Mirrors bootState's per-state wiring, minus creating
+// the loop and minus touching game.galaxy.
+function focusActivePlanet() {
+  const state = activeState(game.galaxy);
+  game.state = state;
+  if (game.input) game.input.destroy();
+  game.input = attachInput(canvas, state, () => renderHUD());
+  const cc = [...state.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const openAt = cc || state.map.bases.player;
+  const cam = game.input.getCamera();
+  cam.x = openAt.x;
+  cam.y = openAt.y;
+  clampCamera(cam, state.map, canvas.clientWidth, canvas.clientHeight);
+  resetEffects();
+  resetFacing();
+  resetPanelSignature();
+  showSeedChip(state.seed);
+  showFactionChip(state);
+  renderHUD();
+}
+
 // Re-open the map-select screen (the game-over "choose another battlefield"
 // button, passed into overlays' showGameOver so that module needn't import setup).
 function restartToMapSelect() {
@@ -154,7 +187,13 @@ export function bootState(newState, { intro }) {
   let lastFrame = performance.now();
 
   loop = createLoop({
-    update: dt => tick(game.state, dt),
+    // Odyssey advances every world in the galaxy each tick (only the active one
+    // is rendered), so the colonies you left keep evolving; otherwise just the
+    // one match state ticks.
+    update: dt => {
+      if (game.galaxy) { for (const s of game.galaxy.planets.values()) tick(s, dt); }
+      else tick(game.state, dt);
+    },
     render: () => {
       const now = performance.now();
       game.input.tickCamera((now - lastFrame) / 1000);

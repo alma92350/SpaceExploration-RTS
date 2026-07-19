@@ -316,6 +316,7 @@ function drawBuildings(ctx, state, view) {
     else if (b.type === "arsenal") drawArsenal(ctx, b, color);
     else if (b.type === "turret") drawTurret(ctx, state, b, color);   // only this draw takes state — it aims at its live target
     else if (b.type === "habitat") drawHabitat(ctx, b, color);
+    else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
     else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
 
     ctx.globalAlpha = 1;
@@ -535,6 +536,32 @@ function drawGenericBuilding(ctx, b, color) {
   ctx.arc(cx, cy, r * 0.4, 0, Math.PI * 2);
   ctx.fillStyle = shade(color, 20); ctx.fill();
   ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1; ctx.stroke();
+}
+
+// Spaceport — a round launch pad ringed by a gantry with an upright rocket
+// standing on it, so the "leave this world" building reads at a glance.
+function drawSpaceport(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.66, 0, Math.PI * 2);
+  ctx.strokeStyle = shade(color, -30); ctx.lineWidth = 3; ctx.stroke();
+
+  const bw = r * 0.26, bh = r * 0.92;                     // upright rocket body
+  ctx.fillStyle = DETAIL;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - bh);
+  ctx.lineTo(cx + bw, cy - bh * 0.4);
+  ctx.lineTo(cx + bw, cy + bh * 0.5);
+  ctx.lineTo(cx - bw, cy + bh * 0.5);
+  ctx.lineTo(cx - bw, cy - bh * 0.4);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(color, -20);                     // fins
+  ctx.beginPath();
+  ctx.moveTo(cx - bw, cy + bh * 0.12); ctx.lineTo(cx - bw * 2.1, cy + bh * 0.5); ctx.lineTo(cx - bw, cy + bh * 0.5); ctx.closePath();
+  ctx.moveTo(cx + bw, cy + bh * 0.12); ctx.lineTo(cx + bw * 2.1, cy + bh * 0.5); ctx.lineTo(cx + bw, cy + bh * 0.5); ctx.closePath();
+  ctx.fill();
 }
 
 // Sentinel Turret — a hexagonal base pad with a single barrel that swings to

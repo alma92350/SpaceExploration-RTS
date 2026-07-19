@@ -17,6 +17,9 @@ import { queueProduction, cancelProduction, researchUpgrade } from "./engine/pro
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
+import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
+import { performJump } from "./boot.js";
+import { PLANETS } from "./data.js";
 import * as sound from "./sound.js";
 
 // Scenario dock actions — wired once. They read game.state at click time, and
@@ -362,12 +365,33 @@ function rebuildSelectionPanel(sel) {
     });
   }
 
+  // Spaceport (Odyssey): the interplanetary jump panel. Relocate the capital +
+  // the units staged nearby to another world; the world you leave carries on as
+  // a colony.
+  const spaceport = sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
+  if (spaceport && game.galaxy) {
+    const staged = [...state.units.values()].filter(u => u.owner === "player"
+      && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS).length;
+    const info = document.createElement("p");
+    info.className = "hint";
+    info.textContent = `Relocate your capital to another world. ${staged} unit${staged === 1 ? "" : "s"} staged by the pad will jump too — park units near the Spaceport to bring them.`;
+    panelEl.appendChild(info);
+    for (const w of game.galaxy.worlds) {
+      if (w === game.galaxy.activeId) continue;
+      const name = PLANETS.find(p => p.id === w)?.name || w;
+      const visited = game.galaxy.planets.has(w) && w !== game.galaxy.activeId;
+      panelEl.appendChild(makeButton(`Jump ▸ ${name}${visited ? " · your colony" : ""}`,
+        () => performJump(w), { tip: "Relocate the Command Center and staged units to this world" }));
+    }
+  }
+
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
     // Odyssey gives you one Command Center — your single relocatable capital — so
-    // a second can't be built there; a skirmish still allows expansion CCs.
+    // a second can't be built there; instead it unlocks the Spaceport (the jump
+    // pad). A skirmish still allows expansion CCs and has no Spaceport.
     const buildables = ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat"];
-    if (!state.endless) buildables.push("command");
+    buildables.push(state.endless ? "spaceport" : "command");
     for (const t of buildables) {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);
