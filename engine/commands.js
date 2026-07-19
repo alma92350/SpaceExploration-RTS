@@ -29,11 +29,11 @@ function formationSpots(count, x, y) {
 }
 
 // Give a unit an order, either replacing what it's doing (a plain command)
-// or appending it as a waypoint (shift+command). Appending only queues when
-// the unit is actually busy — a shift-command to a fully idle unit acts
-// immediately, so the first waypoint of a chain doesn't sit inert. A plain
-// command always wipes any queued waypoints, so it cancels a chain cleanly.
-// sim.js pulls the next queued order in as soon as `order` clears.
+// or appending it as a waypoint (queue = true, the Ctrl+command from input.js).
+// Appending only queues when the unit is actually busy — a queued command to a
+// fully idle unit acts immediately, so the first waypoint of a chain doesn't
+// sit inert. A plain command always wipes any queued waypoints, so it cancels a
+// chain cleanly. sim.js pulls the next queued order in as soon as `order` clears.
 function dispatch(unit, order, queue) {
   if (!unit.orderQueue) unit.orderQueue = [];
   if (queue && (unit.order || unit.orderQueue.length)) {

@@ -37,7 +37,7 @@ export function tick(state, dt) {
 
 function updateUnit(state, unit, dt) {
   // Whenever the active order finishes (arrival, target killed, node drained),
-  // pull in the next shift-queued waypoint before anything else runs this tick
+  // pull in the next queued waypoint before anything else runs this tick
   // — so a completed step flows straight into the next, and a combat unit only
   // falls back to auto-acquiring once its whole chain is exhausted.
   if (!unit.order && unit.orderQueue && unit.orderQueue.length) {

@@ -146,21 +146,21 @@ test("issueBuild pays a multi-commodity cost and refuses when the crystal half i
   assert.equal(state.players.player.resources.ore, oreBefore, "and charges nothing");
 });
 
-test("a shift-queued order appends as a waypoint instead of replacing the active one", () => {
+test("a queued order appends as a waypoint instead of replacing the active one", () => {
   const [unit] = dummyUnits(1);
   issueMove([unit], 500, 400);              // plain: takes effect now
-  issueMove([unit], 600, 400, true);        // shift: queued behind it
-  issueAttackMove([unit], 700, 400, true);  // shift: queued behind that
+  issueMove([unit], 600, 400, true);        // queued behind it
+  issueAttackMove([unit], 700, 400, true);  // queued behind that
 
   assert.deepEqual(unit.order, { type: "move", x: 500, y: 400 }, "the active order is untouched");
-  assert.equal(unit.orderQueue.length, 2, "both shift-clicks are queued");
+  assert.equal(unit.orderQueue.length, 2, "both queued commands are waiting");
   assert.deepEqual(unit.orderQueue[0], { type: "move", x: 600, y: 400 });
   assert.equal(unit.orderQueue[1].type, "attack-move");
 });
 
-test("a shift order to a fully idle unit takes effect immediately, not as a dead first waypoint", () => {
+test("a queued order to a fully idle unit takes effect immediately, not as a dead first waypoint", () => {
   const [unit] = dummyUnits(1);
-  issueMove([unit], 500, 400, true);   // shift, but nothing is queued or active yet
+  issueMove([unit], 500, 400, true);   // queued, but nothing is active or waiting yet
   assert.deepEqual(unit.order, { type: "move", x: 500, y: 400 });
   assert.equal(unit.orderQueue.length, 0);
 });

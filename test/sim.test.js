@@ -38,7 +38,7 @@ test("a full skirmish concludes on a modified, poor-economy world (glacius)", ()
   assert.ok(["player", "ai"].includes(state.winner));
 });
 
-test("a unit walks through its shift-queued waypoints in order, then goes idle", () => {
+test("a unit walks through its queued waypoints in order, then goes idle", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   // Isolate one worker so nothing else steers or interrupts it.
   const w = makeUnit("worker", "player", 800, 500);

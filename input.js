@@ -113,11 +113,11 @@ export function attachInput(canvas, state, onChange) {
     const selected = state.selection.map(id => state.units.get(id)).filter(Boolean);
     if (!selected.length) return;
 
-    // Holding Shift queues the order as a waypoint instead of replacing what
-    // the units are doing, so a sequence of Shift+right-clicks lays down a
+    // Holding Ctrl queues the order as a waypoint instead of replacing what
+    // the units are doing, so a sequence of Ctrl+right-clicks lays down a
     // path (move/attack/gather steps) the units run through in order. A plain
     // right-click issues immediately and clears any queued waypoints.
-    const queue = e.shiftKey;
+    const queue = e.ctrlKey;
 
     const target = entityAt(p.x, p.y);
     if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
@@ -140,10 +140,10 @@ export function attachInput(canvas, state, onChange) {
     }
 
     // On open ground a plain right-click is a real move — it goes exactly
-    // where clicked, ignoring any enemy it passes. Shift keeps that
+    // where clicked, ignoring any enemy it passes. Ctrl keeps that
     // aggressive-advance flavor while queuing it: combat units get an
     // attack-move waypoint (they stop to fight anything met along the way),
-    // workers a plain move, and each extra Shift+click extends the path.
+    // workers a plain move, and each extra Ctrl+click extends the path.
     if (queue) {
       const combatants = selected.filter(u => UNITS[u.type].role === "combat");
       const others = selected.filter(u => UNITS[u.type].role !== "combat");

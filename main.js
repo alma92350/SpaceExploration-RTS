@@ -54,10 +54,7 @@ muteBtn.addEventListener("click", () => {
 // already suppresses it for clicks that land squarely on it, but the view has
 // padding around the canvas and the minimap sits on top of it — a right-click
 // on either of those would otherwise open the native menu. One window-level
-// listener covers the whole window in one place. (Firefox is the one holdout:
-// it deliberately lets Shift+right-click bypass this, so a Firefox player
-// queuing waypoints may still see the native menu — a browser policy no page
-// can override.)
+// listener covers the whole window in one place.
 window.addEventListener("contextmenu", e => e.preventDefault());
 
 function resizeCanvas() {
@@ -420,7 +417,7 @@ function rebuildSelectionPanel(sel) {
   } else if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "Right-click to move (ignores enemies). Shift+right-click to attack-move.";
+    hint.textContent = "Right-click to move (ignores enemies). Ctrl+right-click to queue a waypoint.";
     panelEl.appendChild(hint);
   } else if (sel.length === 1 && (cc || barracks)) {
     const hint = document.createElement("p");

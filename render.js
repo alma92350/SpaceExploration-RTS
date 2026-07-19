@@ -734,7 +734,7 @@ function drawRallyPoint(ctx, state) {
 }
 
 // The queued-waypoint path for every selected player unit: a dashed line
-// threading the unit through its active order and each shift-queued step,
+// threading the unit through its active order and each queued step,
 // with a dot at each stop. Only drawn for units that actually have a queue,
 // so an ordinary single-destination move doesn't clutter the field.
 function drawWaypoints(ctx, state) {
