@@ -92,7 +92,8 @@ test("every charted world yields ore within reach of both bases", () => {
 
 test("the ore guarantee never fires on an ore-bearing world: ferros keeps its deposit-table node count", () => {
   const map = generateMap("ferros", () => 0.5);
-  const oreNodes = map.nodes.filter(n => n.com === "ore" && !n.hidden);   // surface ore only; caches are separate
+  // surface deposit ore only — caches (hidden) and the fixed home cluster (home) are separate
+  const oreNodes = map.nodes.filter(n => n.com === "ore" && !n.hidden && !n.home);
   assert.equal(oreNodes.length, Math.round(2.0 * 1.5) * 2);   // ferros' ore yieldMult drives exactly 3 mirrored clusters
 });
 
@@ -138,7 +139,8 @@ test("helix's dense belt adds one extra crystal cluster per side, on top of its 
 
 test("oort's rich frontier makes its deposits hold 30% more", () => {
   const map = generateMap("oort", () => 0.5);
-  const oreNodes = map.nodes.filter(n => n.com === "ore" && !n.hidden);   // surface ore; hidden caches size differently
+  // surface deposit ore only — home cluster and hidden caches size differently
+  const oreNodes = map.nodes.filter(n => n.com === "ore" && !n.hidden && !n.home);
   assert.ok(oreNodes.length > 0);
   // oort deposits ore at 1.2, so the ore guarantee never fires here — every
   // surface ore node is a deposit-table node scaled by the 1.3 nodeAmountMult.
@@ -201,6 +203,36 @@ test("map size scales the dimensions, bases, and node bounds; sizeMult 1 is the 
   for (const n of big.nodes) {
     assert.ok(n.x >= 0 && n.x <= big.width && n.y >= 0 && n.y <= big.height, "every node stays inside the bigger map");
   }
+});
+
+test("every base opens onto home ore at a fixed distance, on every map size and world", () => {
+  // The whole point of the home cluster: the opening economy can't scale away
+  // from the base as the map grows. On Small through Gigantic, and on a world
+  // that deposits no ore at all, both bases must have reachable ore within a
+  // fixed absolute radius — enough to fund a 400-ore second Command Center.
+  const HOME_REACH = 260;   // ~165px offset + overlap-relaxation slack; independent of map size
+  for (const size of [1, 2, 4]) {
+    for (const id of ["ferros", "glacius"]) {   // glacius deposits no ore — only the home cluster can satisfy this
+      const map = generateMap(id, () => 0.5, { sizeMult: size });
+      for (const [side, base] of Object.entries(map.bases)) {
+        const homeOre = map.nodes.filter(n => n.com === "ore" && n.home &&
+          Math.hypot(n.x - base.x, n.y - base.y) <= HOME_REACH);
+        assert.ok(homeOre.length > 0, `${id} ${size}x: ${side} base needs home ore within ${HOME_REACH}`);
+        const total = homeOre.reduce((s, n) => s + n.amount, 0);
+        assert.ok(total >= 400, `${id} ${size}x: ${side} home ore (${total}) must fund a second Command Center`);
+      }
+    }
+  }
+});
+
+test("home ore is mirrored so both starts get the identical head start", () => {
+  const map = generateMap("ferros", () => 0.5);
+  const home = map.nodes.filter(n => n.home);
+  const left = home.filter(n => n.x < MAP_WIDTH / 2);
+  const right = home.filter(n => n.x >= MAP_WIDTH / 2);
+  assert.equal(left.length, right.length, "same count of home nodes each side");
+  assert.equal(left.reduce((s, n) => s + n.amount, 0), right.reduce((s, n) => s + n.amount, 0),
+    "same total home ore each side");
 });
 
 test("sizeMult 1 / resourceMult 1 reproduces the original map byte-for-byte", () => {

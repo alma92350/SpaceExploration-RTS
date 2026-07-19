@@ -39,6 +39,23 @@ const GUARANTEE_Y = { ore: 0, crystals: -0.12, radioactives: 0.12 };
 
 const CACHE_BASE_AMOUNT = 360;   // ~0.6x a normal 600 cluster — a real bonus, not a second economy
 
+// A guaranteed ore cluster right on the doorstep of each Command Center, at a
+// FIXED absolute distance regardless of map size. The deposit clusters sit at
+// fractions of the map width, so on a Gigantic (4x) map they drift far from the
+// base and the opening economy crawls. These home nodes never move: whatever the
+// map size, every base opens onto ore it can reach in seconds — enough to fund a
+// second Command Center (400 ore) and push out toward the contested deposits and
+// the enemy. Offsets face the map interior (mirrored for the AI) so they never
+// fall off the edge, and carry NO rng draw, so the deposit/cache layout and map
+// determinism are byte-for-byte untouched. Flagged `home` so the deposit-count
+// tests can tell them apart from the surface deposit table.
+const HOME_ORE_AMOUNT = 350;                       // per node; 3 nodes ⇒ ~1050 ore on the doorstep
+const HOME_ORE_OFFSETS = [                          // absolute px from the base, interior-facing
+  { dx: 130, dy: -95 },
+  { dx: 165, dy: 0 },
+  { dx: 130, dy: 95 },
+];
+
 /* ---------- terrain ---------- */
 
 // A coarse per-cell terrain field (a flat Uint8Array of type codes, same idiom
@@ -124,6 +141,20 @@ export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
 
   const nodes = [];
   let nid = 0;
+
+  // Home ore, on every base's doorstep at a fixed absolute distance (see
+  // HOME_ORE_OFFSETS). Fractional offsets from each base, mirrored across the
+  // centreline so both starts open onto the same head start. No rng — added
+  // before the rng-driven clusters so the draw sequence, and thus the rest of
+  // the map, is untouched. `home` marks them out from the deposit table.
+  const homeAmount = amountOf(HOME_ORE_AMOUNT);
+  for (const { dx, dy } of HOME_ORE_OFFSETS) {
+    nodes.push({ id: `n${nid++}`, com: "ore", amount: homeAmount, max: homeAmount,
+      x: bases.player.x + dx, y: bases.player.y + dy, home: true });
+    nodes.push({ id: `n${nid++}`, com: "ore", amount: homeAmount, max: homeAmount,
+      x: bases.ai.x - dx, y: bases.ai.y + dy, home: true });
+  }
+
   // A near-base cluster on each side, mirrored, sized by the planet's yield.
   // x is drawn independently per side (matching the original generator), y
   // spreads the clusters down the map. All in fractions of the scaled dims.
@@ -145,7 +176,10 @@ export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
   // Placed before the caches so a hidden cache can never satisfy the check.
   const nearBase = width * NEAR_BASE_FRAC;
   for (const com of BUILD_CRITICAL) {
-    const has = nodes.some(n => n.com === com &&
+    // Home ore is excluded here so the seam logic is exactly as it always was:
+    // the deposit table alone decides whether a world needs a guaranteed seam,
+    // keeping the rng draw sequence and node layout byte-identical.
+    const has = nodes.some(n => n.com === com && !n.home &&
       Math.hypot(n.x - bases.player.x, n.y - bases.player.y) <= nearBase);
     if (has) continue;
     const y = height * (0.5 + GUARANTEE_Y[com]);

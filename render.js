@@ -311,8 +311,11 @@ function drawBuildings(ctx, state, view) {
     if (b.type === "command") drawCommandCenter(ctx, b, color);
     else if (b.type === "barracks") drawBarracks(ctx, b, color);
     else if (b.type === "refinery") drawRefinery(ctx, b, color);
+    else if (b.type === "foundry") drawFoundry(ctx, b, color);
+    else if (b.type === "arsenal") drawArsenal(ctx, b, color);
     else if (b.type === "turret") drawTurret(ctx, state, b, color);   // only this draw takes state — it aims at its live target
     else if (b.type === "habitat") drawHabitat(ctx, b, color);
+    else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
 
     ctx.globalAlpha = 1;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
@@ -445,6 +448,88 @@ function drawHabitat(ctx, b, color) {
 
   ctx.fillStyle = DETAIL;
   for (const dx of [-w * 0.25, 0, w * 0.25]) ctx.fillRect(cx + dx - 1.5, cy + h * 0.2, 3, 3);
+}
+
+// Foundry — the Tier-2 war-smeltery that unlocks the Lancer and Breacher: an
+// industrial hall under a sawtooth factory roofline, a tall smokestack tipped
+// with a hot ember and a molten forge vent glowing orange through its face, so
+// the building that opens the advanced units reads as a working forge — not
+// just another bunker.
+function drawFoundry(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 2.0, h = r * 1.4;
+
+  ctx.fillStyle = color;                                       // main hall
+  ctx.fillRect(cx - w / 2, cy - h * 0.2, w, h * 0.7);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2;
+  ctx.strokeRect(cx - w / 2, cy - h * 0.2, w, h * 0.7);
+
+  const teeth = 3, tw = w / teeth;                             // sawtooth roof
+  for (let i = 0; i < teeth; i++) {
+    const x0 = cx - w / 2 + i * tw;
+    pathPoints(ctx, [[x0, cy - h * 0.2], [x0, cy - h * 0.52], [x0 + tw, cy - h * 0.2]]);
+    ctx.fillStyle = shade(color, -20); ctx.fill();
+    ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  ctx.fillStyle = "#ff8c42";                                   // molten forge vent
+  ctx.fillRect(cx - w * 0.18, cy + h * 0.08, w * 0.36, h * 0.24);
+
+  ctx.fillStyle = shade(color, -30);                           // smokestack
+  ctx.fillRect(cx + w * 0.3, cy - h * 0.78, w * 0.15, h * 0.6);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5;
+  ctx.strokeRect(cx + w * 0.3, cy - h * 0.78, w * 0.15, h * 0.6);
+  ctx.beginPath();                                             // ember at the stack tip
+  ctx.arc(cx + w * 0.375, cy - h * 0.8, 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffd166"; ctx.fill();
+}
+
+// Arsenal — the Tier-3 weapons manufactory that unlocks the Dreadnought capital
+// ship: a squat armoured bunker with chamfered corners, a reinforced cap, a rack
+// of stubby missile tubes on the roof and a lit reactor core, so the top of the
+// tech tree reads as the most fortified, most militarised structure on the field.
+function drawArsenal(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 1.9, h = r * 1.5, ch = r * 0.5;
+
+  pathPoints(ctx, [                                            // chamfered armoured hull
+    [cx - w / 2 + ch, cy - h * 0.35], [cx + w / 2 - ch, cy - h * 0.35],
+    [cx + w / 2, cy - h * 0.35 + ch], [cx + w / 2, cy + h * 0.4 - ch],
+    [cx + w / 2 - ch, cy + h * 0.4], [cx - w / 2 + ch, cy + h * 0.4],
+    [cx - w / 2, cy + h * 0.4 - ch], [cx - w / 2, cy - h * 0.35 + ch],
+  ]);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2; ctx.stroke();
+
+  ctx.fillStyle = shade(color, -22);                           // reinforced cap
+  ctx.fillRect(cx - w * 0.3, cy - h * 0.5, w * 0.6, h * 0.18);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1;
+  ctx.strokeRect(cx - w * 0.3, cy - h * 0.5, w * 0.6, h * 0.18);
+
+  ctx.fillStyle = shade(color, -35);                           // roof missile tubes
+  for (const dx of [-w * 0.2, 0, w * 0.2]) ctx.fillRect(cx + dx - 2, cy - h * 0.62, 4, h * 0.16);
+
+  ctx.beginPath();                                             // lit reactor core
+  ctx.arc(cx, cy + h * 0.02, r * 0.34, 0, Math.PI * 2);
+  ctx.fillStyle = shade(color, 25); ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy + h * 0.02, r * 0.15, 0, Math.PI * 2);
+  ctx.fillStyle = DETAIL; ctx.fill();
+}
+
+// A last-resort silhouette for any building type without a bespoke draw — a
+// hexagonal hull with a lit core. Nothing on the current roster falls through
+// to it (every type above is handled), but it guarantees the "every entity has
+// a graphical representation" invariant holds for anything added later, so a new
+// building can never ship as an invisible click target.
+function drawGenericBuilding(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y;
+  pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.4, 0, Math.PI * 2);
+  ctx.fillStyle = shade(color, 20); ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1; ctx.stroke();
 }
 
 // Sentinel Turret — a hexagonal base pad with a single barrel that swings to
