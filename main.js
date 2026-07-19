@@ -353,7 +353,7 @@ const HELP_ROWS = [
   ["Left-drag", "Select units · Ctrl+drag adds to selection"],
   ["Right-click", "Move · attack an enemy · gather a node"],
   ["A, then click", "Attack-move — advance and engage on the way"],
-  ["Shift+right-click", "Queue a waypoint (chain a path)"],
+  ["Ctrl+right-click", "Queue a waypoint (chain a path)"],
   ["1–9 / Shift+1–9", "Recall / bind a control group"],
   ["Double-click", "Select every unit of that type on screen"],
   ["Q · E · X", "Select army · Ranger scout mode · stop"],
@@ -706,7 +706,7 @@ function rebuildSelectionPanel(sel) {
   } else if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = "A + click to attack-move. Right-click moves (ignores enemies). Shift+right-click queues a waypoint.";
+    hint.textContent = "A + click to attack-move. Right-click moves (ignores enemies). Ctrl+right-click queues a waypoint.";
     panelEl.appendChild(hint);
   } else if (sel.length === 1 && (cc || barracks)) {
     const hint = document.createElement("p");
@@ -731,7 +731,7 @@ function controlsLegend() {
     ["Left-drag", "select · Ctrl+drag adds"],
     ["Right-click", "move / attack / gather"],
     ["A + click", "attack-move"],
-    ["Shift+right", "queue a waypoint"],
+    ["Ctrl+right", "queue a waypoint"],
     ["Shift+1–9", "set group · 1–9 recall"],
     ["Double-click", "select all of that type"],
     ["Q · E · X", "army · scout · stop · ` idle worker"],

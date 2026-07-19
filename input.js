@@ -186,12 +186,13 @@ export function attachInput(canvas, state, onChange) {
     const selected = state.selection.map(id => state.units.get(id)).filter(Boolean);
     if (!selected.length) return;
 
-    // Holding Shift queues the order as a waypoint instead of replacing what
-    // the units are doing, so a sequence of Shift+right-clicks lays down a
-    // path (move/attack/gather steps) the units run through in order. A plain
-    // right-click issues immediately and clears any queued waypoints. (Ctrl is
-    // add-to-selection; keeping queue on Shift frees the two from colliding.)
-    const queue = e.shiftKey;
+    // Holding Ctrl queues the order as a waypoint instead of replacing what the
+    // units are doing, so a sequence of Ctrl+right-clicks lays down a path
+    // (move/attack/gather steps) the units run through in order. A plain
+    // right-click issues immediately and clears any queued waypoints. NOT Shift:
+    // Firefox force-shows the native context menu on Shift+right-click and
+    // bypasses preventDefault, so a Shift-queued order could never be captured.
+    const queue = e.ctrlKey;
 
     const target = entityAt(p.x, p.y);
     if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
