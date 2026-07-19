@@ -136,18 +136,20 @@ const RESOURCE_OPTIONS = [
   { label: "Normal", mult: 1.0, note: "balanced" },
   { label: "Abundant", mult: 1.5, note: "rich deposits" },
 ];
-const TACTICS_OPTIONS = [
-  { label: "Standard", mult: false, note: "holds formation" },
-  { label: "Tactical", mult: true, note: "focus-fires · kites" },
+// Difficulty bundles the two dials — how FAST the opponent acts (aiApm) and
+// whether it MICROS its army (aiMicro: focus-fire, kiting, Ranger scouting) — into
+// one Easy/Medium/Hard pick. Hard is the tactical opponent.
+const DIFFICULTY_OPTIONS = [
+  { label: "Easy", mult: "easy", note: "slow · no micro" },
+  { label: "Medium", mult: "medium", note: "a fair fight" },
+  { label: "Hard", mult: "hard", note: "fast · focus-fire · kite" },
 ];
-const setup = { aiApm: 60, sizeMult: 1, resourceMult: 1, seed: null, aiMicro: false };
-
-function apmDescriptor(apm) {
-  if (apm <= 20) return "Sluggish";
-  if (apm <= 55) return "Casual";
-  if (apm <= 100) return "Sharp";
-  return "Relentless";
-}
+const DIFFICULTY = {
+  easy: { aiApm: 20, aiMicro: false },
+  medium: { aiApm: 65, aiMicro: false },
+  hard: { aiApm: 140, aiMicro: true },
+};
+const setup = { difficulty: "medium", sizeMult: 1, resourceMult: 1, seed: null };
 
 // A one-of-N pick rendered as a row of buttons; clicking one selects it and
 // stores its value via onPick.
@@ -173,25 +175,17 @@ function renderSetupPanel() {
   const panel = document.createElement("div");
   panel.className = "setup";
 
-  const apmRow = document.createElement("div");
-  apmRow.className = "setup-row";
-  const apmLabel = document.createElement("span");
-  apmLabel.className = "setup-label";
-  apmLabel.textContent = "AI speed";
-  const slider = document.createElement("input");
-  slider.type = "range"; slider.min = "1"; slider.max = "150"; slider.step = "1";
-  slider.value = String(setup.aiApm); slider.className = "apm-slider";
-  const apmValue = document.createElement("span");
-  apmValue.className = "setup-value";
-  const showApm = () => { apmValue.textContent = `${setup.aiApm} APM · ${apmDescriptor(setup.aiApm)}`; };
-  showApm();
-  slider.addEventListener("input", () => { setup.aiApm = Number(slider.value); showApm(); });
-  apmRow.append(apmLabel, slider, apmValue);
-  panel.appendChild(apmRow);
+  const diffRow = document.createElement("div");
+  diffRow.className = "setup-row";
+  const diffLabel = document.createElement("span");
+  diffLabel.className = "setup-label";
+  diffLabel.textContent = "Difficulty";
+  diffRow.append(diffLabel, optionGroup(setup.difficulty, DIFFICULTY_OPTIONS, key => { setup.difficulty = key; }));
+  panel.appendChild(diffRow);
 
   const hint = document.createElement("p");
   hint.className = "setup-hint";
-  hint.textContent = "Actions per minute the opponent can take — a click, a selection, a command. 1 is a crawl; 150 is relentless.";
+  hint.textContent = "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger.";
   panel.appendChild(hint);
 
   const sizeRow = document.createElement("div");
@@ -209,16 +203,6 @@ function renderSetupPanel() {
   resLabel.textContent = "Resources";
   resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
   panel.appendChild(resRow);
-
-  // AI tactics — orthogonal to speed (APM): whether the opponent micros its army
-  // (focus-fire, kiting) like a skilled player, or just holds formation.
-  const tacRow = document.createElement("div");
-  tacRow.className = "setup-row";
-  const tacLabel = document.createElement("span");
-  tacLabel.className = "setup-label";
-  tacLabel.textContent = "AI tactics";
-  tacRow.append(tacLabel, optionGroup(setup.aiMicro, TACTICS_OPTIONS, v => { setup.aiMicro = v; }));
-  panel.appendChild(tacRow);
 
   // Optional seed: leave blank for a fresh random map, or enter a seed (shown on
   // the seed chip / game-over screen) to replay the exact same world.
@@ -292,8 +276,9 @@ function startGame(planetId) {
   // UI layer (Math.random is fine here — it's not the sim); everything downstream
   // flows from the seeded mulberry32, so same seed ⇒ same world.
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const diff = DIFFICULTY[setup.difficulty] || DIFFICULTY.medium;
   state = createGameState({ planetId, seed, rng: mulberry32(seed),
-    aiApm: setup.aiApm, aiMicro: setup.aiMicro, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
+    aiApm: diff.aiApm, aiMicro: diff.aiMicro, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult });
   showSeedChip(seed);
   showObjectives();
   input = attachInput(canvas, state, () => renderHUD());
