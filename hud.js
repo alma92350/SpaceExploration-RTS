@@ -19,6 +19,7 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } 
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_LOAD_RADIUS, JUMP_COST } from "./engine/galaxy.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
+import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
 import { PLANETS } from "./data.js";
 import * as sound from "./sound.js";
@@ -69,6 +70,16 @@ export function renderHUD() {
       creditsSpan.textContent = `◈ ${Math.floor(game.galaxy.credits)}`;
       creditsSpan.title = "Universal credits — galaxy-wide, carried between planets";
       resourcesEl.appendChild(creditsSpan);
+
+      // The neighbour's stance — it drifts hostile as this world's deposits run scarce.
+      if (state.diplomacy) {
+        const st = state.diplomacy.stance;
+        const relSpan = document.createElement("span");
+        relSpan.className = "relation " + (st <= PEACE_THRESHOLD ? "hostile" : st < 0.25 ? "neutral" : "friendly");
+        relSpan.textContent = `neighbour: ${stanceLabel(st)}`;
+        relSpan.title = "Your neighbour's stance — it turns hostile as this world's deposits run scarce";
+        resourcesEl.appendChild(relSpan);
+      }
     }
 
     const mins = Math.floor(state.time / 60);

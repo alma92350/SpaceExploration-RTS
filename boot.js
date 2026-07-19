@@ -23,10 +23,11 @@ import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
 import { addTracer, addDeathFlash, addUnderAttackPing, resetEffects } from "./effects.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
-import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd } from "./overlays.js";
+import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
-import { createGalaxy, activeState, jumpCapital } from "./engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, sweepColonies } from "./engine/galaxy.js";
+import { PLANETS } from "./data.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -191,8 +192,10 @@ export function bootState(newState, { intro }) {
     // is rendered), so the colonies you left keep evolving; otherwise just the
     // one match state ticks.
     update: dt => {
-      if (game.galaxy) { for (const s of game.galaxy.planets.values()) tick(s, dt); }
-      else tick(game.state, dt);
+      if (game.galaxy) {
+        for (const s of game.galaxy.planets.values()) tick(s, dt);
+        for (const n of sweepColonies(game.galaxy)) notifyColony(n);
+      } else tick(game.state, dt);
     },
     render: () => {
       const now = performance.now();
@@ -213,6 +216,21 @@ export function bootState(newState, { intro }) {
   });
   loop.start();
   renderHUD();
+}
+
+// Background-colony notifications from galaxy.sweepColonies. "Under attack" is
+// throttled per planet so a sustained raid pings occasionally rather than every
+// tick; "lost" fires once (sweepColonies only reports it once).
+const COLONY_NOTE_THROTTLE_MS = 9000;
+const lastColonyNote = {};
+function notifyColony(n) {
+  const name = PLANETS.find(p => p.id === n.planetId)?.name || n.planetId;
+  if (n.type === "lost") { showGalaxyToast(`⚠ Your colony on ${name} has fallen.`, "bad"); return; }
+  const now = performance.now();
+  const last = lastColonyNote[n.planetId];
+  if (last !== undefined && now - last < COLONY_NOTE_THROTTLE_MS) return;   // undefined ⇒ first alert always fires
+  lastColonyNote[n.planetId] = now;
+  showGalaxyToast(`⚔ Your colony on ${name} is under attack.`, "warn");
 }
 
 // Stereo pan (-1..1) for a world-x, relative to the camera: a fight off the

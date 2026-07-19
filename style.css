@@ -70,6 +70,22 @@ html, body {
 .resources .supply.blocked { color: var(--bad); }
 /* Odyssey universal-credit balance — galaxy-wide, so it reads gold like the clock. */
 .resources .credits { color: var(--gold); font-variant-numeric: tabular-nums; }
+/* Neighbour stance chip — green when friendly, amber neutral, red hostile. */
+.resources .relation { text-transform: capitalize; }
+.resources .relation.friendly { color: var(--good, #4ade80); }
+.resources .relation.neutral  { color: var(--warn); }
+.resources .relation.hostile  { color: var(--bad); }
+
+/* Galaxy toast — a brief top-center alert about a world you're not on. */
+.galaxy-toast {
+  position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+  padding: 8px 16px; border-radius: 8px; font-size: 0.9rem; font-weight: 600;
+  background: #12203a; border: 1px solid #2b3a5e; color: var(--text);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 20; pointer-events: none;
+  transition: opacity 0.3s;
+}
+.galaxy-toast.warn { border-color: var(--warn); color: var(--warn); }
+.galaxy-toast.bad  { border-color: var(--bad); color: var(--bad); }
 
 /* Odyssey market panel (hud.js renderMarket): a header plus a compact
    commodity/price + Sell/Buy row per tradeable good. */

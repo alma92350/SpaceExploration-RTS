@@ -29,6 +29,7 @@ export const helpBtn = document.getElementById("helpBtn");
 export const saveBtn = document.getElementById("saveBtn");
 export const loadBtn = document.getElementById("loadBtn");
 export const volumeEl = document.getElementById("volume");
+export const galaxyToastEl = document.getElementById("galaxyToast");
 export const scenarioBarEl = document.getElementById("scenarioBar");
 export const scenarioBannerEl = document.getElementById("scenarioBanner");
 export const scenarioStatusEl = document.getElementById("scenarioStatus");

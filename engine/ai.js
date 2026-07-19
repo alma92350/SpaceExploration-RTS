@@ -39,6 +39,7 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, isDropOff } from "./
 import { supplyUsed, supplyCap } from "./supply.js";
 import { isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
+import { atPeace } from "./diplomacy.js";
 
 const THINK_INTERVAL = 1.5;
 const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
@@ -383,7 +384,13 @@ export function runAI(state, dt) {
 
     const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
     const timedOut = state.time >= nextAttackAt;
-    const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || timedOut);
+    // Odyssey diplomacy: while the neighbour is at peace it holds its fire — it
+    // keeps building economy and army (and still defends above), but launches no
+    // offensive waves until scarcity turns its stance hostile (diplomacy.js). A
+    // skirmish has no diplomacy, so this is a no-op there and the AI attacks as
+    // ever (preserving the resolves-to-a-winner guarantee).
+    const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || timedOut)
+      && !atPeace(state);
     if (readyToAttack && cc) {
       // A massed (size-triggered) attack keeps a home guard back; a timeout
       // commit is desperation and throws everything, so the game always resolves

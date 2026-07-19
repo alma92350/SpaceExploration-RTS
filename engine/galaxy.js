@@ -23,6 +23,7 @@ import { createGameState } from "./state.js";
 import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
 import { createMarket } from "./market.js";
+import { createDiplomacy } from "./diplomacy.js";
 import { PLANET_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
 
 // The worlds an Odyssey can settle — the same curated roster the skirmish picker
@@ -90,9 +91,33 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
     state.background = true;   // not the active seat until you land here
     updateFog(state, state.fog, "player");
   }
-  state.market = createMarket(state);   // every world has its own price book
+  state.market = createMarket(state);         // every world has its own price book
+  state.diplomacy = createDiplomacy();        // and its own neighbour's stance toward you
   galaxy.planets.set(planetId, state);
   return state;
+}
+
+// Watch the background colonies for trouble and return notifications for the UI.
+// Also the single place their sim events are drained — a colony isn't rendered or
+// heard, so nothing else consumes them (left alone they would grow without bound).
+// Reports a colony coming under attack (a player asset destroyed there) and a
+// colony being lost (its last player building razed), each at most once per state
+// transition via flags stamped on the planet.
+export function sweepColonies(galaxy) {
+  const out = [];
+  for (const [id, state] of galaxy.planets) {
+    if (!state.background) continue;
+    const playerBuildings = [...state.buildings.values()].filter(b => b.owner === "player").length;
+    if (playerBuildings > 0) state._hadColony = true;
+    if (state._hadColony && playerBuildings === 0 && !state._colonyLost) {
+      state._colonyLost = true;
+      out.push({ type: "lost", planetId: id });
+    } else if (!state._colonyLost && state.events.some(e => e.type === "entityKilled" && e.owner === "player")) {
+      out.push({ type: "attacked", planetId: id });
+    }
+    state.events.length = 0;   // drain: a background colony's events have no other consumer
+  }
+  return out;
 }
 
 // The game state the player is currently on — what boot.js renders and drives.

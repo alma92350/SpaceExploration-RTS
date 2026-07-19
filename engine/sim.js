@@ -21,6 +21,7 @@ import { checkWinCondition, checkEndlessLoss } from "./victory.js";
 import { runAI } from "./ai.js";
 import { updateScenario } from "./scenarios.js";
 import { updateMarket } from "./market.js";
+import { updateDiplomacy } from "./diplomacy.js";
 
 export function tick(state, dt) {
   if (state.over) return;
@@ -59,7 +60,8 @@ export function tick(state, dt) {
   else if (state.endless) { if (!state.background) checkEndlessLoss(state); }   // a colony with no capital isn't "over" — only your active seat can be lost
   else checkWinCondition(state);
 
-  if (state.market) updateMarket(state, dt);   // Odyssey: relax trade pressure back toward equilibrium
+  if (state.market) updateMarket(state, dt);       // Odyssey: relax trade pressure back toward equilibrium
+  if (state.diplomacy) updateDiplomacy(state, dt);  // Odyssey: drift the neighbour's stance with scarcity
   state.time += dt;
   state.tick++;
 }

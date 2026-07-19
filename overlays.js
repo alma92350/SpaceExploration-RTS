@@ -9,7 +9,7 @@
 
 "use strict";
 
-import { seedChipEl, factionChipEl, objectivesEl, helpOverlayEl, helpBtn, gameOverEl } from "./dom.js";
+import { seedChipEl, factionChipEl, objectivesEl, helpOverlayEl, helpBtn, gameOverEl, galaxyToastEl } from "./dom.js";
 import { FACTIONS } from "./engine/factions.js";
 import * as sound from "./sound.js";
 
@@ -59,6 +59,18 @@ export function showObjectives(endless = false) {
 export function hideObjectives() {
   clearTimeout(objectivesTimer);
   objectivesEl.classList.add("hidden");
+}
+
+/* ---------- galaxy toast (Odyssey background-colony alerts) ---------- */
+
+// A brief top-center notice for things happening on a world you're not on — a
+// colony under attack or lost (boot.js drives it from galaxy.sweepColonies).
+let galaxyToastTimer;
+export function showGalaxyToast(msg, kind = "warn") {
+  galaxyToastEl.textContent = msg;
+  galaxyToastEl.className = "galaxy-toast " + kind;   // drops "hidden", sets the kind
+  clearTimeout(galaxyToastTimer);
+  galaxyToastTimer = setTimeout(() => galaxyToastEl.classList.add("hidden"), 5000);
 }
 
 /* ---------- help overlay ---------- */
