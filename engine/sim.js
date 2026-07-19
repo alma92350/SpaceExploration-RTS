@@ -20,6 +20,7 @@ import { getEntity } from "./state.js";
 import { checkWinCondition, checkEndlessLoss } from "./victory.js";
 import { runAI } from "./ai.js";
 import { updateScenario } from "./scenarios.js";
+import { updateMarket } from "./market.js";
 
 export function tick(state, dt) {
   if (state.over) return;
@@ -57,6 +58,8 @@ export function tick(state, dt) {
   if (state.scenario) { /* updateScenario already set state.over if finished */ }
   else if (state.endless) { if (!state.background) checkEndlessLoss(state); }   // a colony with no capital isn't "over" — only your active seat can be lost
   else checkWinCondition(state);
+
+  if (state.market) updateMarket(state, dt);   // Odyssey: relax trade pressure back toward equilibrium
   state.time += dt;
   state.tick++;
 }

@@ -17,7 +17,8 @@ import { queueProduction, cancelProduction, researchUpgrade } from "./engine/pro
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
-import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
+import { JUMP_LOAD_RADIUS, JUMP_COST } from "./engine/galaxy.js";
+import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { performJump } from "./boot.js";
 import { PLANETS } from "./data.js";
 import * as sound from "./sound.js";
@@ -279,6 +280,53 @@ function renderQueueRows(building) {
   });
 }
 
+// The Odyssey trade panel, shown under the Command Center's production. One row
+// per tradeable commodity: its live sell price, and Sell/Buy buttons in fixed
+// lots. Selling banks universal credits (and nudges the local price down);
+// buying spends them (and nudges it up) — see engine/market.js.
+function renderMarket(state) {
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = "Market — trade local goods for credits";
+  panelEl.appendChild(head);
+
+  const res = state.players.player.resources;
+  for (const com of tradeables(state)) {
+    const row = document.createElement("div");
+    row.className = "market-row";
+
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = `${com} ◈${Math.round(unitPrice(state.market, com, "sell"))}`;
+    row.appendChild(label);
+
+    const have = Math.floor(res[com] || 0);
+    const sellBtn = document.createElement("button");
+    sellBtn.className = "market-btn" + (have < TRADE_LOT ? " disabled" : "");
+    sellBtn.textContent = `Sell ${TRADE_LOT}`;
+    sellBtn.title = `Sell ${TRADE_LOT} ${com} for ~◈${Math.round(unitPrice(state.market, com, "sell") * TRADE_LOT)}`;
+    sellBtn.addEventListener("click", () => {
+      if (Math.floor(res[com] || 0) >= TRADE_LOT) { sell(game.galaxy, state, com, TRADE_LOT); renderHUD(); }
+      else sound.playProductionBlocked();
+    });
+    row.appendChild(sellBtn);
+
+    const buyPrice = unitPrice(state.market, com, "buy");
+    const canBuy = game.galaxy.credits >= buyPrice * TRADE_LOT;
+    const buyBtn = document.createElement("button");
+    buyBtn.className = "market-btn" + (canBuy ? "" : " disabled");
+    buyBtn.textContent = `Buy ${TRADE_LOT}`;
+    buyBtn.title = `Buy ${TRADE_LOT} ${com} for ~◈${Math.round(buyPrice * TRADE_LOT)}`;
+    buyBtn.addEventListener("click", () => {
+      if (game.galaxy.credits >= unitPrice(state.market, com, "buy") * TRADE_LOT) { buy(game.galaxy, state, com, TRADE_LOT); renderHUD(); }
+      else sound.playProductionBlocked();
+    });
+    row.appendChild(buyBtn);
+
+    panelEl.appendChild(row);
+  }
+}
+
 function rebuildSelectionPanel(sel) {
   const { state, input } = game;
   panelEl.innerHTML = "";
@@ -321,6 +369,7 @@ function rebuildSelectionPanel(sel) {
         () => queueProduction(state, cc.id, t), { cost: def.cost, tip: unitTip(def) }));
     }
     if (cc.queue.length) renderQueueRows(cc);
+    if (game.galaxy && state.market) renderMarket(state);   // Odyssey: trade local commodities for universal credits
   }
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
@@ -372,16 +421,19 @@ function rebuildSelectionPanel(sel) {
   if (spaceport && game.galaxy) {
     const staged = [...state.units.values()].filter(u => u.owner === "player"
       && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS).length;
+    const afford = game.galaxy.credits >= JUMP_COST;
     const info = document.createElement("p");
     info.className = "hint";
-    info.textContent = `Relocate your capital to another world. ${staged} unit${staged === 1 ? "" : "s"} staged by the pad will jump too — park units near the Spaceport to bring them.`;
+    info.textContent = `Relocate your capital to another world (◈${JUMP_COST} fuel). ${staged} unit${staged === 1 ? "" : "s"} staged by the pad will jump too — park units near the Spaceport to bring them.`;
     panelEl.appendChild(info);
     for (const w of game.galaxy.worlds) {
       if (w === game.galaxy.activeId) continue;
       const name = PLANETS.find(p => p.id === w)?.name || w;
       const visited = game.galaxy.planets.has(w) && w !== game.galaxy.activeId;
       panelEl.appendChild(makeButton(`Jump ▸ ${name}${visited ? " · your colony" : ""}`,
-        () => performJump(w), { tip: "Relocate the Command Center and staged units to this world" }));
+        () => performJump(w),
+        { tip: "Relocate the Command Center and staged units to this world",
+          locked: !afford, lockTip: `Need ◈${JUMP_COST} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
     }
   }
 

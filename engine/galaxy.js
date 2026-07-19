@@ -22,6 +22,7 @@
 import { createGameState } from "./state.js";
 import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
+import { createMarket } from "./market.js";
 import { PLANET_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
 
 // The worlds an Odyssey can settle — the same curated roster the skirmish picker
@@ -48,7 +49,7 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
 
   const galaxy = {
     seed,
-    credits: 0,                 // universal credits — galaxy-wide, transportable (Phase 3 spends them)
+    credits: 500,               // universal credits — galaxy-wide, transportable; fund jumps + trade
     activeId: startId,          // the world the player is currently on
     homeId: startId,            // where the Odyssey began
     worlds: ODYSSEY_WORLDS.slice(),
@@ -62,6 +63,10 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
 // Units staged within this radius of a Spaceport ride along with the capital on
 // a jump — you assemble your expedition at the pad, then launch.
 export const JUMP_LOAD_RADIUS = 150;
+
+// Credits a jump costs (fuel). Funded by trading at the market, so exploration
+// draws on your economy rather than being free.
+export const JUMP_COST = 400;
 
 // Build (or rebuild) a planet's engine state into the galaxy. Reuses the exact
 // skirmish scaffold — economy, both players' bases, fog — but flagged `endless`
@@ -85,6 +90,7 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
     state.background = true;   // not the active seat until you land here
     updateFog(state, state.fog, "player");
   }
+  state.market = createMarket(state);   // every world has its own price book
   galaxy.planets.set(planetId, state);
   return state;
 }
@@ -110,7 +116,8 @@ export function jumpCapital(galaxy, destId) {
   const from = activeState(galaxy);
   const spaceport = [...from.buildings.values()]
     .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
-  if (!spaceport || destId === galaxy.activeId) return null;
+  if (!spaceport || destId === galaxy.activeId || galaxy.credits < JUMP_COST) return null;
+  galaxy.credits -= JUMP_COST;   // fuel for the jump
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });
   const lz = dest.map.bases.player;

@@ -71,6 +71,19 @@ html, body {
 /* Odyssey universal-credit balance — galaxy-wide, so it reads gold like the clock. */
 .resources .credits { color: var(--gold); font-variant-numeric: tabular-nums; }
 
+/* Odyssey market panel (hud.js renderMarket): a header plus a compact
+   commodity/price + Sell/Buy row per tradeable good. */
+.market-head { margin: 8px 0 4px; font-size: 0.8rem; color: var(--gold); letter-spacing: 0.03em; }
+.market-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.market-com { flex: 1; font-size: 0.82rem; color: var(--text); text-transform: capitalize; }
+.market-btn {
+  padding: 3px 8px; font-size: 0.76rem; cursor: pointer;
+  background: #16203a; color: var(--text);
+  border: 1px solid #2b3a5e; border-radius: 5px;
+}
+.market-btn:hover { background: #1e2c4d; }
+.market-btn.disabled { opacity: 0.4; cursor: default; }
+
 .clock {
   font-variant-numeric: tabular-nums;
   color: var(--gold);

@@ -22,7 +22,7 @@ test("createGalaxy settles the player on one world with a single command center"
   const g = createGalaxy({ seed: 7, difficulty: "medium" });
   assert.ok(ODYSSEY_WORLDS.includes(g.activeId), "the start world is one of the roster");
   assert.equal(g.planets.size, 1, "Phase 1: exactly one planet");
-  assert.equal(g.credits, 0, "credits start empty");
+  assert.ok(g.credits > 0, "you start with a credit stipend to fund the first jump");
   const s = activeState(g);
   assert.equal(s.endless, true, "the active planet is an endless (Odyssey) state");
   assert.equal(commandCenters(s, "player").length, 1, "the player has exactly one Command Center");
