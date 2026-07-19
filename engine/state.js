@@ -57,6 +57,8 @@ export function createGameState(opts = {}) {
     buildings: new Map(),
     selection: [],          // unit/building ids currently selected by the human player
     fog: createFog(map),    // the player's fog of war — see engine/fog.js
+    fogAI: createFog(map),  // the AI's own fog: it must scout for intel too, it's no longer omniscient (see engine/ai.js)
+    aiScoutId: null,        // the unit currently out scouting for the AI, if any
     aiArchetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
     events: [],              // sim events this tick (unitSpawned/attackHit/entityKilled/buildingComplete) — pushed by
                               // production.js/combat.js, drained and turned into sound by main.js each render frame
@@ -65,6 +67,7 @@ export function createGameState(opts = {}) {
   seedPlayer(state, "player", map.bases.player);
   seedPlayer(state, "ai", map.bases.ai);
   updateFog(state, state.fog, "player");   // so the starting base's vision is correct before the first render
+  updateFog(state, state.fogAI, "ai");     // ...and the AI likewise starts only knowing its own corner
 
   return state;
 }

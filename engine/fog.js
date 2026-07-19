@@ -1,15 +1,17 @@
 /* ============================================================
-   Fog of war for the player's view: a coarse grid tracks which cells
-   are currently in sight of a player unit/building (recomputed fresh
-   every tick) and which have ever been seen (permanent, once set).
+   Fog of war: a coarse grid tracks which cells are currently in sight of
+   an owner's unit/building (recomputed fresh every tick) and which have
+   ever been seen (permanent, once set). Both sides get their own grid —
+   state.fog for the player, state.fogAI for the AI — so neither is
+   omniscient; the same createFog/updateFog serves both (updateFog takes
+   the owner). See engine/ai.js for how the AI's grid gates its decisions.
 
-   Deliberately scoped to units/buildings only — resource nodes stay
-   visible regardless (the charted deposits from data.js are treated as
-   known map knowledge, not battlefield intel), and there's no
-   "remembered snapshot" of enemy positions once they leave vision, they
-   simply stop rendering. The AI plays with full knowledge of the map
-   internally (it always has); this only ever gates what the player sees
-   and can target.
+   Deliberately scoped to units/buildings only — charted surface deposits
+   (data.js) stay visible regardless, treated as known map knowledge, not
+   battlefield intel. Hidden caches (map.js) are the exception: they only
+   count as known once their cell has been explored (isNodeDiscovered).
+   There's no "remembered snapshot" of enemy positions once they leave
+   vision — they simply stop rendering (or, for the AI, stop being read).
    ============================================================ */
 
 "use strict";

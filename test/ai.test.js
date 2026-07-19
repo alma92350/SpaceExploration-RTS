@@ -75,16 +75,18 @@ test("the AI launches repeated attack waves, not just one", () => {
   assert.equal(waveTwo.order?.type, "attack-move", "a second, independent wave should commit once its own timeout passes");
 });
 
-test("the AI biases production toward the counter of the player's most common combat type", () => {
+test("the AI biases production toward the counter of a player army it can SEE", () => {
   const state = createGameState({ planetId: "ferros" });
   const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
   state.buildings.set(barracks.id, barracks);
   state.players.ai.resources.ore = 100000;
 
-  // Flood the player's army with Skiffs -- Bastion is Skiff's hard counter
-  // (see entities.js's bonusVs tables), so the AI should start reacting.
+  // Flood a Skiff army right at the AI's doorstep, inside its Command Center's
+  // sight -- so it's within the AI's fog (the initial createGameState fog pass
+  // already marks these cells visible). Bastion is Skiff's hard counter (see
+  // entities.js's bonusVs), so the AI, seeing them, should start reacting.
   for (let i = 0; i < 5; i++) {
-    const s = makeUnit("skiff", "player", 100 + i, 100);
+    const s = makeUnit("skiff", "player", state.map.bases.ai.x - 150, state.map.bases.ai.y + i * 6);
     state.units.set(s.id, s);
   }
 
@@ -98,8 +100,33 @@ test("the AI biases production toward the counter of the player's most common co
   }
 
   assert.equal(builtTypes[0], state.aiArchetype.unitMix[0], "the very first build should still follow the archetype's mix");
-  assert.equal(builtTypes[3], "bastion", "the 4th unit built (the first counter-pick slot) should directly counter the player's Skiff-heavy army");
+  assert.equal(builtTypes[3], "bastion", "the 4th unit built (the first counter-pick slot) should directly counter the seen Skiff-heavy army");
   assert.equal(builtTypes[6], "bastion", "the counter-pick recurs every 3rd unit thereafter");
+});
+
+test("the AI does NOT counter a player army it hasn't seen — no free intel", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
+  state.buildings.set(barracks.id, barracks);
+  fundAll(state);   // fund every commodity so the plain mix (Breacher and all) completes
+
+  // The same Skiff flood, but tucked in the player's own corner, far outside
+  // any AI vision. With fog, the AI can't know the composition, so the
+  // counter-pick slots must fall back to the archetype's own mix.
+  for (let i = 0; i < 5; i++) {
+    const s = makeUnit("skiff", "player", 100 + i, 100);
+    state.units.set(s.id, s);
+  }
+
+  const built = [];
+  for (let i = 0; i < 7; i++) {
+    runAI(state, THINK_INTERVAL);
+    if (barracks.queue.length) { built.push(barracks.queue[barracks.queue.length - 1].unitType); barracks.queue.length = 0; }
+  }
+
+  const mix = state.aiArchetype.unitMix;
+  assert.deepEqual(built, Array.from({ length: 7 }, (_, i) => mix[i % mix.length]),
+    "with the player army unseen, every slot follows the plain mix — no reactive counter");
 });
 
 // A completed Barracks the tests can drive without waiting on construction.

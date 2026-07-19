@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { issueMove } from "../engine/commands.js";
+import { isNodeDiscovered } from "../engine/fog.js";
 
 test("a full skirmish runs to a decisive winner without throwing", () => {
   const state = createGameState({ planetId: "ferros" });
@@ -76,6 +77,19 @@ test("an idle worker never auto-acquires a neighbouring enemy — it stays on th
   tick(state, 0.1);
 
   assert.equal(enemy.hp, enemyStartHp, "with no attack order, the worker never swings at the enemy beside it");
+});
+
+test("the AI is not omniscient: it scouts, revealing the map and discovering caches over a match", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const exploredCells = () => state.fogAI.explored.reduce((sum, v) => sum + v, 0);
+  const start = exploredCells();   // just its home corner at kickoff
+
+  for (let i = 0; i < 4000 && !state.over; i++) tick(state, 0.1);
+
+  assert.ok(exploredCells() > start * 2, "the AI should have scouted well beyond its starting corner");
+  const caches = state.map.nodes.filter(n => n.hidden);
+  assert.ok(caches.some(c => isNodeDiscovered(state.fogAI, c)),
+    "and turned up at least one hidden cache by exploring, rather than knowing it for free");
 });
 
 test("tick() is a no-op once the game is already over", () => {

@@ -24,6 +24,7 @@ export function tick(state, dt) {
   for (const unit of state.units.values()) updateUnit(state, unit, dt);
   applySeparation(state, dt);
   updateFog(state, state.fog, "player");
+  updateFog(state, state.fogAI, "ai");   // the AI sees only what its own units/buildings reveal, same as the player
   for (const building of state.buildings.values()) {
     updateBuildingConstruction(state, building, dt);
     updateProductionQueue(state, building, dt);

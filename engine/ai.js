@@ -11,12 +11,14 @@
    researches both upgrades — so the player isn't the only side that gets to
    use crystals/radioactives, expansions, or defenses.
 
-   Every few units it also breaks from the archetype's mix to build whatever
-   directly counters the type the player fields most (see counterToPlayerArmy
-   below) — full-knowledge scouting, consistent with the AI already playing
-   with an unfogged view of the map (fog.js only ever gates the player's own
-   view). The rest of the cycle still follows the archetype's own flavor, so
-   a Rusher doesn't turn into a pure reactive counter-picker.
+   The AI plays under its own fog of war (state.fogAI) — it is NOT omniscient.
+   It keeps one unit out scouting (updateScout), and its intel-dependent moves
+   are gated by what it has actually seen: every few units it breaks from the
+   mix to counter whatever the player fields most, but only counting player
+   units currently in its vision (counterToPlayerArmy); and it only mines or
+   expands to nodes it has discovered — charted surface deposits always, hidden
+   caches once scouted. The rest of the cycle follows the archetype's own
+   flavor, so a Rusher doesn't turn into a pure reactive counter-picker.
 
    How aggressively vs. how patiently it plays — worker/army targets, attack
    timing, unit mix, how many turrets and barracks, when to expand — all comes
@@ -29,10 +31,11 @@
 "use strict";
 
 import { queueProduction, researchUpgrade } from "./production.js";
-import { issueBuild, issueAttackMove } from "./commands.js";
+import { issueBuild, issueAttackMove, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
 import { supplyUsed, supplyCap } from "./supply.js";
+import { isVisibleAt, isNodeDiscovered } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
 
 const THINK_INTERVAL = 1.5;
@@ -79,6 +82,7 @@ export function runAI(state, dt) {
   const allBarracks = buildings.filter(b => b.type === "barracks");
   let oreReserve = 0;
 
+  updateScout(state, army);   // before worker assignment, so a worker-turned-scout isn't re-tasked to gather
   assignIdleWorkers(state, workers);
 
   // EXPANSION: once home ore runs thin, plant a second Command Center on the
@@ -205,7 +209,9 @@ export function runAI(state, dt) {
   // units automatically forms the next wave once the threshold is met
   // again, so the AI keeps attacking instead of throwing exactly one
   // army at the player for the whole match.
-  const homeArmy = army.filter(u => !u.order || u.order.type === "move");
+  // The lone scout is kept out of the wave (it's off revealing the map on a
+  // 'move' order, which would otherwise read as "home army").
+  const homeArmy = army.filter(u => u.id !== state.aiScoutId && (!u.order || u.order.type === "move"));
   const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
   const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || state.time >= nextAttackAt);
   if (readyToAttack) {
@@ -231,14 +237,17 @@ function pickNextUnitType(state, archetype) {
   return mix[built % mix.length];
 }
 
-// Whatever combat type the player currently fields the most of, mapped
-// to its hard counter. Ties keep whichever type was seen first, which is
-// fine — there's no meaningfully "correct" pick between two equally
-// common threats.
+// Whatever combat type the player currently fields the most of — among only
+// the units the AI can actually SEE right now (its own fog) — mapped to its
+// hard counter. No vision of the player's army means no counter-pick, so the
+// AI has to scout or fight to earn that intel, the same as the player. Ties
+// keep whichever type was seen first; there's no meaningfully "correct" pick
+// between two equally common threats.
 function counterToPlayerArmy(state) {
   const counts = {};
   for (const u of state.units.values()) {
     if (u.owner !== "player" || UNITS[u.type].role !== "combat") continue;
+    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;   // can't counter what it hasn't seen
     counts[u.type] = (counts[u.type] || 0) + 1;
   }
   let best = null, bestCount = 0;
@@ -248,8 +257,32 @@ function counterToPlayerArmy(state) {
   return best ? COUNTER_OF[best] : null;
 }
 
+// Keep one spare unit ranging across the contested middle so the AI earns its
+// intel — uncovering hidden caches and spotting the player's forces — instead
+// of knowing the map for free. Only lends a scout once the army can spare one;
+// a box sweep of the centre laid down as plain-move waypoints (it reveals fog
+// rather than diving into a fight), re-issued whenever the scout falls idle or
+// dies. Runs before assignIdleWorkers so a scout is never re-tasked to gather.
+function updateScout(state, army) {
+  const current = state.aiScoutId ? state.units.get(state.aiScoutId) : null;
+  if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;   // still sweeping
+  if (army.length < 4) { state.aiScoutId = null; return; }   // need a genuine spare to lend
+  const scout = army.find(u => u.id !== state.aiScoutId);
+  if (!scout) { state.aiScoutId = null; return; }
+  state.aiScoutId = scout.id;
+  const w = state.map.width, h = state.map.height;
+  issueMove([scout], w * 0.42, h * 0.22);
+  issueMove([scout], w * 0.58, h * 0.22, true);
+  issueMove([scout], w * 0.58, h * 0.78, true);
+  issueMove([scout], w * 0.42, h * 0.78, true);
+  issueMove([scout], scout.x, scout.y, true);   // and head home to fold back into the army
+}
+
 function assignIdleWorkers(state, workers) {
-  const live = state.map.nodes.filter(n => n.amount > 0);
+  // Only nodes the AI actually knows about: charted surface deposits (always)
+  // plus any hidden cache it has scouted. It can't send workers to a cache it
+  // hasn't discovered any more than the player can.
+  const live = state.map.nodes.filter(n => n.amount > 0 && isNodeDiscovered(state.fogAI, n));
   if (!live.length) return;
   const oreLive = live.filter(n => n.com === "ore");
   const otherLive = live.filter(n => n.com !== "ore" && SPENDABLE.has(n.com));
@@ -304,19 +337,23 @@ function homeOreFraction(state, ccs) {
 
 // The ore node worth expanding to: richest surrounding cluster of live nodes,
 // lightly penalized by distance from home so the AI grabs its own side first
-// and only reaches across the map once the near ore is claimed or dry. Skips
-// anchors already inside CLAIM_RADIUS of any CC (either owner, incl. those
-// still under construction). Returns null when every live cluster is claimed —
-// which is what keeps the reserve from ever engaging in a no-room deadlock.
+// and only reaches across the map once the near ore is claimed or dry. Only
+// nodes the AI has discovered count (surface ore always, hidden ore caches
+// once scouted) — so on a map where the near ore is spent, the AI has to send
+// its scout out to find somewhere to expand, just like the player. Skips
+// anchors inside CLAIM_RADIUS of any CC (either owner, incl. constructing).
+// Returns null when nothing known is available — which keeps the reserve from
+// ever engaging in a no-room deadlock.
 function bestExpansionCluster(state, myCCs) {
   const allCCs = [...state.buildings.values()].filter(b => b.type === "command");
   let best = null, bestScore = -Infinity;
   for (const n of state.map.nodes) {
     if (n.com !== "ore" || n.amount <= 0) continue;                                 // anchor on live ore
+    if (!isNodeDiscovered(state.fogAI, n)) continue;                                // ...that the AI actually knows about
     if (allCCs.some(c => Math.hypot(c.x - n.x, c.y - n.y) <= CLAIM_RADIUS)) continue;
     let cluster = 0;
     for (const m of state.map.nodes)
-      if (m.amount > 0 && Math.hypot(m.x - n.x, m.y - n.y) <= CLUSTER_RADIUS) cluster += m.amount;
+      if (m.amount > 0 && isNodeDiscovered(state.fogAI, m) && Math.hypot(m.x - n.x, m.y - n.y) <= CLUSTER_RADIUS) cluster += m.amount;
     const dHome = Math.min(...myCCs.map(c => Math.hypot(c.x - n.x, c.y - n.y)));
     const score = cluster - 0.2 * dHome;   // richness first; keeps it on its own side unless dry
     if (score > bestScore) { bestScore = score; best = n; }
