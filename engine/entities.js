@@ -29,6 +29,7 @@ export const BUILDINGS = {
     id: "refinery", name: "Refinery", hp: 400, radius: 18,
     cost: { ore: 200 }, buildTime: 16,
     sight: 140,
+    dropOff: true,   // doubles as a resource drop-off — see the dropOff note below
     // No `produces` — it researches upgrades instead of building units,
     // which is also what keeps it out of the rally-point UI (input.js
     // only offers that for buildings with a `produces` list).
@@ -54,6 +55,7 @@ export const BUILDINGS = {
   foundry: {
     id: "foundry", name: "Foundry", hp: 450, radius: 18,
     cost: { ore: 175 }, buildTime: 22, sight: 140,
+    dropOff: true,   // an industrial building doubles as a resource drop-off
     // The military tech gate: a pure prerequisite building (no `produces`, so
     // it stays out of the rally UI). It unlocks the Tier-2 combat units
     // (Lancer, Breacher) — the Barracks still trains them. Ore-only on purpose,
@@ -64,6 +66,7 @@ export const BUILDINGS = {
   arsenal: {
     id: "arsenal", name: "Arsenal", hp: 550, radius: 18,
     cost: { ore: 220 }, buildTime: 26, sight: 140,
+    dropOff: true,   // an industrial building doubles as a resource drop-off
     // The Tier-3 gate, one step past the Foundry: unlocks the Dreadnought
     // capital unit. Also a pure gate (no `produces`), ore-only so the tech path
     // stays reachable on every world.
@@ -88,6 +91,18 @@ export function prereqsMet(state, owner, def) {
     }
     return !!(player && player.upgrades && player.upgrades[req]);
   });
+}
+
+// A building is a resource drop-off if it's the Command Center or an industrial
+// building flagged `dropOff` (Refinery, Foundry, Arsenal). Workers deposit their
+// haul at the NEAREST drop-off (see gather.js), so planting one of these cheaper,
+// faster industrial buildings forward shortens a distant mining run without the
+// cost of a whole second Command Center — a decentralized economy where the CC
+// still keeps its unique roles (training workers, granting supply). Single source
+// of truth for the routing, tests, and any future UI.
+export function isDropOff(type) {
+  const def = BUILDINGS[type];
+  return !!(def && (def.isCommandCenter || def.dropOff));
 }
 
 // One-time, player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE

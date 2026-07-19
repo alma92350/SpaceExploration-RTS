@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canAfford, payCost, prereqsMet, committedDoctrine, UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
+import { canAfford, payCost, prereqsMet, committedDoctrine, isDropOff, UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
 
 // Minimal state stub for prereqsMet: it only reads state.buildings and
 // state.players[owner].upgrades.
@@ -106,6 +106,23 @@ test("the Command Center is buildable but steep: the priciest, slowest structure
   assert.equal(BUILDINGS.command.buildTime, 30);
   assert.ok(BUILDINGS.command.buildTime > BUILDINGS.barracks.buildTime, "an expansion should take longer than a Barracks");
   assert.ok(BUILDINGS.command.cost.ore > BUILDINGS.refinery.cost.ore, "an expansion should out-price every other building");
+});
+
+test("resource drop-offs are the Command Center and the industrial buildings that proxy it", () => {
+  // The CC and the industrial line (Refinery, Foundry, Arsenal) all bank hauls,
+  // so a forward industrial building shortens a distant mining run without a
+  // whole second Command Center.
+  assert.equal(isDropOff("command"), true, "the CC is always a drop-off");
+  assert.equal(isDropOff("refinery"), true);
+  assert.equal(isDropOff("foundry"), true);
+  assert.equal(isDropOff("arsenal"), true);
+  // Troop, defense, and housing buildings are not collection points.
+  assert.equal(isDropOff("barracks"), false, "the Barracks trains troops, it doesn't collect");
+  assert.equal(isDropOff("turret"), false);
+  assert.equal(isDropOff("habitat"), false);
+  assert.equal(isDropOff("not-a-building"), false, "an unknown type is never a drop-off");
+  // The flag is what the routing reads — keep def and predicate in sync.
+  for (const t of ["refinery", "foundry", "arsenal"]) assert.equal(BUILDINGS[t].dropOff, true, `${t} carries the dropOff flag`);
 });
 
 test("every unit and building carries a sight radius for fog of war", () => {

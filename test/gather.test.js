@@ -128,3 +128,39 @@ test("a constructing expansion Command Center only becomes a dropoff once it com
   updateGather(state, worker, 0.05);
   assert.ok(state.players.player.resources.ore > before, "the finished expansion is the nearest dropoff");
 });
+
+test("an industrial building doubles as a drop-off: a worker banks at a forward Refinery, not the distant base CC", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  // A completed Refinery planted right on the node, far from the seeded base CC.
+  const refinery = makeBuilding("refinery", "player", node.x + 12, node.y, { constructing: false });
+  state.buildings.set(refinery.id, refinery);
+  // The worker is full and standing at the node — well beyond DROP_REACH of the
+  // base CC, so a deposit this tick can ONLY be the nearby Refinery.
+  worker.x = node.x; worker.y = node.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+  const before = state.players.player.resources.ore;
+  const cc = [...state.buildings.values()].find(b => b.type === "command");
+  assert.ok(Math.hypot(cc.x - worker.x, cc.y - worker.y) > 30, "the base CC is out of drop reach — only the Refinery is close");
+
+  updateGather(state, worker, 0.05);
+  assert.ok(state.players.player.resources.ore > before, "the Refinery accepted the haul as a drop-off point");
+  assert.equal(worker.cargo.qty, 0, "cargo emptied at the forward Refinery");
+});
+
+test("a still-constructing Refinery is not yet a drop-off", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  const refinery = makeBuilding("refinery", "player", node.x + 12, node.y, { constructing: true });
+  state.buildings.set(refinery.id, refinery);
+  worker.x = node.x; worker.y = node.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+  const before = state.players.player.resources.ore;
+
+  updateGather(state, worker, 0.05);
+  assert.equal(state.players.player.resources.ore, before, "an unfinished Refinery banks nothing — the worker heads for the distant CC");
+});

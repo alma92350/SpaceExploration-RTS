@@ -1,13 +1,15 @@
 /* ============================================================
    Worker gather/deposit loop: walk to node -> mine into cargo -> walk to
-   the nearest completed Command Center -> deposit -> repeat until the
-   node runs dry.
+   the nearest completed drop-off -> deposit -> repeat until the node runs
+   dry. A drop-off is the Command Center OR any industrial building that
+   proxies it (Refinery, Foundry, Arsenal — see entities.js isDropOff), so
+   a forward industrial building shortens a distant haul without a full CC.
    ============================================================ */
 
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS } from "./entities.js";
+import { UNITS, isDropOff } from "./entities.js";
 import { sideMod } from "./map.js";
 
 const ORBIT_RADIUS = 16;   // workers ring the node instead of stacking on its exact center
@@ -71,7 +73,7 @@ export function updateGather(state, unit, dt) {
   }
 
   if (order.phase === "toDrop") {
-    const drop = nearestCommand(state, unit.owner, unit.x, unit.y);
+    const drop = nearestDropoff(state, unit.owner, unit.x, unit.y);
     if (!drop) { unit.order = null; return; }
     const dist = Math.hypot(drop.x - unit.x, drop.y - unit.y);
     if (dist <= DROP_REACH) {
@@ -89,10 +91,14 @@ export function updateGather(state, unit, dt) {
   }
 }
 
-function nearestCommand(state, owner, x, y) {
+// The nearest COMPLETED drop-off the worker can bank at: its own Command Center
+// or any of its industrial proxies (Refinery/Foundry/Arsenal). Picking the
+// closest is what makes a forward industrial building act as a local collection
+// point — the haul goes to it instead of all the way back to the base.
+function nearestDropoff(state, owner, x, y) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {
-    if (b.owner !== owner || b.constructing || b.type !== "command") continue;
+    if (b.owner !== owner || b.constructing || !isDropOff(b.type)) continue;
     const d = Math.hypot(b.x - x, b.y - y);
     if (d < bestD) { bestD = d; best = b; }
   }

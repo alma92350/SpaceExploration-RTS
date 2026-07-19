@@ -657,6 +657,8 @@ function unitTip(def) {
   if (def.attack) bits.push(`${def.attack} dmg`, `rng ${def.range}`);
   if (def.speed) bits.push(`spd ${def.speed}`);
   if (def.supplyCost) bits.push(`${def.supplyCost} supply`);
+  if (def.supplyGrants) bits.push(`+${def.supplyGrants} supply`);
+  if (def.dropOff || def.isCommandCenter) bits.push("resource drop-off");
   return bits.join(" · ");
 }
 
