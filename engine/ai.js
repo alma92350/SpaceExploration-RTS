@@ -82,6 +82,7 @@ export function runAI(state, dt) {
   const ai = state.players.ai;
   const workers = playerUnits(state, "ai").filter(u => u.type === "worker");
   const army = playerUnits(state, "ai").filter(u => UNITS[u.type].role === "combat");
+  const rangers = playerUnits(state, "ai").filter(u => u.type === "ranger");
   const buildings = playerBuildings(state, "ai");
   const cc = buildings.find(b => b.type === "command" && !b.constructing);
   const barracks = buildings.find(b => b.type === "barracks");
@@ -93,8 +94,18 @@ export function runAI(state, dt) {
   // AI can see pressing its base. Under threat it won't lend a new scout — every
   // unit is needed at home.
   const threats = visibleThreatsNearHome(state);
-  updateScout(state, army, threats.length > 0);   // before worker assignment, so a worker-turned-scout isn't re-tasked to gather
+  updateScout(state, army, rangers, threats.length > 0);   // before worker assignment, so a worker-turned-scout isn't re-tasked to gather
   assignIdleWorkers(state, workers);
+
+  // TACTICAL: build one cheap Ranger up front to scout with — far sight,
+  // all-terrain, and it doesn't bleed a fighter out of the army the way lending a
+  // combat unit does (updateScout prefers it). Standard AI keeps lending a unit,
+  // so its economy/opening is untouched. Ore-only and tiny (45), reserve-aware.
+  if (state.aiMicro && cc && workers.length > 0 && rangers.length === 0
+      && !cc.queue.some(j => j.unitType === "ranger")
+      && canAffordKeeping(ai.resources, UNITS.ranger.cost, oreReserve) && canAct(state)) {
+    if (queueProduction(state, cc.id, "ranger")) spend(state);
+  }
 
   // EXPANSION: once home ore runs thin, plant a second Command Center on the
   // richest unclaimed cluster. Runs before every ore-spending block so it can
@@ -538,12 +549,24 @@ function spend(state) {
 // a box sweep of the centre laid down as plain-move waypoints (it reveals fog
 // rather than diving into a fight), re-issued whenever the scout falls idle or
 // dies. Runs before assignIdleWorkers so a scout is never re-tasked to gather.
-function updateScout(state, army, defending = false) {
+function updateScout(state, army, rangers, defending = false) {
   if (defending) return;   // base under attack — hold every unit home, don't lend a scout
-  const current = state.aiScoutId ? state.units.get(state.aiScoutId) : null;
-  if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;   // still sweeping
-  if (army.length < 4) { state.aiScoutId = null; return; }   // need a genuine spare to lend
-  const scout = army.find(u => u.id !== state.aiScoutId);
+  let scout;
+  const ranger = (rangers && rangers.length) ? rangers[0] : null;
+  if (ranger) {
+    // Prefer a dedicated Ranger (Tactical builds one): it out-sees any fighter,
+    // goes anywhere, and costs the army nothing. Leave it be while it's sweeping;
+    // re-task only once it falls idle (or send it out the first time).
+    if (ranger.order || (ranger.orderQueue && ranger.orderQueue.length)) return;
+    scout = ranger;
+  } else {
+    // No Ranger: fall back to lending a combat unit, but only if one isn't already
+    // out — don't pull a second fighter off the line.
+    const current = state.aiScoutId ? state.units.get(state.aiScoutId) : null;
+    if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;
+    if (army.length < 4) { state.aiScoutId = null; return; }   // need a genuine spare to lend
+    scout = army.find(u => u.id !== state.aiScoutId);
+  }
   if (!scout || !canAct(state)) return;   // no spare, or no action budget to send one out yet
   spend(state);
   state.aiScoutId = scout.id;

@@ -643,3 +643,25 @@ test("the Standard AI never sets a focus (micro is opt-in)", () => {
 
   assert.ok(!a1.focusId, "with tactics off, the AI leaves targeting to the dispersed auto-acquire");
 });
+
+test("the Tactical AI builds a Ranger and scouts with it instead of lending a fighter", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, aiMicro: true });
+  let sawRanger = false, rangerScouted = false;
+  for (let i = 0; i < 2000 && !state.over; i++) {
+    tick(state, 0.1);
+    const ranger = [...state.units.values()].find(u => u.owner === "ai" && u.type === "ranger");
+    if (ranger) { sawRanger = true; if (state.aiScoutId === ranger.id) rangerScouted = true; }
+  }
+  assert.ok(sawRanger, "the Tactical AI builds a Ranger");
+  assert.ok(rangerScouted, "and hands it the scouting job");
+});
+
+test("the Standard AI builds no Ranger — the scout unit is a Tactical-only extra", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });   // aiMicro off
+  let sawRanger = false;
+  for (let i = 0; i < 2000 && !state.over; i++) {
+    tick(state, 0.1);
+    if ([...state.units.values()].some(u => u.owner === "ai" && u.type === "ranger")) { sawRanger = true; break; }
+  }
+  assert.ok(!sawRanger, "the Standard AI never trains a Ranger — its opening is unchanged");
+});
