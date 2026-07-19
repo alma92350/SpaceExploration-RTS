@@ -311,6 +311,55 @@ test("the AI recalls its army to defend when it SEES an attack on its base", () 
   }
 });
 
+test("the AI retreats a ground-down attack that still faces opposition, saving the survivors", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cc = [...state.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  // A wave that launched 10 strong is down to 3 survivors, out at midfield (far
+  // enough from the AI base that it's an OFFENSE situation, not a home defense).
+  state.aiAttackForce = 10;
+  state.aiAttackDesperate = false;
+  const survivors = [];
+  for (let i = 0; i < 3; i++) {
+    const u = makeUnit("skiff", "ai", 800, 480 + i * 8);
+    u.order = { type: "attack-move", x: state.map.bases.player.x, y: state.map.bases.player.y };
+    state.units.set(u.id, u);
+    survivors.push(u);
+  }
+  // A larger defending force right on them; reveal those cells to the AI's fog
+  // so the retreat's "still facing opposition" check can see them.
+  const revealAI = (x, y) => { state.fogAI.visible[Math.floor(y / 40) * state.fogAI.cols + Math.floor(x / 40)] = 1; };
+  for (let i = 0; i < 5; i++) {
+    const d = makeUnit("bastion", "player", 810, 470 + i * 8);
+    state.units.set(d.id, d);
+    revealAI(d.x, d.y);
+  }
+
+  runAI(state, THINK_INTERVAL);
+
+  for (const u of survivors) {
+    assert.equal(u.order?.type, "move", "the survivors disengage (plain move, so they don't stop to fight)...");
+    assert.ok(Math.hypot(u.order.x - cc.x, u.order.y - cc.y) < 40, "...and head home to the Command Center (within formation spread)");
+  }
+});
+
+test("the AI does NOT retreat a ground-down attack once its opposition is gone (it finishes the job)", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.aiAttackForce = 10;
+  state.aiAttackDesperate = false;
+  const survivors = [];
+  for (let i = 0; i < 3; i++) {
+    const u = makeUnit("skiff", "ai", 800, 480 + i * 8);
+    u.order = { type: "attack-move", x: state.map.bases.player.x, y: state.map.bases.player.y };
+    state.units.set(u.id, u);
+    survivors.push(u);
+  }
+  // No visible enemy combat nearby — the attack broke through, so it presses on.
+  runAI(state, THINK_INTERVAL);
+  for (const u of survivors) {
+    assert.equal(u.order?.type, "attack-move", "with no opposition in sight it keeps attacking, doesn't retreat");
+  }
+});
+
 test("a size-triggered attack keeps a home guard back; a timeout commit throws everything", () => {
   // economist: armyAttackSize 9, garrison 3. Twelve idle units at home, well
   // before any timeout -> nine push, three stay to defend.

@@ -278,23 +278,64 @@ export function runAI(state, dt) {
     // Filtering on that means each new batch automatically forms the next wave
     // once the threshold is met again, so the AI keeps attacking in waves.
     const homeArmy = nonScout.filter(u => !u.order || u.order.type === "move");
+    const attackers = nonScout.filter(u => u.order && u.order.type === "attack-move");
+    const cc = buildings.find(b => b.type === "command" && !b.constructing) || buildings[0];
+
+    // RETREAT: a committed, non-desperation attack that's been ground down to a
+    // fraction of what was sent — and is STILL facing live opposition — pulls its
+    // survivors home instead of feeding the last of them into a lost fight. So an
+    // engagement trades (both sides keep a remnant) rather than ending in a wipe,
+    // and the saved veterans re-form into the next wave. Two guards preserve the
+    // resolves-to-a-winner guarantee: a desperation (timeout) commit never
+    // retreats, and a retreat only fires while the AI can SEE enemy combat units
+    // near the fight — so against an undefended base (every headless resolve
+    // test) it never triggers and the AI razes the base exactly as before.
+    if (!state.aiAttackDesperate && state.aiAttackForce > 0 && attackers.length > 0
+        && attackers.length < state.aiAttackForce * RETREAT_FRACTION && cc) {
+      const focus = threatCentroid(attackers);
+      if (visibleEnemyCombatNear(state, focus.x, focus.y, RETREAT_SIGHT) >= attackers.length) {
+        issueMove(attackers, cc.x, cc.y);   // plain move disengages: combat.js skips auto-acquire on a 'move' order
+        state.aiAttackForce = 0;
+      }
+    }
+
     const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
     const timedOut = state.time >= nextAttackAt;
     const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || timedOut);
-    if (readyToAttack) {
+    if (readyToAttack && cc) {
       // A massed (size-triggered) attack keeps a home guard back; a timeout
       // commit is desperation and throws everything, so the game always resolves
       // even for a turtle that never quite reaches its attack size.
       const garrison = timedOut ? 0 : (archetype.garrison || 0);
-      const cc = buildings.find(b => b.type === "command" && !b.constructing) || buildings[0];
       const strike = withoutHomeGuard(homeArmy, cc, garrison);
       if (strike.length > 0) {
         const target = chooseAttackTarget(state, cc);
         issueAttackMove(strike, target.x, target.y);
         state.aiNextAttackAt = state.time + archetype.attackTimeout;
+        // Reset the retreat baseline to the whole committed force (survivors of a
+        // prior wave plus this reinforcement) so a wave that's being topped up
+        // doesn't read as "ground down".
+        state.aiAttackForce = attackers.length + strike.length;
+        state.aiAttackDesperate = timedOut;
       }
     }
   }
+}
+
+const RETREAT_FRACTION = 0.4;   // a committed attack ground below this share of its launch size pulls back
+const RETREAT_SIGHT = 260;      // ...if it can see at least as many enemy combat units this close (still losing)
+
+// Player combat units the AI can currently SEE within `radius` of (x, y) — the
+// live opposition at a fight. Zero against an undefended base, which is what
+// makes the retreat safe for the resolves-to-a-winner guarantee.
+function visibleEnemyCombatNear(state, x, y, radius) {
+  let n = 0;
+  for (const u of state.units.values()) {
+    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
+    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+    if (Math.hypot(u.x - x, u.y - y) <= radius) n++;
+  }
+  return n;
 }
 
 const DEFEND_RADIUS = 340;   // enemy combat units this close to an AI building trigger a recall

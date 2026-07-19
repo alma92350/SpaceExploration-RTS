@@ -72,6 +72,8 @@ export function createGameState(opts = {}) {
     aiScoutId: null,        // the unit currently out scouting for the AI, if any
     aiApm: opts.aiApm ?? null,   // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
     aiActionBudget: 0,      // accumulated action credits (see engine/ai.js's accrueActionBudget)
+    aiAttackForce: 0,       // size of the current committed attack at its peak — drives the retreat check (ai.js)
+    aiAttackDesperate: false, // whether the current attack is a fight-to-death timeout commit (never retreats)
     aiArchetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
     events: [],              // sim events this tick (unitSpawned/attackHit/entityKilled/buildingComplete) — pushed by
                               // production.js/combat.js, drained and turned into sound by main.js each render frame
