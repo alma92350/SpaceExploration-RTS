@@ -175,6 +175,18 @@ export function runAI(state, dt) {
   // at full flow while it builds. Zero for a rusher/legacy profile that doesn't
   // want a Foundry, so their army is never gated.
   const foundryReserve = wantsFoundry && !hasFoundry ? BUILDINGS.foundry.cost.ore : 0;
+  // Once the Foundry is up (or not wanted), a macro archetype likewise banks for
+  // a Refinery so it actually teches its doctrine instead of letting the ungated
+  // unit stream eat every spare bit of ore — the same reserve trick, sequenced
+  // AFTER the Foundry so units only ever pause for one investment at a time.
+  // Rushers leave wantsRefinery unset (their game resolves before an upgrade
+  // would pay off), so their army is never gated.
+  const foundryHandled = !wantsFoundry || hasFoundry;
+  // ...but not while banking for an expansion (higher priority) — the Refinery
+  // couldn't be paid for during that window anyway, so pausing units for it
+  // would just waste the pause.
+  const refineryReserve = archetype.wantsRefinery && !refinery && foundryHandled && oreReserve === 0
+    ? BUILDINGS.refinery.cost.ore : 0;
 
   // One shared production cycle across every completed Barracks: consecutive
   // barracks pick up consecutive mix entries, so two of them drain the same
@@ -188,7 +200,7 @@ export function runAI(state, dt) {
     if (b.constructing || b.queue.length > 0) continue;
     if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
     const nextType = pickNextUnitType(state, archetype);
-    if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, foundryReserve)) continue;   // hold back ore while banking the Foundry
+    if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, foundryReserve + refineryReserve)) continue;   // hold back ore while banking the Foundry / Refinery
     if (queueProduction(state, b.id, nextType)) {
       spend(state);
       state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
@@ -237,7 +249,7 @@ export function runAI(state, dt) {
   // and deepens it (T1 then T2) instead of dabbling in both. The doctrine lock
   // in researchUpgrade backs this up. One purchase per think cycle is plenty.
   if (refinery && !refinery.constructing && canAct(state)) {
-    const doctrine = archetype.doctrine || "assault";
+    const doctrine = aiDoctrine(state, archetype);
     const path = Object.values(UPGRADES).filter(u => u.doctrine === doctrine).sort((a, b) => a.tier - b.tier);
     for (const u of path) {
       if (ai.upgrades[u.id]) continue;
@@ -562,6 +574,21 @@ function effectiveMix(state, archetype) {
     && prereqsMet(state, "ai", UNITS[t])
     && Object.keys(UNITS[t].cost).every(com => state.map.nodes.some(n => n.com === com && !n.hidden)));
   return mix.length ? mix : ["skiff"];
+}
+
+// Which upgrade doctrine the AI commits to. It prefers its archetype's flavour
+// (rusher/balanced Assault, economist Bulwark), but follows the world's economy
+// when that world is clearly richer in the OTHER doctrine's commodity — Assault
+// runs on radioactives, Bulwark on crystals — so it doesn't build a Refinery it
+// can't actually research on a world short of its preferred commodity. Surface
+// deposits only (mirrors effectiveMix): steady income, not a contested cache.
+function aiDoctrine(state, archetype) {
+  const surfaceTotal = com => state.map.nodes
+    .filter(n => n.com === com && !n.hidden).reduce((s, n) => s + n.max, 0);
+  const rad = surfaceTotal("radioactives"), cry = surfaceTotal("crystals");
+  const pref = archetype.doctrine || "assault";
+  if (pref === "assault") return rad >= cry * 0.6 ? "assault" : "bulwark";
+  return cry >= rad * 0.6 ? "bulwark" : "assault";
 }
 
 // Nearest free worker to (x, y) to found a building, skipping any already

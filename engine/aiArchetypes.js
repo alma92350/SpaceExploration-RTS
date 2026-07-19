@@ -34,6 +34,7 @@ export const ARCHETYPES = {
     expandWhenNodesBelow: 0.4,   // grabs a second field while the first still has 40% left
     garrison: 3,           // turtles: holds three back to defend home while the surplus attacks.
     doctrine: "bulwark",   // out-scales and turtles behind turrets — the defensive path suits it.
+    wantsRefinery: true,   // patient enough to bank for a Refinery and research its doctrine.
   },
   balanced: {
     name: "Balanced",
@@ -46,6 +47,7 @@ export const ARCHETYPES = {
     expandWhenNodesBelow: 0.25,   // expands later than the Economist, but still does
     garrison: 2,           // keeps a small home guard back on a massed attack.
     doctrine: "assault",   // leans aggressive once its army is up.
+    wantsRefinery: true,   // builds a Refinery and researches its doctrine once teched.
   },
 };
 

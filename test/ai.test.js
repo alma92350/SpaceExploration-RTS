@@ -384,6 +384,20 @@ test("the AI teches up: over a match it builds a Foundry and then fields Tier-2 
   assert.ok(sawTier2, "and then fields the Tier-2 units it unlocks");
 });
 
+test("a macro AI teches its doctrine: it builds a Refinery and researches an upgrade", () => {
+  // helix is a crystal-dense Economist world, so the adaptive doctrine picks
+  // Bulwark and the AI banks for a Refinery and researches it over a match.
+  const state = createGameState({ planetId: "helix", rng: () => 0.5 });
+  let sawRefinery = false, sawUpgrade = false;
+  for (let i = 0; i < 5000 && !state.over; i++) {
+    tick(state, 0.1);
+    if (!sawRefinery && [...state.buildings.values()].some(b => b.owner === "ai" && b.type === "refinery" && !b.constructing)) sawRefinery = true;
+    if (!sawUpgrade && Object.keys(state.players.ai.upgrades).some(k => state.players.ai.upgrades[k])) sawUpgrade = true;
+  }
+  assert.ok(sawRefinery, "the macro AI banks for and builds a Refinery");
+  assert.ok(sawUpgrade, "and researches its doctrine instead of leaving the Refinery idle");
+});
+
 test("the AI spreads workers across ore nodes instead of over-piling one under saturation", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const cap = UNITS.worker.minerSoftCap;
