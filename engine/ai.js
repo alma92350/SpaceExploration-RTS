@@ -173,7 +173,7 @@ export function runAI(state, dt) {
   // effectiveMix keeps the Tier-2 units out of the cycle until it completes —
   // so this reliably teches a patient AI up without ever stalling. Ore-only, so
   // it's affordable on every world.
-  const wantsFoundry = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("foundry"));
+  const wantsFoundry = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("foundry") && affordableOnSurface(state, t));
   let hasFoundry = buildings.some(b => b.type === "foundry");   // built or still constructing
   if (wantsFoundry && !hasFoundry && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, oreReserve)) {
@@ -198,7 +198,7 @@ export function runAI(state, dt) {
   // flourish without slowing its core timing — the deep Tier-3 path is primarily
   // a strategic option for the human player. Only archetypes whose mix wants a
   // Tier-3 unit build it.
-  const wantsArsenal = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("arsenal"));
+  const wantsArsenal = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("arsenal") && affordableOnSurface(state, t));
   const hasArsenal = buildings.some(b => b.type === "arsenal");
   if (wantsArsenal && !hasArsenal && foundryHandled && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, oreReserve + BARRACKS_BUFFER)) {
@@ -800,8 +800,22 @@ function effectiveMix(state, archetype) {
     UNITS[t]
     && BUILDINGS.barracks.produces?.includes(t)
     && prereqsMet(state, "ai", UNITS[t])
-    && Object.keys(UNITS[t].cost).every(com => state.map.nodes.some(n => n.com === com && !n.hidden)));
+    && affordableOnSurface(state, t));
   return mix.length ? mix : ["skiff"];
+}
+
+// Can the AI pay for `unitType` from this world's STEADY income — i.e. does every
+// cost commodity have a non-hidden (surface) deposit somewhere on the map? Shared
+// by effectiveMix (which unit types actually cycle) and the Foundry/Arsenal
+// "wants" gates below. Deliberately NOT prereq-aware: the gates use it to decide
+// whether teching up would ever pay off, so folding in the building prereq would
+// deadlock (you'd never build the Arsenal a gas-Wraith needs because the Wraith
+// is prereq-locked until the Arsenal exists). ore/crystals/radioactives are
+// seeded near every base (map.js MIN_GUARANTEE), so only the specialty commodities
+// (gas/ice/relics) actually gate anything here.
+function affordableOnSurface(state, unitType) {
+  const def = UNITS[unitType];
+  return !!def && Object.keys(def.cost).every(com => state.map.nodes.some(n => n.com === com && !n.hidden));
 }
 
 // Which upgrade doctrine the AI commits to. It prefers its archetype's flavour

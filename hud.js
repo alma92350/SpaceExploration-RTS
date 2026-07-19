@@ -229,7 +229,13 @@ function rebuildSelectionPanel(sel) {
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
   if (barracks) {
-    for (const t of ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender"]) {
+    // Only offer a unit this world can actually pay for — a specialty unit
+    // (Wraith/gas, Aegis/ice, Colossus/relics) is hidden entirely on a map that
+    // deposits none of its commodity, instead of showing a forever-greyed button.
+    const onMap = new Set(state.map.nodes.map(n => n.com));
+    const buildable = t => Object.keys(UNITS[t].cost).every(c => onMap.has(c));
+    for (const t of ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender", "wraith", "aegis", "colossus"]) {
+      if (!buildable(t)) continue;
       const def = UNITS[t];
       const locked = !prereqsMet(state, "player", def);
       panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,

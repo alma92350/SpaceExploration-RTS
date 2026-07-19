@@ -43,7 +43,12 @@ export const ARCHETYPES = {
     workerTarget: 6,
     armyAttackSize: 6,
     attackTimeout: 150,
-    unitMix: ["skiff", "bastion", "lancer", "breacher"],   // even split, plus siege where the map allows it
+    // Even split, plus siege where the map allows it — and, on a world that
+    // deposits gas or ice, its specialty Tier-3 unit (Wraith / Aegis). Those
+    // entries are dropped by effectiveMix on worlds that can't pay for them
+    // (every economist/rusher world, and pyralis), so the cycle is unchanged
+    // there; only Vesper and Glacius actually fold them in.
+    unitMix: ["skiff", "bastion", "lancer", "breacher", "wraith", "aegis"],
     turretCount: 1,
     maxBarracks: 2,
     expandWhenNodesBelow: 0.25,   // expands later than the Economist, but still does

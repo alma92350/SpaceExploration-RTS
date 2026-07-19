@@ -162,6 +162,42 @@ test("the Ranger is a Command-Center recon unit: cheap, fragile, all-terrain, fa
   assert.equal(UNITS.ranger.supplyCost, 1);
 });
 
+test("the Tier-3 specialty units spend the once-dead commodities and sit outside the triangle", () => {
+  const specialty = { wraith: "gas", aegis: "ice", colossus: "relics" };
+  for (const [id, com] of Object.entries(specialty)) {
+    const def = UNITS[id];
+    assert.ok(def, `${id} exists`);
+    assert.equal(def.role, "combat", `${id} is a combat unit`);
+    assert.deepEqual(def.requires, ["arsenal"], `${id} is Arsenal-gated`);
+    assert.ok(BUILDINGS.barracks.produces.includes(id), `${id} is trained at the Barracks`);
+    assert.ok(def.cost[com] > 0, `${id} costs ${com} — the commodity that was otherwise never spent`);
+    assert.ok(!def.bonusVs, `${id} carries no bonusVs — it's outside the rock-paper-scissors triangle`);
+    for (const t of ["skiff", "bastion", "lancer"]) {
+      assert.ok(!(UNITS[t].bonusVs && UNITS[t].bonusVs[id]), `${t} must not hard-counter ${id} (would put it in the triangle)`);
+    }
+  }
+});
+
+test("each specialty unit has a distinct identity: Wraith glass cannon, Aegis wall, Colossus artillery", () => {
+  const dps = def => def.attack / def.cooldown;
+  const combat = Object.values(UNITS).filter(u => u.role === "combat");
+
+  // Wraith — fastest combatant, highest raw DPS, but soft.
+  assert.ok(combat.every(u => u.id === "wraith" || UNITS.wraith.speed >= u.speed), "Wraith is the fastest combat unit");
+  assert.ok(combat.every(u => u.id === "wraith" || dps(UNITS.wraith) > dps(u)), "Wraith has the highest DPS");
+  assert.ok(UNITS.wraith.hp < UNITS.bastion.hp, "...paid for with a fragile hull");
+
+  // Aegis — the tankiest hull, with a token gun (it soaks, it doesn't kill).
+  assert.ok(combat.every(u => u.id === "aegis" || UNITS.aegis.hp >= u.hp), "Aegis is the tankiest combat unit");
+  assert.ok(dps(UNITS.aegis) < dps(UNITS.dreadnought), "Aegis deals far less than the same-tier Dreadnought — it's a wall, not a bruiser");
+
+  // Colossus — out-ranges everything and cracks buildings.
+  assert.ok(combat.every(u => u.id === "colossus" || UNITS.colossus.range > u.range), "Colossus out-ranges every other unit");
+  assert.ok(UNITS.colossus.range > BUILDINGS.turret.range, "...and out-ranges the Sentinel Turret");
+  assert.ok(UNITS.colossus.bonusVsBuildings > 0, "Colossus is a base-cracker (structure bonus)");
+  assert.ok(UNITS.colossus.speed < UNITS.wraith.speed, "the artillery is slow — the price of its reach");
+});
+
 test("the Mender is a Foundry-gated support drone: heals, but carries no weapon", () => {
   assert.equal(UNITS.mender.role, "support", "its own role — never auto-acquires, never counted in the combat army");
   assert.deepEqual(UNITS.mender.requires, ["foundry"], "gated behind the Foundry, like the Tier-2 units");

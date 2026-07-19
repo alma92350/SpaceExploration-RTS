@@ -212,22 +212,51 @@ test("two completed Barracks drain a single shared mix cycle", () => {
 
 test("with radioactives guaranteed on every world, the Breacher is buildable even on vesper", () => {
   // Vesper's surface deposits no radioactives, but the build-critical minimum
-  // seams the map with a little, so the full balanced mix — Breacher and all —
-  // cycles without stalling on an unbuildable entry.
+  // seams the map with a little, so the Breacher cycles without stalling. The
+  // balanced mix also lists the specialty Wraith/Aegis, but here both drop out —
+  // Wraith needs the (un-built) Arsenal and Aegis needs ice Vesper lacks — so the
+  // effective cycle is the four non-specialty units.
   const state = createGameState({ planetId: "vesper", rng: () => 0.5 });
   fundAll(state);
   const barracks = stockedBarracks(state);
   stockedFoundry(state);   // Tier-2 unlocked, isolating the resource guarantee (not the tech gate) as what's under test
-  const mix = state.aiArchetype.unitMix;   // [skiff, bastion, lancer, breacher]
+  const cycle = ["skiff", "bastion", "lancer", "breacher"];
 
   const built = [];
-  for (let i = 0; i < mix.length * 2; i++) {
+  for (let i = 0; i < cycle.length * 2; i++) {
     runAI(state, THINK_INTERVAL);
     if (barracks.queue.length) { built.push(barracks.queue[barracks.queue.length - 1].unitType); barracks.queue.length = 0; }
   }
 
-  assert.deepEqual(built, Array.from({ length: mix.length * 2 }, (_, i) => mix[i % mix.length]));
+  assert.deepEqual(built, Array.from({ length: cycle.length * 2 }, (_, i) => cycle[i % cycle.length]));
   assert.ok(built.includes("breacher"), "the Breacher enters the cycle now that radioactives are guaranteed");
+});
+
+test("on a gas world the balanced AI folds its specialty Wraith into the cycle", () => {
+  const state = createGameState({ planetId: "vesper", rng: () => 0.5 });   // vesper: balanced archetype, deposits gas
+  Object.assign(state.players.ai.resources, { ore: 1e5, crystals: 1e5, radioactives: 1e5, gas: 1e5 });
+  const barracks = stockedBarracks(state);
+  stockedFoundry(state); stockedArsenal(state);   // Tier-3 unlocked so the specialty unit can cycle
+
+  const built = [];
+  for (let i = 0; i < 12; i++) {
+    runAI(state, THINK_INTERVAL);
+    if (barracks.queue.length) { built.push(barracks.queue[barracks.queue.length - 1].unitType); barracks.queue.length = 0; }
+  }
+  assert.ok(built.includes("wraith"), "Vesper's gas funds the Wraith once the Arsenal is up");
+  assert.ok(!built.includes("aegis"), "but not the Aegis — Vesper deposits no ice");
+  assert.ok(!built.includes("colossus"), "nor the Colossus — no relics, and it isn't in the balanced mix");
+});
+
+test("the AI only teches to the Arsenal where a buildable Arsenal unit exists", () => {
+  // Balanced on Pyralis (crystals + radioactives, no gas/ice): its mix's only
+  // Arsenal units are the Wraith (gas) and Aegis (ice), both unpayable here, so
+  // affordableOnSurface keeps wantsArsenal false and it never wastes the build.
+  const state = createGameState({ planetId: "pyralis", rng: () => 0.5 });
+  fundAll(state);
+  stockedBarracks(state); stockedFoundry(state);
+  for (let i = 0; i < 20; i++) runAI(state, THINK_INTERVAL);
+  assert.equal(aiBuildings(state, "arsenal").length, 0, "no Arsenal on a world whose deposits can't pay for any Arsenal unit");
 });
 
 // Zeros every ore node within HOME_RADIUS of the AI base, dropping the

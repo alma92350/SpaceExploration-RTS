@@ -599,6 +599,9 @@ function drawUnits(ctx, state, view) {
     else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
     else if (u.type === "dreadnought") drawDreadnought(ctx, u, def, color);
     else if (u.type === "mender") drawMender(ctx, u, def, color);
+    else if (u.type === "wraith") drawWraith(ctx, u, def, color);
+    else if (u.type === "aegis") drawAegis(ctx, u, def, color);
+    else if (u.type === "colossus") drawColossus(ctx, u, def, color);
     else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 
     if (u.cargo && u.cargo.qty > 0) {
@@ -914,6 +917,104 @@ function drawDreadnought(ctx, u, def, color) {
   ctx.fillStyle = DETAIL;
   const [bx, by] = toWorld(cx, cy, angle, -L * 0.25, 0);
   ctx.beginPath(); ctx.arc(bx, by, r * 0.32, 0, Math.PI * 2); ctx.fill();
+}
+
+// Wraith — the gas-fuelled glass cannon: a long, forward-swept interceptor with
+// wingtips raked back and a hot fusion core amidships, so it reads as the
+// fastest, most dangerous, most fragile thing on the field — all engine and gun,
+// no armour.
+const FUSION = "#ffd166";   // Helium-3 core glow (warm) — distinct from the Mender's heal-green
+function drawWraith(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.9, W = r * 1.2;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L, 0],
+    [-L * 0.15, W * 0.5],
+    [-L * 0.7, W],            // raked-back wingtip
+    [-L * 0.5, W * 0.2],
+    [-L * 0.85, 0],
+    [-L * 0.5, -W * 0.2],
+    [-L * 0.7, -W],
+    [-L * 0.15, -W * 0.5],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = FUSION;                                   // fusion core amidships
+  const [gx, gy] = toWorld(cx, cy, angle, -L * 0.08, 0);
+  ctx.beginPath(); ctx.arc(gx, gy, r * 0.3, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = DETAIL;                                   // lit nose
+  const [nx, ny] = toWorld(cx, cy, angle, L * 0.6, 0);
+  ctx.beginPath(); ctx.arc(nx, ny, r * 0.16, 0, Math.PI * 2); ctx.fill();
+}
+
+// Aegis — the ice-armoured wall: a broad, blocky hull wider than it is long,
+// carrying a thick frontal armour plate and only a token gun, so it reads as a
+// shield on legs — the anvil the Wraith is the hammer to.
+function drawAegis(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.1, W = r * 1.25;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L, W * 0.6],
+    [L, -W * 0.6],
+    [-L * 0.7, -W],
+    [-L, -W * 0.4],
+    [-L, W * 0.4],
+    [-L * 0.7, W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  // Thick frontal armour plate, standing just off the nose.
+  ctx.strokeStyle = shade(color, -30);
+  ctx.lineWidth = r * 0.5;
+  const [f1x, f1y] = toWorld(cx, cy, angle, L * 1.05, W * 0.8);
+  const [f2x, f2y] = toWorld(cx, cy, angle, L * 1.05, -W * 0.8);
+  ctx.beginPath(); ctx.moveTo(f1x, f1y); ctx.lineTo(f2x, f2y); ctx.stroke();
+
+  ctx.fillStyle = DETAIL;
+  const [cxx, cyy] = toWorld(cx, cy, angle, -L * 0.2, 0);
+  ctx.beginPath(); ctx.arc(cxx, cyy, r * 0.28, 0, Math.PI * 2); ctx.fill();
+}
+
+// Colossus — the relic siege engine: a heavy hexagonal chassis behind an
+// enormous barrel that overhangs far past the nose (the longest reach on the
+// field), with an ancient-tech violet muzzle and core, so it reads as a slow,
+// fragile-for-its-size superweapon that must be screened.
+const RELIC = "#c4b5fd";   // ancient-tech violet
+function drawColossus(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 1.3, W = r * 1.05;
+  const cx = u.x, cy = u.y;
+
+  pathOriented(ctx, cx, cy, angle, [
+    [L * 0.7, W],
+    [L, 0],
+    [L * 0.7, -W],
+    [-L * 0.8, -W],
+    [-L, 0],
+    [-L * 0.8, W],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  // The oversized barrel — reaches further than any other unit's gun.
+  ctx.strokeStyle = shade(color, -30);
+  ctx.lineWidth = r * 0.32;
+  const [b1x, b1y] = toWorld(cx, cy, angle, -L * 0.3, 0);
+  const [b2x, b2y] = toWorld(cx, cy, angle, L * 2.4, 0);
+  ctx.beginPath(); ctx.moveTo(b1x, b1y); ctx.lineTo(b2x, b2y); ctx.stroke();
+
+  ctx.fillStyle = RELIC;                                    // muzzle + reactor core in relic-violet
+  const [tx, ty] = toWorld(cx, cy, angle, L * 2.4, 0);
+  ctx.beginPath(); ctx.arc(tx, ty, r * 0.2, 0, Math.PI * 2); ctx.fill();
+  const [cxx, cyy] = toWorld(cx, cy, angle, -L * 0.15, 0);
+  ctx.beginPath(); ctx.arc(cxx, cyy, r * 0.3, 0, Math.PI * 2); ctx.fill();
 }
 
 function updateFacing(unit) {

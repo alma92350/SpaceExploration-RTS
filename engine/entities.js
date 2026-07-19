@@ -22,7 +22,7 @@ export const BUILDINGS = {
   barracks: {
     id: "barracks", name: "Barracks", hp: 500, radius: 20,
     cost: { ore: 150 }, buildTime: 20,
-    produces: ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender"],
+    produces: ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender", "wraith", "aegis", "colossus"],
     sight: 150,
   },
   refinery: {
@@ -279,6 +279,47 @@ export const UNITS = {
     // never itself, never something still under construction. Fragile and
     // unarmed, so it's a priority kill: escort it or lose it.
     repairRate: 6, repairRange: 110,
+  },
+
+  /* ---- Tier-3 SPECIALTY units: one per "rare" surface commodity, so a world's
+     deposit specialty shapes which elite you can field (radioactives already
+     give the balanced Dreadnought above). All Arsenal-gated, all deliberately
+     OUTSIDE the Skiff/Bastion/Lancer triangle — situational power, not a hard
+     counter — and each pays in a commodity that was otherwise never spent (gas
+     on Vesper/Glacius/Nimbus, ice on Glacius, relics on Korrath/Oort). ---- */
+  wraith: {
+    id: "wraith", name: "Wraith", hp: 84, radius: 8, speed: 104,
+    cost: { ore: 120, gas: 60 }, buildTime: 18, supplyCost: 2,
+    role: "combat", attack: 22, range: 58, cooldown: 0.85,
+    sight: 175, aggroRange: 150,
+    // Helium-3-fuelled strike craft: the roster's fastest combatant and its
+    // hardest hitter per shot, but paper-thin — a glass cannon that shreds a
+    // line and then melts to any focused fire. Gas turns a dead deposit into
+    // the fuel for raids.
+    requires: ["arsenal"],
+  },
+  aegis: {
+    id: "aegis", name: "Aegis", hp: 360, radius: 11, speed: 40,
+    cost: { ore: 160, ice: 90 }, buildTime: 26, supplyCost: 4,
+    role: "combat", attack: 11, range: 26, cooldown: 1.3,
+    sight: 140, aggroRange: 110,
+    // A cryo-armoured wall: the tankiest hull in the game with an almost token
+    // gun. It doesn't kill things — it soaks fire so the army behind it lives,
+    // the anvil to the Wraith's hammer. Ice (coolant/plating) is its armour.
+    requires: ["arsenal"],
+  },
+  colossus: {
+    id: "colossus", name: "Colossus", hp: 150, radius: 12, speed: 32,
+    cost: { ore: 180, relics: 80 }, buildTime: 30, supplyCost: 4,
+    role: "combat", attack: 42, range: 185, cooldown: 2.6,
+    sight: 210, aggroRange: 185,
+    // A reactivated ancient siege engine: out-ranges everything on the field —
+    // the Sentinel Turret (130) and even the Breacher (150) — and hits like a
+    // truck, but fires slowly, crawls, and is fragile for its cost, so it must
+    // be screened or it's sniped/rushed down. A flat structure bonus makes it a
+    // base-cracker. Relics (ancient tech) are its ammunition.
+    bonusVsBuildings: 25,
+    requires: ["arsenal"],
   },
 };
 
