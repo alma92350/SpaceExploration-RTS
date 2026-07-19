@@ -126,11 +126,30 @@ function performAttack(state, attacker, def, target) {
     heavy: !!(def.bonusVsBuildings && target.kind === "building"),
   });
   if (target.hp <= 0) {
+    grantSalvage(state, target);
     removeEntity(state, target.id);
     state.events.push({ type: "entityKilled", x: target.x, y: target.y, owner: target.owner });
     return true;
   }
   return false;
+}
+
+// Comeback softener: when a COMBAT unit is destroyed, its owner reclaims a
+// fraction of its cost as salvage. Because the side taking the heavier losses
+// gets the larger refund, an army that's being ground down can rebuild faster —
+// relaxing the deathball snowball where one lost engagement cascades into a loss.
+// Combat units only (not workers or buildings), so it rewards standing and
+// trading, not feeding the economy. Symmetric and deterministic; and since a
+// passive opponent loses no units, it never fires in the resolve/determinism
+// tests, leaving the resolves-to-a-winner guarantee untouched.
+const SALVAGE_FRAC = 0.25;
+function grantSalvage(state, target) {
+  if (target.kind !== "unit") return;
+  const def = UNITS[target.type];
+  if (!def || def.role !== "combat" || !def.cost) return;
+  const res = state.players[target.owner]?.resources;
+  if (!res) return;
+  for (const [com, qty] of Object.entries(def.cost)) res[com] = (res[com] || 0) + qty * SALVAGE_FRAC;
 }
 
 // Workers can fight, but only on an explicit 'attack' order — they never

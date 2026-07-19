@@ -53,6 +53,35 @@ test("focus-fire falls back to normal acquire when the focus target is dead or o
   assert.ok(near.hp < nearHp, "a stale focus doesn't freeze the unit — it auto-acquires the real enemy");
 });
 
+test("salvage: destroying a combat unit refunds a quarter of its cost to its owner (comeback softener)", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "ai", 500, 500);
+  const victim = makeUnit("skiff", "player", 510, 500);
+  state.units.set(attacker.id, attacker); state.units.set(victim.id, victim);
+  victim.hp = 1; attacker.attackTimer = 0;
+  const before = state.players.player.resources.ore;
+
+  updateCombat(state, attacker, 0);
+
+  assert.equal(state.units.has(victim.id), false, "the victim died");
+  assert.equal(state.players.player.resources.ore, before + UNITS.skiff.cost.ore * 0.25,
+    "its owner reclaims 25% of its ore cost");
+});
+
+test("salvage is combat-only: a dead worker leaves no refund", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "ai", 500, 500);
+  const worker = makeUnit("worker", "player", 510, 500);
+  state.units.set(attacker.id, attacker); state.units.set(worker.id, worker);
+  worker.hp = 1; attacker.attackTimer = 0;
+  const before = state.players.player.resources.ore;
+
+  updateCombat(state, attacker, 0);
+
+  assert.equal(state.units.has(worker.id), false, "the worker died");
+  assert.equal(state.players.player.resources.ore, before, "but workers yield no salvage — it rewards army trades");
+});
+
 test("kiting: a reloading Tactical ranged unit steps away from a closed-in enemy without firing", () => {
   const state = createGameState({ planetId: "ferros", aiMicro: true });
   const lancer = makeUnit("lancer", "ai", 500, 500);        // range 55, so danger band ~41
