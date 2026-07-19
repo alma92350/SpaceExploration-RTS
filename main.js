@@ -10,8 +10,9 @@ import { createGameState } from "./engine/state.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
+import { issueMove, issueAttackMove } from "./engine/commands.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { BUILDINGS, UNITS, UPGRADES } from "./engine/entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./engine/entities.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { PLANETS } from "./data.js";
@@ -91,6 +92,22 @@ minimapCanvas.addEventListener("click", e => {
   camera.x = world.x;
   camera.y = world.y;
   clampCamera(camera, state.map, canvas.clientWidth, canvas.clientHeight);
+});
+
+// Right-click the minimap to command the current selection to that spot without
+// scrolling the main view first — move for workers, attack-move for combat, so
+// you can respond to a raid on a far flank straight from the map.
+minimapCanvas.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  if (!state || !input) return;
+  const rect = minimapCanvas.getBoundingClientRect();
+  const world = minimapToWorld(state.map, MINIMAP_W, MINIMAP_H, e.clientX - rect.left, e.clientY - rect.top);
+  const selected = state.selection.map(id => state.units.get(id)).filter(Boolean);
+  if (!selected.length) return;
+  const combatants = selected.filter(u => UNITS[u.type].role === "combat");
+  const others = selected.filter(u => UNITS[u.type].role !== "combat");
+  if (combatants.length) issueAttackMove(combatants, world.x, world.y);
+  if (others.length) issueMove(others, world.x, world.y);
 });
 
 // Splash-screen game setup, carried across "choose another battlefield"
@@ -449,6 +466,9 @@ function rebuildSelectionPanel(sel) {
     hint.className = "hint";
     hint.textContent = "Drag-select units, or click a building.";
     panelEl.appendChild(hint);
+    panelEl.appendChild(makeButton("Idle Worker ( ` )", () => input.focusIdleWorker()));
+    panelEl.appendChild(makeButton("Select Army ( Q )", () => input.selectAllArmy()));
+    panelEl.appendChild(controlsLegend());
     return;
   }
 
@@ -473,16 +493,17 @@ function rebuildSelectionPanel(sel) {
 
   const cc = sel.find(e => e.kind === "building" && e.type === "command" && !e.constructing);
   if (cc) {
-    panelEl.appendChild(makeButton(`Produce Worker (${UNITS.worker.cost.ore} ore)`, () => queueProduction(state, cc.id, "worker")));
+    panelEl.appendChild(makeButton(`Produce Worker (${UNITS.worker.cost.ore} ore)`,
+      () => queueProduction(state, cc.id, "worker"), { cost: UNITS.worker.cost, tip: unitTip(UNITS.worker) }));
     if (cc.queue.length) renderQueueRows(cc);
   }
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
   if (barracks) {
-    panelEl.appendChild(makeButton(`Produce Skiff (${UNITS.skiff.cost.ore} ore)`, () => queueProduction(state, barracks.id, "skiff")));
-    panelEl.appendChild(makeButton(`Produce Bastion (${UNITS.bastion.cost.ore} ore)`, () => queueProduction(state, barracks.id, "bastion")));
-    panelEl.appendChild(makeButton(`Produce Lancer (${UNITS.lancer.cost.ore} ore)`, () => queueProduction(state, barracks.id, "lancer")));
-    panelEl.appendChild(makeButton(`Produce Breacher (${costText(UNITS.breacher.cost)})`, () => queueProduction(state, barracks.id, "breacher")));
+    for (const t of ["skiff", "bastion", "lancer", "breacher"]) {
+      panelEl.appendChild(makeButton(`Produce ${UNITS[t].name} (${costText(UNITS[t].cost)})`,
+        () => queueProduction(state, barracks.id, t), { cost: UNITS[t].cost, tip: unitTip(UNITS[t]) }));
+    }
     if (barracks.queue.length) renderQueueRows(barracks);
   }
 
@@ -496,18 +517,22 @@ function rebuildSelectionPanel(sel) {
         row.textContent = `${u.name} — researched`;
         panelEl.appendChild(row);
       } else {
-        panelEl.appendChild(makeButton(`Research ${u.name} (${costText(u.cost)})`, () => researchUpgrade(state, refinery.id, u.id)));
+        panelEl.appendChild(makeButton(`Research ${u.name} (${costText(u.cost)})`,
+          () => researchUpgrade(state, refinery.id, u.id), { cost: u.cost, tip: u.desc }));
       }
     });
   }
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
-    panelEl.appendChild(makeButton(`Build Barracks (${BUILDINGS.barracks.cost.ore} ore)`, () => input.startBuild("barracks")));
-    panelEl.appendChild(makeButton(`Build Refinery (${BUILDINGS.refinery.cost.ore} ore)`, () => input.startBuild("refinery")));
-    panelEl.appendChild(makeButton(`Build Turret (${costText(BUILDINGS.turret.cost)})`, () => input.startBuild("turret")));
-    panelEl.appendChild(makeButton(`Build Habitat (${BUILDINGS.habitat.cost.ore} ore)`, () => input.startBuild("habitat")));
-    panelEl.appendChild(makeButton(`Build Command Center (${BUILDINGS.command.cost.ore} ore)`, () => input.startBuild("command")));
+    for (const t of ["barracks", "refinery", "turret", "habitat", "command"]) {
+      panelEl.appendChild(makeButton(`Build ${BUILDINGS[t].name} (${costText(BUILDINGS[t].cost)})`,
+        () => input.startBuild(t), { cost: BUILDINGS[t].cost, tip: unitTip(BUILDINGS[t]) }));
+    }
+  }
+
+  if (sel.some(e => e.kind === "unit")) {
+    panelEl.appendChild(makeButton("Stop ( X )", () => input.stopSelected()));
   }
 
   if (input.building) {
@@ -534,12 +559,50 @@ function costText(cost) {
   return Object.entries(cost).map(([com, qty]) => `${qty} ${com}`).join(", ");
 }
 
-function makeButton(label, onClick) {
+// A compact keyboard/mouse reference, shown when nothing is selected so the
+// controls aren't hidden knowledge.
+function controlsLegend() {
+  const box = document.createElement("div");
+  box.className = "legend";
+  box.innerHTML = [
+    ["Left-drag", "select · Ctrl+drag adds"],
+    ["Right-click", "move / attack / gather"],
+    ["Ctrl+right", "queue a waypoint"],
+    ["Shift+1–9", "set group · 1–9 recall"],
+    ["Double-click", "select all of that type"],
+    ["Q", "select army · X stop · ` idle worker"],
+    ["Minimap", "left jumps · right orders"],
+    ["Wheel", "zoom · WASD / edge scroll to pan"],
+  ].map(([k, v]) => `<div class="legend-row"><span class="legend-key">${k}</span><span>${v}</span></div>`).join("");
+  return box;
+}
+
+// A build/produce/research button. When `cost` is given and the player can't
+// afford it, the button greys out and a click just plays the denied buzz — so a
+// broke click gives feedback instead of silently doing nothing (previously the
+// only "can't" feedback was the supply block). `tip` becomes a hover tooltip.
+function makeButton(label, onClick, { cost = null, tip = null } = {}) {
   const btn = document.createElement("button");
   btn.className = "btn";
   btn.textContent = label;
-  btn.addEventListener("click", () => { onClick(); renderHUD(); });
+  if (tip) btn.title = tip;
+  const affordable = !cost || canAfford(state.players.player.resources, cost);
+  if (!affordable) {
+    btn.classList.add("disabled");
+    btn.addEventListener("click", () => sound.playProductionBlocked());
+  } else {
+    btn.addEventListener("click", () => { onClick(); renderHUD(); });
+  }
   return btn;
+}
+
+// A compact stat line for a unit/building button tooltip.
+function unitTip(def) {
+  const bits = [`${def.hp} hp`];
+  if (def.attack) bits.push(`${def.attack} dmg`, `rng ${def.range}`);
+  if (def.speed) bits.push(`spd ${def.speed}`);
+  if (def.supplyCost) bits.push(`${def.supplyCost} supply`);
+  return bits.join(" · ");
 }
 
 function showGameOver(winner) {

@@ -88,6 +88,14 @@ export function issueAssistBuild(units, buildingId, queue = false) {
   units.forEach(u => { if (u.cargo) dispatch(u, { type: "build", buildingId }, queue); });
 }
 
+// Halt: drop the active order and any queued waypoints so the unit stops
+// where it stands. A combat unit still defends itself (it re-auto-acquires an
+// enemy that wanders into range next tick), but it won't chase or resume a
+// path — the standard RTS "stop" that pulls a unit out of a move or a chain.
+export function issueStop(units) {
+  units.forEach(u => { u.order = null; u.orderQueue = []; });
+}
+
 // Every unit the building produces from now on walks to this point
 // instead of wherever the old rally was — production.js reads
 // building.rally fresh at spawn time, so this takes effect immediately

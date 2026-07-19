@@ -194,6 +194,15 @@ html, body {
   cursor: pointer;
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
+/* Unaffordable build/produce/research buttons: dimmed and unhoverable-looking,
+   but still clickable so the click can play the "denied" cue (see main.js). */
+.btn.disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.disabled:hover { border-color: var(--border); color: var(--text); }
+
+/* Controls reference shown in the empty selection panel. */
+.legend { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.legend-row { display: flex; gap: 8px; font-size: 0.74rem; color: var(--muted); padding: 2px 0; }
+.legend-key { flex: 0 0 88px; color: var(--accent); }
 
 .overlay {
   position: absolute;

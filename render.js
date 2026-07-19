@@ -266,6 +266,7 @@ function drawGasNode(ctx, n, r) {
 /* ---------- buildings ---------- */
 
 function drawBuildings(ctx, state, view) {
+  const selSet = new Set(state.selection);
   for (const b of state.buildings.values()) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;   // off-screen (pad for the hp bar above it)
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
@@ -279,7 +280,7 @@ function drawBuildings(ctx, state, view) {
     else if (b.type === "habitat") drawHabitat(ctx, b, color);
 
     ctx.globalAlpha = 1;
-    drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp);
+    drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
   }
 }
 
@@ -451,6 +452,7 @@ function turretFacing(state, b) {
 /* ---------- units ---------- */
 
 function drawUnits(ctx, state, view) {
+  const selSet = new Set(state.selection);
   for (const u of state.units.values()) {
     if (view && !inView(view, u.x, u.y, 16)) continue;   // off-screen unit
     if (u.owner !== "player" && !isVisibleAt(state.fog, u.x, u.y)) continue;
@@ -477,7 +479,7 @@ function drawUnits(ctx, state, view) {
       ctx.fillStyle = "#ffd166";
       ctx.fill();
     }
-    drawHealthBar(ctx, u.x, u.y - def.radius - 9, 16, u.hp, u.maxHp);
+    drawHealthBar(ctx, u.x, u.y - def.radius - 9, 16, u.hp, u.maxHp, selSet.has(u.id));
   }
 }
 
@@ -740,12 +742,16 @@ function drawBuildGhost(ctx, state, ghost) {
   ctx.strokeRect(ghost.x - def.radius, ghost.y - def.radius, def.radius * 2, def.radius * 2);
 }
 
-function drawHealthBar(ctx, cx, y, w, hp, maxHp) {
-  if (hp >= maxHp) return;
+// `force` keeps the bar visible at full health for a selected entity, so you
+// can confirm your army's condition at a glance instead of it vanishing the
+// moment it's topped off. Three colour bands (green / amber / red) so the
+// health tier reads without relying on the green-vs-red distinction alone.
+function drawHealthBar(ctx, cx, y, w, hp, maxHp, force = false) {
+  if (hp >= maxHp && !force) return;
   const pct = Math.max(0, hp / maxHp);
   ctx.fillStyle = "#243162";
   ctx.fillRect(cx - w / 2, y, w, 3);
-  ctx.fillStyle = pct > 0.4 ? "#4ade80" : "#f87171";
+  ctx.fillStyle = pct > 0.6 ? "#4ade80" : pct > 0.3 ? "#fbbf24" : "#f87171";
   ctx.fillRect(cx - w / 2, y, w * pct, 3);
 }
 
