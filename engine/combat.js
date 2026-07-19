@@ -33,7 +33,19 @@ export function updateCombat(state, unit, dt) {
 
   let targetId = unit.order && unit.order.type === "attack" ? unit.order.targetId : null;
   if (targetId && !isAlive(state, targetId)) { unit.order = null; targetId = null; }
-  if (!targetId) targetId = acquireTarget(state, unit, def);
+  if (!targetId) {
+    // Stick to last tick's auto-target while it's still a live enemy in aggro
+    // range; only when it dies or slips away do we acquire a fresh (dispersed)
+    // one. Committing to a target instead of re-picking the nearest every tick
+    // is what makes spread-targeting hold — otherwise the whole line would
+    // re-converge on the single closest enemy each frame.
+    if (unit.autoTarget && stillEngageable(state, unit, def, unit.autoTarget)) {
+      targetId = unit.autoTarget;
+    } else {
+      targetId = acquireTarget(state, unit, def);
+      unit.autoTarget = targetId;
+    }
+  }
 
   if (targetId) {
     const target = getEntity(state, targetId);
@@ -133,9 +145,30 @@ function attackDamage(state, unit, def, target) {
   return dmg;
 }
 
+// How many of the nearest in-weapon-range enemies attackers fan out across,
+// instead of the whole line dogpiling the single closest. This is the softener
+// for the focus-fire snowball: spreading damage lets the losing side keep its
+// shooters alive longer, so engagements trade instead of ending in a near-wipe
+// from a slight edge (Lanchester's square law relaxed toward a linear one).
+const SPREAD_TARGETS = 3;
+
 function isAlive(state, id) {
   const e = getEntity(state, id);
   return !!e && e.hp > 0;
+}
+
+// Still worth holding onto: a live enemy inside this unit's aggro range.
+function stillEngageable(state, unit, def, id) {
+  const e = getEntity(state, id);
+  if (!e || e.hp <= 0) return false;
+  const aggro = def.aggroRange * (state.map?.modifiers?.sightMult ?? 1);
+  return Math.hypot(e.x - unit.x, e.y - unit.y) <= aggro;
+}
+
+function hashId(id) {
+  let h = 7;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h;
 }
 
 function nearestEnemy(entities, unit, maxRange) {
@@ -146,6 +179,34 @@ function nearestEnemy(entities, unit, maxRange) {
     if (d <= maxRange && d < bestD) { bestD = d; best = e; }
   }
   return best ? { id: best.id, d: bestD } : null;
+}
+
+// Like nearestEnemy, but once several enemies are within weapon range it fans
+// this unit onto one of the SPREAD_TARGETS nearest (chosen by a per-unit hash),
+// rather than everyone locking the single closest. Still returns the plain
+// nearest while closing in (nothing in weapon range yet), so units approach
+// together and only spread once they can actually fire. Combined with the
+// target stickiness in updateCombat, each attacker commits to its own target.
+function spreadEnemy(entities, unit, def, aggro) {
+  // The local engagement band — a bit past weapon range so it catches the front
+  // line even in a tight melee, where almost no one has 2+ foes strictly within
+  // their (often short) weapon range at once. Spreading across this band is what
+  // actually reduces the dogpile.
+  const band = def.range + 60;
+  let nearest = null, nearestD = Infinity;
+  const local = [];
+  for (const e of entities) {
+    if (e.owner === unit.owner || e.hp <= 0) continue;
+    const d = Math.hypot(e.x - unit.x, e.y - unit.y);
+    if (d > aggro) continue;
+    if (d < nearestD) { nearestD = d; nearest = e; }
+    if (d <= band) local.push({ e, d });
+  }
+  if (!nearest) return null;
+  if (local.length <= 1) return { id: nearest.id, d: nearestD };   // approaching, or a lone foe — just take nearest
+  local.sort((a, b) => a.d - b.d || (a.e.id < b.e.id ? -1 : 1));   // stable, deterministic order
+  const pick = local[hashId(unit.id) % Math.min(local.length, SPREAD_TARGETS)];
+  return { id: pick.e.id, d: pick.d };
 }
 
 // Default policy is nearest-of-anything, with exact ties going to units
@@ -164,7 +225,7 @@ function acquireTarget(state, unit, def) {
   const unitCandidates = state.unitGrid
     ? queryNeighbors(state.unitGrid, unit.x, unit.y, aggro)
     : state.units.values();
-  const u = nearestEnemy(unitCandidates, unit, aggro);
+  const u = spreadEnemy(unitCandidates, unit, def, aggro);
   const b = nearestEnemy(state.buildings.values(), unit, aggro);
   if (def.prefersBuildings && b) return b.id;
   if (!u) return b ? b.id : null;

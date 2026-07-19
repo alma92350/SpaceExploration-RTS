@@ -262,6 +262,38 @@ test("both upgrades stack: attacker's damage bonus and defender's damage reducti
   assert.ok(Math.abs((startHp - b.hp) - expected) < 1e-9);
 });
 
+test("attackers fan out across several nearby enemies instead of all dogpiling the nearest", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear();
+  // A cluster of attackers facing a cluster of enemies, all within the local
+  // engagement band — so the spread policy has several targets to distribute
+  // across rather than everyone locking the single closest.
+  const attackers = [];
+  for (let i = 0; i < 6; i++) { const u = makeUnit("skiff", "player", 500 + i * 4, 500); state.units.set(u.id, u); attackers.push(u); }
+  for (let i = 0; i < 4; i++) { const e = makeUnit("skiff", "ai", 545 + i * 8, 500); state.units.set(e.id, e); }
+
+  for (const u of attackers) updateCombat(state, u, 0.001);   // acquire (tiny dt so nobody dies this step)
+
+  const targets = new Set(attackers.map(u => u.autoTarget).filter(Boolean));
+  assert.ok(targets.size >= 2, `attackers should spread across multiple targets, got ${targets.size}`);
+});
+
+test("a unit sticks to its auto-target while it's alive and in range, instead of re-picking each tick", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const near = makeUnit("skiff", "ai", 520, 500);
+  const nearer = makeUnit("skiff", "ai", 505, 500);   // closer, but arrives "after" a is already locked on `near`
+  state.units.set(a.id, a);
+  state.units.set(near.id, near);
+  a.autoTarget = near.id;                              // already committed
+  updateCombat(state, a, 0.001);
+  assert.equal(a.autoTarget, near.id, "it keeps its committed target even with a closer enemy present");
+  state.units.set(nearer.id, nearer);                 // introduce the closer enemy AFTER the lock
+  updateCombat(state, a, 0.001);
+  assert.equal(a.autoTarget, near.id, "still committed — no re-dogpiling onto the newly-closest foe");
+});
+
 test("the two Assault tiers stack multiplicatively on damage dealt", () => {
   const state = createGameState({ planetId: "ferros" });
   const [a, b] = faceOff(state);

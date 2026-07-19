@@ -29,6 +29,7 @@ export function makeUnit(type, owner, x, y) {
     orderQueue: [],       // queued waypoints (Ctrl+command); sim.js pulls the next in whenever `order` clears
     cargo: def.role === "worker" ? { com: null, qty: 0 } : null,
     attackTimer: 0,
+    autoTarget: null,     // sticky auto-acquired target id (combat.js) — commit to a foe, don't re-dogpile the nearest each tick
   };
 }
 
