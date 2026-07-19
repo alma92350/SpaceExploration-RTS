@@ -127,7 +127,9 @@ export function attachInput(canvas, state, onChange) {
     }
 
     if (target && target.owner !== "player") {
-      const attackers = selected.filter(u => UNITS[u.type].role === "combat");
+      // Anything with an attack stat can be sent in — combat units, and now
+      // workers too (weakly). Non-combatants without a weapon are left out.
+      const attackers = selected.filter(u => UNITS[u.type].attack);
       if (attackers.length) issueAttack(attackers, target.id, queue);
       return;
     }

@@ -80,6 +80,11 @@ export const UNITS = {
     cost: { ore: 50 }, buildTime: 8, supplyCost: 1,
     role: "worker", gatherRate: 10, cargoCap: 10,
     sight: 110,
+    // Can defend itself in a pinch — a weak short-range strike — but only when
+    // explicitly ordered to attack. Workers never auto-acquire, so they don't
+    // abandon the economy to go pick fights; a handful ganging up can drive off
+    // a lone raider, but they're no substitute for real military units.
+    attack: 4, range: 15, cooldown: 1.4,
   },
   skiff: {
     id: "skiff", name: "Skiff", hp: 80, radius: 7, speed: 90,

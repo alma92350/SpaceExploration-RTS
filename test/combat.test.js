@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
-import { updateCombat, updateBuildingCombat } from "../engine/combat.js";
+import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "../engine/combat.js";
 import { UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
 
 function faceOff(state, x = 500, y = 500) {
@@ -67,6 +67,50 @@ test("a plain move order is honored even with an enemy sitting right on top of t
   assert.equal(enemy.hp, enemyHp, "should not have attacked despite the enemy being in range");
   assert.ok(a.x > 500, "should have moved toward its destination, not stayed to fight");
   assert.equal(a.order.type, "move", "the move order should survive an enemy being nearby");
+});
+
+test("a worker lands its (weak) hit on an enemy it's been ordered to attack", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const worker = makeUnit("worker", "player", 500, 500);
+  const enemy = makeUnit("skiff", "ai", 508, 500);   // within the worker's short reach
+  state.units.set(worker.id, worker);
+  state.units.set(enemy.id, enemy);
+  worker.order = { type: "attack", targetId: enemy.id };
+  const startHp = enemy.hp;
+
+  updateWorkerCombat(state, worker, UNITS.worker, UNITS.worker.cooldown);
+
+  assert.equal(startHp - enemy.hp, UNITS.worker.attack, "a worker's swing lands for its attack stat");
+});
+
+test("a worker's kill clears its attack order so a queued waypoint (or idle) can follow", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const worker = makeUnit("worker", "player", 500, 500);
+  const enemy = makeUnit("skiff", "ai", 508, 500);
+  state.units.set(worker.id, worker);
+  state.units.set(enemy.id, enemy);
+  worker.order = { type: "attack", targetId: enemy.id };
+  enemy.hp = 1;
+
+  updateWorkerCombat(state, worker, UNITS.worker, UNITS.worker.cooldown);
+
+  assert.equal(state.units.has(enemy.id), false, "the target is removed");
+  assert.equal(worker.order, null, "and the order clears");
+});
+
+test("a worker out of reach closes on its attack target instead of firing", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const worker = makeUnit("worker", "player", 500, 500);
+  const enemy = makeUnit("skiff", "ai", 700, 500);   // far beyond the worker's range
+  state.units.set(worker.id, worker);
+  state.units.set(enemy.id, enemy);
+  worker.order = { type: "attack", targetId: enemy.id };
+  const startHp = enemy.hp;
+
+  updateWorkerCombat(state, worker, UNITS.worker, 0.1);
+
+  assert.equal(enemy.hp, startHp, "no damage from out of range");
+  assert.ok(worker.x > 500, "it moved toward the target");
 });
 
 test("a move order still eventually clears on arrival, same as before", () => {

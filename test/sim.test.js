@@ -63,6 +63,21 @@ test("a unit walks through its queued waypoints in order, then goes idle", () =>
   assert.equal(w.orderQueue.length, 0, "and the queue is drained");
 });
 
+test("an idle worker never auto-acquires a neighbouring enemy — it stays on the economy", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  // Midfield, clear of both bases so nothing else can reach them in one tick.
+  const worker = makeUnit("worker", "player", 700, 300);
+  const enemy = makeUnit("skiff", "ai", 712, 300);   // right on top of the worker
+  state.units.set(worker.id, worker);
+  state.units.set(enemy.id, enemy);
+  worker.order = null;
+  const enemyStartHp = enemy.hp;
+
+  tick(state, 0.1);
+
+  assert.equal(enemy.hp, enemyStartHp, "with no attack order, the worker never swings at the enemy beside it");
+});
+
 test("tick() is a no-op once the game is already over", () => {
   const state = createGameState({ planetId: "ferros" });
   state.over = true;

@@ -85,6 +85,16 @@ test("the Breacher sits outside the triangle and outranges the turret", () => {
   assert.equal(dps(UNITS.breacher), worst, "the Breacher should deal the worst raw DPS of any combat unit");
 });
 
+test("a Worker can defend itself, but only weakly and without leaving its job behind", () => {
+  assert.ok(UNITS.worker.attack > 0, "workers can fight back when ordered to");
+  assert.equal(UNITS.worker.role, "worker", "it stays a worker — it still gathers and builds, and never auto-acquires");
+  assert.ok(!("aggroRange" in UNITS.worker), "no aggroRange: a worker never picks a fight on its own");
+  const dps = def => def.attack / def.cooldown;
+  for (const type of ["skiff", "bastion", "lancer", "breacher"]) {
+    assert.ok(dps(UNITS.worker) < dps(UNITS[type]), `a worker should out-damage no combat unit (${type})`);
+  }
+});
+
 test("every unit carries a supply cost, and the Command Center and Habitat are the supply grantors", () => {
   for (const def of Object.values(UNITS)) assert.ok(def.supplyCost >= 1, `${def.id} needs a supply cost`);
   assert.equal(BUILDINGS.command.supplyGrants, 10, "the seeded CC houses the starting workers with room to grow");

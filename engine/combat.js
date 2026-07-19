@@ -74,6 +74,28 @@ function performAttack(state, attacker, def, target) {
   return false;
 }
 
+// Workers can fight, but only on an explicit 'attack' order — they never
+// auto-acquire (that's the whole point of keeping them on the economy), so
+// this handles just the ordered case: close to the target, strike on cooldown
+// with the worker's weak stats (entities.js), and drop the order when it dies
+// so a queued waypoint (or idle) takes over. Reuses the same performAttack as
+// real combat units, so a worker's hit shows a tracer and plays its sound too.
+export function updateWorkerCombat(state, unit, def, dt) {
+  unit.attackTimer = Math.max(0, unit.attackTimer - dt);
+  const targetId = unit.order.targetId;
+  if (!isAlive(state, targetId)) { unit.order = null; return; }
+
+  const target = getEntity(state, targetId);
+  const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
+  if (dist > def.range) {
+    stepToward(state, unit, target.x, target.y, def.speed, dt);
+  } else if (unit.attackTimer <= 0) {
+    const died = performAttack(state, unit, def, target);
+    unit.attackTimer = def.cooldown;
+    if (died) unit.order = null;
+  }
+}
+
 // Bonus-vs-type is a flat add (a specific hard counter), while researched
 // Refinery upgrades (entities.js's UPGRADES) are multipliers applied on
 // top — one on the attacker's side (damage dealt), one on the
