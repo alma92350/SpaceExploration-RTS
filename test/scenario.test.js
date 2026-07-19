@@ -230,6 +230,46 @@ test("losing the whole posse ends the hunt in defeat", () => {
   assert.match(s.scenario.banner, /wiped out/);
 });
 
+/* ---------- map size scaling (all scenarios) ---------- */
+
+test("a larger map scales the mission clock with its dimensions", () => {
+  const small = setupEscort({ planetId: "ferros", seed: 1, difficulty: "medium", sizeMult: 1 });
+  const large = setupEscort({ planetId: "ferros", seed: 1, difficulty: "medium", sizeMult: 3 });
+  assert.equal(large.map.width, small.map.width * 3, "the map itself is 3x wider");
+  assert.equal(large.scenario.timeLimit, small.scenario.timeLimit * 3, "the clock scales with the route");
+  // The route still spans the (wider) map end to end.
+  assert.ok(large.scenario.route.at(-1).x > small.scenario.route.at(-1).x * 2.5, "the route grows with the map");
+});
+
+test("a risk-free convoy still delivers on a gigantic map — the clock keeps up", () => {
+  const s = setupEscort({ planetId: "korrath", seed: 2, difficulty: "easy", sizeMult: 4 });
+  s.scenario.legRisk = s.scenario.legRisk.map(() => 0);
+  runToEnd(s, s.scenario.timeLimit / 0.1 + 2000);
+  assert.equal(s.scenario.outcome, "win", "the convoy can cross a 4x map within the scaled clock");
+  assert.equal(s.scenario.delivered, 4);
+});
+
+test("scattered camps stay reachable on a large map — a driven posse still wins", () => {
+  const s = setupBounty({ planetId: "korrath", seed: 2, difficulty: "easy", sizeMult: 3 });
+  let t = 0;
+  const max = s.scenario.timeLimit / 0.1 + 2000;
+  while (!s.over && t < max) {
+    const p = posse(s), men = [...s.units.values()].filter(u => u.owner === "player" && UNITS[u.type].role === "support");
+    const live = camps(s).filter(u => u.hp > 0);
+    if (p.length && live.length) {
+      const c = { x: 0, y: 0 };
+      for (const u of p) { c.x += u.x; c.y += u.y; }
+      c.x /= p.length; c.y /= p.length;
+      let near = live[0], best = Infinity;
+      for (const u of live) { const d = Math.hypot(u.x - c.x, u.y - c.y); if (d < best) { best = d; near = u; } }
+      for (const u of p) u.order = { type: "attack-move", x: near.x, y: near.y };
+      for (const u of men) u.order = { type: "move", x: c.x, y: c.y };
+    }
+    tick(s, 0.1); t++;
+  }
+  assert.equal(s.scenario.outcome, "win", "the posse can traverse a 3x sector and clear its quota in time");
+});
+
 test("a posse that hunts down camps clears at least one through real combat", () => {
   const s = setupBounty({ planetId: "ferros", seed: 8, difficulty: "easy" });
   // Drive the posse camp to camp: attack-move the whole posse at the nearest

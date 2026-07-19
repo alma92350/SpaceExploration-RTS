@@ -74,7 +74,7 @@ export function startGame(planetId) {
 // objective (engine/scenarios.js), so bootState wires it the same way.
 export function startScenario(planetId) {
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
-  const fresh = setupEscort({ planetId, seed, difficulty: setup.difficulty });
+  const fresh = setupEscort({ planetId, seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult });
   bootState(fresh, { intro: false });
 }
 
@@ -82,7 +82,7 @@ export function startScenario(planetId) {
 // the AI convoy). Same boot machinery; the scenario carries its own objective.
 export function startRaider(planetId) {
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
-  const fresh = setupRaider({ planetId, seed, difficulty: setup.difficulty });
+  const fresh = setupRaider({ planetId, seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult });
   bootState(fresh, { intro: false });
 }
 
@@ -90,7 +90,7 @@ export function startRaider(planetId) {
 // across the sector against a clock. Same boot machinery.
 export function startBounty(planetId) {
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
-  const fresh = setupBounty({ planetId, seed, difficulty: setup.difficulty });
+  const fresh = setupBounty({ planetId, seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult });
   bootState(fresh, { intro: false });
 }
 

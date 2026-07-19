@@ -129,8 +129,8 @@ function renderSetupPanel(mode) {
     : "Easy is slow and holds formation; Medium fights at a fair pace; Hard is fast and micros its army — it focus-fires, kites, and scouts with a Ranger.";
   panel.appendChild(hint);
 
-  // Faction / map size / resources only shape a skirmish economy — a convoy
-  // escort has neither, so those rows are skipped in scenario mode.
+  // Faction and resources only shape a skirmish economy — a scenario has
+  // neither, so those rows are skipped in scenario mode.
   if (!scenario) {
     const facHint = document.createElement("p");
     facHint.className = "setup-hint";
@@ -147,15 +147,20 @@ function renderSetupPanel(mode) {
     panel.appendChild(facRow);
     panel.appendChild(facHint);
     renderFactionHint();
+  }
 
-    const sizeRow = document.createElement("div");
-    sizeRow.className = "setup-row";
-    const sizeLabel = document.createElement("span");
-    sizeLabel.className = "setup-label";
-    sizeLabel.textContent = "Map size";
-    sizeRow.append(sizeLabel, optionGroup(setup.sizeMult, SIZE_OPTIONS, m => { setup.sizeMult = m; }));
-    panel.appendChild(sizeRow);
+  // Map size shapes both a skirmish and a scenario — a bigger map is a longer
+  // convoy route / a wider sector to hunt, with the mission clock scaled to
+  // match (engine/scenarios.js), so it's offered in every mode.
+  const sizeRow = document.createElement("div");
+  sizeRow.className = "setup-row";
+  const sizeLabel = document.createElement("span");
+  sizeLabel.className = "setup-label";
+  sizeLabel.textContent = "Map size";
+  sizeRow.append(sizeLabel, optionGroup(setup.sizeMult, SIZE_OPTIONS, m => { setup.sizeMult = m; }));
+  panel.appendChild(sizeRow);
 
+  if (!scenario) {
     const resRow = document.createElement("div");
     resRow.className = "setup-row";
     const resLabel = document.createElement("span");

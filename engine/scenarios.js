@@ -84,9 +84,9 @@ export const BOUNTY_DIFFICULTY = {
 // Build a Convoy Escort game state on `planetId`. Reuses createGameState for the
 // map / fog / players scaffold, then strips the skirmish seeding (no CCs, no
 // economy) and lays out the route, the freighters, and the player's escort.
-export function setupEscort({ planetId = "ferros", seed = 1, difficulty = "medium" } = {}) {
+export function setupEscort({ planetId = "ferros", seed = 1, difficulty = "medium", sizeMult = 1 } = {}) {
   const diff = ESCORT_DIFFICULTY[difficulty] || ESCORT_DIFFICULTY.medium;
-  const state = createGameState({ planetId, seed, rng: mulberry32(seed >>> 0) });
+  const state = createGameState({ planetId, seed, rng: mulberry32(seed >>> 0), sizeMult });
   state.units.clear();
   state.buildings.clear();
 
@@ -121,7 +121,7 @@ export function setupEscort({ planetId = "ferros", seed = 1, difficulty = "mediu
     route,
     legRisk: diff.legRisk,
     legIndex: 0,                   // leg currently being (or about to be) travelled
-    timeLimit: diff.timeLimit,
+    timeLimit: Math.round(diff.timeLimit * sizeMult),   // the route scales with the map, so the clock does too
     dockTime: diff.dockTime,
     budget: diff.budget,
     freighterOwner: "player",      // whose freighters these are (player's to protect in Escort)
@@ -325,9 +325,9 @@ function steerPirates(state, freighters, dt) {
 // Build a Pirate Raider game state on `planetId`. Same route scaffold as Escort,
 // but the convoy is the enemy and the player starts with a raider fleet lying in
 // wait off the convoy lane near mid-route.
-export function setupRaider({ planetId = "ferros", seed = 1, difficulty = "medium" } = {}) {
+export function setupRaider({ planetId = "ferros", seed = 1, difficulty = "medium", sizeMult = 1 } = {}) {
   const diff = RAIDER_DIFFICULTY[difficulty] || RAIDER_DIFFICULTY.medium;
-  const state = createGameState({ planetId, seed, rng: mulberry32(seed >>> 0) });
+  const state = createGameState({ planetId, seed, rng: mulberry32(seed >>> 0), sizeMult });
   state.units.clear();
   state.buildings.clear();
 
@@ -374,7 +374,7 @@ export function setupRaider({ planetId = "ferros", seed = 1, difficulty = "mediu
     route,
     legs: n,
     legIndex: 0,
-    timeLimit: diff.timeLimit,
+    timeLimit: Math.round(diff.timeLimit * sizeMult),   // the route scales with the map, so the clock does too
     freighterOwner: "ai",          // the convoy is the enemy in Raider
     freightersTotal: 4,
     targetKills: diff.targetKills,
@@ -512,9 +512,9 @@ function computeRaiderScore(state, sc) {
 
 // Build a Bounty Marshal game state on `planetId`. The posse musters at the
 // centre of the map; pirate camps are scattered around it, each with a bounty.
-export function setupBounty({ planetId = "ferros", seed = 1, difficulty = "medium" } = {}) {
+export function setupBounty({ planetId = "ferros", seed = 1, difficulty = "medium", sizeMult = 1 } = {}) {
   const diff = BOUNTY_DIFFICULTY[difficulty] || BOUNTY_DIFFICULTY.medium;
-  const state = createGameState({ planetId, seed, rng: mulberry32(seed >>> 0) });
+  const state = createGameState({ planetId, seed, rng: mulberry32(seed >>> 0), sizeMult });
   state.units.clear();
   state.buildings.clear();
 
@@ -557,7 +557,7 @@ export function setupBounty({ planetId = "ferros", seed = 1, difficulty = "mediu
     difficulty,
     phase: "prep",                 // prep → hunt → done
     phaseTimer: PREP_TIME,
-    timeLimit: diff.timeLimit,
+    timeLimit: Math.round(diff.timeLimit * sizeMult),   // camps spread across the map, so the clock scales with it
     packs,
     totalPacks: diff.packs,
     packsCleared: 0,
