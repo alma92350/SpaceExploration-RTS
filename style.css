@@ -91,6 +91,9 @@ html, body {
 .galaxy-toast.warn { border-color: var(--warn); color: var(--warn); }
 .galaxy-toast.bad  { border-color: var(--bad); color: var(--bad); }
 .galaxy-toast.good { border-color: var(--good, #4ade80); color: var(--good, #4ade80); }
+/* No generic `.hidden` exists — each component hides itself. Without this the empty
+   toast renders as a stray pill at top-center (on the setup screen and in-game). */
+.galaxy-toast.hidden { display: none; }
 
 /* Starmap overlay (starmap.js): a full-screen galaxy map with world nodes on a
    ring, coloured by your relationship to each. */
