@@ -16,6 +16,7 @@
 import { COM } from "./data.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
+import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects } from "./effects.js";
 
@@ -93,6 +94,7 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   if (state.scenario) drawScenario(ctx, state);   // the convoy route + stations, under the units
   drawBuildings(ctx, state, view);
   drawUnits(ctx, state, view);
+  drawJumpStaging(ctx, state, view);   // staging ring around a selected Spaceport (Odyssey)
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
   drawWaypoints(ctx, state);
@@ -325,6 +327,41 @@ function drawBuildings(ctx, state, view) {
     // tell an enemy base from their own without relying on the cyan-vs-red hue.
     if (b.owner !== "player") drawEnemyPip(ctx, b.x, b.y + b.radius + 8);
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
+  }
+}
+
+// The jump staging area around a SELECTED player Spaceport: a dashed ring at
+// JUMP_LOAD_RADIUS with a faint fill (the disc whose units ride along on a jump —
+// engine/galaxy.js stagedRiders), and a highlight on each unit currently inside it.
+// Answers "where do I park units so they come with me?" — drawn only when the
+// Spaceport is selected, so it never clutters the map otherwise.
+function drawJumpStaging(ctx, state, view) {
+  const selSet = new Set(state.selection);
+  for (const b of state.buildings.values()) {
+    if (b.type !== "spaceport" || b.owner !== "player" || b.constructing || !selSet.has(b.id)) continue;
+    if (view && !inView(view, b.x, b.y, JUMP_LOAD_RADIUS + 8)) continue;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, JUMP_LOAD_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(120, 200, 255, 0.06)";   // faint disc so the AREA reads
+    ctx.fill();
+    ctx.setLineDash([9, 6]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(120, 200, 255, 0.7)";
+    ctx.stroke();
+    ctx.restore();
+
+    // Ring the units that would ride along, so it's clear WHICH entities jump.
+    for (const u of state.units.values()) {
+      if (u.owner !== "player") continue;
+      if (Math.hypot(u.x - b.x, u.y - b.y) > JUMP_LOAD_RADIUS) continue;
+      ctx.beginPath();
+      ctx.arc(u.x, u.y, (u.radius || 6) + 3, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(120, 200, 255, 0.85)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
 }
 
