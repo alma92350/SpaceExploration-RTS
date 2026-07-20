@@ -194,7 +194,7 @@ export function bootState(newState, { intro }) {
     update: dt => {
       if (game.galaxy) {
         for (const s of game.galaxy.planets.values()) tick(s, dt);
-        for (const n of sweepColonies(game.galaxy)) notifyColony(n);
+        for (const n of sweepColonies(game.galaxy, dt)) notifyColony(n);
       } else tick(game.state, dt);
     },
     render: () => {

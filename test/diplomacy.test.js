@@ -84,6 +84,38 @@ test("sweepColonies reports a colony under attack, then lost, and drains its eve
   assert.ok(!notes.some(n => n.type === "lost"), "the loss is reported only once");
 });
 
+test("destroying the neighbour's ships sours the stance at once", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  updateDiplomacy(s, 0.1);                    // establish the baseline unit count
+  const before = s.diplomacy.stance;
+  const ai = [...s.units.values()].filter(u => u.owner === "ai");
+  let removed = 0;
+  for (const u of ai) { if (removed >= 5) break; s.units.delete(u.id); removed++; }
+  updateDiplomacy(s, 0.1);
+  assert.ok(removed > 0);
+  assert.ok(s.diplomacy.stance < before, "each ship you destroy drops the stance");
+});
+
+test("a held colony sends home passive income each tick", () => {
+  const g = createGalaxy({ seed: 9 });
+  const from = activeState(g);
+  const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y);
+  from.buildings.set(sp.id, sp);
+  g.credits = 1000;
+  const dest = g.worlds.find(w => w !== g.activeId);
+  jumpCapital(g, dest);                       // `from` is now a colony with buildings
+  const before = g.credits;
+  sweepColonies(g, 10);                        // 10 seconds of passive income
+  assert.ok(g.credits > before, "the colony banks income while you're away");
+  // and a razed colony stops paying
+  for (const b of [...from.buildings.values()]) if (b.owner === "player") from.buildings.delete(b.id);
+  const afterRazed = g.credits;
+  sweepColonies(g, 10);
+  assert.equal(g.credits, afterRazed, "a colony with no buildings pays nothing");
+});
+
 test("addPlanet gives every world a neighbour stance", () => {
   const g = createGalaxy({ seed: 8 });
   const other = g.worlds.find(w => w !== g.activeId);

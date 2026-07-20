@@ -150,7 +150,15 @@ test("galaxyStatus reports one seat and the rest unexplored, then a colony after
   st = galaxyStatus(g);
   assert.equal(st.visited, 2);
   assert.equal(st.worlds.find(w => w.id === dest).status, "seat", "the destination is the new seat");
-  assert.ok(st.worlds.some(w => w.status === "colony"), "the world left behind is a colony");
+  const colony = st.worlds.find(w => w.status === "colony");
+  assert.ok(colony, "the world left behind is a colony");
+  assert.ok(colony.income > 0, "a held colony reports passive income");
+
+  // Raze that colony's buildings — it's no longer yours, so it reads "contested".
+  const cs = activeState(g).planetId === colony.id ? null : g.planets.get(colony.id);
+  for (const b of [...cs.buildings.values()]) if (b.owner === "player") cs.buildings.delete(b.id);
+  st = galaxyStatus(g);
+  assert.equal(st.worlds.find(w => w.id === colony.id).status, "contested", "a razed colony is contested, not yours");
 });
 
 test("the galaxy jump is deterministic", () => {

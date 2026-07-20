@@ -48,7 +48,8 @@ export function renderStarmap() {
     node.style.left = `${50 + Math.cos(ang) * 38}%`;
     node.style.top = `${50 + Math.sin(ang) * 40}%`;
     const sub = w.status === "seat" ? "◉ you are here"
-      : w.status === "colony" ? `your colony · ${stanceLabel(w.stance)}`
+      : w.status === "colony" ? `your colony · +${w.income} ◈/min`
+      : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
       : archetypeFor(w.id).name;
     node.innerHTML = `<span class="sm-name">${worldName(w.id)}</span><span class="sm-sub">${sub}</span>`;
     node.addEventListener("click", () => onWorldClick(w));

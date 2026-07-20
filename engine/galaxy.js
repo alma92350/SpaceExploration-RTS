@@ -69,6 +69,17 @@ export const JUMP_LOAD_RADIUS = 150;
 // draws on your economy rather than being free.
 export const JUMP_COST = 400;
 
+// A held background colony sends home this many credits per second per surviving
+// player building — passive income, so the worlds you leave keep working for you
+// (and a razed colony, down to no buildings, quietly stops paying).
+export const COLONY_INCOME_PER_BUILDING = 0.3;
+
+const playerBuildingCount = state => {
+  let n = 0;
+  for (const b of state.buildings.values()) if (b.owner === "player") n++;
+  return n;
+};
+
 // Build (or rebuild) a planet's engine state into the galaxy. Reuses the exact
 // skirmish scaffold — economy, both players' bases, fog — but flagged `endless`
 // so it never resolves by conquest or clock (see engine/victory.js).
@@ -97,19 +108,21 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   return state;
 }
 
-// Watch the background colonies for trouble and return notifications for the UI.
-// Also the single place their sim events are drained — a colony isn't rendered or
-// heard, so nothing else consumes them (left alone they would grow without bound).
-// Reports a colony coming under attack (a player asset destroyed there) and a
-// colony being lost (its last player building razed), each at most once per state
-// transition via flags stamped on the planet.
-export function sweepColonies(galaxy) {
+// Run the background colonies each tick: bank their passive income, watch for
+// trouble, and return notifications for the UI. Also the single place their sim
+// events are drained — a colony isn't rendered or heard, so nothing else consumes
+// them (left alone they would grow without bound). Reports a colony coming under
+// attack (a player asset destroyed there) and a colony being lost (its last
+// player building razed), each at most once per state transition via flags on
+// the planet.
+export function sweepColonies(galaxy, dt = 0) {
   const out = [];
   for (const [id, state] of galaxy.planets) {
     if (!state.background) continue;
-    const playerBuildings = [...state.buildings.values()].filter(b => b.owner === "player").length;
-    if (playerBuildings > 0) state._hadColony = true;
-    if (state._hadColony && playerBuildings === 0 && !state._colonyLost) {
+    const buildings = playerBuildingCount(state);
+    galaxy.credits += buildings * COLONY_INCOME_PER_BUILDING * dt;   // passive colony income
+    if (buildings > 0) state._hadColony = true;
+    if (state._hadColony && buildings === 0 && !state._colonyLost) {
       state._colonyLost = true;
       out.push({ type: "lost", planetId: id });
     } else if (!state._colonyLost && state.events.some(e => e.type === "entityKilled" && e.owner === "player")) {
@@ -136,11 +149,17 @@ export function galaxyStatus(galaxy) {
     total: galaxy.worlds.length,
     worlds: galaxy.worlds.map(id => {
       const s = galaxy.planets.get(id);
-      return {
-        id,
-        status: id === galaxy.activeId ? "seat" : s ? "colony" : "unexplored",
-        stance: s && s.diplomacy ? s.diplomacy.stance : null,
-      };
+      let status = "unexplored", income = 0;
+      if (id === galaxy.activeId) status = "seat";
+      else if (s) {
+        const buildings = playerBuildingCount(s);
+        // A world you've been to is a "colony" only while you still hold a
+        // building there; once razed it's "contested" — visited but no longer
+        // yours (so the map doesn't keep calling a lost world your colony).
+        status = buildings > 0 ? "colony" : "contested";
+        income = Math.round(buildings * COLONY_INCOME_PER_BUILDING * 60);   // credits/min
+      }
+      return { id, status, income, stance: s && s.diplomacy ? s.diplomacy.stance : null };
     }),
   };
 }
