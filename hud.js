@@ -20,7 +20,8 @@ import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale } fro
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
-import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY } from "./engine/galaxy.js";
+import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY,
+         upgradeToCapital, jumpableCC, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
@@ -280,6 +281,11 @@ function renderSelectionPanel() {
     // appease lever surfaces the moment the neighbour cools, without a per-tick rebuild.
     + "|" + (game.galaxy && state.diplomacy
         ? `${state.diplomacy.stance < 0.25}:${tributeCost(state.diplomacy)}:${game.galaxy.credits >= tributeCost(state.diplomacy)}`
+        : "")
+    // Rebuild when the Capital state changes: a CC upgraded to Capital (button → anchored
+    // note) or a jumpable CC appearing/vanishing (Spaceport jump buttons enable/lock).
+    + "|" + (game.galaxy
+        ? `${jumpableCC(state) ? 1 : 0}:${[...state.buildings.values()].filter(b => b.owner === "player" && b.capital).length}`
         : "");
 
   if (signature !== lastPanelSignature) {
@@ -434,6 +440,25 @@ function renderDiplomacy(state) {
       lockTip: `Need ◈${cost} — you have ◈${Math.floor(game.galaxy.credits)}` }));
 }
 
+// The Odyssey Capital control on a Command Center: this CC is already the anchored
+// Capital (a note), a Capital exists elsewhere (nothing — this one is a mobile base),
+// or no Capital yet (an "Upgrade to Capital" button). Fortifying doubles HP and anchors
+// it; only smaller CCs jump (engine/galaxy.js).
+function renderCapital(state, cc) {
+  if (cc.capital) {
+    const row = document.createElement("div");
+    row.className = "sel-note good";
+    row.textContent = `◆ Capital — anchored fortress (${Math.ceil(cc.hp)}/${cc.maxHp} hp). Defends, never jumps.`;
+    panelEl.appendChild(row);
+    return;
+  }
+  if ([...state.buildings.values()].some(b => b.owner === "player" && b.capital)) return;  // one Capital already
+  panelEl.appendChild(makeButton(`◆ Upgrade to Capital (${costText(CAPITAL_UPGRADE_COST)})`,
+    () => { upgradeToCapital(state, cc); },
+    { cost: CAPITAL_UPGRADE_COST,
+      tip: `Fortify this Command Center into your anchored Capital: ×${CAPITAL_HP_MULT} HP. The Capital never jumps — only a smaller CC relocates.` }));
+}
+
 function rebuildSelectionPanel(sel) {
   const { state, input } = game;
   panelEl.innerHTML = "";
@@ -490,6 +515,7 @@ function rebuildSelectionPanel(sel) {
         () => queueProduction(state, cc.id, t), { cost: def.cost, tip: unitTip(def) }));
     }
     if (cc.queue.length) renderQueueRows(cc);
+    if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
     if (game.galaxy && state.market) renderMarket(state);   // Odyssey: trade local commodities for universal credits
     // Odyssey diplomacy: appease the neighbour with credits — shown only once the
     // stance has cooled to Neutral-or-worse (no point paying while comfortably cordial).
@@ -651,10 +677,17 @@ function rebuildSelectionPanel(sel) {
   if (spaceport && game.galaxy) {
     const staged = stagedRiders(state, spaceport).length;
     const afford = game.galaxy.credits >= JUMP_COST;
+    const jumper = jumpableCC(state);   // the anchored Capital can't jump — you need a smaller CC
     const info = document.createElement("p");
     info.className = "hint";
-    info.textContent = `Relocate your capital to another world (◈${JUMP_COST} fuel). ${staged} unit${staged === 1 ? "" : "s"} staged by the pad will jump too — park units near the Spaceport to bring them.`;
+    info.textContent = `Relocate a Command Center to another world (◈${JUMP_COST} fuel). ${staged} unit${staged === 1 ? "" : "s"} staged by the pad will jump too — park units near the Spaceport to bring them.`;
     panelEl.appendChild(info);
+    if (!jumper) {
+      const warn = document.createElement("p");
+      warn.className = "hint";
+      warn.textContent = "Your Capital is anchored — build a second (non-capital) Command Center for it to jump.";
+      panelEl.appendChild(warn);
+    }
 
     // Cargo hold: manufactured goods that ride along to be sold at the destination
     // (they price differently per world). Loaded most-valuable-first, up to capacity.
@@ -672,8 +705,10 @@ function rebuildSelectionPanel(sel) {
       const visited = game.galaxy.planets.has(w) && w !== game.galaxy.activeId;
       panelEl.appendChild(makeButton(`Jump ▸ ${name}${visited ? " · your colony" : ""}`,
         () => performJump(w),
-        { tip: "Relocate the Command Center and staged units to this world",
-          locked: !afford, lockTip: `Need ◈${JUMP_COST} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
+        { tip: "Relocate a (non-capital) Command Center and staged units to this world",
+          locked: !afford || !jumper,
+          lockTip: !jumper ? "Your Capital is anchored — build a smaller Command Center to jump"
+                           : `Need ◈${JUMP_COST} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
     }
   }
 

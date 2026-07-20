@@ -257,11 +257,44 @@ export function galaxyStatus(galaxy) {
   };
 }
 
-// Can the player launch a jump from this world? — a completed player Spaceport.
-export function canJump(state) {
+// The fortified Capital: an upgraded Command Center with double HP that is ANCHORED —
+// it never jumps (only a smaller, non-capital CC relocates). One per owner.
+export const CAPITAL_UPGRADE_COST = { ore: 400 };
+export const CAPITAL_HP_MULT = 2;
+
+// Improve a Command Center into your Capital: pay the cost, mark it, and scale its HP
+// (and current HP, preserving any battle damage as a fraction) by CAPITAL_HP_MULT.
+// Odyssey-only, one Capital per owner, not on a still-constructing CC. Deterministic —
+// pure state mutation, no clock/RNG. Returns whether the upgrade happened.
+export function upgradeToCapital(state, building) {
+  if (!building || building.type !== "command" || building.constructing || building.capital) return false;
+  const owner = building.owner;
   for (const b of state.buildings.values())
-    if (b.owner === "player" && b.type === "spaceport" && !b.constructing) return true;
-  return false;
+    if (b.owner === owner && b.capital) return false;             // only one Capital
+  const res = state.players[owner].resources;
+  for (const com in CAPITAL_UPGRADE_COST) if ((res[com] || 0) < CAPITAL_UPGRADE_COST[com]) return false;
+  for (const com in CAPITAL_UPGRADE_COST) res[com] -= CAPITAL_UPGRADE_COST[com];
+  building.capital = true;
+  building.maxHp = Math.round(building.maxHp * CAPITAL_HP_MULT);
+  building.hp = Math.round(building.hp * CAPITAL_HP_MULT);        // keeps the damage fraction
+  return true;
+}
+
+// The Command Center that would relocate on a jump: your first non-capital ("smaller")
+// CC. The Capital is anchored, so this is null when your only CC is the Capital — build
+// a second CC to jump again.
+export function jumpableCC(state) {
+  for (const b of state.buildings.values())
+    if (b.owner === "player" && b.type === "command" && !b.constructing && !b.capital) return b;
+  return null;
+}
+
+// Can the player launch a jump from this world? — a completed Spaceport AND a smaller
+// (non-capital) Command Center to send. The anchored Capital alone can't jump.
+export function canJump(state) {
+  const hasPort = [...state.buildings.values()]
+    .some(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
+  return hasPort && !!jumpableCC(state);
 }
 
 // The player units staged near a Spaceport — the expedition that rides along on a
@@ -315,20 +348,21 @@ export function jumpCapital(galaxy, destId) {
   const spaceport = [...from.buildings.values()]
     .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
   if (!spaceport || destId === galaxy.activeId || galaxy.credits < JUMP_COST) return null;
+  // Only a smaller (non-capital) Command Center relocates — the Capital is anchored.
+  // Refuse the jump (no fuel spent) if the only CC here is the Capital.
+  const cc = jumpableCC(from);
+  if (!cc) return null;
   galaxy.credits -= JUMP_COST;   // fuel for the jump
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });
   const lz = dest.map.bases.player;
   const nextId = () => "g" + (galaxy.entitySeq = (galaxy.entitySeq || 0) + 1);   // fresh ids: no cross-state collision
 
-  const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   const riders = stagedRiders(from, spaceport);
 
-  if (cc) {
-    from.buildings.delete(cc.id);
-    cc.id = nextId(); cc.x = lz.x; cc.y = lz.y; cc.rally = { x: lz.x + 60, y: lz.y + 60 };
-    dest.buildings.set(cc.id, cc);
-  }
+  from.buildings.delete(cc.id);
+  cc.id = nextId(); cc.x = lz.x; cc.y = lz.y; cc.rally = { x: lz.x + 60, y: lz.y + 60 };
+  dest.buildings.set(cc.id, cc);
   riders.forEach((u, i) => {
     from.units.delete(u.id);
     const a = (i / Math.max(1, riders.length)) * Math.PI * 2, ring = 46 + (i % 3) * 18;

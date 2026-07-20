@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS } from "../engine/galaxy.js";
+import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS,
+         upgradeToCapital, jumpableCC, canJump, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "../engine/galaxy.js";
 import { checkEndlessLoss } from "../engine/victory.js";
+import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 
@@ -72,6 +74,71 @@ test("on a jump only the primary Command Center relocates; an expansion CC stays
   const dest = activeState(g);
   assert.equal(commandCenters(dest, "player").length, 1, "one CC (the capital) arrived at the destination");
   assert.equal(commandCenters(from, "player").length, 1, "the expansion CC stayed behind on the colony");
+});
+
+test("a Command Center upgrades into the Capital — double HP, charged, one per owner", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  const cc = commandCenters(s, "player")[0];
+  const baseMax = cc.maxHp;
+  s.players.player.resources.ore = 1000;
+  assert.equal(upgradeToCapital(s, cc), true, "the upgrade succeeds when affordable");
+  assert.equal(cc.capital, true, "it is now the Capital");
+  assert.equal(cc.maxHp, baseMax * CAPITAL_HP_MULT, "double the HP");
+  assert.equal(s.players.player.resources.ore, 1000 - CAPITAL_UPGRADE_COST.ore, "the cost was charged");
+
+  const second = makeBuilding("command", "player", cc.x + 300, cc.y);
+  s.buildings.set(second.id, second);
+  s.players.player.resources.ore = 1000;
+  assert.equal(upgradeToCapital(s, second), false, "only one Capital per owner");
+  assert.ok(!second.capital, "the second CC stays a normal (jumping) base");
+});
+
+test("upgradeToCapital is refused without the resources or on a still-constructing CC", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  const cc = commandCenters(s, "player")[0];
+  s.players.player.resources.ore = 10;                 // can't afford
+  assert.equal(upgradeToCapital(s, cc), false);
+  assert.ok(!cc.capital);
+  const half = makeBuilding("command", "player", cc.x + 300, cc.y);
+  half.constructing = true;
+  s.buildings.set(half.id, half);
+  s.players.player.resources.ore = 1000;
+  assert.equal(upgradeToCapital(s, half), false, "a half-built CC can't be the Capital yet");
+});
+
+test("only a smaller CC jumps — the anchored Capital can't, and a Capital-only world can't launch", () => {
+  const g = createGalaxy({ seed: 7 });
+  const from = activeState(g);
+  const cc = commandCenters(from, "player")[0];
+  addSpaceport(from);
+  g.credits = 2000;
+  from.players.player.resources.ore = 1000;
+  upgradeToCapital(from, cc);                           // the only CC becomes the anchored Capital
+  assert.equal(jumpableCC(from), null, "no smaller CC to send");
+  assert.equal(canJump(from), false, "a Spaceport alone can't jump the Capital");
+  const before = g.credits;
+  assert.equal(jumpCapital(g, g.worlds.find(w => w !== g.activeId)), null, "the jump is refused");
+  assert.equal(g.credits, before, "and no fuel was spent");
+
+  const mobile = makeBuilding("command", "player", cc.x + 300, cc.y + 100);
+  from.buildings.set(mobile.id, mobile);               // build a smaller CC
+  assert.equal(jumpableCC(from)?.id, mobile.id, "the non-capital CC is the jumper");
+  assert.ok(canJump(from), "now a jump can launch");
+  assert.ok(jumpCapital(g, g.worlds.find(w => w !== g.activeId)), "the jump runs");
+  assert.equal(commandCenters(from, "player").length, 1, "the Capital stayed behind…");
+  assert.equal(commandCenters(from, "player")[0].capital, true, "…as the anchored Capital");
+});
+
+test("the Capital (flag + raised HP) survives a galaxy save/load", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  const cc = commandCenters(s, "player")[0];
+  s.players.player.resources.ore = 1000;
+  upgradeToCapital(s, cc);
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  const rcc = commandCenters(activeState(restored), "player")[0];
+  assert.equal(rcc.capital, true, "the Capital flag round-trips");
+  assert.equal(rcc.maxHp, cc.maxHp, "the raised HP round-trips");
 });
 
 test("an endless state has no time-limit resolution", () => {

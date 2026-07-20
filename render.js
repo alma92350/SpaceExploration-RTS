@@ -364,6 +364,15 @@ function drawCommandCenter(ctx, b, color) {
   ctx.arc(cx, cy - r * 1.2, 2, 0, Math.PI * 2);
   ctx.fillStyle = DETAIL;
   ctx.fill();
+
+  // The anchored Capital (engine/galaxy.js upgradeToCapital) wears a gold ring, so a
+  // fortified, non-jumping Capital reads apart from a normal Command Center at a glance.
+  if (b.capital) {
+    pathPoints(ctx, polygonPoints(cx, cy, r * 1.3, 8, Math.PI / 8));
+    ctx.strokeStyle = "#f2c14e";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
 }
 
 // Barracks — an angular bunker (a "home plate" silhouette with a pointed
