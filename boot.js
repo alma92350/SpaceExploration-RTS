@@ -155,8 +155,11 @@ function focusActivePlanet() {
 }
 
 // Re-open the map-select screen (the game-over "choose another battlefield"
-// button, passed into overlays' showGameOver so that module needn't import setup).
-function restartToMapSelect() {
+// button, passed into overlays' showGameOver so that module needn't import setup;
+// also the topbar Home button via saveload.js). Stops the running loop so the game
+// freezes behind the menu (idempotent — game-over has already stopped it).
+export function restartToMapSelect() {
+  if (loop) loop.stop();
   renderMapSelect();
   mapSelectEl.classList.remove("hidden");
 }

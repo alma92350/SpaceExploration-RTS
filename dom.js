@@ -28,6 +28,7 @@ export const helpOverlayEl = document.getElementById("helpOverlay");
 export const helpBtn = document.getElementById("helpBtn");
 export const saveBtn = document.getElementById("saveBtn");
 export const loadBtn = document.getElementById("loadBtn");
+export const homeBtn = document.getElementById("homeBtn");
 export const starmapBtn = document.getElementById("starmapBtn");
 export const starmapEl = document.getElementById("starmap");
 export const volumeEl = document.getElementById("volume");
