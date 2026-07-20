@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createDiplomacy, updateDiplomacy, atPeace, hostility, stanceLabel, PEACE_THRESHOLD } from "../engine/diplomacy.js";
+import { createDiplomacy, updateDiplomacy, atPeace, hostility, stanceLabel, PEACE_THRESHOLD,
+         offerTribute, tributeCost, TRIBUTE_BASE_COST, APPEASE_TIME } from "../engine/diplomacy.js";
 import { createGalaxy, activeState, addPlanet, jumpCapital, sweepColonies } from "../engine/galaxy.js";
+import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 
@@ -178,6 +180,101 @@ test("a world that stays peaceful never fires the war alert", () => {
   rich.events.length = 0;
   for (let i = 0; i < 4000; i++) updateDiplomacy(rich, 0.1);
   assert.ok(!rich.events.some(e => e.type === "neighbourHostile"), "peace stays quiet");
+});
+
+// ---- Tier 4: the Gate finale provokes war ----
+
+test("a charging Gate provokes war even on a rich, untouched world — harder as it nears firing", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  s.time = 500;                                        // past grace, so the finale clause is live
+  const gate = makeBuilding("antimatter_gate", "player", 600, 500);
+  gate.charge = 0.6;
+  s.buildings.set(gate.id, gate);                      // nodes untouched → scarcity alone would keep the peace
+  for (let i = 0; i < 2000; i++) updateDiplomacy(s, 0.1);
+  assert.equal(atPeace(s), false, "the Gate dragged a rich world into war");
+  const hMid = hostility(s);
+
+  const s2 = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s2.diplomacy = createDiplomacy();
+  s2.time = 500;
+  const gate2 = makeBuilding("antimatter_gate", "player", 600, 500);
+  gate2.charge = 0.95;
+  s2.buildings.set(gate2.id, gate2);
+  for (let i = 0; i < 2000; i++) updateDiplomacy(s2, 0.1);
+  assert.ok(hostility(s2) > hMid, "a near-complete Gate is angrier than a half-charged one");
+});
+
+test("the Gate finale is unappeasable — a tribute can't buy out of the endgame", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  s.time = 500;
+  const gate = makeBuilding("antimatter_gate", "player", 600, 500);
+  gate.charge = 0.8;
+  s.buildings.set(gate.id, gate);
+  offerTribute({ credits: 9999 }, s);                  // pay to appease…
+  for (let i = 0; i < 600; i++) updateDiplomacy(s, 0.1);   // ~60s, well inside APPEASE_TIME
+  assert.equal(atPeace(s), false, "the finale clause overrides the paid truce");
+});
+
+// ---- Tier 4: tribute (diplomacy agency) ----
+
+test("tribute snaps the neighbour to a truce and spends galaxy credits", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.diplomacy.stance = -0.4;                           // hostile
+  g.credits = 1000;
+  assert.equal(offerTribute(g, s), true);
+  assert.equal(g.credits, 1000 - TRIBUTE_BASE_COST, "the first tribute costs the base price");
+  assert.equal(atPeace(s), true, "the neighbour stands down at once");
+  assert.ok(s.diplomacy.appeaseUntil > s.time, "a decaying truce window opens");
+  assert.ok(tributeCost(s.diplomacy) > TRIBUTE_BASE_COST, "the next tribute costs more");
+});
+
+test("you can't tribute without the credits", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  g.credits = 10;                                      // below the base cost
+  assert.equal(offerTribute(g, s), false, "no funds ⇒ no-op");
+  assert.equal(g.credits, 10, "and nothing is spent");
+});
+
+test("a paid truce holds the peace inside its window, then decays back to war", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  s.time = 1000; drainNodes(s, 0.05);                  // past grace, mined out → deeply hostile target
+  offerTribute({ credits: 5000 }, s);                  // galaxy stand-in — offerTribute only reads .credits
+  assert.equal(atPeace(s), true, "the tribute buys instant peace");
+  for (let i = 0; i < 500; i++) { updateDiplomacy(s, 0.1); s.time += 0.1; }    // ~50s < APPEASE_TIME(120)
+  assert.equal(atPeace(s), true, "peace holds inside the window");
+  for (let i = 0; i < 1200; i++) { updateDiplomacy(s, 0.1); s.time += 0.1; }   // +120s, past the window
+  assert.equal(atPeace(s), false, "the truce decays — bought peace is temporary, never permanent");
+});
+
+test("tribute state (tributes, appeaseUntil) round-trips a galaxy save/load", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  g.credits = 1000;
+  offerTribute(g, s);
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  const rd = activeState(restored).diplomacy;
+  assert.equal(rd.tributes, 1, "the tribute count survives the round-trip");
+  assert.ok(Math.abs(rd.appeaseUntil - s.diplomacy.appeaseUntil) < 1e-9, "the truce deadline survives too");
+});
+
+// ---- Tier 4: late-game creep (no hostility plateau) ----
+
+test("late-game creep turns a rich-ish world hostile over a long game, without annihilation", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  drainNodes(s, 0.7);                                  // only ~30% mined — still productive
+  s.time = 421;                                        // just past grace
+  updateDiplomacy(s, 0.1);
+  assert.equal(atPeace(s), true, "no cliff right after grace");
+  for (let i = 0; i < 14000; i++) { updateDiplomacy(s, 0.1); s.time += 0.1; }   // advance to ~30 min
+  assert.equal(atPeace(s), false, "given a long game, even a rich-ish world turns — no plateau");
+  const h = hostility(s);
+  assert.ok(h > 0.15 && h < 0.7, `a rising, survivable threat, not instant annihilation (h=${h.toFixed(2)})`);
 });
 
 test("addPlanet gives every world a neighbour stance", () => {

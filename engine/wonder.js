@@ -51,3 +51,24 @@ export function updateWonder(state, building, dt) {
   building.charge = Math.min(1, (building.charge || 0) + p);
   state.events.push({ type: "wonderCharging", charge: building.charge, x: building.x, y: building.y, owner: building.owner });
 }
+
+// The player's charging wonder on this world, or null — a completed wonder-flagged
+// building partway to full charge. The Tier-4 finale hooks read ONE definition of it:
+// the AI's siege-target bias (engine/ai.js) and the diplomacy war-push (engine/
+// diplomacy.js). Odyssey-only by construction — the Gate is `odysseyOnly` and a
+// skirmish player can never build one, so this returns null in every skirmish and
+// both callers collapse to their prior behaviour. Pure scan of state.buildings,
+// id-tiebroken (there is only ever one). NOT fog-gated: a charging antimatter Gate
+// is a galaxy-wide event the neighbour can sense, so it provokes war regardless of
+// line-of-sight; the AI applies its OWN fog check at the targeting seam (it still
+// has to see the Gate to march its army onto it).
+export function chargingPlayerWonder(state) {
+  let best = null;
+  for (const b of state.buildings.values()) {
+    if (b.owner !== "player" || b.constructing) continue;
+    if (!BUILDINGS[b.type]?.wonder) continue;
+    const c = b.charge || 0;
+    if (c > 0 && c < 1 && (!best || b.id < best.id)) best = b;
+  }
+  return best;
+}

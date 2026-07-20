@@ -22,7 +22,7 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } 
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY } from "./engine/galaxy.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
-import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
+import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
 import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
@@ -274,7 +274,13 @@ function renderSelectionPanel() {
     // Rebuild when a selected factory's status transitions (running ↔ throttled ↔
     // starved ↔ stalled), so its "why it's not producing" line stays live without
     // a full rebuild every HUD tick.
-    + "|" + factorySignature(sel);
+    + "|" + factorySignature(sel)
+    // Rebuild when the Odyssey diplomacy panel would appear/disappear (stance crossing
+    // the 0.25 band) or its tribute button's cost/affordability would flip — so the
+    // appease lever surfaces the moment the neighbour cools, without a per-tick rebuild.
+    + "|" + (game.galaxy && state.diplomacy
+        ? `${state.diplomacy.stance < 0.25}:${tributeCost(state.diplomacy)}:${game.galaxy.credits >= tributeCost(state.diplomacy)}`
+        : "");
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -405,6 +411,28 @@ function factoryStatus(state, b, recipe) {
   return { cls: "good", text: `Running · +${rate.toFixed(1)} ${COM[recipe.out]?.name || recipe.out}/s` };
 }
 
+// The Odyssey diplomacy panel, under the Command Center's market: pay universal
+// credits to appease the neighbour for a while (engine/diplomacy.js offerTribute).
+// The cost escalates per tribute and the truce decays, so it's a stopgap — buy time
+// to weather a wave or finish a jump, not a permanent peace. A charging Antimatter
+// Gate is unappeasable, by design. Credit-gated via locked/lockTip (NOT makeButton's
+// `cost`, which checks the LOCAL economy), the same idiom as the Spaceport jump.
+function renderDiplomacy(state) {
+  const cost = tributeCost(state.diplomacy);
+  const afford = game.galaxy.credits >= cost;
+
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = `Diplomacy — ${stanceLabel(state.diplomacy.stance)} neighbour`;
+  panelEl.appendChild(head);
+
+  panelEl.appendChild(makeButton(`Send tribute (◈${cost})`,
+    () => { offerTribute(game.galaxy, state); },   // makeButton adds renderHUD() on the affordable path
+    { tip: `Buy ~${APPEASE_TIME}s of peace — the neighbour stands down, but the truce decays and each tribute costs more. A charging Gate can't be bought off.`,
+      locked: !afford,
+      lockTip: `Need ◈${cost} — you have ◈${Math.floor(game.galaxy.credits)}` }));
+}
+
 function rebuildSelectionPanel(sel) {
   const { state, input } = game;
   panelEl.innerHTML = "";
@@ -448,6 +476,9 @@ function rebuildSelectionPanel(sel) {
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy && state.market) renderMarket(state);   // Odyssey: trade local commodities for universal credits
+    // Odyssey diplomacy: appease the neighbour with credits — shown only once the
+    // stance has cooled to Neutral-or-worse (no point paying while comfortably cordial).
+    if (game.galaxy && state.diplomacy && state.diplomacy.stance < 0.25) renderDiplomacy(state);
   }
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);

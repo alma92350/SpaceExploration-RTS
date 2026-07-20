@@ -40,6 +40,7 @@ import { supplyUsed, supplyCap } from "./supply.js";
 import { isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
 import { hostility } from "./diplomacy.js";
+import { chargingPlayerWonder } from "./wonder.js";
 
 const THINK_INTERVAL = 1.5;
 const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
@@ -422,8 +423,15 @@ export function runAI(state, dt) {
       // defended main base — sniping production the way a human harasses. A
       // desperation (timeout) commit always goes for the base so the game resolves.
       state.aiWaveCount = (state.aiWaveCount || 0) + 1;
-      const raid = state.aiMicro && !desperate && state.aiWaveCount % RAID_EVERY === 0 && raidTarget(state);
-      const target = raid || chooseAttackTarget(state, cc);
+      // ODYSSEY FINALE: once the AI can SEE the player's charging Gate, every wave
+      // converges on it — razing the galaxy-ender outranks even an economy raid. Still
+      // fog-gated (it has to have eyes on the Gate) and Odyssey-only: in a skirmish
+      // state.diplomacy is undefined, so `gate` is falsy and the target pick below is
+      // byte-for-byte the original `raid || chooseAttackTarget(...)`.
+      const charging = state.diplomacy && chargingPlayerWonder(state);
+      const gate = charging && isVisibleAt(state.fogAI, charging.x, charging.y) ? charging : null;
+      const raid = !gate && state.aiMicro && !desperate && state.aiWaveCount % RAID_EVERY === 0 && raidTarget(state);
+      const target = gate || raid || chooseAttackTarget(state, cc);
       issueAttackMove(strike, target.x, target.y);
       // Cadence: a skirmish keeps the single attackTimeout clock (unchanged);
       // Odyssey paces the NEXT probe by hostility on its own timer — sparse when
