@@ -35,6 +35,17 @@ export function checkEndlessLoss(state) {
   if (!hasCommandCenter(state, "player")) finish(state, "ai");
 }
 
+// Odyssey's terminal WIN check — the twin of checkEndlessLoss. The player wins the
+// galaxy when an Antimatter Gate they own finishes charging (engine/wonder.js): the
+// endless sandbox's only victory, a megaproject you build and defend. Runs on the
+// active seat (sim.js) and, for a Gate left charging on a colony, via
+// galaxy.js checkGalaxyWin.
+export function checkEndlessWin(state) {
+  if (state.over) return;
+  for (const b of state.buildings.values())
+    if (b.owner === "player" && BUILDINGS[b.type]?.wonder && (b.charge || 0) >= 1) { finish(state, "player"); return; }
+}
+
 function finish(state, winner) {
   state.over = true;
   state.winner = winner;

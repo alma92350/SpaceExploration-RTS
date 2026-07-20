@@ -478,6 +478,21 @@ function rebuildSelectionPanel(sel) {
     });
   }
 
+  // Antimatter Gate (Odyssey): the endgame wonder. Shows its charge toward the
+  // galaxy win — keep antimatter flowing and hold the line.
+  const wonder = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.wonder && !e.constructing);
+  if (wonder) {
+    const pct = Math.round((wonder.charge || 0) * 100);
+    const row = document.createElement("div");
+    row.className = "sel-row";
+    row.textContent = `Charging the galaxy jump — ${pct}%`;
+    panelEl.appendChild(row);
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Feeds on antimatter and shares your Reactor Power. At 100% the Gate fires and you win the galaxy — but razed mid-charge, the whole investment is lost, so defend it.";
+    panelEl.appendChild(hint);
+  }
+
   // Spaceport (Odyssey): the interplanetary jump panel. Relocate the capital +
   // the units staged nearby to another world; the world you leave carries on as
   // a colony.
@@ -508,8 +523,15 @@ function rebuildSelectionPanel(sel) {
     // refine raw hauls into goods worth real credits). A skirmish still allows
     // expansion CCs, has no Spaceport, and no industry.
     const buildables = ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat"];
-    if (state.endless) buildables.push("reactor", "smelter", "assembler", "datacenter", "chipfab", "machineworks", "spaceport");
-    else buildables.push("command");
+    if (state.endless) {
+      buildables.push("reactor", "smelter", "datacenter");   // entry-tier industry: always available
+      // The deeper chain + the endgame wonder REVEAL as you unlock them (a greyed
+      // button per locked tier would bury the menu), mirroring how the Barracks
+      // hides units you can't yet field.
+      for (const t of ["assembler", "chipfab", "machineworks", "antimatterforge", "antimatter_gate"])
+        if (prereqsMet(state, "player", BUILDINGS[t])) buildables.push(t);
+      buildables.push("spaceport");
+    } else buildables.push("command");
     for (const t of buildables) {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);

@@ -144,6 +144,29 @@ export const BUILDINGS = {
     requires: ["assembler", "chipfab", "machining"],   // the capstone: the whole chain + Precision Machining
     odysseyOnly: true,
   },
+
+  /* ---- Phase 3: the Strategic tier + the endgame (Odyssey only). The Antimatter
+     Forge tops the chain (machinery → antimatter), and the Antimatter Gate is the
+     WONDER that consumes antimatter to WIN the galaxy — Odyssey's first victory
+     condition (engine/wonder.js + engine/victory.js checkEndlessWin). ---- */
+  antimatterforge: {
+    id: "antimatterforge", name: "Antimatter Forge", hp: 460, radius: 18,
+    cost: { ore: 240 }, buildTime: 26, sight: 140, dropOff: true,
+    recipe: "antifab", prodRate: 0.7,        // machinery + radioactives + power → antimatter (RTS-recost recipe)
+    requires: ["machineworks", "antimatter"],   // needs the full chain + Antimatter Containment research
+    odysseyOnly: true,
+  },
+  antimatter_gate: {
+    id: "antimatter_gate", name: "Antimatter Gate", hp: 1200, radius: 28,
+    cost: { ore: 800 }, buildTime: 60, sight: 200,
+    requires: ["antimatterforge"],   // reveals once you can fuel it
+    odysseyOnly: true,
+    // The wonder: charges by consuming `feed` goods over `chargeTime` seconds of
+    // full-power charging (engine/wonder.js). At full charge the player wins the
+    // galaxy. A fat, defendable objective — razed mid-charge, the whole antimatter
+    // investment is lost with it.
+    wonder: true, feed: { antimatter: 0.4 }, chargeTime: 150,
+  },
 };
 
 // Prerequisites are satisfied for `owner` when: every building-type token in

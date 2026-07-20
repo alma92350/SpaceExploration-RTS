@@ -131,15 +131,18 @@ window.addEventListener("keydown", e => {
 // it lives here rather than with the live HUD readouts (it shares no code with
 // them). Param-driven — the seed and the restart action are passed in, so this
 // module needs neither the session nor setup.js (onRestart re-opens map-select).
-export function showGameOver(winner, seed, onRestart) {
+export function showGameOver(winner, seed, onRestart, opts = {}) {
   if (winner === "player") sound.playVictory(); else sound.playDefeat();
 
   gameOverEl.classList.remove("hidden");
   gameOverEl.innerHTML = "";
 
+  // Odyssey has its own victory: you don't raze an enemy CC, you fire the Antimatter
+  // Gate. The loss copy (last Command Center destroyed) is right for both modes.
   const msg = document.createElement("div");
   msg.textContent = winner === "player"
-    ? "Victory — the enemy's last Command Center is destroyed."
+    ? (opts.odyssey ? "Victory — the Antimatter Gate fires. The galaxy is yours."
+                    : "Victory — the enemy's last Command Center is destroyed.")
     : "Defeat — your last Command Center was destroyed.";
   gameOverEl.appendChild(msg);
 

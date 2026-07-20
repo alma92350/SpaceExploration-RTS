@@ -42,6 +42,10 @@ export const TECHS = {
     rateMult: 1.25, desc: "+25% production speed at every factory." },
   machining: { id: "machining", name: "Precision Machining", cost: { crystals: 150, radioactives: 60 }, time: 36, requires: ["electronics"],
     desc: "Unlock the Machine Works — build machinery from alloys and electronics." },
+  // The strategic capstone (Phase 3): unlocks the Antimatter Forge, and with it the
+  // Antimatter Gate — Odyssey's endgame. The deepest, priciest node on the tree.
+  antimatter: { id: "antimatter", name: "Antimatter Containment", cost: { crystals: 220, radioactives: 100 }, time: 44, requires: ["machining"],
+    desc: "Unlock the Antimatter Forge — the top of the chain, and the key to the Antimatter Gate." },
 };
 
 // Research develops faster on a high-tech world (data.js PLANETS.tech, 1..10) and

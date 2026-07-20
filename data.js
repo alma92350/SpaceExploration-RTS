@@ -101,7 +101,10 @@ export const RECIPES = [
   { id: "luxefab", out: "luxury",      qty: 1, in: { spice: 2, electronics: 1, energy: 1 },       kind: "make" },
   { id: "dronefab",out: "drones",      qty: 1, in: { alloys: 1, electronics: 1, energy: 1 }, req: "dronetech",  kind: "make" },
   { id: "aifab",   out: "ai",          qty: 1, in: { electronics: 2, crystals: 1, energy: 3 }, req: "aicores",   kind: "make" },
-  { id: "antifab", out: "antimatter",  qty: 1, in: { relics: 2, electronics: 1, energy: 3 }, req: "antimatter", kind: "make" },
+  // RTS recost: antimatter is the apex of the UNIVERSAL chain (machinery is reachable
+  // on every world) rather than the turn-based relics recipe, so the Odyssey endgame
+  // win is never seed-locked to a relic world. See engine/wonder.js.
+  { id: "antifab", out: "antimatter",  qty: 1, in: { machinery: 1, radioactives: 2, energy: 3 }, req: "antimatter", kind: "make" },
   { id: "plasmafab", out: "plasmatorp", qty: 1, in: { antimatter: 1, alloys: 2, radioactives: 2 }, req: "antimatter", kind: "make" },
 ];
 

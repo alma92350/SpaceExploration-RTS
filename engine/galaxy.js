@@ -26,6 +26,7 @@ import { updateFog } from "./fog.js";
 import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
+import { checkEndlessWin } from "./victory.js";
 import { PLANET_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
 
 // The worlds an Odyssey can settle — the same curated roster the skirmish picker
@@ -165,6 +166,23 @@ export function stepGalaxy(galaxy, dt) {
   for (const [id, state] of galaxy.planets) {
     if (id === galaxy.activeId || !state.background) continue;
     if (t % BG_STEP === galaxy.worlds.indexOf(id) % BG_STEP) tick(state, dtBg);
+  }
+  checkGalaxyWin(galaxy);   // an Antimatter Gate finishing on ANY held world wins the galaxy
+}
+
+// The galaxy-wide WIN check. An Antimatter Gate (engine/wonder.js) can complete on
+// your active seat OR on a colony you left charging in the background. sim.js's
+// per-tick win check only runs on the active (foreground) world, so this sweep
+// catches a Gate finishing off-screen: run the endless-win check on every world,
+// and if any reports a player win, mirror it onto the active state so boot.js's
+// game.state.over poll surfaces the victory screen. Deterministic and idempotent
+// (finish() no-ops once a state is already over).
+export function checkGalaxyWin(galaxy) {
+  const active = activeState(galaxy);
+  if (active.over) return;
+  for (const state of galaxy.planets.values()) {
+    checkEndlessWin(state);
+    if (state.over && state.winner === "player") { active.over = true; active.winner = "player"; return; }
   }
 }
 

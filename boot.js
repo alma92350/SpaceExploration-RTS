@@ -217,7 +217,7 @@ export function bootState(newState, { intro }) {
         announced = true;
         loop.stop();
         if (game.state.scenario) showScenarioEnd(game.state, restartToMapSelect);
-        else showGameOver(game.state.winner, game.state.seed, restartToMapSelect);
+        else showGameOver(game.state.winner, game.state.seed, restartToMapSelect, { odyssey: !!game.galaxy });
       }
     },
   });

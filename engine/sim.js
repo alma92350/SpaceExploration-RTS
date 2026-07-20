@@ -15,11 +15,12 @@ import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { updateProduction } from "./industry.js";
 import { updateResearch } from "./techtree.js";
+import { updateWonder } from "./wonder.js";
 import { applySeparation } from "./separation.js";
 import { updateFog } from "./fog.js";
 import { UNITS } from "./entities.js";
 import { getEntity } from "./state.js";
-import { checkWinCondition, checkEndlessLoss } from "./victory.js";
+import { checkWinCondition, checkEndlessLoss, checkEndlessWin } from "./victory.js";
 import { runAI } from "./ai.js";
 import { updateScenario } from "./scenarios.js";
 import { updateMarket } from "./market.js";
@@ -50,6 +51,7 @@ export function tick(state, dt) {
     updateProductionQueue(state, building, dt);
     updateProduction(state, building, dt);   // Odyssey factories refine raw hauls into goods (no-op without a recipe)
     updateResearch(state, building, dt);     // Odyssey Datacenter develops the tech tree (no-op for any other building)
+    updateWonder(state, building, dt);       // Odyssey Antimatter Gate charges toward the galaxy win (no-op off a wonder)
     updateBuildingCombat(state, building, dt);
   }
 
@@ -61,7 +63,7 @@ export function tick(state, dt) {
   // (endless) only ends on losing the player's Command Center; a normal match
   // uses the CC/score victory check.
   if (state.scenario) { /* updateScenario already set state.over if finished */ }
-  else if (state.endless) { if (!state.background) checkEndlessLoss(state); }   // a colony with no capital isn't "over" — only your active seat can be lost
+  else if (state.endless) { if (!state.background) { checkEndlessWin(state); checkEndlessLoss(state); } }   // win first (a Gate completing the same tick your CC falls still counts); a colony (background) is never "over"
   else checkWinCondition(state);
 
   if (state.market) updateMarket(state, dt);       // Odyssey: relax trade pressure back toward equilibrium
