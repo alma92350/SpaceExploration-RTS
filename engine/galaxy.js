@@ -64,6 +64,9 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     tick: 0,                    // integer galaxy-tick counter (drives the background-world schedule)
     entitySeq: 0,               // fresh-id counter for entities relocated across worlds by a jump
     colonyNotes: new Map(),     // per-planet UI notification bookkeeping (galaxy-side, not sim state)
+    pacified: new Set(),        // worlds where you've razed the neighbour's Command Center (Domination win progress)
+    pacifyNotes: [],            // freshly-pacified world ids awaiting a UI toast (transient, drained by boot.js)
+    wonBy: null,                // "gate" | "domination" — which victory ended the run (drives the win screen copy)
   };
   addPlanet(galaxy, startId);
   return galaxy;
@@ -170,22 +173,53 @@ export function stepGalaxy(galaxy, dt) {
     if (id === galaxy.activeId || !state.background) continue;
     if (t % BG_STEP === galaxy.worlds.indexOf(id) % BG_STEP) tick(state, dtBg);
   }
-  checkGalaxyWin(galaxy);   // an Antimatter Gate finishing on ANY held world wins the galaxy
+  checkGalaxyWin(galaxy);     // ECONOMIC win: an Antimatter Gate finishing on ANY held world
+  checkDomination(galaxy);    // MILITARY win: enough neighbours' Command Centers razed
 }
 
-// The galaxy-wide WIN check. An Antimatter Gate (engine/wonder.js) can complete on
-// your active seat OR on a colony you left charging in the background. sim.js's
-// per-tick win check only runs on the active (foreground) world, so this sweep
-// catches a Gate finishing off-screen: run the endless-win check on every world,
-// and if any reports a player win, mirror it onto the active state so boot.js's
-// game.state.over poll surfaces the victory screen. Deterministic and idempotent
-// (finish() no-ops once a state is already over).
+// The galaxy-wide economic WIN check. An Antimatter Gate (engine/wonder.js) can
+// complete on your active seat OR on a colony you left charging in the background.
+// sim.js's per-tick win check only runs on the active (foreground) world, so this
+// sweep catches a Gate finishing off-screen: run the endless-win check on every
+// world, and if any reports a player win, mirror it onto the active state so
+// boot.js's game.state.over poll surfaces the victory screen. Deterministic and
+// idempotent (finish() no-ops once a state is already over).
 export function checkGalaxyWin(galaxy) {
   const active = activeState(galaxy);
   if (active.over) return;
   for (const state of galaxy.planets.values()) {
     checkEndlessWin(state);
-    if (state.over && state.winner === "player") { active.over = true; active.winner = "player"; return; }
+    if (state.over && state.winner === "player") {
+      active.over = true; active.winner = "player"; galaxy.wonBy = "gate"; return;
+    }
+  }
+}
+
+// Worlds you must pacify (raze the neighbour's Command Center on) to win by
+// DOMINATION — the military, multi-world alternative to the single-world Gate.
+export const DOMINATION_TARGET = 4;
+
+const hasAiCommand = state => {
+  for (const b of state.buildings.values()) if (b.owner === "ai" && b.type === "command" && !b.constructing) return true;
+  return false;
+};
+
+// The MILITARY WIN check. A world is "pacified" the moment its neighbour has no
+// standing Command Center — you razed it (only two sides fight, and every world is
+// seeded with an AI capital). Pacification is STICKY (recorded on the galaxy, so a
+// neighbour rebuilding can't un-pacify it) and win-progress: pacify DOMINATION_TARGET
+// worlds and you conquer the galaxy. Newly-pacified worlds are queued for a UI toast.
+// Deterministic — reads only entity state.
+export function checkDomination(galaxy) {
+  const active = activeState(galaxy);
+  if (active.over) return;
+  for (const [id, state] of galaxy.planets) {
+    if (galaxy.pacified.has(id) || hasAiCommand(state)) continue;
+    galaxy.pacified.add(id);
+    galaxy.pacifyNotes.push(id);
+  }
+  if (galaxy.pacified.size >= DOMINATION_TARGET) {
+    active.over = true; active.winner = "player"; galaxy.wonBy = "domination";
   }
 }
 
@@ -198,10 +232,14 @@ export function galaxyStatus(galaxy) {
     activeId: galaxy.activeId,
     visited: galaxy.planets.size,
     total: galaxy.worlds.length,
+    pacified: galaxy.pacified ? galaxy.pacified.size : 0,   // Domination progress: worlds conquered
+    dominationTarget: DOMINATION_TARGET,
     worlds: galaxy.worlds.map(id => {
       const s = galaxy.planets.get(id);
       let status = "unexplored", income = 0;
+      const pacified = !!(galaxy.pacified && galaxy.pacified.has(id));
       if (id === galaxy.activeId) status = "seat";
+      else if (pacified) status = "pacified";   // conquered — its neighbour's capital is razed
       else if (s) {
         const buildings = playerBuildingCount(s);
         // A world you've been to is a "colony" only while you still hold a
@@ -213,7 +251,7 @@ export function galaxyStatus(galaxy) {
       // Industry/Tech ratings (data.js) drive factory speed + research speed and
       // finished-good prices — surfaced so "where to settle/jump" is an informed call.
       const p = PLANETS.find(pl => pl.id === id);
-      return { id, status, income, stance: s && s.diplomacy ? s.diplomacy.stance : null,
+      return { id, status, income, pacified, stance: s && s.diplomacy ? s.diplomacy.stance : null,
         industry: p ? p.industry : 5, tech: p ? p.tech : 5, faction: p ? p.faction : null };
     }),
   };

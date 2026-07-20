@@ -33,7 +33,7 @@ export function renderStarmap() {
     ? `Click a world to jump (◈${JUMP_COST} fuel)`
     : "Build a Spaceport on your capital to jump between worlds";
   head.innerHTML = `<h2>Galaxy</h2>`
-    + `<p>Worlds visited ${status.visited}/${status.total} · ◈ ${Math.floor(g.credits)} · ${hint}</p>`;
+    + `<p>Visited ${status.visited}/${status.total} · Conquered ${status.pacified}/${status.dominationTarget} · ◈ ${Math.floor(g.credits)} · ${hint}</p>`;
   starmapEl.appendChild(head);
 
   const field = document.createElement("div");
@@ -45,7 +45,8 @@ export function renderStarmap() {
     node.className = "starmap-world " + w.status;
     node.style.left = `${50 + Math.cos(ang) * 38}%`;
     node.style.top = `${50 + Math.sin(ang) * 40}%`;
-    const sub = w.status === "seat" ? "◉ you are here"
+    const sub = w.status === "seat" ? (w.pacified ? "◉ you are here · pacified" : "◉ you are here")
+      : w.status === "pacified" ? "⚔ conquered"
       : w.status === "colony" ? `your colony · +${w.income} ◈/min`
       : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
       : archetypeFor(w.id).name;

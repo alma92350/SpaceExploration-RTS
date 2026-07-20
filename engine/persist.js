@@ -120,6 +120,7 @@ export function serializeGalaxy(galaxy) {
     seed: galaxy.seed, credits: galaxy.credits, activeId: galaxy.activeId, worlds: galaxy.worlds,
     settings: galaxy.settings,
     entitySeq: galaxy.entitySeq ?? 0, galaxyTick: galaxy.tick ?? 0,
+    pacified: [...(galaxy.pacified || [])], wonBy: galaxy.wonBy ?? null,   // Domination win progress (additive; old saves default to none)
     nextEntityId: peekEntityId(),                 // the ONE global entity counter, saved once
     planets: [...galaxy.planets.values()].map(state => ({
       ...serPlanet(state),
@@ -139,6 +140,7 @@ export function deserializeGalaxy(input) {
     planets: new Map(), settings: save.settings,
     tick: save.galaxyTick ?? 0, entitySeq: save.entitySeq ?? 0,
     colonyNotes: new Map(),   // transient UI bookkeeping — re-derived, never persisted
+    pacified: new Set(save.pacified || []), pacifyNotes: [], wonBy: save.wonBy ?? null,
   };
   for (const P of save.planets) {
     const state = rehydratePlanet(P);

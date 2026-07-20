@@ -26,7 +26,7 @@ import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
-import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy } from "./engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, DOMINATION_TARGET } from "./engine/galaxy.js";
 import { TECHS } from "./engine/techtree.js";
 import { planetName } from "./data.js";
 import * as sound from "./sound.js";
@@ -207,6 +207,12 @@ export function bootState(newState, { intro }) {
       if (game.galaxy) {
         stepGalaxy(game.galaxy, dt);   // active world full-rate, colonies on a coarser schedule
         for (const n of sweepColonies(game.galaxy, dt)) notifyColony(n);
+        // Domination progress: a freshly-razed neighbour capital → a toast.
+        if (game.galaxy.pacifyNotes.length) {
+          for (const id of game.galaxy.pacifyNotes)
+            showGalaxyToast(`Conquered ${planetName(id)} — ${game.galaxy.pacified.size}/${DOMINATION_TARGET} worlds`, "good");
+          game.galaxy.pacifyNotes.length = 0;
+        }
       } else tick(game.state, dt);
     },
     render: () => {
@@ -222,7 +228,7 @@ export function bootState(newState, { intro }) {
         announced = true;
         loop.stop();
         if (game.state.scenario) showScenarioEnd(game.state, restartToMapSelect);
-        else showGameOver(game.state.winner, game.state.seed, restartToMapSelect, { odyssey: !!game.galaxy });
+        else showGameOver(game.state.winner, game.state.seed, restartToMapSelect, { odyssey: !!game.galaxy, wonBy: game.galaxy?.wonBy });
       }
     },
   });

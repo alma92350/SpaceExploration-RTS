@@ -98,6 +98,7 @@ test("a Gate left charging on a background colony still wins the galaxy", () => 
   assert.notEqual(g.activeId, home.planetId, "we jumped away from the Gate's world");
   for (let i = 0; i < GATE.chargeTime * 20 && !activeState(g).over; i++) stepGalaxy(g, 0.1);
   assert.ok(activeState(g).over && activeState(g).winner === "player", "the colony Gate's win propagates to the active seat");
+  assert.equal(g.wonBy, "gate", "recorded as the economic (Gate) victory");
 });
 
 test("a mid-charge Gate survives a save/load", () => {

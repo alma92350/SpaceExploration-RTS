@@ -47,7 +47,7 @@ let objectivesTimer;
 export function showObjectives(endless = false) {
   objectivesEl.innerHTML = (endless
     ? `<span class="obj-goal">Odyssey — build an economy and win the galaxy.</span>`
-      + `<span class="obj-tip">Gather ore to raise a production chain (<b>Reactor → Smelter → factories</b>), then a <b>Datacenter</b> to research deeper tech. The neighbour shares this world and turns hostile as it mines out, so keep some <b>defence</b>. Manufacture the Strategic tier and build an <b>Antimatter Gate</b> to win — or a <b>Spaceport</b> to jump between worlds. Press <b>M</b> for the galaxy map, <b>?</b> for controls.</span>`
+      + `<span class="obj-tip">Gather ore to raise a production chain (<b>Reactor → Smelter → factories</b>), then a <b>Datacenter</b> to research deeper tech. The neighbour shares this world and turns hostile as it mines out, so keep some <b>defence</b>. Win by building an <b>Antimatter Gate</b> from the Strategic tier — or by <b>conquering rival capitals</b> across the galaxy (build a <b>Spaceport</b> to jump between worlds). Press <b>M</b> for the galaxy map, <b>?</b> for controls.</span>`
     : `<span class="obj-goal">Objective — destroy every enemy Command Center.</span>`
       + `<span class="obj-tip">Workers gather ore → build a Barracks → train an army → <b>A</b> then click to attack-move it in. Press <b>?</b> for all controls.</span>`)
     + `<button class="obj-close" title="Dismiss" aria-label="Dismiss">×</button>`;
@@ -142,8 +142,11 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
   // Gate. The loss copy (last Command Center destroyed) is right for both modes.
   const msg = document.createElement("div");
   msg.textContent = winner === "player"
-    ? (opts.odyssey ? "Victory — the Antimatter Gate fires. The galaxy is yours."
-                    : "Victory — the enemy's last Command Center is destroyed.")
+    ? (opts.odyssey
+        ? (opts.wonBy === "domination"
+            ? "Conquest — the galaxy bows to your fleet. Rival capitals lie in ruins."
+            : "Victory — the Antimatter Gate fires. The galaxy is yours.")
+        : "Victory — the enemy's last Command Center is destroyed.")
     : "Defeat — your last Command Center was destroyed.";
   gameOverEl.appendChild(msg);
 
