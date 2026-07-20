@@ -70,6 +70,10 @@ html, body {
 .resources .supply.blocked { color: var(--bad); }
 /* Odyssey universal-credit balance — galaxy-wide, so it reads gold like the clock. */
 .resources .credits { color: var(--gold); font-variant-numeric: tabular-nums; }
+/* Odyssey industrial-Power gauge — reads like supply, warns amber when factories
+   out-draw the Reactors and production throttles. */
+.resources .power { font-variant-numeric: tabular-nums; }
+.resources .power.at-cap { color: var(--warn); }
 /* Neighbour stance chip — green when friendly, amber neutral, red hostile. */
 .resources .relation { text-transform: capitalize; }
 .resources .relation.friendly { color: var(--good, #4ade80); }

@@ -16,6 +16,7 @@ import {
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
+import { powerCap, powerDraw } from "./engine/industry.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, stagedRiders } from "./engine/galaxy.js";
@@ -78,6 +79,19 @@ export function renderHUD() {
       creditsSpan.textContent = `◈ ${Math.floor(game.galaxy.credits)}`;
       creditsSpan.title = "Universal credits — galaxy-wide, carried between planets";
       resourcesEl.appendChild(creditsSpan);
+
+      // Industrial Power — shown only once you've started industrializing (a
+      // Reactor or a factory exists), so it never clutters the pre-industry HUD.
+      // Reads like the supply gauge: draw/cap, flagged when factories out-draw
+      // the Reactors and production throttles.
+      const pCap = powerCap(state, "player"), pDraw = powerDraw(state, "player");
+      if (pCap > 0 || pDraw > 0) {
+        const pw = document.createElement("span");
+        pw.className = "power" + (pDraw > pCap ? " at-cap" : "");
+        pw.textContent = `⚡ ${Math.round(pDraw)}/${pCap}`;
+        pw.title = "Industrial Power — Reactors grant it, factories draw it; short power throttles all production";
+        resourcesEl.appendChild(pw);
+      }
 
       // The neighbour's stance — it drifts hostile as this world's deposits run scarce.
       if (state.diplomacy) {
@@ -459,9 +473,12 @@ function rebuildSelectionPanel(sel) {
   if (worker && !input.building) {
     // Odyssey gives you one Command Center — your single relocatable capital — so
     // a second can't be built there; instead it unlocks the Spaceport (the jump
-    // pad). A skirmish still allows expansion CCs and has no Spaceport.
+    // pad) plus the industry chain (Reactor → Smelter → Assembly Plant, which
+    // refine raw hauls into goods worth real credits). A skirmish still allows
+    // expansion CCs, has no Spaceport, and no industry.
     const buildables = ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat"];
-    buildables.push(state.endless ? "spaceport" : "command");
+    if (state.endless) buildables.push("reactor", "smelter", "assembler", "spaceport");
+    else buildables.push("command");
     for (const t of buildables) {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);

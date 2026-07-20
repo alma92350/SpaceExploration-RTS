@@ -24,7 +24,11 @@ import { COM } from "../data.js";
 // source of truth — so the two can never drift (data.js is pure data; engine/map.js
 // already imports it). TRADEABLE stays an explicit curated list: it deliberately
 // omits deposit commodities like biomass/spice that the RTS doesn't trade.
-const TRADEABLE = ["ore", "crystals", "radioactives", "gas", "ice", "relics"];
+// The refined goods (metals, alloys) the Odyssey production chain manufactures
+// (engine/industry.js) are tradeable too — and since no world DEPOSITS them,
+// createMarket prices them at the "scarce" ceiling everywhere, so refining a raw
+// haul into them and selling is the whole point of building a factory.
+const TRADEABLE = ["ore", "crystals", "radioactives", "gas", "ice", "relics", "metals", "alloys"];
 const BASE = Object.fromEntries(TRADEABLE.map(id => [id, COM[id].base]));
 
 export const TRADE_LOT = 25;      // units bought/sold per click

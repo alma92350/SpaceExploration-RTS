@@ -81,6 +81,37 @@ export const BUILDINGS = {
     // Gated behind the Foundry so leaving the planet is a mid-game milestone.
     requires: ["foundry"],
   },
+
+  /* ---- INDUSTRY (Odyssey only) — the production chain that turns raw hauls into
+     refined goods worth real credits. All ore-costed (ore is guaranteed near every
+     base, so the chain is reachable on any world) and flagged `odysseyOnly`: they
+     never appear in a skirmish build menu, the skirmish AI never builds one, and
+     engine/industry.js's updateProduction is a no-op for any building without a
+     `recipe` — so a skirmish match never instantiates one and its byte-identical
+     replay is untouched. A building's `recipe` names an entry in data.js RECIPES;
+     `prodRate` is how many batches/sec it runs at full power. `energyGrants` is
+     industrial Power capacity (a per-tick flow, like supply — see engine/industry.js). ---- */
+  reactor: {
+    id: "reactor", name: "Reactor", hp: 400, radius: 16,
+    cost: { ore: 120 }, buildTime: 16, sight: 130,
+    energyGrants: 20,   // the power that runs the factories below; short power throttles them all
+    odysseyOnly: true,
+  },
+  smelter: {
+    id: "smelter", name: "Smelter", hp: 420, radius: 16,
+    cost: { ore: 160 }, buildTime: 18, sight: 140,
+    dropOff: true,               // an industrial building doubles as a resource drop-off
+    recipe: "smelt", prodRate: 2, // ore + power → metals (data.js RECIPES.smelt)
+    odysseyOnly: true,
+  },
+  assembler: {
+    id: "assembler", name: "Assembly Plant", hp: 440, radius: 17,
+    cost: { ore: 180 }, buildTime: 20, sight: 140,
+    dropOff: true,
+    recipe: "alloy", prodRate: 1.5,   // metals + power → alloys (data.js RECIPES.alloy)
+    requires: ["smelter"],            // the chain reads as a chain: you need metals before you can alloy them
+    odysseyOnly: true,
+  },
 };
 
 // Prerequisites are satisfied for `owner` when: every building-type token in
