@@ -26,13 +26,23 @@ test("every TECH node is well-formed: a commodity cost (no separate currency), a
   }
 });
 
-test("researchTech starts a project: pays the commodity cost, one project at a time", () => {
+test("researchTech queues a project and pays its commodity cost on enqueue", () => {
   const { state, dc } = odysseyWithDatacenter();
   const before = state.players.player.resources.crystals;
   assert.equal(researchTech(state, dc.id, "metallurgy"), true);
-  assert.equal(state.players.player.resources.crystals, before - TECHS.metallurgy.cost.crystals, "paid on start");
-  assert.ok(dc.research && dc.research.techId === "metallurgy", "the project is in progress");
-  assert.equal(researchTech(state, dc.id, "reactors"), false, "a Datacenter researches one node at a time");
+  assert.equal(state.players.player.resources.crystals, before - TECHS.metallurgy.cost.crystals, "paid on enqueue");
+  assert.equal(dc.researchQueue[0].techId, "metallurgy", "the project heads the queue");
+  assert.equal(researchTech(state, dc.id, "metallurgy"), false, "the same node can't be queued twice");
+  assert.equal(researchTech(state, dc.id, "reactors"), true, "but a second node queues behind the first");
+  assert.equal(dc.researchQueue.length, 2, "both are lined up — no more one-at-a-time babysitting");
+});
+
+test("a whole prereq chain can be queued at once — a prereq queued ahead counts as met", () => {
+  const { state, dc } = odysseyWithDatacenter();
+  assert.equal(researchTech(state, dc.id, "metallurgy"), true);
+  assert.equal(researchTech(state, dc.id, "electronics"), true, "electronics queues though metallurgy isn't done — it's ahead");
+  assert.equal(researchTech(state, dc.id, "machining"), true, "…and machining behind electronics");
+  assert.deepEqual(dc.researchQueue.map(j => j.techId), ["metallurgy", "electronics", "machining"]);
 });
 
 test("research is prereq-gated and afford-gated", () => {
@@ -46,24 +56,34 @@ test("research is prereq-gated and afford-gated", () => {
   assert.equal(researchTech(poor.state, poor.dc.id, "metallurgy"), false, "can't afford → refused");
 });
 
-test("updateResearch develops the node over time and banks it into player.upgrades", () => {
+test("updateResearch develops the head of the queue and banks it into player.upgrades", () => {
   const { state, dc } = odysseyWithDatacenter();
   researchTech(state, dc.id, "metallurgy");
   const need = TECHS.metallurgy.time * researchTimeScale(state);
   for (let t = 0; t < need + 1; t += 0.5) updateResearch(state, dc, 0.5);
   assert.equal(state.players.player.upgrades.metallurgy, true, "the node completes and lands in upgrades");
-  assert.equal(dc.research, null, "the project clears on completion");
+  assert.equal(dc.researchQueue.length, 0, "the job leaves the queue on completion");
   assert.ok(state.events.some(e => e.type === "researchComplete" && e.techId === "metallurgy"), "an event fires for the HUD/sound");
+});
+
+test("the queue auto-advances: a lined-up chain researches without babysitting", () => {
+  const { state, dc } = odysseyWithDatacenter();
+  researchTech(state, dc.id, "metallurgy");
+  researchTech(state, dc.id, "electronics");
+  for (let i = 0; i < 4000; i++) updateResearch(state, dc, 0.1);   // long enough for both
+  assert.equal(state.players.player.upgrades.metallurgy, true);
+  assert.equal(state.players.player.upgrades.electronics, true, "the second node researched on its own after the first");
+  assert.equal(dc.researchQueue.length, 0);
 });
 
 test("updateResearch is a no-op for a non-Datacenter and for an idle Datacenter", () => {
   const { state, dc } = odysseyWithDatacenter();
   const smelter = makeBuilding("smelter", "player", 700, 500);
-  smelter.research = { techId: "metallurgy", progress: 0 };   // even if mis-set, a non-datacenter ignores it
+  smelter.researchQueue = [{ techId: "metallurgy", progress: 0 }];   // even if mis-set, a non-datacenter ignores it
   state.buildings.set(smelter.id, smelter);
   updateResearch(state, smelter, 100);
   assert.ok(!state.players.player.upgrades.metallurgy, "a Smelter never researches");
-  updateResearch(state, dc, 100);   // dc has no research job
+  updateResearch(state, dc, 100);   // dc has no queue
   assert.ok(!state.players.player.upgrades.metallurgy, "an idle Datacenter accrues nothing");
 });
 

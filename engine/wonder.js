@@ -5,12 +5,15 @@
    endless Odyssey sandbox its first WIN condition — until now it could only be
    lost (checkEndlessLoss).
 
-   Charging is a structural twin of industry.js updateProduction: throttled by the
-   player's spare Power (so a Gate charging while your factories run competes with
-   them for the grid) and clamped to the strategic goods actually in stock (so a
-   starved Gate stalls and waits rather than charging on nothing, and the stockpile
-   never goes negative). Goods are spent as they're fed, so a Gate razed mid-charge
-   costs the whole investment — a fat, defendable objective, not a fire-and-forget.
+   Charging draws Power while it runs (industry.js powerDraw), so it TAXES the grid
+   — your factories throttle down while the Gate charges, a real "charging costs you
+   production" tension that more Reactors / Fusion Containment relieve. The charge
+   itself isn't power-gated, though: it proceeds even if a Reactor is sniped (so a
+   colony Gate can't be trivially stalled by killing one building). It IS clamped to
+   the strategic goods in stock — a starved Gate waits rather than charging on
+   nothing, and the stockpile never goes negative. Goods are spent as they're fed,
+   so a Gate razed mid-charge costs the whole investment — a fat, defendable
+   objective, not a fire-and-forget.
 
    Odyssey-only and inert-by-construction: the Gate is `odysseyOnly`, the skirmish
    AI never builds it, and updateWonder is a no-op for any building without the
@@ -21,7 +24,6 @@
 "use strict";
 
 import { BUILDINGS } from "./entities.js";
-import { powerThrottle } from "./industry.js";
 
 // Advance a charging wonder by dt — a no-op for any building that isn't a completed
 // wonder. `charge` is a 0..1 float on the building (persists for free — serPlanet
@@ -34,9 +36,11 @@ export function updateWonder(state, building, dt) {
   const feed = def.feed || {};
   const res = state.players[building.owner].resources;
 
-  // Charge fraction this tick: the power-throttled target, clamped by the scarcest
-  // fed good in stock (measured in "full charges' worth", so we never overspend).
-  let p = (dt * powerThrottle(state, building.owner)) / def.chargeTime;
+  // Charge fraction this tick — full rate (the Gate's own draw taxes the factories
+  // via powerDraw, but the charge itself isn't power-gated, so a sniped Reactor
+  // can't stall it), clamped by the scarcest fed good in stock (measured in "full
+  // charges' worth", so we never overspend).
+  let p = dt / def.chargeTime;
   for (const com in feed) {
     const perCharge = feed[com] * def.chargeTime;
     if (perCharge > 0) p = Math.min(p, (res[com] || 0) / perCharge);

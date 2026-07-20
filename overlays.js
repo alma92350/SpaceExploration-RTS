@@ -46,8 +46,8 @@ seedChipEl.addEventListener("click", () => {
 let objectivesTimer;
 export function showObjectives(endless = false) {
   objectivesEl.innerHTML = (endless
-    ? `<span class="obj-goal">Odyssey — settle this world and grow your economy.</span>`
-      + `<span class="obj-tip">You have one Command Center — your capital. Gather, then <b>trade at the Command Center</b> for credits and build a <b>Spaceport</b> to relocate to new worlds. No clock, no victory screen. Press <b>?</b> for all controls.</span>`
+    ? `<span class="obj-goal">Odyssey — build an economy and win the galaxy.</span>`
+      + `<span class="obj-tip">Gather ore to raise a production chain (<b>Reactor → Smelter → factories</b>), then a <b>Datacenter</b> to research deeper tech. The neighbour shares this world and turns hostile as it mines out, so keep some <b>defence</b>. Manufacture the Strategic tier and build an <b>Antimatter Gate</b> to win — or a <b>Spaceport</b> to jump between worlds. Press <b>M</b> for the galaxy map, <b>?</b> for controls.</span>`
     : `<span class="obj-goal">Objective — destroy every enemy Command Center.</span>`
       + `<span class="obj-tip">Workers gather ore → build a Barracks → train an army → <b>A</b> then click to attack-move it in. Press <b>?</b> for all controls.</span>`)
     + `<button class="obj-close" title="Dismiss" aria-label="Dismiss">×</button>`;
@@ -87,6 +87,7 @@ const HELP_ROWS = [
   ["Q · E · X", "Select army · Ranger scout mode · stop"],
   ["H", "Hold position — fire in range, don't chase"],
   ["`", "Jump to the next idle worker"],
+  ["M", "Odyssey — open the galaxy map"],
   ["Right-click a node", "(building selected) rally new workers to mine it"],
   ["Minimap", "Left-click to jump · right-click to order"],
   ["Wheel · arrows · edge", "Zoom · pan the camera"],

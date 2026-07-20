@@ -72,39 +72,49 @@ export function techMult(upgrades, field) {
   return m;
 }
 
-// Advance a Datacenter's in-progress research by dt — a no-op for anything that
-// isn't a completed Datacenter with an active job. On completion the node lands in
-// player.upgrades (where prereqsMet/techMult read it) and the job clears. Same
-// dt-driven float pattern as buildProgress — deterministic, engine-pure.
+// Advance a Datacenter's research QUEUE by dt — a no-op for anything that isn't a
+// completed Datacenter with a queued job. Develops the head of the queue; on
+// completion the node lands in player.upgrades (where prereqsMet/techMult read it),
+// the job is dropped, and the next queued node begins. Same dt-driven float pattern
+// as buildProgress — deterministic, engine-pure.
 export function updateResearch(state, building, dt) {
   if (building.constructing || building.type !== "datacenter") return;
-  const job = building.research;
-  if (!job) return;
+  const queue = building.researchQueue;
+  if (!queue || queue.length === 0) return;
+  const job = queue[0];
   const def = TECHS[job.techId];
-  if (!def) { building.research = null; return; }
+  if (!def) { queue.shift(); return; }
   job.progress += dt / (def.time * researchTimeScale(state));
   if (job.progress >= 1) {
     state.players[building.owner].upgrades[job.techId] = true;
-    building.research = null;
+    queue.shift();
     state.events.push({ type: "researchComplete", techId: def.id, x: building.x, y: building.y, owner: building.owner });
   }
 }
 
-// Begin researching a node at a Datacenter: needs an IDLE completed Datacenter,
-// the node not already owned, prereqs met, and affordability — then pay (gathered
-// commodities) and start the timer. Mirrors production.js researchUpgrade, but
-// timed rather than instant, and one project at a time.
+// Queue a node for research at a Datacenter: needs a completed Datacenter, the node
+// not already owned or queued, its prereqs met OR already queued AHEAD of it (so a
+// whole path can be lined up at once and stop being babysat one node at a time),
+// and affordability — then pay (gathered commodities, on enqueue like the
+// production queue) and append it. Mirrors production.js researchUpgrade, but timed
+// and queued rather than instant and single.
 export function researchTech(state, buildingId, techId) {
   const building = state.buildings.get(buildingId);
   if (!building || building.type !== "datacenter" || building.constructing) return false;
-  if (building.research) return false;                 // one project at a time
   const player = state.players[building.owner];
-  if (player.upgrades[techId]) return false;           // already researched
+  if (player.upgrades[techId]) return false;                     // already researched
+  const queue = building.researchQueue || (building.researchQueue = []);
+  if (queue.some(j => j.techId === techId)) return false;        // already queued
   const def = TECHS[techId];
   if (!def) return false;
-  if (!prereqsMet(state, building.owner, def)) return false;
+  // A prereq counts as met if it's researched, a completed building, OR queued
+  // ahead on this same Datacenter (it'll finish first). prereqsMet covers the first
+  // two; filter out the queued-ahead tokens before delegating to it.
+  const queuedAhead = new Set(queue.map(j => j.techId));
+  const remaining = (def.requires || []).filter(r => !queuedAhead.has(r));
+  if (!prereqsMet(state, building.owner, { requires: remaining })) return false;
   if (!canAfford(player.resources, def.cost)) return false;
   payCost(player.resources, def.cost);
-  building.research = { techId, progress: 0 };
+  queue.push({ techId, progress: 0 });
   return true;
 }

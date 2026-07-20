@@ -100,14 +100,15 @@ test("researched tech and an in-progress Datacenter project survive a save/load"
   const s = activeState(g);
   s.players.player.upgrades.metallurgy = true;              // a completed research node
   const dc = makeBuilding("datacenter", "player", 600, 500);
-  dc.research = { techId: "electronics", progress: 0.4 };    // a project mid-flight
+  dc.researchQueue = [{ techId: "electronics", progress: 0.4 }, { techId: "machining", progress: 0 }];   // mid-flight + a queued node
   s.buildings.set(dc.id, dc);
   const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
   const rs = activeState(restored);
   assert.equal(rs.players.player.upgrades.metallurgy, true, "the researched node persists (rides in player.upgrades)");
   const rdc = [...rs.buildings.values()].find(b => b.type === "datacenter");
-  assert.ok(rdc && rdc.research && rdc.research.techId === "electronics", "the in-progress project persists on the building");
-  assert.ok(Math.abs(rdc.research.progress - 0.4) < 1e-9, "…with its progress intact");
+  assert.ok(rdc && rdc.researchQueue && rdc.researchQueue[0].techId === "electronics", "the in-progress project persists on the building");
+  assert.ok(Math.abs(rdc.researchQueue[0].progress - 0.4) < 1e-9, "…with its progress intact");
+  assert.equal(rdc.researchQueue.length, 2, "…and the rest of the queue survives too");
 });
 
 test("the galaxy save is seed+delta (no terrain), and guards its version", () => {

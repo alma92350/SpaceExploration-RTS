@@ -454,14 +454,16 @@ function rebuildSelectionPanel(sel) {
   const datacenter = sel.find(e => e.kind === "building" && e.type === "datacenter" && !e.constructing);
   if (datacenter) {
     const upgrades = state.players.player.upgrades;
-    if (datacenter.research) {
-      const def = TECHS[datacenter.research.techId];
+    const queue = datacenter.researchQueue || [];
+    const queued = new Set(queue.map(j => j.techId));
+    if (queue.length) {
+      const head = TECHS[queue[0].techId];
       const row = document.createElement("div");
       row.className = "sel-row";
-      row.textContent = `Researching ${def.name} — ${Math.round(datacenter.research.progress * 100)}%`;
+      row.textContent = `Researching ${head.name} — ${Math.round(queue[0].progress * 100)}%`
+        + (queue.length > 1 ? ` (+${queue.length - 1} queued)` : "");
       panelEl.appendChild(row);
     }
-    const busy = !!datacenter.research;
     Object.values(TECHS).forEach(t => {
       if (upgrades[t.id]) {
         const row = document.createElement("div");
@@ -470,11 +472,12 @@ function rebuildSelectionPanel(sel) {
         panelEl.appendChild(row);
         return;
       }
-      const prereqLocked = !prereqsMet(state, "player", t);
+      if (queued.has(t.id)) return;   // already lined up — reflected in the header's "+N queued"
+      // Available if every prereq is researched, a completed building, or queued ahead.
+      const ready = (t.requires || []).every(r => queued.has(r) || prereqsMet(state, "player", { requires: [r] }));
       panelEl.appendChild(makeButton(`Research ${t.name} (${costText(t.cost)})`,
         () => researchTech(state, datacenter.id, t.id),
-        { cost: t.cost, tip: t.desc, locked: prereqLocked || busy,
-          lockTip: prereqLocked ? lockTipFor(t) : busy ? "A research project is already in progress" : null }));
+        { cost: t.cost, tip: t.desc, locked: !ready, lockTip: !ready ? lockTipFor(t) : null }));
     });
   }
 

@@ -20,6 +20,7 @@ test("a new neighbour starts cordial and at peace", () => {
 test("scarcity turns the neighbour hostile; abundance keeps the peace", () => {
   const scarce = createGameState({ planetId: "ferros", seed: 3, endless: true });
   scarce.diplomacy = createDiplomacy();
+  scarce.time = 1000;                               // past the opening grace window (war can't start during grace)
   drainNodes(scarce, 0.05);                         // world almost mined out
   for (let i = 0; i < 4000; i++) updateDiplomacy(scarce, 0.1);
   assert.equal(atPeace(scarce), false, "a mined-out world's neighbour turns on you");

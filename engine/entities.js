@@ -189,6 +189,7 @@ export const BUILDINGS = {
     // lost with it. The Leviathan (below) draws on the same strategic goods — feed
     // the Gate or build the fleet.
     wonder: true, feed: { ai: 0.2, antimatter: 0.3, plasmatorp: 0.1 }, chargeTime: 150,
+    powerDraw: 8,   // a charging Gate loads the grid — it competes with your factories for Reactor Power
   },
 };
 

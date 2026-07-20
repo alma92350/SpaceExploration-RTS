@@ -27,6 +27,7 @@ import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGame
 import { renderMapSelect, setup } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
 import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy } from "./engine/galaxy.js";
+import { TECHS } from "./engine/techtree.js";
 import { planetName } from "./data.js";
 import * as sound from "./sound.js";
 
@@ -44,6 +45,9 @@ const DIFFICULTY = {
 // Runtime bookkeeping — module-local because only the loop / frame-event pump
 // touch them (state + input live on the shared session instead).
 let loop, announced, lastHud, lastUnderAttackAt, underAttackTimer;
+// Highest Antimatter Gate charge milestone (25/50/75/100%) already announced, so the
+// wonderCharging event (which fires every tick) toasts once per threshold, not per frame.
+let gateMilestone = 0;
 // Where the last under-attack alert fired — clicking the banner jumps there, so a
 // raid on the far side of a big map is one click away instead of a frantic scroll.
 let lastAttackAt = null;
@@ -189,6 +193,7 @@ export function bootState(newState, { intro }) {
   resetFacing();
   announced = false;
   lastHud = 0;
+  gateMilestone = 0;
   resetPanelSignature();
   lastUnderAttackAt = -Infinity;
   game.supplyBlockedUntil = 0;
@@ -287,6 +292,22 @@ function processFrameEvents() {
           game.supplyBlockedUntil = performance.now() + 800;
         }
         break;
+      // Odyssey research finishing was previously silent — announce the unlock so
+      // the player connects the wait to the reward (and notices new build options).
+      case "researchComplete":
+        sound.playBuildingComplete(pan);
+        showGalaxyToast(`Researched ${TECHS[ev.techId]?.name || ev.techId}`, "good");
+        break;
+      // The Antimatter Gate charge (fires every tick) — toast once per 25% so the
+      // multi-minute climb to the galaxy win is visible without selecting the Gate.
+      case "wonderCharging": {
+        const pct = Math.floor((ev.charge || 0) * 4) * 25;
+        if (pct >= 25 && pct > gateMilestone) {
+          gateMilestone = pct;
+          showGalaxyToast(`Antimatter Gate charging — ${pct}%`, pct >= 75 ? "bad" : "warn");
+        }
+        break;
+      }
     }
   }
   state.events.length = 0;

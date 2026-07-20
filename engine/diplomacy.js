@@ -22,8 +22,17 @@
 export const PEACE_THRESHOLD = -0.15;
 
 const START_STANCE = 0.35;        // a new neighbour starts Cordial
-const DRIFT_RATE = 0.06;          // how fast stance chases its scarcity target (per second)
+const DRIFT_RATE = 0.05;          // how fast stance chases its scarcity target (per second)
 const GRIEVANCE_PER_KILL = 0.04;  // stance lost per enemy ship you destroy on this world
+
+// Odyssey is an economy-builder: the win path is ~25–35 minutes, so the neighbour
+// must give you room to establish before it can turn. A GRACE window floors the
+// scarcity target at cordial for the opening (empirically, two economies sharing a
+// world mine it to the old ~23%-depletion war threshold in ~4 minutes — far too
+// soon), and the target slope below is much gentler, so war arrives in the mid-game
+// and escalates toward the endgame instead of ending the run before it starts.
+const GRACE_TIME = 420;           // 7 minutes of guaranteed cordiality to establish an economy + defence
+const GRACE_FLOOR = 0.2;          // the stance target can't fall below this during grace
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -53,7 +62,12 @@ export function updateDiplomacy(state, dt) {
   }
   dip.lastAiUnits = ai;
 
-  const target = 0.45 - dip.depletion * 2.6;
+  // Scarcity target: full deposits → +0.6 (cordial); war (below PEACE_THRESHOLD)
+  // only once the world is ~47% mined out, and full hostility only near total
+  // depletion — a gentle mid-to-late-game slide, not a minute-4 cliff. Floored to
+  // cordial during the opening grace window regardless of how fast you strip-mine.
+  let target = 0.6 - dip.depletion * 1.6;
+  if (state.time < GRACE_TIME) target = Math.max(target, GRACE_FLOOR);
   dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * DRIFT_RATE), -1, 1);
 }
 

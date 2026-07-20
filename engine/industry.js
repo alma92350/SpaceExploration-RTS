@@ -67,6 +67,10 @@ export function powerDraw(state, owner) {
     const def = BUILDINGS[b.type];
     const r = def.recipe ? RECIPE_BY_ID[def.recipe] : null;
     if (r) draw += (r.in.energy || 0) * (def.prodRate || 1);
+    // A wonder still charging loads the grid too, so the Antimatter Gate competes
+    // with the factories for Reactor Power (engine/wonder.js) — making the finale a
+    // real "feed the factories vs charge the Gate" call, and Fusion Containment worth it.
+    else if (def.wonder && (b.charge || 0) < 1) draw += def.powerDraw || 0;
   }
   return draw;
 }
