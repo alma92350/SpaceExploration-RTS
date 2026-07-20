@@ -66,7 +66,7 @@ export function powerDraw(state, owner) {
     if (b.owner !== owner || b.constructing) continue;
     const def = BUILDINGS[b.type];
     const r = def.recipe ? RECIPE_BY_ID[def.recipe] : null;
-    if (r) draw += (r.in.energy || 0) * (def.prodRate || 1);
+    if (r && !b.paused) draw += (r.in.energy || 0) * (def.prodRate || 1);   // a paused factory frees its reserved Power
     // A wonder still charging loads the grid too, so the Antimatter Gate competes
     // with the factories for Reactor Power (engine/wonder.js) — making the finale a
     // real "feed the factories vs charge the Gate" call, and Fusion Containment worth it.
@@ -95,6 +95,7 @@ export function updateProduction(state, building, dt) {
   if (building.constructing) return;
   const recipe = recipeOf(building);
   if (!recipe) return;
+  if (building.paused) return;   // player-paused to conserve its inputs — banks nothing, draws nothing (see hud.js)
   const throttle = powerThrottle(state, building.owner);
   if (throttle <= 0) return;
   const player = state.players[building.owner];

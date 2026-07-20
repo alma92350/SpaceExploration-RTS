@@ -260,6 +260,16 @@ html, body {
 .sel-note.good { color: var(--good, #4ade80); }
 .sel-note.warn { color: var(--warn); }
 .sel-note.bad  { color: var(--bad); }
+.sel-note.paused { color: var(--muted); }
+
+/* Aggregated type row as a button (hud.js) — click "3× Bastion" to sub-select that
+   type. Strips the default button chrome, keeps the .sel-row look, adds a hover cue. */
+.type-row {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); font-family: inherit; cursor: pointer;
+}
+.type-row:hover { color: var(--accent); background: rgba(255, 255, 255, 0.03); }
 
 /* Section header in the Odyssey build menu (Economy / Military / …) — a quiet
    divider so the ~18-building list is scannable instead of a flat wall. */

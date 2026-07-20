@@ -115,9 +115,14 @@ export function attachInput(canvas, state, onChange) {
     } else {
       const x1 = Math.min(box.x1, box.x2), x2 = Math.max(box.x1, box.x2);
       const y1 = Math.min(box.y1, box.y2), y2 = Math.max(box.y1, box.y2);
-      picks = [...state.units.values()]
-        .filter(u => u.owner === "player" && u.x >= x1 && u.x <= x2 && u.y >= y1 && u.y <= y2)
-        .map(u => u.id);
+      let inBox = [...state.units.values()]
+        .filter(u => u.owner === "player" && u.x >= x1 && u.x <= x2 && u.y >= y1 && u.y <= y2);
+      // Prioritise the army: a box that catches any fighter drops the workers, so
+      // sweeping across your base to grab your army doesn't drag the miners along
+      // (standard RTS). A box with no fighters still selects the workers as before.
+      if (inBox.some(u => UNITS[u.type].role === "combat"))
+        inBox = inBox.filter(u => u.type !== "worker");
+      picks = inBox.map(u => u.id);
     }
     if (additive) {
       if (picks.length) state.selection = [...new Set([...state.selection, ...picks])];
@@ -460,6 +465,13 @@ export function attachInput(canvas, state, onChange) {
     getCamera: () => camera,
     focusIdleWorker,
     selectAllArmy: () => { selectAllArmy(); onChange(); },
+    // Narrow the current selection to one unit type — the HUD's aggregated type rows
+    // are clickable (hud.js), so clicking "12× Skiff" keeps only the Skiffs.
+    selectType(type) {
+      const ids = state.selection
+        .map(id => state.units.get(id)).filter(u => u && u.type === type).map(u => u.id);
+      if (ids.length) { state.selection = ids; sound.playSelect(); onChange(); }
+    },
     stopSelected: () => { stopSelected(); onChange(); },
     scoutSelected: () => { scoutSelected(); onChange(); },
     holdSelected: () => { holdSelected(); onChange(); },

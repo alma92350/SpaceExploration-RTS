@@ -392,6 +392,7 @@ function renderMarket(state) {
 // applies, in priority order: no Power at all, then a missing input, then a Power
 // shortfall throttling everything, else running (with the live output rate).
 function factoryStatus(state, b, recipe) {
+  if (b.paused) return { cls: "paused", text: "Paused — banking its inputs" };
   const throttle = powerThrottle(state, b.owner);
   if (throttle <= 0) return { cls: "bad", text: "Stalled — no Power" };
 
@@ -449,13 +450,27 @@ function rebuildSelectionPanel(sel) {
   }
 
   if (sel.length > 1 && sel.every(e => e.kind === "unit")) {
-    for (const [type, entry] of countByType(sel)) {
+    const counts = countByType(sel);
+    const multiType = counts.size > 1;   // only worth sub-selecting when the mix has 2+ types
+    for (const [type, entry] of counts) {
       const def = UNITS[type];
-      const row = document.createElement("div");
-      row.className = "sel-row";
       const pct = Math.round((entry.hp / entry.maxHp) * 100);
-      row.textContent = `${entry.count}× ${def.name} — ${pct}% hp`;
-      panelEl.appendChild(row);
+      const label = `${entry.count}× ${def.name} — ${pct}% hp`;
+      // With several types selected, each row is a button that narrows the selection
+      // to just that type (input.selectType) — click "3× Bastion" to keep only them.
+      if (multiType) {
+        const btn = document.createElement("button");
+        btn.className = "sel-row type-row";
+        btn.textContent = label;
+        btn.title = `Select only your ${def.name}s`;
+        btn.addEventListener("click", () => input.selectType(type));
+        panelEl.appendChild(btn);
+      } else {
+        const row = document.createElement("div");
+        row.className = "sel-row";
+        row.textContent = label;
+        panelEl.appendChild(row);
+      }
     }
   } else {
     sel.forEach(e => {
@@ -606,6 +621,13 @@ function rebuildSelectionPanel(sel) {
     stRow.className = "sel-note " + st.cls;
     stRow.textContent = st.text;
     panelEl.appendChild(stRow);
+
+    // Pause toggle: stop this factory drawing down its inputs (and Power) — the way to
+    // keep a hungry Smelter from eating all your ore, or to free the grid for the Gate.
+    panelEl.appendChild(makeButton(factory.paused ? "▶ Resume production" : "⏸ Pause production",
+      () => { factory.paused = !factory.paused; },
+      { tip: factory.paused ? "Resume converting inputs into goods"
+                            : "Stop consuming inputs — banks and draws nothing until resumed" }));
   }
 
   // Reactor (Odyssey): grants Power to the grid rather than running a recipe, so

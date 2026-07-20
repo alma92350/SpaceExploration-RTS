@@ -73,6 +73,19 @@ test("an unpowered factory produces nothing", () => {
   assert.equal(s.players.player.resources.ore, 1000, "…and no inputs consumed");
 });
 
+test("a paused factory consumes no inputs, banks no output, and frees its Power", () => {
+  const s = stub([reactor(), smelter({ paused: true })], { ore: 1000 });
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  assert.equal(powerDraw(s, "player"), 0, "a paused factory reserves no Power (frees the grid for others)");
+  updateProduction(s, sm, 0.1);
+  assert.equal(s.players.player.resources.ore, 1000, "paused → no ore consumed");
+  assert.equal(s.players.player.resources.metals || 0, 0, "paused → no metals banked");
+  sm.paused = false;                       // resume
+  assert.equal(powerDraw(s, "player"), 4, "resumed → it reserves its draw again");
+  updateProduction(s, sm, 0.1);
+  assert.ok(s.players.player.resources.metals > 0, "resumed → it refines again");
+});
+
 test("updateProduction is a no-op for a building with no recipe (e.g. a Command Center)", () => {
   const s = stub([{ type: "command" }], { ore: 500 });
   const cc = [...s.buildings.values()][0];
