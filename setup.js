@@ -95,9 +95,9 @@ const SCENARIO_COPY = {
   odyssey: {
     title: "Odyssey — open world",
     diffHint: "Difficulty sets how fast and fiercely your neighbours expand — from a calm frontier to a hostile sector.",
-    brief: "The open-world campaign. Settle a random world with a single Command Center — your one, relocatable "
-      + "capital — and build your economy beside your neighbours, in peace or war. No clock and no victory screen: "
-      + "you play on for as long as your capital stands.",
+    brief: "The open-world campaign. Settle a random world with a single Command Center — your relocatable "
+      + "capital — and build your economy beside your neighbours, in peace or war. Expand with more Command Centers, "
+      + "but only your capital jumps between worlds. No clock and no victory screen: you play on while a capital stands.",
   },
 };
 

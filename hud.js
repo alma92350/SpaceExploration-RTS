@@ -687,20 +687,21 @@ function rebuildSelectionPanel(sel) {
         { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null });
     };
     if (state.endless) {
-      // Odyssey gives you one relocatable Command Center (no second CC), so a Worker
-      // instead builds the Spaceport (jump pad) plus the whole industry chain. That's
-      // ~18 buildings — a flat list is a wall — so group them by purpose. The entry
-      // tier of each group is always shown; deeper buildings REVEAL as their prereqs
-      // are met (a greyed button per locked tier would bury the menu), mirroring how
-      // the Barracks hides units you can't yet field.
+      // Odyssey adds the Spaceport (jump pad) and the whole industry chain, plus
+      // expansion Command Centers — a second base at a fresh ore cluster, same as a
+      // skirmish. That's ~19 buildings — a flat list is a wall — so group them by
+      // purpose. The entry tier of each group is always shown; deeper buildings REVEAL
+      // as their prereqs are met (a greyed button per locked tier would bury the menu),
+      // mirroring how the Barracks hides units you can't yet field. On a jump only your
+      // primary Command Center relocates; any extras stay behind as colony infrastructure.
       const GROUPS = [
-        ["Economy", ["reactor", "smelter", "datacenter", "assembler", "chipfab",
+        ["Economy", ["command", "reactor", "smelter", "datacenter", "assembler", "chipfab",
                      "machineworks", "antimatterforge", "aifoundry", "torpedoworks"]],
         ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
         ["Endgame", ["antimatter_gate"]],
         ["Travel", ["spaceport"]],
       ];
-      const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
+      const alwaysShow = new Set(["command", "barracks", "foundry", "arsenal", "refinery", "turret",
                                   "habitat", "reactor", "smelter", "datacenter", "spaceport"]);
       for (const [title, types] of GROUPS) {
         const shown = types.filter(t => alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t]));

@@ -45,6 +45,35 @@ test("endless mode ends in defeat only when the player's Command Center is lost"
   assert.equal(s.winner, "ai");
 });
 
+test("a second Command Center is an expansion — losing one doesn't end the Odyssey", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  const first = commandCenters(s, "player")[0];
+  const second = makeBuilding("command", "player", first.x + 300, first.y + 200);   // an expansion base
+  s.buildings.set(second.id, second);
+  assert.equal(commandCenters(s, "player").length, 2, "the player can hold multiple CCs in Odyssey");
+  s.buildings.delete(first.id);                     // the original capital falls…
+  checkEndlessLoss(s);
+  assert.equal(s.over, false, "…but the expansion CC keeps the Odyssey alive");
+  s.buildings.delete(second.id);                    // now the last one falls
+  checkEndlessLoss(s);
+  assert.equal(s.over, true, "only the LAST Command Center ends the run");
+});
+
+test("on a jump only the primary Command Center relocates; an expansion CC stays as colony", () => {
+  const g = createGalaxy({ seed: 7 });
+  const from = activeState(g);
+  const primary = commandCenters(from, "player")[0];
+  const expansion = makeBuilding("command", "player", primary.x + 300, primary.y + 200);
+  from.buildings.set(expansion.id, expansion);      // build a second base before jumping
+  addSpaceport(from);
+  g.credits = 2000;
+  const destId = g.worlds.find(w => w !== g.activeId);
+  assert.ok(jumpCapital(g, destId), "the jump launched");
+  const dest = activeState(g);
+  assert.equal(commandCenters(dest, "player").length, 1, "one CC (the capital) arrived at the destination");
+  assert.equal(commandCenters(from, "player").length, 1, "the expansion CC stayed behind on the colony");
+});
+
 test("an endless state has no time-limit resolution", () => {
   const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
   s.time = 100000;   // far beyond any skirmish clock
