@@ -202,3 +202,8 @@ export const PLANETS = [
 // whatever the previous seed/playthrough left behind, so re-applying it (a mid-session
 // New Game reuses these same 20 objects, unlike the frontier ring) can never compound drift.
 export const CORE_BASELINE = PLANETS.map(p => ({ id: p.id, industry: p.industry, tech: p.tech, enforce: p.enforce, deposits: { ...p.deposits } }));
+
+// A world's display name from its id, falling back to the id itself for anything
+// off the roster. One definition, reused by the HUD, the starmap and the galaxy
+// notifications (all of which previously hand-wrote this lookup).
+export const planetName = id => PLANETS.find(p => p.id === id)?.name || id;

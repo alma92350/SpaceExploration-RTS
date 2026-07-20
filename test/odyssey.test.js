@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, ODYSSEY_WORLDS } from "../engine/galaxy.js";
+import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS } from "../engine/galaxy.js";
 import { checkEndlessLoss } from "../engine/victory.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
@@ -62,6 +62,42 @@ test("an Odyssey galaxy runs without ending while both capitals stand, and is de
   const a = fingerprint();
   assert.match(a, /\|false\|/, "the sandbox is still running after 20s (no premature end)");
   assert.equal(a, fingerprint(), "same galaxy seed replays identically");
+});
+
+/* ---------- background-world scheduling (stepGalaxy) ---------- */
+
+// Seed a galaxy with `n` background worlds added alongside the active seat.
+function galaxyWithBackground(seed, n) {
+  const g = createGalaxy({ seed });
+  const others = g.worlds.filter(w => w !== g.activeId).slice(0, n);
+  for (const w of others) addPlanet(g, w, { unsettled: true });
+  return { g, bg: others.map(w => g.planets.get(w)) };
+}
+
+test("stepGalaxy ticks the active world every frame and colonies on a coarser step", () => {
+  const { g, bg } = galaxyWithBackground(5, 2);
+  const active = activeState(g);
+  for (let i = 0; i < BG_STEP; i++) stepGalaxy(g, 0.1);
+  assert.equal(active.tick, BG_STEP, "the active world ticks every galaxy tick");
+  for (const s of bg) assert.equal(s.tick, 1, "a background world ticks once per BG_STEP window");
+  // Sim time is conserved despite the coarser cadence.
+  for (const s of bg) assert.ok(Math.abs(s.time - active.time) < 1e-9, "same sim time elapsed");
+});
+
+test("every background world ticks exactly once per BG_STEP window", () => {
+  const { g, bg } = galaxyWithBackground(6, 5);
+  for (let i = 0; i < BG_STEP; i++) stepGalaxy(g, 0.1);
+  for (const s of bg) assert.equal(s.tick, 1, "each colony advanced exactly one coarse step");
+});
+
+test("stepGalaxy scheduling is deterministic for a given seed", () => {
+  const run = () => {
+    const { g, bg } = galaxyWithBackground(424242, 3);
+    for (let i = 0; i < 40; i++) stepGalaxy(g, 0.1);
+    const a = activeState(g);
+    return `${a.tick}|${a.units.size}|${bg.map(s => `${s.tick}:${s.units.size}`).join(",")}|${Math.round(g.credits)}`;
+  };
+  assert.equal(run(), run(), "same seed + same stepGalaxy sequence replays identically");
 });
 
 test("addPlanet builds a distinct, deterministic world into the galaxy", () => {

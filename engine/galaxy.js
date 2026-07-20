@@ -1,20 +1,21 @@
 /* ============================================================
    The Odyssey galaxy — the open-world meta-layer over the per-planet sim. A
    galaxy holds one engine game state per planet (each a normal createGameState);
-   one is "active" (rendered + controlled by the player), and — from Phase 2 on —
-   the rest keep evolving in the background. The player has a single, relocatable
-   Command Center: their capital seat travels with them via a Spaceport, and a
-   world they leave stays theirs, tended on autopilot.
+   one is "active" (rendered + controlled by the player) and ticks at full rate,
+   while the worlds you've left keep evolving in the background on a coarser
+   schedule (stepGalaxy). The player has a single, relocatable Command Center:
+   their capital seat travels with them via a Spaceport (jumpCapital), and a world
+   they leave stays a colony that keeps producing and sends home passive income.
 
-   Phase 1 stands up the structure with a single planet: the player settles a
-   random world, develops endlessly (no victory, no clock — see the `endless`
-   flag on each state), and can only ever hold one Command Center. Credits and
-   the multi-planet map / jump machinery live here so the later phases slot in
-   without touching the per-planet engine.
+   This module owns everything meta: the world roster, universal credits, the
+   active planet, the per-frame advance (stepGalaxy), background-colony upkeep +
+   notifications (sweepColonies), a status snapshot for the starmap (galaxyStatus),
+   and the jump. The per-planet engine is untouched — a planet is just a normal
+   createGameState flagged `endless` (no victory, no clock — see engine/victory.js).
 
-   Determinism: the start world and every planet's map are derived from the
-   galaxy seed, so the same seed replays the same galaxy — same guarantee as the
-   skirmish sim.
+   Determinism: the start world and every planet's map are derived from the galaxy
+   seed, and the background schedule is keyed to the integer `galaxy.tick`, so the
+   same seed replays the same galaxy — the same guarantee as the skirmish sim.
    ============================================================ */
 
 "use strict";
@@ -22,6 +23,7 @@
 import { createGameState } from "./state.js";
 import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
+import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
 import { PLANET_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
@@ -52,10 +54,12 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     seed,
     credits: 500,               // universal credits — galaxy-wide, transportable; fund jumps + trade
     activeId: startId,          // the world the player is currently on
-    homeId: startId,            // where the Odyssey began
     worlds: ODYSSEY_WORLDS.slice(),
     planets: new Map(),         // planetId -> engine game state
     settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro },
+    tick: 0,                    // integer galaxy-tick counter (drives the background-world schedule)
+    entitySeq: 0,               // fresh-id counter for entities relocated across worlds by a jump
+    colonyNotes: new Map(),     // per-planet UI notification bookkeeping (galaxy-side, not sim state)
   };
   addPlanet(galaxy, startId);
   return galaxy;
@@ -113,21 +117,24 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
 // events are drained — a colony isn't rendered or heard, so nothing else consumes
 // them (left alone they would grow without bound). Reports a colony coming under
 // attack (a player asset destroyed there) and a colony being lost (its last
-// player building razed), each at most once per state transition via flags on
-// the planet.
+// player building razed), each at most once per state transition. The "already
+// notified" flags live on the galaxy (colonyNotes), not on the deterministic
+// engine state — they're transient UI bookkeeping, re-derived harmlessly on load.
 export function sweepColonies(galaxy, dt = 0) {
   const out = [];
   for (const [id, state] of galaxy.planets) {
     if (!state.background) continue;
     const buildings = playerBuildingCount(state);
     galaxy.credits += buildings * COLONY_INCOME_PER_BUILDING * dt;   // passive colony income
-    if (buildings > 0) state._hadColony = true;
-    if (state._hadColony && buildings === 0 && !state._colonyLost) {
-      state._colonyLost = true;
+    const rec = galaxy.colonyNotes.get(id) || { hadColony: false, colonyLost: false };
+    if (buildings > 0) rec.hadColony = true;
+    if (rec.hadColony && buildings === 0 && !rec.colonyLost) {
+      rec.colonyLost = true;
       out.push({ type: "lost", planetId: id });
-    } else if (!state._colonyLost && state.events.some(e => e.type === "entityKilled" && e.owner === "player")) {
+    } else if (!rec.colonyLost && state.events.some(e => e.type === "entityKilled" && e.owner === "player")) {
       out.push({ type: "attacked", planetId: id });
     }
+    galaxy.colonyNotes.set(id, rec);
     state.events.length = 0;   // drain: a background colony's events have no other consumer
   }
   return out;
@@ -136,6 +143,29 @@ export function sweepColonies(galaxy, dt = 0) {
 // The game state the player is currently on — what boot.js renders and drives.
 export function activeState(galaxy) {
   return galaxy.planets.get(galaxy.activeId);
+}
+
+// Background worlds tick once every BG_STEP galaxy-ticks, each time by BG_STEP× the
+// step, so a colony advances the same amount of sim time as the active world over
+// any span — just in coarser, cheaper increments.
+export const BG_STEP = 4;
+
+// Advance the whole galaxy by one frame. The active world ticks every frame at
+// full cadence (it's rendered and controlled). Every background colony ticks on a
+// coarser fixed step, spread round-robin across BG_STEP frames by its fixed roster
+// index, so per-frame background work is ~ceil(N/BG_STEP) worlds instead of N.
+// Deterministic by construction: the schedule is pure integer arithmetic on the
+// galaxy tick and the world's roster position (no wall-clock, no Map-order
+// dependence), and each background tick uses the exact constant dtBg so total sim
+// time is conserved regardless of cadence.
+export function stepGalaxy(galaxy, dt) {
+  const t = (galaxy.tick = (galaxy.tick | 0) + 1);
+  tick(activeState(galaxy), dt);                     // active world: full rate
+  const dtBg = dt * BG_STEP;
+  for (const [id, state] of galaxy.planets) {
+    if (id === galaxy.activeId || !state.background) continue;
+    if (t % BG_STEP === galaxy.worlds.indexOf(id) % BG_STEP) tick(state, dtBg);
+  }
 }
 
 // A pure snapshot of the galaxy for the starmap: per-world status (your active
@@ -171,6 +201,16 @@ export function canJump(state) {
   return false;
 }
 
+// The player units staged near a Spaceport — the expedition that rides along on a
+// jump. One definition, so the HUD's preview count and the jump's actual move can
+// never disagree about what leaves.
+export function stagedRiders(state, spaceport) {
+  const out = [];
+  for (const u of state.units.values())
+    if (u.owner === "player" && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS) out.push(u);
+  return out;
+}
+
 // Relocate the capital to `destId`: the Command Center plus every player unit
 // staged near the Spaceport move to the destination's landing zone; the origin
 // keeps its other buildings and units and becomes a background colony that goes
@@ -188,8 +228,7 @@ export function jumpCapital(galaxy, destId) {
   const nextId = () => "g" + (galaxy.entitySeq = (galaxy.entitySeq || 0) + 1);   // fresh ids: no cross-state collision
 
   const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
-  const riders = [...from.units.values()].filter(u => u.owner === "player"
-    && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS);
+  const riders = stagedRiders(from, spaceport);
 
   if (cc) {
     from.buildings.delete(cc.id);

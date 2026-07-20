@@ -13,7 +13,7 @@ import { PLANETS } from "./data.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
-import { hasSave, loadGame } from "./saveload.js";
+import { hasSave, loadGame, hasOdysseySave, loadOdyssey } from "./saveload.js";
 import { startGame, startScenario, startRaider, startBounty, startOdyssey } from "./boot.js";
 import * as sound from "./sound.js";
 
@@ -243,8 +243,16 @@ export function renderMapSelect() {
 
   mapSelectEl.appendChild(renderSetupPanel(setup.mode));
 
-  // Odyssey lands on a random world — one Begin button instead of the card grid.
+  // Odyssey lands on a random world — one Begin button instead of the card grid,
+  // plus a Resume button when a saved galaxy exists.
   if (odyssey) {
+    if (hasOdysseySave()) {
+      const resume = document.createElement("button");
+      resume.className = "btn resume-btn";
+      resume.textContent = "▶ Resume Odyssey";
+      resume.addEventListener("click", () => { sound.unlockAudio(); mapSelectEl.classList.add("hidden"); loadOdyssey(); });
+      mapSelectEl.appendChild(resume);
+    }
     const begin = document.createElement("button");
     begin.className = "btn resume-btn";
     begin.textContent = "⏵ Begin Odyssey — land on a random world";

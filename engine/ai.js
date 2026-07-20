@@ -39,7 +39,7 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, isDropOff } from "./
 import { supplyUsed, supplyCap } from "./supply.js";
 import { isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
-import { atPeace } from "./diplomacy.js";
+import { hostility } from "./diplomacy.js";
 
 const THINK_INTERVAL = 1.5;
 const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
@@ -60,6 +60,8 @@ const CLUSTER_RADIUS = 160;       // nodes within this of an anchor sum into its
 const EXPANSION_STANDOFF = 70;    // CC-to-anchor-node placement distance (26 CC radius + 16 node radius + clearance)
 const BARRACKS_BUFFER = 150;      // bank kept when adding a barracks so the mix doesn't starve
 const SATURATION_STEER = 250;     // distance-equivalent penalty per worker a node is over the soft cap
+const PROBE_MIN = 3;              // Odyssey: smallest wave a wary neighbour sends — it harasses, never doomstacks
+const WAVE_CADENCE_FRAC = 0.3;    // Odyssey: probe spacing as a fraction of attackTimeout, tightening with hostility
 const FORWARD_DROP_MIN = 360;     // ore worked this far from every drop-off is worth a forward Refinery drop-off
 const MAX_AI_REFINERIES = 3;      // hard cap so forward drop-offs never run away with the AI's ore
 
@@ -384,36 +386,58 @@ export function runAI(state, dt) {
 
     const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
     const timedOut = state.time >= nextAttackAt;
-    // Odyssey diplomacy: while the neighbour is at peace it holds its fire — it
-    // keeps building economy and army (and still defends above), but launches no
-    // offensive waves until scarcity turns its stance hostile (diplomacy.js). A
-    // skirmish has no diplomacy, so this is a no-op there and the AI attacks as
-    // ever (preserving the resolves-to-a-winner guarantee).
-    const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || timedOut)
-      && !atPeace(state);
-    if (readyToAttack && cc) {
-      // A massed (size-triggered) attack keeps a home guard back; a timeout
-      // commit is desperation and throws everything, so the game always resolves
-      // even for a turtle that never quite reaches its attack size.
-      const garrison = timedOut ? 0 : (archetype.garrison || 0);
-      const strike = withoutHomeGuard(homeArmy, cc, garrison);
-      if (strike.length > 0) {
-        // ECONOMY RAID (Tactical): every RAID_EVERY-th wave, if it can see the
-        // player's worker line, this one goes for the economy instead of grinding
-        // the defended main base — sniping production the way a human harasses.
-        // The other waves still assault the base, so the CC still falls and the
-        // game resolves; a desperation (timeout) commit always goes for the base.
-        state.aiWaveCount = (state.aiWaveCount || 0) + 1;
-        const raid = state.aiMicro && !timedOut && state.aiWaveCount % RAID_EVERY === 0 && raidTarget(state);
-        const target = raid || chooseAttackTarget(state, cc);
-        issueAttackMove(strike, target.x, target.y);
-        state.aiNextAttackAt = state.time + archetype.attackTimeout;
-        // Reset the retreat baseline to the whole committed force (survivors of a
-        // prior wave plus this reinforcement) so a wave that's being topped up
-        // doesn't read as "ground down".
-        state.aiAttackForce = attackers.length + strike.length;
-        state.aiAttackDesperate = timedOut;
+
+    // Build this cycle's strike force. Two regimes, split on whether this world has
+    // an Odyssey neighbour (state.diplomacy):
+    //  • SKIRMISH (no diplomacy) — byte-for-byte as before: muster armyAttackSize,
+    //    or throw everything on the desperation timeout (the resolves-to-a-winner
+    //    path). A home guard is kept unless it's a timeout commit.
+    //  • ODYSSEY — a hostility ramp (diplomacy.js). At peace (h===0) it holds fire;
+    //    once wary it probes on a cadence with a small slice; as the stance sinks
+    //    toward fully hostile the muster, the committed fraction and the cadence all
+    //    climb, so a banked army bleeds out in escalating waves — never one doomstack.
+    let strike = [], desperate = false;
+    if (cc) {
+      if (!state.diplomacy) {
+        const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || timedOut);
+        if (readyToAttack) {
+          strike = withoutHomeGuard(homeArmy, cc, timedOut ? 0 : (archetype.garrison || 0));
+          desperate = timedOut;
+        }
+      } else {
+        const h = hostility(state);
+        const muster = Math.max(PROBE_MIN, Math.round(archetype.armyAttackSize * h));
+        const waveReady = state.time >= (state.aiNextWaveAt ?? 0);
+        if (h > 0 && waveReady && homeArmy.length >= muster) {
+          const available = withoutHomeGuard(homeArmy, cc, archetype.garrison || 0);   // always hold the home guard
+          const commit = Math.min(available.length, Math.max(PROBE_MIN, Math.round(available.length * h)));
+          strike = available.slice(available.length - commit);   // send the forward-most; the rest reinforce
+        }
       }
+    }
+
+    if (strike.length > 0) {
+      // ECONOMY RAID (Tactical): every RAID_EVERY-th wave, if it can see the
+      // player's worker line, this one goes for the economy instead of grinding the
+      // defended main base — sniping production the way a human harasses. A
+      // desperation (timeout) commit always goes for the base so the game resolves.
+      state.aiWaveCount = (state.aiWaveCount || 0) + 1;
+      const raid = state.aiMicro && !desperate && state.aiWaveCount % RAID_EVERY === 0 && raidTarget(state);
+      const target = raid || chooseAttackTarget(state, cc);
+      issueAttackMove(strike, target.x, target.y);
+      // Cadence: a skirmish keeps the single attackTimeout clock (unchanged);
+      // Odyssey paces the NEXT probe by hostility on its own timer — sparse when
+      // merely wary, tight when hostile — so the skirmish clock is never touched.
+      if (state.diplomacy) {
+        state.aiNextWaveAt = state.time + archetype.attackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state));
+      } else {
+        state.aiNextAttackAt = state.time + archetype.attackTimeout;
+      }
+      // Reset the retreat baseline to the whole committed force (survivors of a
+      // prior wave plus this reinforcement) so a topped-up wave doesn't read as
+      // "ground down".
+      state.aiAttackForce = attackers.length + strike.length;
+      state.aiAttackDesperate = desperate;
     }
   }
 

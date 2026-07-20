@@ -57,9 +57,23 @@ export function updateDiplomacy(state, dt) {
   dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * DRIFT_RATE), -1, 1);
 }
 
-// True while the neighbour is holding its fire — read by the AI's offense gate.
+// True while the neighbour is holding its fire — read by tests / the HUD.
 export function atPeace(state) {
   return !!state.diplomacy && state.diplomacy.stance > PEACE_THRESHOLD;
+}
+
+// Offensive intensity, 0..1, read by the AI's offense ramp (engine/ai.js): 0 while
+// the neighbour is at peace, climbing linearly to 1 as the stance falls from the
+// peace line to fully hostile (-1). Scales the AI's muster threshold, committed
+// fraction, and wave cadence, so a peaceful world doesn't unleash a banked
+// doomstack the instant it turns — it probes, then escalates. A skirmish has no
+// state.diplomacy, so this returns 1 (full intensity) and the offense block
+// collapses to its original size/timeout logic, leaving skirmish play unchanged.
+export function hostility(state) {
+  if (!state.diplomacy) return 1;
+  const s = state.diplomacy.stance;
+  if (s > PEACE_THRESHOLD) return 0;                                   // at peace: holds fire
+  return clamp((PEACE_THRESHOLD - s) / (PEACE_THRESHOLD + 1), 0, 1);   // -0.15→0, -0.5→~0.41, -1→1
 }
 
 // A human-readable band for the HUD.

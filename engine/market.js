@@ -17,11 +17,15 @@
 
 "use strict";
 
-// The RTS deposit commodities you can actually hold and trade. Base prices match
-// the commodity table (data.js COM.base), inlined so the engine stays decoupled
-// from the UI-layer data.
-const BASE = { ore: 9, crystals: 30, radioactives: 36, gas: 18, ice: 8, relics: 52 };
-const TRADEABLE = Object.keys(BASE);
+import { COM } from "../data.js";
+
+// The RTS deposit commodities you can actually hold and trade. Equilibrium base
+// prices come straight from the commodity table (data.js COM.base) — the single
+// source of truth — so the two can never drift (data.js is pure data; engine/map.js
+// already imports it). TRADEABLE stays an explicit curated list: it deliberately
+// omits deposit commodities like biomass/spice that the RTS doesn't trade.
+const TRADEABLE = ["ore", "crystals", "radioactives", "gas", "ice", "relics"];
+const BASE = Object.fromEntries(TRADEABLE.map(id => [id, COM[id].base]));
 
 export const TRADE_LOT = 25;      // units bought/sold per click
 const SPREAD = 1.15;              // a buy costs 15% more than the matching sell — the market's cut

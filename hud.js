@@ -18,11 +18,11 @@ import { queueProduction, cancelProduction, researchUpgrade } from "./engine/pro
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
-import { JUMP_LOAD_RADIUS, JUMP_COST } from "./engine/galaxy.js";
+import { JUMP_COST, stagedRiders } from "./engine/galaxy.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
-import { PLANETS } from "./data.js";
+import { planetName } from "./data.js";
 import * as sound from "./sound.js";
 
 // Scenario dock actions — wired once. They read game.state at click time, and
@@ -40,11 +40,12 @@ export function resetPanelSignature() { lastPanelSignature = null; }
 export function renderHUD() {
   const { state } = game;
 
-  // Odyssey shows the galaxy-map button and hides skirmish save/load (galaxy
-  // persistence isn't supported, so a skirmish save here would be misleading).
+  // The galaxy-map button shows only in Odyssey. Save/Load work in a skirmish and
+  // in an Odyssey (whole-galaxy save), but a scripted scenario can't be resumed,
+  // so they're hidden there.
   starmapBtn.classList.toggle("hidden", !game.galaxy);
-  saveBtn.classList.toggle("hidden", !!game.galaxy);
-  loadBtn.classList.toggle("hidden", !!game.galaxy);
+  saveBtn.classList.toggle("hidden", !!state.scenario);
+  loadBtn.classList.toggle("hidden", !!state.scenario);
 
   if (state.scenario) {
     // A scenario has no economy: its budget + clock live in the scenario bar,
@@ -437,8 +438,7 @@ function rebuildSelectionPanel(sel) {
   // a colony.
   const spaceport = sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
   if (spaceport && game.galaxy) {
-    const staged = [...state.units.values()].filter(u => u.owner === "player"
-      && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS).length;
+    const staged = stagedRiders(state, spaceport).length;
     const afford = game.galaxy.credits >= JUMP_COST;
     const info = document.createElement("p");
     info.className = "hint";
@@ -446,7 +446,7 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(info);
     for (const w of game.galaxy.worlds) {
       if (w === game.galaxy.activeId) continue;
-      const name = PLANETS.find(p => p.id === w)?.name || w;
+      const name = planetName(w);
       const visited = game.galaxy.planets.has(w) && w !== game.galaxy.activeId;
       panelEl.appendChild(makeButton(`Jump ▸ ${name}${visited ? " · your colony" : ""}`,
         () => performJump(w),

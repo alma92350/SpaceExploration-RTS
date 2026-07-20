@@ -16,11 +16,9 @@ import { game } from "./session.js";
 import { galaxyStatus, canJump, activeState, JUMP_COST } from "./engine/galaxy.js";
 import { performJump } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
-import { PLANETS } from "./data.js";
+import { planetName as worldName } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { stanceLabel } from "./engine/diplomacy.js";
-
-const worldName = id => PLANETS.find(p => p.id === id)?.name || id;
 
 export function renderStarmap() {
   const g = game.galaxy;

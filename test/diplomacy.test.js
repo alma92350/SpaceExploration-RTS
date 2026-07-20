@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createDiplomacy, updateDiplomacy, atPeace, stanceLabel, PEACE_THRESHOLD } from "../engine/diplomacy.js";
+import { createDiplomacy, updateDiplomacy, atPeace, hostility, stanceLabel, PEACE_THRESHOLD } from "../engine/diplomacy.js";
 import { createGalaxy, activeState, addPlanet, jumpCapital, sweepColonies } from "../engine/galaxy.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
@@ -39,19 +39,61 @@ test("stanceLabel bands run hostile → allied", () => {
   assert.equal(stanceLabel(0.8), "Allied");
 });
 
-test("a neighbour at peace launches no offensive wave; one turned hostile does", () => {
-  const state = createGameState({ planetId: "ferros" });
-  state.time = state.aiArchetype.attackTimeout + 1;     // past the desperation timeout
-  const unit = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
-  state.units.set(unit.id, unit);
+// Seat a home army of `n` idle skiffs at the AI base, on a `ferros` world with a
+// given neighbour stance, so we can watch the offense ramp.
+function armyWorld(stance, n = 12) {
+  const s = createGameState({ planetId: "ferros" });
+  const army = [];
+  for (let i = 0; i < n; i++) {
+    const u = makeUnit("skiff", "ai", s.map.bases.ai.x, s.map.bases.ai.y);
+    s.units.set(u.id, u); army.push(u);
+  }
+  s.diplomacy = { stance, depletion: 0 };
+  return { s, army };
+}
+const attacking = army => army.filter(u => u.order?.type === "attack-move").length;
 
-  state.diplomacy = { stance: 0.4, depletion: 0 };       // at peace
-  runAI(state, THINK);
-  assert.notEqual(unit.order?.type, "attack-move", "a peaceful neighbour holds its army home");
+test("hostility() maps stance to 0..1 (and is full without diplomacy)", () => {
+  assert.equal(hostility({}), 1, "no diplomacy ⇒ full intensity (a skirmish)");
+  assert.equal(hostility({ diplomacy: { stance: 0.4 } }), 0, "at peace ⇒ 0");
+  assert.equal(hostility({ diplomacy: { stance: PEACE_THRESHOLD } }), 0, "exactly the peace line ⇒ 0");
+  assert.equal(hostility({ diplomacy: { stance: -1 } }), 1, "fully hostile ⇒ 1");
+  const mid = hostility({ diplomacy: { stance: -0.5 } });
+  assert.ok(mid > 0.35 && mid < 0.5, `mid stance ⇒ ~0.41 (got ${mid.toFixed(3)})`);
+});
 
-  state.diplomacy.stance = -0.6;                          // turned hostile
-  runAI(state, THINK);
-  assert.equal(unit.order?.type, "attack-move", "a hostile neighbour commits the wave");
+test("a neighbour at peace launches no offensive wave", () => {
+  const { s, army } = armyWorld(0.4);   // cordial
+  runAI(s, THINK);
+  assert.equal(attacking(army), 0, "a peaceful neighbour holds its whole army home");
+});
+
+test("a barely-wary neighbour sends a small probe, not its banked army", () => {
+  const { s, army } = armyWorld(-0.2);   // just past the peace line, h≈0.06
+  runAI(s, THINK);
+  const n = attacking(army);
+  assert.ok(n >= 1 && n <= 4, `a probe, not a doomstack (got ${n})`);
+  assert.ok(n < army.length, "most of the banked army stays home");
+});
+
+test("a deeply-hostile neighbour commits a large fraction of its army", () => {
+  const { s, army } = armyWorld(-0.95);   // h≈0.94
+  runAI(s, THINK);
+  assert.ok(attacking(army) >= 6, "near-full commitment when deeply hostile");
+});
+
+test("odyssey probes are spaced by a cadence, not launched every tick", () => {
+  const { s, army } = armyWorld(-0.2);
+  s.time = 0;
+  runAI(s, THINK);
+  const first = attacking(army);
+  assert.ok(first >= 1, "the first probe launches");
+  assert.ok(s.aiNextWaveAt > 0, "the next wave is scheduled ahead");
+  runAI(s, THINK);   // same tick — the reserve must wait
+  assert.equal(attacking(army), first, "no second probe before the cadence elapses");
+  s.time = s.aiNextWaveAt + 1;
+  runAI(s, THINK);
+  assert.ok(attacking(army) > first, "a fresh probe launches once the cadence elapses");
 });
 
 test("the AI still attacks when there is no diplomacy (a plain skirmish)", () => {

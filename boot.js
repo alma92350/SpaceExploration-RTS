@@ -26,8 +26,8 @@ import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
-import { createGalaxy, activeState, jumpCapital, sweepColonies } from "./engine/galaxy.js";
-import { PLANETS } from "./data.js";
+import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy } from "./engine/galaxy.js";
+import { planetName } from "./data.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -102,11 +102,18 @@ export function startBounty(planetId) {
 export function startOdyssey() {
   const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
   const diff = DIFFICULTY[setup.difficulty] || DIFFICULTY.medium;
-  const galaxy = createGalaxy({
+  bootGalaxy(createGalaxy({
     seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
     playerFaction: setup.faction, aiApm: diff.aiApm, aiMicro: diff.aiMicro,
-  });
-  bootState(activeState(galaxy), { intro: true });   // bootState clears game.galaxy; set it just after
+  }), { intro: true });
+}
+
+// Boot a galaxy (fresh from startOdyssey, or rehydrated from a save by
+// saveload.js). bootState clears game.galaxy and rewires input/camera/HUD to the
+// active world; the loop reads game.galaxy live, so the background worlds resume
+// on their own once it's set right after.
+export function bootGalaxy(galaxy, { intro = false } = {}) {
+  bootState(activeState(galaxy), { intro });
   game.galaxy = galaxy;
 }
 
@@ -193,7 +200,7 @@ export function bootState(newState, { intro }) {
     // one match state ticks.
     update: dt => {
       if (game.galaxy) {
-        for (const s of game.galaxy.planets.values()) tick(s, dt);
+        stepGalaxy(game.galaxy, dt);   // active world full-rate, colonies on a coarser schedule
         for (const n of sweepColonies(game.galaxy, dt)) notifyColony(n);
       } else tick(game.state, dt);
     },
@@ -224,7 +231,7 @@ export function bootState(newState, { intro }) {
 const COLONY_NOTE_THROTTLE_MS = 9000;
 const lastColonyNote = {};
 function notifyColony(n) {
-  const name = PLANETS.find(p => p.id === n.planetId)?.name || n.planetId;
+  const name = planetName(n.planetId);
   if (n.type === "lost") { showGalaxyToast(`⚠ Your colony on ${name} has fallen.`, "bad"); return; }
   const now = performance.now();
   const last = lastColonyNote[n.planetId];
