@@ -86,6 +86,15 @@ test("a jump-relocated capital survives a save/load", () => {
   assert.equal([...activeState(restored).buildings.values()].filter(b => b.owner === "player" && b.type === "command").length, 1, "the capital is where it jumped");
 });
 
+test("the Odyssey AI wave-cadence clock survives a save/load (continue-identically)", () => {
+  const g = createGalaxy({ seed: 4 });
+  const s = activeState(g);
+  s.diplomacy.stance = -0.4;     // a hostile world that has scheduled its next probe
+  s.aiNextWaveAt = 123.5;        // a future cadence time — must not reset to 0 on reload
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  assert.equal(activeState(restored).aiNextWaveAt, 123.5, "the next-wave clock is preserved, not reset to wave-ready");
+});
+
 test("the galaxy save is seed+delta (no terrain), and guards its version", () => {
   const json = JSON.stringify(serializeGalaxy(evolved(1)));
   assert.ok(!/"terrain"/.test(json), "terrain arrays regenerate from the seed, not stored");

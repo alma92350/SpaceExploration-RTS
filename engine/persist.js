@@ -50,6 +50,10 @@ function serPlanet(state) {
       aiActionBudget: state.aiActionBudget ?? 0,
       aiAttackForce: state.aiAttackForce ?? 0, aiAttackDesperate: !!state.aiAttackDesperate,
       aiNextAttackAt: state.aiNextAttackAt ?? null, aiUnitsBuilt: state.aiUnitsBuilt ?? 0,
+      // Odyssey offense cadence (engine/ai.js) — a scheduled future time. Must be
+      // persisted or a reloaded hostile world fires its next probe a full cadence
+      // early (undefined ?? 0 ⇒ immediately wave-ready), breaking continue-identically.
+      aiNextWaveAt: state.aiNextWaveAt ?? null,
     },
   };
 }
@@ -82,6 +86,7 @@ function rehydratePlanet(P) {
     aiActionBudget: P.ai.aiActionBudget,
     aiAttackForce: P.ai.aiAttackForce, aiAttackDesperate: P.ai.aiAttackDesperate,
     aiNextAttackAt: P.ai.aiNextAttackAt, aiUnitsBuilt: P.ai.aiUnitsBuilt,
+    aiNextWaveAt: P.ai.aiNextWaveAt ?? undefined,
     aiArchetype: archetypeFor(P.planetId),
     events: [],
   };
