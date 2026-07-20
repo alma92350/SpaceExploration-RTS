@@ -236,6 +236,37 @@ export function stagedRiders(state, spaceport) {
   return out;
 }
 
+// A jump carries a bounded CARGO HOLD of manufactured goods to the destination, so
+// a run of production on one world can be sold on another — the make-here/sell-there
+// loop (produced goods price differently per world, engine/market.js). Loaded
+// most-valuable-first (data.js COM.base: machinery 250 > electronics 95 > alloys 80
+// > metals 22). Raws are too cheap to bother hauling and strategic goods stay put
+// (committed to local wonders/superweapons) — which also means the hold is empty
+// until you've actually industrialized.
+export const CARGO_CAPACITY = 300;
+const CARGO_GOODS = ["machinery", "electronics", "alloys", "metals"];
+
+// What a jump from `from` would haul, as { good: qty } — pure, for the HUD preview
+// and the jump itself (so the shown manifest and the moved goods can never disagree).
+export function cargoManifest(from) {
+  let room = CARGO_CAPACITY;
+  const src = from.players.player.resources;
+  const manifest = {};
+  for (const com of CARGO_GOODS) {
+    if (room <= 0) break;
+    const move = Math.min(Math.floor(src[com] || 0), room);
+    if (move > 0) { manifest[com] = move; room -= move; }
+  }
+  return manifest;
+}
+
+function loadCargo(from, dest) {
+  const manifest = cargoManifest(from);
+  const src = from.players.player.resources, dst = dest.players.player.resources;
+  for (const com in manifest) { src[com] -= manifest[com]; dst[com] = (dst[com] || 0) + manifest[com]; }
+  return manifest;
+}
+
 // Relocate the capital to `destId`: the Command Center plus every player unit
 // staged near the Spaceport move to the destination's landing zone; the origin
 // keeps its other buildings and units and becomes a background colony that goes
@@ -268,6 +299,8 @@ export function jumpCapital(galaxy, destId) {
     dest.units.set(u.id, u);
   });
 
+  const cargo = loadCargo(from, dest);   // haul the manufactured goods along to sell at the destination
+
   from.selection = []; dest.selection = [];
   from.background = true;    // the world you left keeps evolving on its own
   dest.background = false;   // the destination is now your active seat
@@ -275,5 +308,5 @@ export function jumpCapital(galaxy, destId) {
   updateFog(dest, dest.fog, "player");
   updateFog(dest, dest.fogAI, "ai");
   updateFog(from, from.fog, "player");
-  return { destId, riders: riders.length };
+  return { destId, riders: riders.length, cargo };
 }

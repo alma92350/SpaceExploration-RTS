@@ -20,7 +20,7 @@ import { powerCap, powerDraw } from "./engine/industry.js";
 import { TECHS, researchTech } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
-import { JUMP_COST, stagedRiders } from "./engine/galaxy.js";
+import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY } from "./engine/galaxy.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
@@ -517,6 +517,17 @@ function rebuildSelectionPanel(sel) {
     info.className = "hint";
     info.textContent = `Relocate your capital to another world (◈${JUMP_COST} fuel). ${staged} unit${staged === 1 ? "" : "s"} staged by the pad will jump too — park units near the Spaceport to bring them.`;
     panelEl.appendChild(info);
+
+    // Cargo hold: manufactured goods that ride along to be sold at the destination
+    // (they price differently per world). Loaded most-valuable-first, up to capacity.
+    const cargo = cargoManifest(state);
+    const cargoTotal = Object.values(cargo).reduce((a, b) => a + b, 0);
+    const cargoInfo = document.createElement("p");
+    cargoInfo.className = "hint";
+    cargoInfo.textContent = cargoTotal
+      ? `Cargo hold (${cargoTotal}/${CARGO_CAPACITY}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — hauled to sell at the destination.`
+      : `Cargo hold (0/${CARGO_CAPACITY}): empty — manufacture metals/alloys/electronics/machinery to haul and sell elsewhere.`;
+    panelEl.appendChild(cargoInfo);
     for (const w of game.galaxy.worlds) {
       if (w === game.galaxy.activeId) continue;
       const name = planetName(w);
