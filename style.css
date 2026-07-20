@@ -429,6 +429,11 @@ html, body {
   flex-wrap: wrap;
   flex: 1 1 auto;
 }
+/* The mode toggle is a direct child of the .map-select flex COLUMN, so flex-grow:1
+   makes it (and its stretched buttons) balloon vertically to fill spare space — huge
+   when a mode like Odyssey shows no card grid below. Only the nested setup-row groups
+   should grow (horizontally, to fill their row); the mode toggle must not. */
+.map-select > .opt-group { flex: 0 0 auto; }
 .opt-btn {
   background: var(--bg);
   border: 1px solid var(--border);
