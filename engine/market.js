@@ -17,7 +17,7 @@
 
 "use strict";
 
-import { COM } from "../data.js";
+import { COM, PLANETS } from "../data.js";
 
 // The RTS deposit commodities you can actually hold and trade. Equilibrium base
 // prices come straight from the commodity table (data.js COM.base) — the single
@@ -41,13 +41,29 @@ function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 // Build a planet's price book: equilibrium price per tradeable commodity, scaled
 // by how abundant that commodity is in the planet's own deposits.
+// Manufactured goods (engine/industry.js) that no world deposits — priced by the
+// world's INDUSTRY rating instead of by local ore: an industrial world floods its
+// own finished-goods market (cheap, pays little), a frontier world can't make them
+// so pays dear. This is what gives a low-industry world an economic niche.
+const PRODUCED = new Set(["metals", "alloys", "electronics", "machinery"]);
+
 export function createMarket(state) {
   const total = {}; let sum = 0;
   for (const n of state.map.nodes) { total[n.com] = (total[n.com] || 0) + n.max; sum += n.max; }
+  const industry = PLANETS.find(p => p.id === state.planetId)?.industry ?? 5;
   const base = {}, pressure = {};
   for (const com of TRADEABLE) {
-    const share = sum ? (total[com] || 0) / sum : 0;         // 0..1 local abundance
-    const mult = clamp(1.5 - share * 3.2, 0.6, 1.5);          // abundant → 0.6x, absent → 1.5x
+    let mult;
+    if (PRODUCED.has(com)) {
+      // Pivot at industry 5 → 1.5× (today's flat ceiling, so this is continuous):
+      // Forge (10) → ~1.05×, Vesper (5) → 1.5×, Oort (2) → ~1.77×. A moderate slope
+      // so industrializing still out-earns overall (Forge's speed edge dominates) —
+      // this only narrows the gap and keeps frontier factories worth running.
+      mult = clamp(1.5 - (industry - 5) * 0.09, 0.9, 1.9);
+    } else {
+      const share = sum ? (total[com] || 0) / sum : 0;         // 0..1 local abundance
+      mult = clamp(1.5 - share * 3.2, 0.6, 1.5);               // abundant → 0.6x, absent → 1.5x
+    }
     base[com] = Math.max(1, Math.round(BASE[com] * mult));
     pressure[com] = 0;
   }

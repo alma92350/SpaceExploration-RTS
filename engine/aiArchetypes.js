@@ -79,6 +79,23 @@ export const PLANET_ARCHETYPE = {
   forge: "economist",      // a factory world begs to out-produce
 };
 
+// Extra worlds the ODYSSEY roster can settle, beyond the skirmish nine. Kept in a
+// SEPARATE table (not folded into PLANET_ARCHETYPE) on purpose: the skirmish map
+// picker and its full-resolve tests iterate Object.keys(PLANET_ARCHETYPE), so
+// freezing that at nine keeps every skirmish match byte-identical and adds no new
+// resolve tests, while archetypeFor still resolves these Odyssey-only worlds.
+// Their whole point is economic identity from data.js stats the engine already
+// reads — Kybernet's tech 10 (fastest research, engine/techtree.js) and industry 8
+// (fastest factories, engine/industry.js), Verdani the low-industry agri contrast
+// where finished goods sell dear (engine/market.js). Temperament only sets the
+// neighbour's combat style, exactly as for the skirmish nine.
+export const ODYSSEY_EXTRA_ARCHETYPE = {
+  kybernet: "economist",   // a patient tech-race rival on the research capital
+  verdani: "balanced",     // a calm, map-controlling neighbour on the farm world
+};
+
+const ALL_ARCHETYPE = { ...PLANET_ARCHETYPE, ...ODYSSEY_EXTRA_ARCHETYPE };
+
 export function archetypeFor(planetId) {
-  return ARCHETYPES[PLANET_ARCHETYPE[planetId]] || ARCHETYPES.balanced;
+  return ARCHETYPES[ALL_ARCHETYPE[planetId]] || ARCHETYPES.balanced;
 }

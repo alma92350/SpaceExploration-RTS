@@ -114,6 +114,8 @@ html, body {
 .starmap-world:hover { border-color: var(--accent); }
 .starmap-world .sm-name { font-weight: 600; font-size: 0.9rem; }
 .starmap-world .sm-sub { font-size: 0.72rem; color: var(--muted); }
+/* Industry/Tech badge — the world's economic character at a glance. */
+.starmap-world .sm-stats { font-size: 0.68rem; color: var(--muted); opacity: 0.85; font-variant-numeric: tabular-nums; margin-top: 1px; }
 .starmap-world.seat   { border-color: var(--accent); box-shadow: 0 0 14px rgba(79,209,255,0.5); }
 .starmap-world.seat .sm-sub   { color: var(--accent); }
 .starmap-world.colony { border-color: var(--good, #4ade80); }

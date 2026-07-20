@@ -24,8 +24,20 @@
 "use strict";
 
 import { BUILDINGS } from "./entities.js";
-import { RECIPES } from "../data.js";
+import { RECIPES, PLANETS } from "../data.js";
 import { techMult } from "./techtree.js";
+
+// A world's `industry` rating (data.js PLANETS, 1..10) scales how fast its
+// factories run — the RATE twin of techtree.js researchTimeScale (which scales
+// research TIME). Same clamp band [0.5, 2], pivot 5 → 1.0×, so an industrial world
+// (Forge, 10 → 2×) out-manufactures a frontier rock (Oort, 2 → 0.5×) without any
+// world grinding to a halt. Pure data lookup — deterministic, DOM-free. Used only
+// inside updateProduction (below), which never runs on the skirmish path.
+export function planetIndustryScale(state) {
+  const i = PLANETS.find(p => p.id === state.planetId)?.industry ?? 5;
+  const s = i / 5;
+  return s < 0.5 ? 0.5 : s > 2 ? 2 : s;
+}
 
 // data.js RECIPES is an array; index it by id once for O(1) lookup.
 const RECIPE_BY_ID = Object.fromEntries(RECIPES.map(r => [r.id, r]));
@@ -86,9 +98,10 @@ export function updateProduction(state, building, dt) {
   const ups = player.upgrades;
 
   // How much of a batch we can run this tick: the power-throttled target — sped up
-  // by the Factory Automation tech (techtree.js `automation`) — capped by the
-  // scarcest input in stock.
-  let frac = (BUILDINGS[building.type].prodRate || 1) * techMult(ups, "rateMult") * throttle * dt;
+  // by the Factory Automation tech (techtree.js `automation`) and by the world's
+  // industry rating — capped by the scarcest input in stock.
+  let frac = (BUILDINGS[building.type].prodRate || 1) * techMult(ups, "rateMult")
+    * planetIndustryScale(state) * throttle * dt;
   for (const com in recipe.in) {
     if (com === "energy") continue;
     frac = Math.min(frac, (res[com] || 0) / recipe.in[com]);

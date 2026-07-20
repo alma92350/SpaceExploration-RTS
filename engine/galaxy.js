@@ -27,11 +27,14 @@ import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
 import { checkEndlessWin } from "./victory.js";
-import { PLANET_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
+import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
+import { PLANETS } from "../data.js";
 
-// The worlds an Odyssey can settle — the same curated roster the skirmish picker
-// and the scenarios draw from (one entry per AI archetype).
-export const ODYSSEY_WORLDS = Object.keys(PLANET_ARCHETYPE);
+// The worlds an Odyssey can settle: the skirmish nine PLUS the Odyssey-only extras
+// (a research capital, an agri world) — appended AFTER the nine so the skirmish
+// worlds keep their roster index, which keeps the background-tick schedule (keyed
+// on worlds.indexOf) and every same-seed replay stable.
+export const ODYSSEY_WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 
 // A stable per-planet seed derived from the galaxy seed + the world id, so every
 // world generates its own deterministic map and two galaxies with the same seed
@@ -207,7 +210,11 @@ export function galaxyStatus(galaxy) {
         status = buildings > 0 ? "colony" : "contested";
         income = Math.round(buildings * COLONY_INCOME_PER_BUILDING * 60);   // credits/min
       }
-      return { id, status, income, stance: s && s.diplomacy ? s.diplomacy.stance : null };
+      // Industry/Tech ratings (data.js) drive factory speed + research speed and
+      // finished-good prices — surfaced so "where to settle/jump" is an informed call.
+      const p = PLANETS.find(pl => pl.id === id);
+      return { id, status, income, stance: s && s.diplomacy ? s.diplomacy.stance : null,
+        industry: p ? p.industry : 5, tech: p ? p.tech : 5, faction: p ? p.faction : null };
     }),
   };
 }

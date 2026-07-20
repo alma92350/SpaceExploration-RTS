@@ -4,7 +4,7 @@ import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
-import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf } from "../engine/industry.js";
+import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 
 // The industry helpers read only state.buildings and state.players[owner].resources,
@@ -132,6 +132,27 @@ test("a researched passive tech lifts production — Heavy Alloys yields ~40% mo
   updateProduction(teched, sm2, 0.1);
   const m1 = plain.players.player.resources.metals, m2 = teched.players.player.resources.metals;
   assert.ok(near(m2, m1 * 1.4), "Heavy Alloys yields 40% more metals per batch");
+});
+
+test("planetIndustryScale scales factory speed by a world's industry rating, clamped [0.5, 2]", () => {
+  assert.equal(planetIndustryScale({ planetId: "forge" }), 2, "Forge (industry 10) runs at 2×");
+  assert.equal(planetIndustryScale({ planetId: "vesper" }), 1, "Vesper (industry 5) is the neutral pivot");
+  assert.ok(near(planetIndustryScale({ planetId: "ferros" }), 0.8), "Ferros (industry 4) → 0.8×");
+  assert.equal(planetIndustryScale({ planetId: "oort" }), 0.5, "Oort (industry 2) → clamped to 0.5×, never zero");
+  assert.equal(planetIndustryScale({ planetId: "nowhere" }), 1, "an unknown world falls to the neutral pivot");
+});
+
+test("a high-industry world out-produces a low-industry one over identical ticks", () => {
+  const mk = (planetId) => {
+    const s = createGameState({ planetId, endless: true });
+    const reactor = makeBuilding("reactor", "player", 600, 480);
+    const smelter = makeBuilding("smelter", "player", 660, 520);
+    s.buildings.set(reactor.id, reactor); s.buildings.set(smelter.id, smelter);
+    s.players.player.resources.ore = 100000;
+    for (let i = 0; i < 50; i++) updateProduction(s, smelter, 0.1);
+    return s.players.player.resources.metals;
+  };
+  assert.ok(near(mk("forge"), mk("vesper") * 2), "Forge's factories (industry 10) run twice as fast as Vesper's (industry 5)");
 });
 
 test("industry is Odyssey-only: the buildings are flagged, and a skirmish makes no refined goods", () => {

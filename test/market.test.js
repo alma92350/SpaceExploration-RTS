@@ -92,3 +92,15 @@ test("a jump spends its fuel cost in credits and is refused when you can't pay",
 test("TRADE_LOT is a sane positive lot size", () => {
   assert.ok(Number.isInteger(TRADE_LOT) && TRADE_LOT > 0);
 });
+
+test("finished goods are dearer on a low-industry world than a high-industry one", () => {
+  const forge = createMarket({ planetId: "forge", map: { nodes: [] } });   // industry 10 — floods its own market
+  const oort = createMarket({ planetId: "oort", map: { nodes: [] } });      // industry 2 — can't make them
+  assert.ok(oort.base.alloys > forge.base.alloys, "a frontier world pays more for the alloys it can't make");
+  assert.ok(oort.base.machinery > forge.base.machinery, "…and for machinery");
+});
+
+test("a produced good at an industry-5 world matches the old flat 1.5× ceiling (continuity)", () => {
+  const m = createMarket({ planetId: "vesper", map: { nodes: [] } });   // industry 5 pivot
+  assert.equal(m.base.alloys, 120, "alloys base 80 × 1.5 = 120 — continuous with the pre-Phase-4 flat price");
+});

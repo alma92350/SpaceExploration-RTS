@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { archetypeFor, ARCHETYPES, PLANET_ARCHETYPE } from "../engine/aiArchetypes.js";
+import { archetypeFor, ARCHETYPES, PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE } from "../engine/aiArchetypes.js";
 import { createGameState } from "../engine/state.js";
 import { PLANETS } from "../data.js";
 
@@ -52,8 +52,23 @@ test("the Breacher rides only in the patient mixes, not the Rusher's", () => {
 });
 
 test("every roster entry is a real planet mapped to a real archetype", () => {
-  for (const [planetId, archetypeKey] of Object.entries(PLANET_ARCHETYPE)) {
+  for (const [planetId, archetypeKey] of Object.entries({ ...PLANET_ARCHETYPE, ...ODYSSEY_EXTRA_ARCHETYPE })) {
     assert.ok(PLANETS.some(p => p.id === planetId), `${planetId} should be a charted world`);
     assert.ok(ARCHETYPES[archetypeKey], `${planetId} maps to a real archetype`);
   }
+});
+
+test("the skirmish roster stays frozen at nine so skirmish replays are byte-identical", () => {
+  // Phase 4 grows the ODYSSEY roster, but PLANET_ARCHETYPE (the skirmish map picker
+  // + its full-resolve tests) must NOT change — the Odyssey extras live in their own
+  // table. If this count moves, a skirmish world was added and byte-identity is at risk.
+  assert.equal(Object.keys(PLANET_ARCHETYPE).length, 9, "the skirmish roster is the original nine");
+  for (const id of Object.keys(ODYSSEY_EXTRA_ARCHETYPE)) {
+    assert.ok(!(id in PLANET_ARCHETYPE), `${id} is Odyssey-only, not a skirmish world`);
+  }
+});
+
+test("archetypeFor resolves the Odyssey-only worlds too", () => {
+  assert.equal(archetypeFor("kybernet"), ARCHETYPES.economist, "the research capital hands a patient rival");
+  assert.equal(archetypeFor("verdani"), ARCHETYPES.balanced);
 });

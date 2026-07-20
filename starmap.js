@@ -49,7 +49,10 @@ export function renderStarmap() {
       : w.status === "colony" ? `your colony · +${w.income} ◈/min`
       : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
       : archetypeFor(w.id).name;
-    node.innerHTML = `<span class="sm-name">${worldName(w.id)}</span><span class="sm-sub">${sub}</span>`;
+    // Industry drives factory speed + finished-good prices; Tech drives research
+    // speed — so the badge is what makes "where to settle" an informed decision.
+    const stats = `<span class="sm-stats">⚙ ${w.industry} · 🔬 ${w.tech}</span>`;
+    node.innerHTML = `<span class="sm-name">${worldName(w.id)}</span><span class="sm-sub">${sub}</span>${stats}`;
     node.addEventListener("click", () => onWorldClick(w));
     field.appendChild(node);
   });
