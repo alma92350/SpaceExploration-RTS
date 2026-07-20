@@ -16,15 +16,15 @@ import {
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { powerCap, powerDraw } from "./engine/industry.js";
-import { TECHS, researchTech } from "./engine/techtree.js";
+import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale } from "./engine/industry.js";
+import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY } from "./engine/galaxy.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
-import { planetName } from "./data.js";
+import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
 
 // Scenario dock actions — wired once. They read game.state at click time, and
@@ -59,8 +59,16 @@ export function renderHUD() {
     const res = state.players.player.resources;
     resourcesEl.innerHTML = "";
     Object.entries(res).forEach(([com, qty]) => {
+      const n = Math.floor(qty);
+      // Suppress empty stockpiles (a fresh Odyssey shows "ai: 0", "antimatter: 0",
+      // … for a dozen goods you haven't made yet) — but always keep ore, the
+      // bread-and-butter you're never without. An iconed readout ("🪨 120")
+      // reads far faster than a wall of "com: n" labels.
+      if (n <= 0 && com !== "ore") return;
+      const meta = COM[com];
       const span = document.createElement("span");
-      span.textContent = `${com}: ${Math.floor(qty)}`;
+      span.textContent = meta?.ico ? `${meta.ico} ${n}` : `${com}: ${n}`;
+      span.title = meta?.name || com;
       resourcesEl.appendChild(span);
     });
 
@@ -228,6 +236,14 @@ function availabilitySignature() {
   return afford + "|" + built;
 }
 
+// The colour-band of a selected factory's status (or "" for none), so a status
+// transition triggers a panel rebuild — see the panel signature above.
+function factorySignature(sel) {
+  const { state } = game;
+  const f = sel.find(e => e.kind === "building" && recipeOf(e) && !e.constructing);
+  return f ? factoryStatus(state, f, recipeOf(f)).cls : "";
+}
+
 function renderSelectionPanel() {
   const { state, input } = game;
   const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
@@ -254,7 +270,11 @@ function renderSelectionPanel() {
     + "|" + availabilitySignature()
     // Rebuild when the app flips into touch mode, so the panel's legend + hints
     // swap from mouse/keyboard to finger phrasing on the first touch.
-    + "|" + isTouchMode();
+    + "|" + isTouchMode()
+    // Rebuild when a selected factory's status transitions (running ↔ throttled ↔
+    // starved ↔ stalled), so its "why it's not producing" line stays live without
+    // a full rebuild every HUD tick.
+    + "|" + factorySignature(sel);
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -359,6 +379,30 @@ function renderMarket(state) {
 
     panelEl.appendChild(row);
   }
+}
+
+// Why a selected factory is (or isn't) producing — the answer to "my antimatter
+// isn't going up." Checks the same limits updateProduction (engine/industry.js)
+// applies, in priority order: no Power at all, then a missing input, then a Power
+// shortfall throttling everything, else running (with the live output rate).
+function factoryStatus(state, b, recipe) {
+  const throttle = powerThrottle(state, b.owner);
+  if (throttle <= 0) return { cls: "bad", text: "Stalled — no Power" };
+
+  const res = state.players[b.owner].resources;
+  let scarce = null, scarceRatio = Infinity;
+  for (const com in recipe.in) {
+    if (com === "energy") continue;
+    const ratio = (res[com] || 0) / recipe.in[com];
+    if (ratio < scarceRatio) { scarceRatio = ratio; scarce = com; }
+  }
+  if (scarceRatio < 1) return { cls: "bad", text: `Starved — needs ${COM[scarce]?.name || scarce}` };
+  if (throttle < 0.995) return { cls: "warn", text: `Throttled ${Math.round(throttle * 100)}% — low Power` };
+
+  const def = BUILDINGS[b.type], ups = state.players[b.owner].upgrades;
+  const rate = (def.prodRate || 1) * techMult(ups, "rateMult") * planetIndustryScale(state)
+    * throttle * recipe.qty * techMult(ups, "yieldMult");
+  return { cls: "good", text: `Running · +${rate.toFixed(1)} ${COM[recipe.out]?.name || recipe.out}/s` };
 }
 
 function rebuildSelectionPanel(sel) {
@@ -509,6 +553,44 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(hint);
   }
 
+  // Factory (Odyssey): a production building that converts raw hauls into refined
+  // goods. Without this a selected Smelter reads only "420/420 hp" — the chain's
+  // core loop is invisible. Show its recipe and, in colour, whether it's running
+  // and why not (no Power / low Power / starved of an input).
+  const factory = sel.find(e => e.kind === "building" && recipeOf(e) && !e.constructing);
+  if (factory) {
+    const recipe = recipeOf(factory);
+    const inParts = Object.entries(recipe.in)
+      .filter(([c]) => c !== "energy")
+      .map(([c, q]) => `${q}${COM[c]?.ico || ""} ${COM[c]?.name || c}`).join(" + ");
+    const energy = recipe.in.energy || 0;
+    const recRow = document.createElement("div");
+    recRow.className = "sel-row";
+    recRow.textContent = `${inParts} → ${recipe.qty} ${COM[recipe.out]?.name || recipe.out}`
+      + (energy ? ` · ⚡${energy}` : "");
+    panelEl.appendChild(recRow);
+
+    const st = factoryStatus(state, factory, recipe);
+    const stRow = document.createElement("div");
+    stRow.className = "sel-note " + st.cls;
+    stRow.textContent = st.text;
+    panelEl.appendChild(stRow);
+  }
+
+  // Reactor (Odyssey): grants Power to the grid rather than running a recipe, so
+  // it has no factory panel — say what it feeds and why it matters.
+  const reactor = sel.find(e => e.kind === "building" && e.type === "reactor" && !e.constructing);
+  if (reactor) {
+    const row = document.createElement("div");
+    row.className = "sel-note good";
+    row.textContent = `Grants ⚡${BUILDINGS.reactor.energyGrants || 0} Power`;
+    panelEl.appendChild(row);
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = "Powers your factories. If total draw outruns Power, every factory throttles — build more Reactors (or research Fusion Containment).";
+    panelEl.appendChild(note);
+  }
+
   // Spaceport (Odyssey): the interplanetary jump panel. Relocate the capital +
   // the units staged nearby to another world; the world you leave carries on as
   // a colony.
@@ -544,28 +626,42 @@ function rebuildSelectionPanel(sel) {
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
-    // Odyssey gives you one Command Center — your single relocatable capital — so
-    // a second can't be built there; instead it unlocks the Spaceport (the jump
-    // pad) plus the industry chain (Reactor → Smelter → Assembly Plant, which
-    // refine raw hauls into goods worth real credits). A skirmish still allows
-    // expansion CCs, has no Spaceport, and no industry.
-    const buildables = ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat"];
-    if (state.endless) {
-      buildables.push("reactor", "smelter", "datacenter");   // entry-tier industry: always available
-      // The deeper chain + the endgame wonder REVEAL as you unlock them (a greyed
-      // button per locked tier would bury the menu), mirroring how the Barracks
-      // hides units you can't yet field.
-      for (const t of ["assembler", "chipfab", "machineworks", "antimatterforge",
-                       "aifoundry", "torpedoworks", "stardock", "antimatter_gate"])
-        if (prereqsMet(state, "player", BUILDINGS[t])) buildables.push(t);
-      buildables.push("spaceport");
-    } else buildables.push("command");
-    for (const t of buildables) {
+    const buildBtn = t => {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);
-      panelEl.appendChild(makeButton(`Build ${def.name} (${costText(def.cost)})`,
+      return makeButton(`Build ${def.name} (${costText(def.cost)})`,
         () => input.startBuild(t),
-        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null }));
+        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null });
+    };
+    if (state.endless) {
+      // Odyssey gives you one relocatable Command Center (no second CC), so a Worker
+      // instead builds the Spaceport (jump pad) plus the whole industry chain. That's
+      // ~18 buildings — a flat list is a wall — so group them by purpose. The entry
+      // tier of each group is always shown; deeper buildings REVEAL as their prereqs
+      // are met (a greyed button per locked tier would bury the menu), mirroring how
+      // the Barracks hides units you can't yet field.
+      const GROUPS = [
+        ["Economy", ["reactor", "smelter", "datacenter", "assembler", "chipfab",
+                     "machineworks", "antimatterforge", "aifoundry", "torpedoworks"]],
+        ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
+        ["Endgame", ["antimatter_gate"]],
+        ["Travel", ["spaceport"]],
+      ];
+      const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
+                                  "habitat", "reactor", "smelter", "datacenter", "spaceport"]);
+      for (const [title, types] of GROUPS) {
+        const shown = types.filter(t => alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t]));
+        if (!shown.length) continue;
+        const head = document.createElement("div");
+        head.className = "sel-group";
+        head.textContent = title;
+        panelEl.appendChild(head);
+        for (const t of shown) panelEl.appendChild(buildBtn(t));
+      }
+    } else {
+      // A skirmish still allows expansion CCs, has no Spaceport, and no industry.
+      for (const t of ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"])
+        panelEl.appendChild(buildBtn(t));
     }
   }
 

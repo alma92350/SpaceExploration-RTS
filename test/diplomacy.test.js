@@ -159,6 +159,27 @@ test("a held colony sends home passive income each tick", () => {
   assert.equal(g.credits, afterRazed, "a colony with no buildings pays nothing");
 });
 
+test("the neighbour announces its turn to war exactly once", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  s.time = 1000;                 // past grace — war can actually start
+  drainNodes(s, 0.05);           // mined out → the stance will cross into war
+  s.events.length = 0;
+  for (let i = 0; i < 4000; i++) updateDiplomacy(s, 0.1);
+  const alerts = s.events.filter(e => e.type === "neighbourHostile" && e.owner === "player");
+  assert.equal(alerts.length, 1, "the peace→war crossing fires the alert once");
+  assert.equal(s.diplomacy.warAnnounced, true, "and the world is marked announced");
+  assert.equal(atPeace(s), false, "the neighbour is indeed at war");
+});
+
+test("a world that stays peaceful never fires the war alert", () => {
+  const rich = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  rich.diplomacy = createDiplomacy();   // deposits untouched → stays cordial
+  rich.events.length = 0;
+  for (let i = 0; i < 4000; i++) updateDiplomacy(rich, 0.1);
+  assert.ok(!rich.events.some(e => e.type === "neighbourHostile"), "peace stays quiet");
+});
+
 test("addPlanet gives every world a neighbour stance", () => {
   const g = createGalaxy({ seed: 8 });
   const other = g.worlds.find(w => w !== g.activeId);

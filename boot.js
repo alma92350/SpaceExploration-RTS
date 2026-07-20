@@ -304,6 +304,12 @@ function processFrameEvents() {
         sound.playBuildingComplete(pan);
         showGalaxyToast(`Researched ${TECHS[ev.techId]?.name || ev.techId}`, "good");
         break;
+      // The neighbour just crossed from peace into war — a one-time heads-up so the
+      // first raid doesn't land unannounced (diplomacy.js fires this once per world).
+      case "neighbourHostile":
+        sound.playProductionBlocked();
+        showGalaxyToast("⚔ Your neighbour has turned hostile — expect raids. Ready your defence.", "bad");
+        break;
       // The Antimatter Gate charge (fires every tick) — toast once per 25% so the
       // multi-minute climb to the galaxy win is visible without selecting the Gate.
       case "wonderCharging": {

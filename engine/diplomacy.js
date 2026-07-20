@@ -45,6 +45,7 @@ export function createDiplomacy() {
 // +0.45 (cordial), ~30% mined out → hostile.
 export function updateDiplomacy(state, dt) {
   const dip = state.diplomacy;
+  const wasPeaceful = dip.stance > PEACE_THRESHOLD;
 
   let cur = 0, max = 0;
   for (const n of state.map.nodes) { cur += n.amount; max += n.max; }
@@ -69,6 +70,15 @@ export function updateDiplomacy(state, dt) {
   let target = 0.6 - dip.depletion * 1.6;
   if (state.time < GRACE_TIME) target = Math.max(target, GRACE_FLOOR);
   dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * DRIFT_RATE), -1, 1);
+
+  // The moment the neighbour crosses from peace into war, fire a one-time heads-up
+  // (boot.js turns it into a toast) — the offensive ramp is silent otherwise, so a
+  // first attack can land with no warning. Fires once per world (survives save/load
+  // via the persisted flag); on a background colony the event is drained unused.
+  if (wasPeaceful && dip.stance <= PEACE_THRESHOLD && !dip.warAnnounced) {
+    dip.warAnnounced = true;
+    state.events.push({ type: "neighbourHostile", owner: "player" });
+  }
 }
 
 // True while the neighbour is holding its fire — read by tests / the HUD.

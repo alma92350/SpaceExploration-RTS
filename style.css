@@ -251,6 +251,22 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
+/* A coloured status line under a selected factory (hud.js factoryStatus): green
+   running, amber throttled, red stalled/starved — the "why isn't it producing" cue. */
+.sel-note { font-size: 0.82rem; padding: 3px 0 5px; }
+.sel-note.good { color: var(--good, #4ade80); }
+.sel-note.warn { color: var(--warn); }
+.sel-note.bad  { color: var(--bad); }
+
+/* Section header in the Odyssey build menu (Economy / Military / …) — a quiet
+   divider so the ~18-building list is scannable instead of a flat wall. */
+.sel-group {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); margin: 9px 0 2px; padding-top: 5px;
+  border-top: 1px solid var(--border);
+}
+.sel-group:first-child { border-top: none; padding-top: 0; margin-top: 4px; }
+
 .queue-row {
   display: flex;
   align-items: center;
