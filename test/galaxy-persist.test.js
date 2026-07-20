@@ -95,6 +95,21 @@ test("the Odyssey AI wave-cadence clock survives a save/load (continue-identical
   assert.equal(activeState(restored).aiNextWaveAt, 123.5, "the next-wave clock is preserved, not reset to wave-ready");
 });
 
+test("researched tech and an in-progress Datacenter project survive a save/load", () => {
+  const g = createGalaxy({ seed: 8 });
+  const s = activeState(g);
+  s.players.player.upgrades.metallurgy = true;              // a completed research node
+  const dc = makeBuilding("datacenter", "player", 600, 500);
+  dc.research = { techId: "electronics", progress: 0.4 };    // a project mid-flight
+  s.buildings.set(dc.id, dc);
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  const rs = activeState(restored);
+  assert.equal(rs.players.player.upgrades.metallurgy, true, "the researched node persists (rides in player.upgrades)");
+  const rdc = [...rs.buildings.values()].find(b => b.type === "datacenter");
+  assert.ok(rdc && rdc.research && rdc.research.techId === "electronics", "the in-progress project persists on the building");
+  assert.ok(Math.abs(rdc.research.progress - 0.4) < 1e-9, "…with its progress intact");
+});
+
 test("the galaxy save is seed+delta (no terrain), and guards its version", () => {
   const json = JSON.stringify(serializeGalaxy(evolved(1)));
   assert.ok(!/"terrain"/.test(json), "terrain arrays regenerate from the seed, not stored");

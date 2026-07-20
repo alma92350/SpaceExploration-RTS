@@ -14,6 +14,7 @@ import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { updateProduction } from "./industry.js";
+import { updateResearch } from "./techtree.js";
 import { applySeparation } from "./separation.js";
 import { updateFog } from "./fog.js";
 import { UNITS } from "./entities.js";
@@ -48,6 +49,7 @@ export function tick(state, dt) {
     updateBuildingConstruction(state, building, dt);
     updateProductionQueue(state, building, dt);
     updateProduction(state, building, dt);   // Odyssey factories refine raw hauls into goods (no-op without a recipe)
+    updateResearch(state, building, dt);     // Odyssey Datacenter develops the tech tree (no-op for any other building)
     updateBuildingCombat(state, building, dt);
   }
 

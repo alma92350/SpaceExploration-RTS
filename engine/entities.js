@@ -109,7 +109,39 @@ export const BUILDINGS = {
     cost: { ore: 180 }, buildTime: 20, sight: 140,
     dropOff: true,
     recipe: "alloy", prodRate: 1.5,   // metals + power → alloys (data.js RECIPES.alloy)
-    requires: ["smelter"],            // the chain reads as a chain: you need metals before you can alloy them
+    // The chain reads as a chain (needs a Smelter for metals) AND is the first
+    // thing the tech tree gates: Metallurgy research (engine/techtree.js) unlocks
+    // it, so the free tier (Smelter → metals) gives an immediate payoff while
+    // deeper refining is an investment. `metallurgy` is a tech-node token that
+    // prereqsMet resolves out of player.upgrades, exactly like a building token.
+    requires: ["smelter", "metallurgy"],
+    odysseyOnly: true,
+  },
+
+  /* ---- Phase 2 research + deeper industry (Odyssey only). The Datacenter hosts
+     the tech tree (engine/techtree.js); the Chip Fab and Machine Works are the
+     next two hops of the chain, each gated behind a research node so unlocking a
+     node visibly unlocks new production. All ore-costed and odysseyOnly, like the
+     Phase-1 factories. ---- */
+  datacenter: {
+    id: "datacenter", name: "Datacenter", hp: 420, radius: 17,
+    cost: { ore: 200 }, buildTime: 22, sight: 140,
+    odysseyOnly: true,
+    // Hosts research — no `recipe` (updateProduction ignores it) and no `produces`
+    // (stays out of the rally UI). Selecting it opens the research panel (hud.js).
+  },
+  chipfab: {
+    id: "chipfab", name: "Chip Fab", hp: 440, radius: 17,
+    cost: { ore: 190 }, buildTime: 20, sight: 140, dropOff: true,
+    recipe: "chipfab", prodRate: 1.5,        // crystals + metals + power → electronics
+    requires: ["smelter", "electronics"],    // needs the metals chain + Microelectronics research
+    odysseyOnly: true,
+  },
+  machineworks: {
+    id: "machineworks", name: "Machine Works", hp: 460, radius: 18,
+    cost: { ore: 220 }, buildTime: 24, sight: 140, dropOff: true,
+    recipe: "machine", prodRate: 1,          // alloys + electronics + power → machinery
+    requires: ["assembler", "chipfab", "machining"],   // the capstone: the whole chain + Precision Machining
     odysseyOnly: true,
   },
 };

@@ -122,6 +122,18 @@ test("end-to-end: a built chain refines through the real Odyssey tick, and the a
   assert.equal(g.credits, creditsBefore + proceeds, "credits banked the sale");
 });
 
+test("a researched passive tech lifts production — Heavy Alloys yields ~40% more from the same ore", () => {
+  const plain = stub([reactor(), smelter()], { ore: 1000 });
+  const teched = stub([reactor(), smelter()], { ore: 1000 });
+  teched.players.player.upgrades = { heavyalloys: true };
+  const sm1 = [...plain.buildings.values()].find(b => b.type === "smelter");
+  const sm2 = [...teched.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(plain, sm1, 0.1);
+  updateProduction(teched, sm2, 0.1);
+  const m1 = plain.players.player.resources.metals, m2 = teched.players.player.resources.metals;
+  assert.ok(near(m2, m1 * 1.4), "Heavy Alloys yields 40% more metals per batch");
+});
+
 test("industry is Odyssey-only: the buildings are flagged, and a skirmish makes no refined goods", () => {
   for (const t of ["reactor", "smelter", "assembler"]) assert.equal(BUILDINGS[t].odysseyOnly, true, `${t} is Odyssey-only`);
   const state = createGameState({ planetId: "ferros" });   // a plain skirmish (not endless)

@@ -25,6 +25,7 @@
 
 import { BUILDINGS } from "./entities.js";
 import { RECIPES } from "../data.js";
+import { techMult } from "./techtree.js";
 
 // data.js RECIPES is an array; index it by id once for O(1) lookup.
 const RECIPE_BY_ID = Object.fromEntries(RECIPES.map(r => [r.id, r]));
@@ -35,12 +36,13 @@ export function recipeOf(building) {
   return def && def.recipe ? RECIPE_BY_ID[def.recipe] : null;
 }
 
-// Total industrial Power a player's completed buildings grant (Reactors).
+// Total industrial Power a player's completed buildings grant (Reactors), lifted
+// by the Fusion Containment tech (techtree.js `reactors` node, +50%) if researched.
 export function powerCap(state, owner) {
   let cap = 0;
   for (const b of state.buildings.values())
     if (b.owner === owner && !b.constructing) cap += BUILDINGS[b.type].energyGrants || 0;
-  return cap;
+  return cap * techMult(state.players[owner]?.upgrades, "powerMult");
 }
 
 // Total Power a player's completed factories draw at full rate — a factory
@@ -79,11 +81,14 @@ export function updateProduction(state, building, dt) {
   if (!recipe) return;
   const throttle = powerThrottle(state, building.owner);
   if (throttle <= 0) return;
-  const res = state.players[building.owner].resources;
+  const player = state.players[building.owner];
+  const res = player.resources;
+  const ups = player.upgrades;
 
-  // How much of a batch we can run this tick: the power-throttled target, capped
-  // by the scarcest input in stock.
-  let frac = (BUILDINGS[building.type].prodRate || 1) * throttle * dt;
+  // How much of a batch we can run this tick: the power-throttled target — sped up
+  // by the Factory Automation tech (techtree.js `automation`) — capped by the
+  // scarcest input in stock.
+  let frac = (BUILDINGS[building.type].prodRate || 1) * techMult(ups, "rateMult") * throttle * dt;
   for (const com in recipe.in) {
     if (com === "energy") continue;
     frac = Math.min(frac, (res[com] || 0) / recipe.in[com]);
@@ -94,5 +99,7 @@ export function updateProduction(state, building, dt) {
     if (com === "energy") continue;
     res[com] = (res[com] || 0) - frac * recipe.in[com];
   }
-  res[recipe.out] = (res[recipe.out] || 0) + frac * recipe.qty;
+  // Heavy Alloys (techtree.js `heavyalloys`) lifts output per batch — same inputs,
+  // more goods out.
+  res[recipe.out] = (res[recipe.out] || 0) + frac * recipe.qty * techMult(ups, "yieldMult");
 }

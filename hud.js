@@ -17,6 +17,7 @@ import {
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw } from "./engine/industry.js";
+import { TECHS, researchTech } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, stagedRiders } from "./engine/galaxy.js";
@@ -447,6 +448,36 @@ function rebuildSelectionPanel(sel) {
     });
   }
 
+  // Datacenter (Odyssey): the industrial tech tree. Researches one node at a time,
+  // paid in gathered commodities and developed over time — flat lock-tip buttons,
+  // the same idiom as the Refinery's doctrine research (no separate tree UI).
+  const datacenter = sel.find(e => e.kind === "building" && e.type === "datacenter" && !e.constructing);
+  if (datacenter) {
+    const upgrades = state.players.player.upgrades;
+    if (datacenter.research) {
+      const def = TECHS[datacenter.research.techId];
+      const row = document.createElement("div");
+      row.className = "sel-row";
+      row.textContent = `Researching ${def.name} — ${Math.round(datacenter.research.progress * 100)}%`;
+      panelEl.appendChild(row);
+    }
+    const busy = !!datacenter.research;
+    Object.values(TECHS).forEach(t => {
+      if (upgrades[t.id]) {
+        const row = document.createElement("div");
+        row.className = "sel-row";
+        row.textContent = `${t.name} — researched`;
+        panelEl.appendChild(row);
+        return;
+      }
+      const prereqLocked = !prereqsMet(state, "player", t);
+      panelEl.appendChild(makeButton(`Research ${t.name} (${costText(t.cost)})`,
+        () => researchTech(state, datacenter.id, t.id),
+        { cost: t.cost, tip: t.desc, locked: prereqLocked || busy,
+          lockTip: prereqLocked ? lockTipFor(t) : busy ? "A research project is already in progress" : null }));
+    });
+  }
+
   // Spaceport (Odyssey): the interplanetary jump panel. Relocate the capital +
   // the units staged nearby to another world; the world you leave carries on as
   // a colony.
@@ -477,7 +508,7 @@ function rebuildSelectionPanel(sel) {
     // refine raw hauls into goods worth real credits). A skirmish still allows
     // expansion CCs, has no Spaceport, and no industry.
     const buildables = ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat"];
-    if (state.endless) buildables.push("reactor", "smelter", "assembler", "spaceport");
+    if (state.endless) buildables.push("reactor", "smelter", "assembler", "datacenter", "chipfab", "machineworks", "spaceport");
     else buildables.push("command");
     for (const t of buildables) {
       const def = BUILDINGS[t];
@@ -595,8 +626,10 @@ function makeButton(label, onClick, { cost = null, tip = null, locked = false, l
 }
 
 // "Requires Foundry" style tooltip listing a def's unmet prerequisites by name.
+// A prereq token is a building type, a doctrine upgrade, or a tech-tree node — the
+// name lookup covers all three (prereqsMet resolves them the same way).
 function lockTipFor(def) {
-  return `Requires ${(def.requires || []).map(r => BUILDINGS[r]?.name || UPGRADES[r]?.name || r).join(", ")}`;
+  return `Requires ${(def.requires || []).map(r => BUILDINGS[r]?.name || UPGRADES[r]?.name || TECHS[r]?.name || r).join(", ")}`;
 }
 
 // A compact stat line for a unit/building button tooltip.
