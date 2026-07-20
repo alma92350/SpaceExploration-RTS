@@ -9,25 +9,40 @@ import { checkEndlessWin } from "../engine/victory.js";
 import { BUILDINGS } from "../engine/entities.js";
 
 const GATE = BUILDINGS.antimatter_gate;
-const FULL_ANTIMATTER = GATE.feed.antimatter * GATE.chargeTime;   // antimatter for one full charge
 
-// An endless world with a completed Gate (+ a Reactor for the grid) and antimatter.
-function withGate(planetId = "ferros", antimatter = FULL_ANTIMATTER + 5) {
+// Stock each fed strategic good to `mult` full-charges' worth (mult 0 = starve it).
+function stockFeed(res, mult) {
+  for (const com in GATE.feed) res[com] = GATE.feed[com] * GATE.chargeTime * mult;
+}
+
+// An endless world with a completed Gate (+ a Reactor for the grid) and the whole
+// Strategic tier stocked.
+function withGate(planetId = "ferros", mult = 1.2) {
   const state = createGameState({ planetId, endless: true });
   const reactor = makeBuilding("reactor", "player", 600, 480);
   const gate = makeBuilding("antimatter_gate", "player", 660, 520);
   state.buildings.set(reactor.id, reactor);
   state.buildings.set(gate.id, gate);
-  state.players.player.resources.antimatter = antimatter;
+  stockFeed(state.players.player.resources, mult);
   return { state, gate };
 }
 
-test("the Antimatter Gate charges from antimatter and wins the galaxy at full charge", () => {
+test("the Antimatter Gate charges from the Strategic tier and wins the galaxy at full charge", () => {
   const { state, gate } = withGate();
   for (let i = 0; i < GATE.chargeTime * 12 && !state.over; i++) tick(state, 0.1);
   assert.ok(state.over && state.winner === "player", "a full charge wins the galaxy");
   assert.ok(gate.charge >= 1, "the Gate reached full charge");
-  assert.ok(state.players.player.resources.antimatter < FULL_ANTIMATTER + 5, "antimatter was consumed to charge it");
+  assert.ok(state.players.player.resources.antimatter < GATE.feed.antimatter * GATE.chargeTime,
+    "the strategic goods were consumed to charge it");
+});
+
+test("the Gate stalls if ANY fed good runs out — it demands the whole Strategic tier", () => {
+  const { state, gate } = withGate();
+  state.players.player.resources.plasmatorp = 0;   // torpedoes dry up, ai + antimatter plentiful
+  for (let i = 0; i < 100; i++) tick(state, 0.1);
+  assert.ok(!state.over, "a missing strategic good stalls the Gate — no partial win");
+  assert.ok((gate.charge || 0) < 1, "…and it never reaches full charge");
+  assert.ok((state.players.player.resources.plasmatorp || 0) >= 0, "the scarcest good never goes negative");
 });
 
 test("checkEndlessWin fires only at full charge", () => {
@@ -43,7 +58,7 @@ test("checkEndlessWin fires only at full charge", () => {
 test("a starved Gate stalls without charging and never drives the stockpile negative", () => {
   const { state, gate } = withGate("ferros", 0);
   for (let i = 0; i < 50; i++) tick(state, 0.1);
-  assert.equal(gate.charge || 0, 0, "no antimatter → no charge");
+  assert.equal(gate.charge || 0, 0, "no strategic goods → no charge");
   assert.ok((state.players.player.resources.antimatter || 0) >= 0, "the stockpile never goes negative");
   assert.ok(!state.over, "a stalled Gate doesn't win");
 });
@@ -77,7 +92,7 @@ test("a Gate left charging on a background colony still wins the galaxy", () => 
   home.buildings.set(sp.id, sp);
   home.buildings.set(reactor.id, reactor);
   home.buildings.set(gate.id, gate);
-  home.players.player.resources.antimatter = FULL_ANTIMATTER + 10;
+  stockFeed(home.players.player.resources, 1.3);
   g.credits = 2000;
   jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // leave the Gate behind on a background colony
   assert.notEqual(g.activeId, home.planetId, "we jumped away from the Gate's world");
@@ -92,7 +107,7 @@ test("a mid-charge Gate survives a save/load", () => {
   const gate = makeBuilding("antimatter_gate", "player", 660, 520);
   s.buildings.set(reactor.id, reactor);
   s.buildings.set(gate.id, gate);
-  s.players.player.resources.antimatter = FULL_ANTIMATTER + 5;
+  stockFeed(s.players.player.resources, 1.3);
   for (let i = 0; i < 200; i++) stepGalaxy(g, 0.1);   // partially charge
   const mid = [...activeState(g).buildings.values()].find(b => b.type === "antimatter_gate").charge;
   assert.ok(mid > 0 && mid < 1, "the Gate is partway charged before the save");

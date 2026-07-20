@@ -478,6 +478,19 @@ function rebuildSelectionPanel(sel) {
     });
   }
 
+  // Star Dock (Odyssey): trains the Leviathan capital ship. Its own panel (not the
+  // Barracks) because the Leviathan costs strategic goods that never sit on the map,
+  // so the Barracks' on-map-cost filter would hide it.
+  const stardock = sel.find(e => e.kind === "building" && e.type === "stardock" && !e.constructing);
+  if (stardock) {
+    const def = UNITS.leviathan;
+    const locked = !prereqsMet(state, "player", def);
+    panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
+      () => queueProduction(state, stardock.id, "leviathan"),
+      { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null }));
+    if (stardock.queue.length) renderQueueRows(stardock);
+  }
+
   // Antimatter Gate (Odyssey): the endgame wonder. Shows its charge toward the
   // galaxy win — keep antimatter flowing and hold the line.
   const wonder = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.wonder && !e.constructing);
@@ -528,7 +541,8 @@ function rebuildSelectionPanel(sel) {
       // The deeper chain + the endgame wonder REVEAL as you unlock them (a greyed
       // button per locked tier would bury the menu), mirroring how the Barracks
       // hides units you can't yet field.
-      for (const t of ["assembler", "chipfab", "machineworks", "antimatterforge", "antimatter_gate"])
+      for (const t of ["assembler", "chipfab", "machineworks", "antimatterforge",
+                       "aifoundry", "torpedoworks", "stardock", "antimatter_gate"])
         if (prereqsMet(state, "player", BUILDINGS[t])) buildables.push(t);
       buildables.push("spaceport");
     } else buildables.push("command");

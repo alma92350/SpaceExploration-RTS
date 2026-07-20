@@ -46,6 +46,10 @@ export const TECHS = {
   // Antimatter Gate — Odyssey's endgame. The deepest, priciest node on the tree.
   antimatter: { id: "antimatter", name: "Antimatter Containment", cost: { crystals: 220, radioactives: 100 }, time: 44, requires: ["machining"],
     desc: "Unlock the Antimatter Forge — the top of the chain, and the key to the Antimatter Gate." },
+  // The full Strategic tier: the two remaining strategic goods, which fuel the
+  // Antimatter Gate and the Leviathan capital ship.
+  aicores: { id: "aicores", name: "Machine Minds", cost: { crystals: 260, radioactives: 130 }, time: 48, requires: ["antimatter"],
+    desc: "Unlock the AI Foundry and Torpedo Works — cultivate AI Cores and Plasma Torpedoes." },
 };
 
 // Research develops faster on a high-tech world (data.js PLANETS.tech, 1..10) and

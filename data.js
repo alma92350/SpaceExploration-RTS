@@ -105,7 +105,7 @@ export const RECIPES = [
   // on every world) rather than the turn-based relics recipe, so the Odyssey endgame
   // win is never seed-locked to a relic world. See engine/wonder.js.
   { id: "antifab", out: "antimatter",  qty: 1, in: { machinery: 1, radioactives: 2, energy: 3 }, req: "antimatter", kind: "make" },
-  { id: "plasmafab", out: "plasmatorp", qty: 1, in: { antimatter: 1, alloys: 2, radioactives: 2 }, req: "antimatter", kind: "make" },
+  { id: "plasmafab", out: "plasmatorp", qty: 1, in: { antimatter: 1, alloys: 2, radioactives: 2, energy: 2 }, req: "antimatter", kind: "make" },
 ];
 
 /* ---------- Planets (10) ----------

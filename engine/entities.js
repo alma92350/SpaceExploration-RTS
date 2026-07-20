@@ -156,16 +156,39 @@ export const BUILDINGS = {
     requires: ["machineworks", "antimatter"],   // needs the full chain + Antimatter Containment research
     odysseyOnly: true,
   },
+  aifoundry: {
+    id: "aifoundry", name: "AI Foundry", hp: 460, radius: 18,
+    cost: { ore: 240 }, buildTime: 26, sight: 140, dropOff: true,
+    recipe: "aifab", prodRate: 0.7,          // electronics + crystals + power → AI Cores
+    requires: ["chipfab", "aicores"],
+    odysseyOnly: true,
+  },
+  torpedoworks: {
+    id: "torpedoworks", name: "Torpedo Works", hp: 460, radius: 18,
+    cost: { ore: 240 }, buildTime: 26, sight: 140, dropOff: true,
+    recipe: "plasmafab", prodRate: 0.7,      // antimatter + alloys + radioactives + power → Plasma Torpedoes
+    requires: ["antimatterforge", "aicores"],
+    odysseyOnly: true,
+  },
+  stardock: {
+    id: "stardock", name: "Star Dock", hp: 600, radius: 22,
+    cost: { ore: 350 }, buildTime: 40, sight: 160,
+    produces: ["leviathan"],                 // the strategic-good capital ship (no recipe — it trains a unit)
+    requires: ["aifoundry", "torpedoworks"], // building it proves you've teched the whole Strategic tree
+    odysseyOnly: true,
+  },
   antimatter_gate: {
     id: "antimatter_gate", name: "Antimatter Gate", hp: 1200, radius: 28,
     cost: { ore: 800 }, buildTime: 60, sight: 200,
-    requires: ["antimatterforge"],   // reveals once you can fuel it
+    requires: ["antimatterforge", "aifoundry", "torpedoworks"],   // the true capstone: the whole Strategic tier
     odysseyOnly: true,
     // The wonder: charges by consuming `feed` goods over `chargeTime` seconds of
-    // full-power charging (engine/wonder.js). At full charge the player wins the
-    // galaxy. A fat, defendable objective — razed mid-charge, the whole antimatter
-    // investment is lost with it.
-    wonder: true, feed: { antimatter: 0.4 }, chargeTime: 150,
+    // full-power charging (engine/wonder.js), clamped to the scarcest one — so the
+    // win demands the WHOLE Strategic tier flowing, not just antimatter. At full
+    // charge the player wins the galaxy. Razed mid-charge, the whole investment is
+    // lost with it. The Leviathan (below) draws on the same strategic goods — feed
+    // the Gate or build the fleet.
+    wonder: true, feed: { ai: 0.2, antimatter: 0.3, plasmatorp: 0.1 }, chargeTime: 150,
   },
 };
 
@@ -427,6 +450,22 @@ export const UNITS = {
     // base-cracker. Relics (ancient tech) are its ammunition.
     bonusVsBuildings: 25,
     requires: ["arsenal"],
+  },
+  leviathan: {
+    id: "leviathan", name: "Leviathan", hp: 900, radius: 14, speed: 34,
+    cost: { ore: 300, ai: 3, plasmatorp: 4 }, buildTime: 60, supplyCost: 8,
+    role: "combat", attack: 70, range: 200, cooldown: 2.4,
+    sight: 220, aggroRange: 190,
+    // The Strategic-tier capital ship: built only at a Star Dock (Odyssey-only),
+    // costed in AI Cores + Plasma Torpedoes you must MANUFACTURE — the military
+    // half of the endgame. Huge hull, long reach, a base-cracker's structure
+    // bonus. Deliberately OUTSIDE the rock-paper-scissors triangle (no bonusVs,
+    // nothing hard-counters it) — but 8 supply and a strategic-good price mean a
+    // swarm of cheap units still trades into it, and every good spent on a
+    // Leviathan is one not fed to the Antimatter Gate.
+    bonusVsBuildings: 40,
+    requires: ["stardock"],
+    odysseyOnly: true,   // the endgame capital ship deliberately exceeds the skirmish specialists (see entities.test)
   },
 };
 

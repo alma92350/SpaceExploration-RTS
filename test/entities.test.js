@@ -154,7 +154,9 @@ test("the Ranger is a Command-Center recon unit: cheap, fragile, all-terrain, fa
   assert.ok(BUILDINGS.command.produces.includes("ranger"), "trained at the Command Center, like a Worker");
   assert.equal(UNITS.ranger.role, "scout", "its own role — never auto-acquires, never counted in the combat army");
   assert.equal(UNITS.ranger.allTerrain, true, "ice fields and rough ground never slow it");
-  const combat = Object.values(UNITS).filter(u => u.role === "combat");
+  // The skirmish roster only — the Odyssey-only Leviathan is a capital ship deliberately
+  // beyond these balance invariants (it never appears in a skirmish).
+  const combat = Object.values(UNITS).filter(u => u.role === "combat" && !u.odysseyOnly);
   assert.ok(combat.every(u => UNITS.ranger.sight > u.sight), "it out-sees every combat unit — vision is its edge");
   assert.ok(UNITS.ranger.cost.ore < UNITS.skiff.cost.ore, "cheaper than the cheapest combat unit");
   assert.ok(UNITS.ranger.hp <= UNITS.skiff.hp, "fragile — it scouts, it doesn't trade blows");
@@ -180,7 +182,8 @@ test("the Tier-3 specialty units spend the once-dead commodities and sit outside
 
 test("each specialty unit has a distinct identity: Wraith glass cannon, Aegis wall, Colossus artillery", () => {
   const dps = def => def.attack / def.cooldown;
-  const combat = Object.values(UNITS).filter(u => u.role === "combat");
+  // Skirmish roster only — the Odyssey-only Leviathan out-tanks/out-guns these on purpose.
+  const combat = Object.values(UNITS).filter(u => u.role === "combat" && !u.odysseyOnly);
 
   // Wraith — fastest combatant, highest raw DPS, but soft.
   assert.ok(combat.every(u => u.id === "wraith" || UNITS.wraith.speed >= u.speed), "Wraith is the fastest combat unit");
