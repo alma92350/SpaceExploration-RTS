@@ -65,12 +65,20 @@ export function hideObjectives() {
 
 // A brief top-center notice for things happening on a world you're not on — a
 // colony under attack or lost (boot.js drives it from galaxy.sweepColonies).
+// An optional onClick makes the toast actionable (e.g. jump to the attacked
+// colony to defend it): it turns on pointer events, and clicking runs the
+// handler and dismisses the toast. A clickable alert lingers a little longer so
+// there's time to act on it. `.onclick` (not addEventListener) is assigned fresh
+// each call, so a plain toast clears any handler the previous one left behind.
 let galaxyToastTimer;
-export function showGalaxyToast(msg, kind = "warn") {
+export function showGalaxyToast(msg, kind = "warn", onClick = null) {
   galaxyToastEl.textContent = msg;
-  galaxyToastEl.className = "galaxy-toast " + kind;   // drops "hidden", sets the kind
+  galaxyToastEl.className = "galaxy-toast " + kind + (onClick ? " clickable" : "");   // drops "hidden", sets the kind
+  galaxyToastEl.onclick = onClick
+    ? () => { galaxyToastEl.classList.add("hidden"); onClick(); }
+    : null;
   clearTimeout(galaxyToastTimer);
-  galaxyToastTimer = setTimeout(() => galaxyToastEl.classList.add("hidden"), 5000);
+  galaxyToastTimer = setTimeout(() => galaxyToastEl.classList.add("hidden"), onClick ? 8000 : 5000);
 }
 
 /* ---------- help overlay ---------- */

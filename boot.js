@@ -126,10 +126,11 @@ export function bootGalaxy(galaxy, { intro = false } = {}) {
 // loop keeps running and keeps ticking the world you left (now a background
 // colony), so this only swaps what's rendered and controlled.
 export function performJump(destId) {
-  if (!game.galaxy) return;
+  if (!game.galaxy) return null;
   const result = jumpCapital(game.galaxy, destId);
-  if (!result) return;
+  if (!result) return null;   // couldn't launch (no Spaceport here, or too poor for a new world)
   focusActivePlanet();
+  return result;
 }
 
 // Repoint the view/input at the galaxy's active planet without restarting the
@@ -241,17 +242,24 @@ export function bootState(newState, { intro }) {
 
 // Background-colony notifications from galaxy.sweepColonies. "Under attack" is
 // throttled per planet so a sustained raid pings occasionally rather than every
-// tick; "lost" fires once (sweepColonies only reports it once).
+// tick; "lost" fires once (sweepColonies only reports it once). Both toasts are
+// clickable — clicking jumps straight to that world to defend or retake it (a
+// free hop, since it's a world you've held). If no Spaceport stands on the world
+// you're currently on, the jump can't launch, so the click explains why instead.
 const COLONY_NOTE_THROTTLE_MS = 9000;
 const lastColonyNote = {};
 function notifyColony(n) {
   const name = planetName(n.planetId);
-  if (n.type === "lost") { showGalaxyToast(`⚠ Your colony on ${name} has fallen.`, "bad"); return; }
+  const jumpThere = () => {
+    if (!performJump(n.planetId))
+      showGalaxyToast(`Build a Spaceport on your current world to jump to ${name}.`, "warn");
+  };
+  if (n.type === "lost") { showGalaxyToast(`⚠ Your colony on ${name} has fallen — click to retake ▸`, "bad", jumpThere); return; }
   const now = performance.now();
   const last = lastColonyNote[n.planetId];
   if (last !== undefined && now - last < COLONY_NOTE_THROTTLE_MS) return;   // undefined ⇒ first alert always fires
   lastColonyNote[n.planetId] = now;
-  showGalaxyToast(`⚔ Your colony on ${name} is under attack.`, "warn");
+  showGalaxyToast(`⚔ Your colony on ${name} is under attack — click to defend ▸`, "warn", jumpThere);
 }
 
 // Stereo pan (-1..1) for a world-x, relative to the camera: a fight off the

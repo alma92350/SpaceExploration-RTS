@@ -94,6 +94,10 @@ html, body {
 /* No generic `.hidden` exists — each component hides itself. Without this the empty
    toast renders as a stray pill at top-center (on the setup screen and in-game). */
 .galaxy-toast.hidden { display: none; }
+/* An actionable alert (e.g. "colony under attack — click to defend"): the base
+   toast is pointer-events:none, so re-enable clicks and cue it as interactive. */
+.galaxy-toast.clickable { pointer-events: auto; cursor: pointer; }
+.galaxy-toast.clickable:hover { background: #1a2c4d; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
 
 /* Starmap overlay (starmap.js): a full-screen galaxy map with world nodes on a
    ring, coloured by your relationship to each. */
