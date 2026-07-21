@@ -20,7 +20,7 @@ import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale } fro
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
-import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY,
+import { JUMP_COST, jumpCost, stagedRiders, cargoManifest, CARGO_CAPACITY,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip } from "./engine/colony.js";
@@ -284,10 +284,11 @@ function renderSelectionPanel() {
     + "|" + (game.galaxy && state.diplomacy
         ? `${state.diplomacy.stance < 0.25}:${tributeCost(state.diplomacy)}:${game.galaxy.credits >= tributeCost(state.diplomacy)}`
         : "")
-    // Rebuild when the Capital state changes (a CC upgraded to Capital → anchored note) or
-    // a staged colony ship appears/vanishes (Spaceport jump buttons enable/lock).
+    // Rebuild when the Capital state changes (a CC upgraded to Capital → anchored note), a
+    // staged colony ship appears/vanishes (the jump panel's "ship loaded?" hint), or the
+    // credits cross the new-world jump cost (those Jump buttons enable/lock).
     + "|" + (game.galaxy
-        ? `${jumpVessel(state) ? 1 : 0}:${[...state.buildings.values()].filter(b => b.owner === "player" && b.capital).length}`
+        ? `${jumpVessel(state) ? 1 : 0}:${game.galaxy.credits >= JUMP_COST ? 1 : 0}:${[...state.buildings.values()].filter(b => b.owner === "player" && b.capital).length}`
         : "")
     // Rebuild when a selected colony ship crosses a deploy-placement boundary, so its
     // "Deploy as Command Center" button locks/unlocks live as you move it to clear ground.
@@ -688,18 +689,17 @@ function rebuildSelectionPanel(sel) {
   const spaceport = sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
   if (spaceport && game.galaxy) {
     const staged = stagedRiders(state, spaceport).length;
-    const afford = game.galaxy.credits >= JUMP_COST;
-    const vessel = jumpVessel(state);   // a colony ship staged on the pad carries the jump; a deployed base never travels
+    const vessel = jumpVessel(state);   // is a colony ship on the pad? (settles a NEW world) — a hint, not a gate
     const info = document.createElement("p");
     info.className = "hint";
-    info.textContent = `Send a Colony Ship to another world (◈${JUMP_COST} fuel), then deploy it there to found a base. ${staged} unit${staged === 1 ? "" : "s"} staged by the pad ride along — park your army near the Spaceport to bring it. Your bases here stay as a colony.`;
+    info.textContent = `Jump the ${staged} unit${staged === 1 ? "" : "s"} staged by the pad to another world — free to a world you already hold, ◈${JUMP_COST} fuel to reach a new one. Park an army by the pad to reinforce a colony, or a Colony Ship to settle new ground (deploy it there). Your bases here stay as a colony.`;
     panelEl.appendChild(info);
-    if (!vessel) {
-      const warn = document.createElement("p");
-      warn.className = "hint";
-      warn.textContent = "Park a Colony Ship next to the Spaceport to carry the jump (build one at a Command Center).";
-      panelEl.appendChild(warn);
-    }
+    const shipHint = document.createElement("p");
+    shipHint.className = "hint";
+    shipHint.textContent = vessel
+      ? "A Colony Ship is loaded — jump to a new world and deploy it to found a base."
+      : "No Colony Ship on the pad: you can still hop to a world you hold (to control or reinforce it). To settle a NEW world, build a Colony Ship at a Command Center and park it here first.";
+    panelEl.appendChild(shipHint);
 
     // Cargo hold: manufactured goods that ride along to be sold at the destination
     // (they price differently per world). Loaded most-valuable-first, up to capacity.
@@ -714,13 +714,15 @@ function rebuildSelectionPanel(sel) {
     for (const w of game.galaxy.worlds) {
       if (w === game.galaxy.activeId) continue;
       const name = planetName(w);
-      const visited = game.galaxy.planets.has(w) && w !== game.galaxy.activeId;
-      panelEl.appendChild(makeButton(`Jump ▸ ${name}${visited ? " · your colony" : ""}`,
+      const owned = game.galaxy.planets.has(w);   // a world you already hold → free to return
+      const cost = jumpCost(game.galaxy, w);
+      const afford = game.galaxy.credits >= cost;
+      panelEl.appendChild(makeButton(`Jump ▸ ${name}${owned ? " · your colony" : ` · ◈${cost}`}`,
         () => performJump(w),
-        { tip: "Carry the staged Colony Ship (and army) to this world — deploy it there to settle",
-          locked: !afford || !vessel,
-          lockTip: !vessel ? "Park a Colony Ship next to the Spaceport to carry the jump"
-                           : `Need ◈${JUMP_COST} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
+        { tip: owned ? "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+                     : "Settle new ground: carry the staged expedition here. Bring a Colony Ship to found a base.",
+          locked: !afford,
+          lockTip: `Need ◈${cost} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
     }
   }
 

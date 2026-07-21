@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS,
-         upgradeToCapital, jumpVessel, canJump, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "../engine/galaxy.js";
+         upgradeToCapital, jumpVessel, canJump, jumpCost, checkGalaxyLoss, JUMP_COST,
+         CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "../engine/galaxy.js";
 import { checkEndlessLoss } from "../engine/victory.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
@@ -123,7 +124,7 @@ test("upgradeToCapital is refused without the resources or on a still-constructi
   assert.equal(upgradeToCapital(s, half), false, "a half-built CC can't be the Capital yet");
 });
 
-test("a jump needs a colony ship on the pad — a deployed base (even the Capital) never travels", () => {
+test("a jump launches from a Spaceport alone (no colony-ship mandate) and never carries a deployed base", () => {
   const g = createGalaxy({ seed: 7 });
   const from = settle(activeState(g));
   const cc = commandCenters(from, "player")[0];
@@ -131,19 +132,20 @@ test("a jump needs a colony ship on the pad — a deployed base (even the Capita
   g.credits = 2000;
   from.players.player.resources.ore = 1000;
   upgradeToCapital(from, cc);                           // a fortified base
-  assert.equal(jumpVessel(from), null, "no colony ship staged → no vessel");
-  assert.equal(canJump(from), false, "a Spaceport alone can't jump");
-  const before = g.credits;
-  assert.equal(jumpCapital(g, g.worlds.find(w => w !== g.activeId)), null, "the jump is refused");
-  assert.equal(g.credits, before, "and no fuel was spent");
-
-  const ship = makeUnit("colonyship", "player", sp.x, sp.y);   // park a colony ship on the pad
-  from.units.set(ship.id, ship);
-  assert.equal(jumpVessel(from)?.id, ship.id, "the staged colony ship is the vessel");
-  assert.ok(canJump(from), "now a jump can launch");
-  assert.ok(jumpCapital(g, g.worlds.find(w => w !== g.activeId)), "the jump runs");
+  assert.equal(jumpVessel(from), null, "no colony ship staged → no vessel loaded (a HUD hint, not a gate)");
+  assert.ok(canJump(from), "a Spaceport alone can launch a jump — no colony ship required");
+  const destId = g.worlds.find(w => w !== g.activeId);
+  assert.ok(jumpCapital(g, destId), "the jump runs with just a Spaceport (a scout/reinforce hop)");
   assert.equal(commandCenters(from, "player").length, 1, "the deployed base stayed put…");
   assert.equal(commandCenters(from, "player")[0].capital, true, "…still the fortified Capital");
+  assert.equal(commandCenters(activeState(g), "player").length, 0, "and nothing was teleported to the destination");
+
+  // With a colony ship staged near a pad, jumpVessel still identifies it (the HUD's "ship loaded?" cue).
+  const here = activeState(g);
+  const sp2 = makeBuilding("spaceport", "player", here.map.bases.player.x + 40, here.map.bases.player.y);
+  here.buildings.set(sp2.id, sp2);
+  const ship = makeUnit("colonyship", "player", sp2.x, sp2.y); here.units.set(ship.id, ship);
+  assert.equal(jumpVessel(here)?.id, ship.id, "a staged colony ship is still reported as the loaded vessel");
 });
 
 test("the Capital (flag + raised HP) survives a galaxy save/load", () => {
@@ -328,4 +330,71 @@ test("the galaxy jump is deterministic", () => {
     return `${g.activeId}|${dest.units.size}|${dest.buildings.size}|${from.units.size}|${from.buildings.size}`;
   };
   assert.equal(run(), run(), "same seed + same jump replays identically");
+});
+
+/* ---------- free travel between held worlds + galaxy-wide defeat ---------- */
+
+test("a jump is free to a world you already hold and costs fuel only to reach a new one", () => {
+  const g = createGalaxy({ seed: 33 });
+  settle(activeState(g));
+  const newWorld = g.worlds.find(w => !g.planets.has(w));
+  assert.equal(jumpCost(g, newWorld), JUMP_COST, "reaching a never-visited world costs fuel");
+  addPlanet(g, newWorld, { unsettled: true });                 // now it's a world you've been to
+  assert.equal(jumpCost(g, newWorld), 0, "returning to a world you hold is free");
+  assert.equal(jumpCost(g, g.activeId), 0, "your current seat is free too");
+});
+
+test("a free reinforcement hop back to a colony carries an army and spends no fuel", () => {
+  const g = createGalaxy({ seed: 34 });
+  const from = settle(activeState(g));
+  // A colony we already hold (settled, then left as a background world).
+  const colonyId = g.worlds.find(w => w !== g.activeId);
+  const colony = addPlanet(g, colonyId, { unsettled: true });
+  const colonyCC = makeBuilding("command", "player", colony.map.bases.player.x, colony.map.bases.player.y);
+  colony.buildings.set(colonyCC.id, colonyCC);                 // it's ours: a standing base
+  // Stage an army by our Spaceport back home — no colony ship, just reinforcements.
+  const sp = addSpaceport(from);
+  const trooper = makeUnit("skiff", "player", sp.x + 10, sp.y); from.units.set(trooper.id, trooper);
+  g.credits = 500;
+  const before = g.credits;
+  const res = jumpCapital(g, colonyId);
+  assert.ok(res, "the hop to a held colony runs");
+  assert.equal(g.credits, before, "no fuel was spent returning to a world we hold");
+  assert.equal(g.activeId, colonyId, "we're now controlling the colony");
+  assert.ok([...activeState(g).units.values()].some(u => u.owner === "player" && u.type === "skiff"),
+    "the staged army rode along to reinforce the colony");
+});
+
+test("defeat is galaxy-wide: holding a foothold on ANY world keeps you in the game", () => {
+  const g = createGalaxy({ seed: 35 });
+  const home = settle(activeState(g));                          // home has a CC
+  // Jump (Spaceport only, no ship) to a fresh world where we hold nothing.
+  addSpaceport(home);
+  g.credits = 2000;
+  const destId = g.worlds.find(w => w !== g.activeId);
+  jumpCapital(g, destId);
+  const dest = activeState(g);
+  assert.equal(commandCenters(dest, "player").length, 0, "we hold nothing on the world we hopped to");
+  assert.equal(hasColonyShip(dest, "player"), false, "…not even a colony ship");
+  checkGalaxyLoss(g);
+  assert.equal(dest.over, false, "still in the game — a base stands back home");
+
+  // The per-world check must stay quiet on a galaxy world (inGalaxy), even with no foothold here.
+  dest.over = false;
+  checkEndlessLoss(dest);
+  assert.equal(dest.over, false, "the per-world loss check is suppressed for a galaxy world");
+
+  // Now raze the home base too — no foothold anywhere → galaxy defeat.
+  for (const b of commandCenters(home, "player")) home.buildings.delete(b.id);
+  checkGalaxyLoss(g);
+  assert.equal(activeState(g).over, true, "with no foothold on any world, the Odyssey is lost");
+  assert.equal(activeState(g).winner, "ai");
+});
+
+test("a lone undeployed colony ship anywhere still counts as a foothold (no galaxy defeat)", () => {
+  const g = createGalaxy({ seed: 36 });
+  // Don't settle: the start world holds only the colony ship (no CC anywhere).
+  assert.ok(hasColonyShip(activeState(g), "player"), "the start is a lone colony ship");
+  checkGalaxyLoss(g);
+  assert.equal(activeState(g).over, false, "a lone colony ship can still re-found — not a defeat");
 });

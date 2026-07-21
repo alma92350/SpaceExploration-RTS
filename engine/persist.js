@@ -152,6 +152,7 @@ export function deserializeGalaxy(input) {
     Object.assign(state.market.pressure, P.market.pressure); // ...then overlay the saved running pressure
     state.diplomacy = { ...createDiplomacy(), ...P.diplomacy };
     state.background = !!P.background;
+    state.inGalaxy = true;                                    // galaxy member → galaxy-wide defeat (engine/galaxy.js)
     galaxy.planets.set(P.planetId, state);
   }
   const active = galaxy.planets.get(galaxy.activeId);

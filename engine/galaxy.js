@@ -116,6 +116,8 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   }
   state.market = createMarket(state);         // every world has its own price book
   state.diplomacy = createDiplomacy();        // and its own neighbour's stance toward you
+  state.inGalaxy = true;                       // part of a galaxy → defeat is judged galaxy-wide (checkGalaxyLoss),
+                                               // not per-world (so an army-only hop to a world you don't hold isn't a loss)
   galaxy.planets.set(planetId, state);
   return state;
 }
@@ -176,6 +178,24 @@ export function stepGalaxy(galaxy, dt) {
   }
   checkGalaxyWin(galaxy);     // ECONOMIC win: an Antimatter Gate finishing on ANY held world
   checkDomination(galaxy);    // MILITARY win: enough neighbours' Command Centers razed
+  checkGalaxyLoss(galaxy);    // DEFEAT: no player foothold left on ANY world (checked after the wins)
+}
+
+// Galaxy-wide DEFEAT: you're beaten only when you hold no foothold — no Command Center
+// and no colony ship — on ANY world. So a jump to a world where you have nothing yet (an
+// army-only reinforcement run, or a hop to fetch a colony ship) is never an instant loss
+// while a base or ship still stands somewhere else. The per-world checkEndlessLoss is
+// suppressed for galaxy states (state.inGalaxy, see engine/victory.js), so this is the one
+// authority. Runs AFTER the win checks, so a same-tick win takes precedence. Idempotent.
+export function checkGalaxyLoss(galaxy) {
+  const active = activeState(galaxy);
+  if (active.over) return;
+  for (const state of galaxy.planets.values()) {
+    for (const b of state.buildings.values())
+      if (b.owner === "player" && b.type === "command") return;   // a base somewhere → still in the game
+    if (hasColonyShip(state, "player")) return;                   // …or a colony ship to re-found from
+  }
+  active.over = true; active.winner = "ai";                       // last foothold anywhere is gone
 }
 
 // The galaxy-wide economic WIN check. An Antimatter Gate (engine/wonder.js) can
@@ -303,10 +323,21 @@ export function jumpVessel(state) {
   return null;
 }
 
-// Can the player launch a jump from this world? — a completed Spaceport with a colony
-// ship staged on the pad to carry (jumpVessel already checks for the Spaceport).
+// Can the player launch a jump from this world? — just a completed Spaceport. No colony
+// ship is required: a jump can carry one (to settle a new world), or an army (to reinforce
+// a colony), or nothing (to hop back and control a world you already hold). jumpVessel
+// stays as an informational helper (is a ship loaded?) for the HUD, not a gate.
 export function canJump(state) {
-  return !!jumpVessel(state);
+  return [...state.buildings.values()]
+    .some(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
+}
+
+// The fuel a jump to `destId` costs: FREE to a world you already hold (any world you've
+// visited — a colony you're returning to, reinforcing, or re-settling), and JUMP_COST to
+// reach a NEW world for the first time. So bouncing between your own worlds to defend or
+// ferry a colony ship is friction-free; only expanding the frontier costs fuel.
+export function jumpCost(galaxy, destId) {
+  return galaxy.planets.has(destId) ? 0 : JUMP_COST;
 }
 
 // The player units staged near a Spaceport — the expedition that rides along on a
@@ -351,23 +382,21 @@ function loadCargo(from, dest) {
 }
 
 // Launch an interplanetary jump to `destId`: every player unit staged near the Spaceport
-// — the colony ship that carries the expedition, plus any army loaded with it — moves to
-// the destination's landing zone, along with the credit fuel and the cargo hold. NO
-// deployed base moves: the origin keeps ALL its buildings (and any un-staged units) and
-// becomes a background colony that goes on evolving. Deploy the colony ship at the
-// destination to found your base there. Returns a summary, or null if the jump can't run
-// (no Spaceport, no colony ship staged on the pad, same world, or not enough fuel).
+// — a colony ship (to settle), an army (to reinforce), or nothing — moves to the
+// destination's landing zone, along with the cargo hold. NO deployed base moves: the
+// origin keeps ALL its buildings (and any un-staged units) and becomes a background colony
+// that goes on evolving. Deploy a colony ship at the destination to found a base there.
+// Costs fuel only for a NEW world (jumpCost) — returning to a world you hold is free.
+// Returns a summary, or null if the jump can't run (no Spaceport, same world, or too poor
+// to fuel a new-world jump).
 export function jumpCapital(galaxy, destId) {
   const from = activeState(galaxy);
   const spaceport = [...from.buildings.values()]
     .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
-  if (!spaceport || destId === galaxy.activeId || galaxy.credits < JUMP_COST) return null;
+  const cost = jumpCost(galaxy, destId);
+  if (!spaceport || destId === galaxy.activeId || galaxy.credits < cost) return null;
   const riders = stagedRiders(from, spaceport);
-  // The expedition must include a colony ship — the vessel that founds your base at the
-  // destination. A deployed Command Center is permanent and never travels, so without a
-  // staged ship there's nothing to settle with and the jump is refused (no fuel spent).
-  if (!riders.some(u => u.type === "colonyship")) return null;
-  galaxy.credits -= JUMP_COST;   // fuel for the jump
+  galaxy.credits -= cost;   // fuel — free to a world you already hold
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });
   const lz = dest.map.bases.player;
