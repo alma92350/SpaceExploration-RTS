@@ -30,8 +30,8 @@ export function renderStarmap() {
   const head = document.createElement("div");
   head.className = "starmap-head";
   const hint = canLaunch
-    ? `Click a world to jump (◈${JUMP_COST} fuel)`
-    : "Build a Spaceport on your capital to jump between worlds";
+    ? `Click a world to send your Colony Ship (◈${JUMP_COST} fuel)`
+    : "Build a Spaceport and park a Colony Ship beside it to jump between worlds";
   head.innerHTML = `<h2>Galaxy</h2>`
     + `<p>Visited ${status.visited}/${status.total} · Conquered ${status.pacified}/${status.dominationTarget} · ◈ ${Math.floor(g.credits)} · ${hint}</p>`;
   starmapEl.appendChild(head);
@@ -68,10 +68,10 @@ export function renderStarmap() {
 function onWorldClick(w) {
   const g = game.galaxy;
   if (!g || w.id === g.activeId) return;
-  if (!canJump(activeState(g))) { showGalaxyToast("Build a Spaceport on your capital to jump.", "warn"); return; }
+  if (!canJump(activeState(g))) { showGalaxyToast("Park a Colony Ship by a Spaceport to jump.", "warn"); return; }
   if (g.credits < JUMP_COST) { showGalaxyToast(`Need ◈${JUMP_COST} fuel to jump to ${worldName(w.id)}.`, "warn"); return; }
   closeStarmap();
-  performJump(w.id);   // relocates the capital + staged units, repoints the view
+  performJump(w.id);   // carries the staged Colony Ship + army to the new world, repoints the view
 }
 
 export function openStarmap() { if (!game.galaxy) return; renderStarmap(); starmapEl.classList.remove("hidden"); }

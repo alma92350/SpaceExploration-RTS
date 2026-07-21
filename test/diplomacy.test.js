@@ -120,6 +120,7 @@ test("sweepColonies reports a colony under attack, then lost, and drains its eve
   const from = settle(activeState(g));
   const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   from.buildings.set(...(() => { const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y); return [sp.id, sp]; })());
+  from.units.set(...(() => { const sh = makeUnit("colonyship", "player", cc.x + 40, cc.y); return [sh.id, sh]; })());   // vessel on the pad
   g.credits = 1000;
   const destId = g.worlds.find(w => w !== g.activeId);
   jumpCapital(g, destId);                        // `from` is now a background colony (keeps its Spaceport)
@@ -155,9 +156,10 @@ test("a held colony sends home passive income each tick", () => {
   const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y);
   from.buildings.set(sp.id, sp);
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y); from.units.set(ship.id, ship);   // vessel on the pad
   g.credits = 1000;
   const dest = g.worlds.find(w => w !== g.activeId);
-  jumpCapital(g, dest);                       // `from` is now a colony with buildings
+  jumpCapital(g, dest);                       // `from` keeps its base and is now a colony
   const before = g.credits;
   sweepColonies(g, 10);                        // 10 seconds of passive income
   assert.ok(g.credits > before, "the colony banks income while you're away");

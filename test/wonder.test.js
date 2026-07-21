@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeBuilding } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy, jumpCapital } from "../engine/galaxy.js";
 import { deployColonyShip } from "../engine/colony.js";
@@ -94,9 +94,10 @@ test("a Gate left charging on a background colony still wins the galaxy", () => 
   home.buildings.set(sp.id, sp);
   home.buildings.set(reactor.id, reactor);
   home.buildings.set(gate.id, gate);
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y); home.units.set(ship.id, ship);   // vessel to carry the jump
   stockFeed(home.players.player.resources, 1.3);
   g.credits = 2000;
-  jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // leave the Gate behind on a background colony
+  jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // sail a colony ship away; the Gate + base stay on the colony
   assert.notEqual(g.activeId, home.planetId, "we jumped away from the Gate's world");
   for (let i = 0; i < GATE.chargeTime * 20 && !activeState(g).over; i++) stepGalaxy(g, 0.1);
   assert.ok(activeState(g).over && activeState(g).winner === "player", "the colony Gate's win propagates to the active seat");

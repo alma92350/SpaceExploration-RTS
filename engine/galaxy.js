@@ -263,8 +263,10 @@ export function galaxyStatus(galaxy) {
   };
 }
 
-// The fortified Capital: an upgraded Command Center with double HP that is ANCHORED —
-// it never jumps (only a smaller, non-capital CC relocates). One per owner.
+// The fortified Capital: an upgraded Command Center with double HP. Like every deployed
+// base it is permanent — it never travels (interplanetary jumps carry a colony ship, not
+// a base; jumpVessel/jumpCapital) — so the Capital is your hardened anchor world. One
+// per owner; the flag also drives its gold ring on the map (render.js).
 export const CAPITAL_UPGRADE_COST = { ore: 400 };
 export const CAPITAL_HP_MULT = 2;
 
@@ -286,21 +288,25 @@ export function upgradeToCapital(state, building) {
   return true;
 }
 
-// The Command Center that would relocate on a jump: your first non-capital ("smaller")
-// CC. The Capital is anchored, so this is null when your only CC is the Capital — build
-// a second CC to jump again.
-export function jumpableCC(state) {
-  for (const b of state.buildings.values())
-    if (b.owner === "player" && b.type === "command" && !b.constructing && !b.capital) return b;
+// The colony ship that would carry an interplanetary jump: a player colony ship staged
+// within JUMP_LOAD_RADIUS of a completed Spaceport. A jump relocates the SHIP (and the
+// rest of the staged expedition) — NOT a deployed base. Deployed Command Centers are
+// permanent: the world you leave keeps them and becomes a background colony. Deploy the
+// ship at the destination to found your new base there. Null when no ship is on the pad.
+export function jumpVessel(state) {
+  const spaceport = [...state.buildings.values()]
+    .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
+  if (!spaceport) return null;
+  for (const u of state.units.values())
+    if (u.owner === "player" && u.type === "colonyship"
+        && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS) return u;
   return null;
 }
 
-// Can the player launch a jump from this world? — a completed Spaceport AND a smaller
-// (non-capital) Command Center to send. The anchored Capital alone can't jump.
+// Can the player launch a jump from this world? — a completed Spaceport with a colony
+// ship staged on the pad to carry (jumpVessel already checks for the Spaceport).
 export function canJump(state) {
-  const hasPort = [...state.buildings.values()]
-    .some(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
-  return hasPort && !!jumpableCC(state);
+  return !!jumpVessel(state);
 }
 
 // The player units staged near a Spaceport — the expedition that rides along on a
@@ -344,31 +350,29 @@ function loadCargo(from, dest) {
   return manifest;
 }
 
-// Relocate the capital to `destId`: the Command Center plus every player unit
-// staged near the Spaceport move to the destination's landing zone; the origin
-// keeps its other buildings and units and becomes a background colony that goes
-// on evolving. Creates the destination (unsettled) on first visit. Returns a
-// small summary, or null if the jump can't run (no Spaceport, or same world).
+// Launch an interplanetary jump to `destId`: every player unit staged near the Spaceport
+// — the colony ship that carries the expedition, plus any army loaded with it — moves to
+// the destination's landing zone, along with the credit fuel and the cargo hold. NO
+// deployed base moves: the origin keeps ALL its buildings (and any un-staged units) and
+// becomes a background colony that goes on evolving. Deploy the colony ship at the
+// destination to found your base there. Returns a summary, or null if the jump can't run
+// (no Spaceport, no colony ship staged on the pad, same world, or not enough fuel).
 export function jumpCapital(galaxy, destId) {
   const from = activeState(galaxy);
   const spaceport = [...from.buildings.values()]
     .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
   if (!spaceport || destId === galaxy.activeId || galaxy.credits < JUMP_COST) return null;
-  // Only a smaller (non-capital) Command Center relocates — the Capital is anchored.
-  // Refuse the jump (no fuel spent) if the only CC here is the Capital.
-  const cc = jumpableCC(from);
-  if (!cc) return null;
+  const riders = stagedRiders(from, spaceport);
+  // The expedition must include a colony ship — the vessel that founds your base at the
+  // destination. A deployed Command Center is permanent and never travels, so without a
+  // staged ship there's nothing to settle with and the jump is refused (no fuel spent).
+  if (!riders.some(u => u.type === "colonyship")) return null;
   galaxy.credits -= JUMP_COST;   // fuel for the jump
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });
   const lz = dest.map.bases.player;
   const nextId = () => "g" + (galaxy.entitySeq = (galaxy.entitySeq || 0) + 1);   // fresh ids: no cross-state collision
 
-  const riders = stagedRiders(from, spaceport);
-
-  from.buildings.delete(cc.id);
-  cc.id = nextId(); cc.x = lz.x; cc.y = lz.y; cc.rally = { x: lz.x + 60, y: lz.y + 60 };
-  dest.buildings.set(cc.id, cc);
   riders.forEach((u, i) => {
     from.units.delete(u.id);
     const a = (i / Math.max(1, riders.length)) * Math.PI * 2, ring = 46 + (i % 3) * 18;

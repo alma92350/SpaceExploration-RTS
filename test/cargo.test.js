@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, jumpCapital, cargoManifest, CARGO_CAPACITY } from "../engine/galaxy.js";
-import { makeBuilding } from "../engine/state.js";
+import { makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
 
-// A galaxy with a deployed capital, a Spaceport on it, and fuel to jump.
+// A galaxy with a deployed base, a Spaceport, and a Colony Ship staged on the pad (the
+// jump vessel) with fuel to go.
 function readyToJump(seed = 20) {
   const g = createGalaxy({ seed });
   const from = activeState(g);
@@ -12,6 +13,8 @@ function readyToJump(seed = 20) {
   const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y);
   from.buildings.set(sp.id, sp);
+  const ship = makeUnit("colonyship", "player", sp.x + 20, sp.y);   // a colony ship parked on the pad carries the jump
+  from.units.set(ship.id, ship);
   g.credits = 2000;
   return { g, from, destId: g.worlds.find(w => w !== g.activeId) };
 }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, jumpCapital, JUMP_COST } from "../engine/galaxy.js";
 import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT } from "../engine/market.js";
-import { createGameState, makeBuilding } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
 
 test("createGalaxy hands every world its own price book", () => {
@@ -79,6 +79,7 @@ test("a jump spends its fuel cost in credits and is refused when you can't pay",
   const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y);
   s.buildings.set(sp.id, sp);
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y); s.units.set(ship.id, ship);   // vessel on the pad
   const dest = g.worlds.find(w => w !== g.activeId);
 
   g.credits = JUMP_COST - 1;

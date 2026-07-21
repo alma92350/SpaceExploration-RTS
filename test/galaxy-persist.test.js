@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGalaxy, activeState, addPlanet, jumpCapital, stepGalaxy } from "../engine/galaxy.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
-import { deployColonyShip } from "../engine/colony.js";
+import { deployColonyShip, hasColonyShip } from "../engine/colony.js";
 import { sell } from "../engine/market.js";
 
 // A comparable fingerprint of a whole galaxy (rounded to dodge FP noise).
@@ -72,20 +72,21 @@ test("entity ids continue past the save with no collision", () => {
   assert.ok(!existing.has(fresh.id), "a newly minted id collides with nothing in the galaxy");
 });
 
-test("a jump-relocated capital survives a save/load", () => {
+test("a colony-ship jump to a new seat survives a save/load", () => {
   const g = createGalaxy({ seed: 12 });
   const from = activeState(g);
   for (const u of [...from.units.values()]) if (u.type === "colonyship") deployColonyShip(from, u.id);   // deploy start ships → CCs
   const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y);
   from.buildings.set(sp.id, sp);
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y); from.units.set(ship.id, ship);   // the jump vessel
   g.credits = 2000;
-  jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // now 2 worlds: an active seat + a colony
+  jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // sail the ship to a new seat; the base stays a colony
   const before = snapshot(g);
   const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
   assert.deepEqual(snapshot(restored), before);
   assert.equal(activeState(restored).background, false, "the reloaded seat is not a background world");
-  assert.equal([...activeState(restored).buildings.values()].filter(b => b.owner === "player" && b.type === "command").length, 1, "the capital is where it jumped");
+  assert.ok(hasColonyShip(activeState(restored), "player"), "the colony ship is at the new seat it jumped to");
 });
 
 test("the Odyssey AI wave-cadence clock survives a save/load (continue-identically)", () => {

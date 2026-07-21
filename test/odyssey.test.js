@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS,
-         upgradeToCapital, jumpableCC, canJump, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "../engine/galaxy.js";
+         upgradeToCapital, jumpVessel, canJump, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "../engine/galaxy.js";
 import { checkEndlessLoss } from "../engine/victory.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
@@ -75,19 +75,22 @@ test("a second Command Center is an expansion — losing one doesn't end the Ody
   assert.equal(s.over, true, "only the LAST Command Center ends the run");
 });
 
-test("on a jump only the primary Command Center relocates; an expansion CC stays as colony", () => {
+test("a jump carries a colony ship, NOT a deployed base — the bases stay behind as a colony", () => {
   const g = createGalaxy({ seed: 7 });
   const from = settle(activeState(g));
-  const primary = commandCenters(from, "player")[0];
-  const expansion = makeBuilding("command", "player", primary.x + 300, primary.y + 200);
-  from.buildings.set(expansion.id, expansion);      // build a second base before jumping
-  addSpaceport(from);
+  const cc = commandCenters(from, "player")[0];
+  const expansion = makeBuilding("command", "player", cc.x + 300, cc.y + 200);
+  from.buildings.set(expansion.id, expansion);      // two deployed bases
+  const sp = addSpaceport(from);
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y);   // the jump vessel, staged on the pad
+  from.units.set(ship.id, ship);
   g.credits = 2000;
   const destId = g.worlds.find(w => w !== g.activeId);
   assert.ok(jumpCapital(g, destId), "the jump launched");
   const dest = activeState(g);
-  assert.equal(commandCenters(dest, "player").length, 1, "one CC (the capital) arrived at the destination");
-  assert.equal(commandCenters(from, "player").length, 1, "the expansion CC stayed behind on the colony");
+  assert.equal(commandCenters(dest, "player").length, 0, "NO deployed base teleported to the destination");
+  assert.ok(hasColonyShip(dest, "player"), "the colony ship arrived — deploy it to settle here");
+  assert.equal(commandCenters(from, "player").length, 2, "both deployed bases stayed behind on the colony");
 });
 
 test("a Command Center upgrades into the Capital — double HP, charged, one per owner", () => {
@@ -120,27 +123,27 @@ test("upgradeToCapital is refused without the resources or on a still-constructi
   assert.equal(upgradeToCapital(s, half), false, "a half-built CC can't be the Capital yet");
 });
 
-test("only a smaller CC jumps — the anchored Capital can't, and a Capital-only world can't launch", () => {
+test("a jump needs a colony ship on the pad — a deployed base (even the Capital) never travels", () => {
   const g = createGalaxy({ seed: 7 });
   const from = settle(activeState(g));
   const cc = commandCenters(from, "player")[0];
-  addSpaceport(from);
+  const sp = addSpaceport(from);
   g.credits = 2000;
   from.players.player.resources.ore = 1000;
-  upgradeToCapital(from, cc);                           // the only CC becomes the anchored Capital
-  assert.equal(jumpableCC(from), null, "no smaller CC to send");
-  assert.equal(canJump(from), false, "a Spaceport alone can't jump the Capital");
+  upgradeToCapital(from, cc);                           // a fortified base
+  assert.equal(jumpVessel(from), null, "no colony ship staged → no vessel");
+  assert.equal(canJump(from), false, "a Spaceport alone can't jump");
   const before = g.credits;
   assert.equal(jumpCapital(g, g.worlds.find(w => w !== g.activeId)), null, "the jump is refused");
   assert.equal(g.credits, before, "and no fuel was spent");
 
-  const mobile = makeBuilding("command", "player", cc.x + 300, cc.y + 100);
-  from.buildings.set(mobile.id, mobile);               // build a smaller CC
-  assert.equal(jumpableCC(from)?.id, mobile.id, "the non-capital CC is the jumper");
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y);   // park a colony ship on the pad
+  from.units.set(ship.id, ship);
+  assert.equal(jumpVessel(from)?.id, ship.id, "the staged colony ship is the vessel");
   assert.ok(canJump(from), "now a jump can launch");
   assert.ok(jumpCapital(g, g.worlds.find(w => w !== g.activeId)), "the jump runs");
-  assert.equal(commandCenters(from, "player").length, 1, "the Capital stayed behind…");
-  assert.equal(commandCenters(from, "player")[0].capital, true, "…as the anchored Capital");
+  assert.equal(commandCenters(from, "player").length, 1, "the deployed base stayed put…");
+  assert.equal(commandCenters(from, "player")[0].capital, true, "…still the fortified Capital");
 });
 
 test("the Capital (flag + raised HP) survives a galaxy save/load", () => {
@@ -234,10 +237,11 @@ test("an unsettled destination has only its neighbour — no auto-seeded player 
 
 /* ---------- the interplanetary jump ---------- */
 
-test("a jump relocates the capital + staged units and leaves a colony behind", () => {
+test("a jump carries the colony ship + staged units and leaves the base as a colony", () => {
   const g = createGalaxy({ seed: 5, difficulty: "easy" });
   const from = settle(activeState(g));
   const sp = addSpaceport(from);
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y);        from.units.set(ship.id, ship);   // the vessel
   const rider = makeUnit("skiff", "player", sp.x + 20, sp.y);       from.units.set(rider.id, rider);
   const stayer = makeUnit("worker", "player", sp.x + 900, sp.y);    from.units.set(stayer.id, stayer);
 
@@ -247,25 +251,28 @@ test("a jump relocates the capital + staged units and leaves a colony behind", (
   assert.equal(g.activeId, destId, "the destination is now active");
 
   const dest = activeState(g);
-  assert.equal(commandCenters(dest, "player").length, 1, "the capital arrived at the destination");
+  assert.ok(hasColonyShip(dest, "player"), "the colony ship arrived at the destination");
   assert.ok([...dest.units.values()].some(u => u.owner === "player" && u.type === "skiff"), "the staged unit rode along");
+  assert.equal(commandCenters(dest, "player").length, 0, "no deployed base teleported");
 
   assert.equal(from.background, true, "the origin is now a background colony");
   assert.equal(dest.background, false, "the destination is the active seat");
-  assert.equal(commandCenters(from, "player").length, 0, "the origin's capital left");
+  assert.equal(commandCenters(from, "player").length, 1, "the origin KEEPS its base as a colony");
   assert.ok(playerBuildings(from, "spaceport").length === 1, "the Spaceport stays with the colony");
-  assert.ok([...from.units.values()].some(u => u.owner === "player" && u.type === "worker"), "far units stay with the colony");
+  assert.ok([...from.units.values()].some(u => u.owner === "player" && u.type === "worker" && u.x === stayer.x),
+    "far units stay with the colony");
 });
 
-test("a jump destination keeps only the arriving capital as the player's presence", () => {
+test("a jump destination receives the colony ship (and staged units), no teleported base", () => {
   const g = createGalaxy({ seed: 6 });
-  addSpaceport(settle(activeState(g)));
+  const from = settle(activeState(g));
+  const sp = addSpaceport(from);
+  const ship = makeUnit("colonyship", "player", sp.x, sp.y); from.units.set(ship.id, ship);
   const destId = g.worlds.find(w => w !== g.activeId);
   jumpCapital(g, destId);
   const dest = g.planets.get(destId);
-  const pb = playerBuildings(dest);
-  assert.equal(pb.length, 1, "exactly one player building on arrival");
-  assert.equal(pb[0].type, "command", "and it's the relocated capital");
+  assert.equal(playerBuildings(dest).length, 0, "no player building teleported — you deploy the ship to found one");
+  assert.ok(hasColonyShip(dest, "player"), "the colony ship is the player's presence on arrival");
   assert.ok([...dest.units.values()].some(u => u.owner === "ai"), "the destination's neighbour is intact (its colony ship)");
 });
 
@@ -289,7 +296,9 @@ test("galaxyStatus reports one seat and the rest unexplored, then a colony after
   assert.equal(st.worlds.filter(w => w.status === "unexplored").length, ODYSSEY_WORLDS.length - 1, "everything else unexplored");
   assert.equal(st.worlds.find(w => w.status === "seat").id, g.activeId);
 
-  addSpaceport(settle(activeState(g)));
+  const from = settle(activeState(g));
+  const sp = addSpaceport(from);
+  from.units.set(...(() => { const sh = makeUnit("colonyship", "player", sp.x, sp.y); return [sh.id, sh]; })());   // vessel
   g.credits = 1000;
   const dest = g.worlds.find(w => w !== g.activeId);
   jumpCapital(g, dest);
@@ -310,7 +319,9 @@ test("galaxyStatus reports one seat and the rest unexplored, then a colony after
 test("the galaxy jump is deterministic", () => {
   const run = () => {
     const g = createGalaxy({ seed: 88, difficulty: "medium" });
-    addSpaceport(settle(activeState(g)));
+    const home = settle(activeState(g));
+    const sp = addSpaceport(home);
+    home.units.set(...(() => { const sh = makeUnit("colonyship", "player", sp.x, sp.y); return [sh.id, sh]; })());
     const destId = g.worlds.find(w => w !== g.activeId);
     jumpCapital(g, destId);
     const dest = activeState(g), from = g.planets.get([...g.planets.keys()].find(k => k !== g.activeId));

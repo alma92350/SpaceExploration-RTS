@@ -21,7 +21,7 @@ import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY,
-         upgradeToCapital, jumpableCC, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
+         upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
@@ -284,10 +284,10 @@ function renderSelectionPanel() {
     + "|" + (game.galaxy && state.diplomacy
         ? `${state.diplomacy.stance < 0.25}:${tributeCost(state.diplomacy)}:${game.galaxy.credits >= tributeCost(state.diplomacy)}`
         : "")
-    // Rebuild when the Capital state changes: a CC upgraded to Capital (button → anchored
-    // note) or a jumpable CC appearing/vanishing (Spaceport jump buttons enable/lock).
+    // Rebuild when the Capital state changes (a CC upgraded to Capital → anchored note) or
+    // a staged colony ship appears/vanishes (Spaceport jump buttons enable/lock).
     + "|" + (game.galaxy
-        ? `${jumpableCC(state) ? 1 : 0}:${[...state.buildings.values()].filter(b => b.owner === "player" && b.capital).length}`
+        ? `${jumpVessel(state) ? 1 : 0}:${[...state.buildings.values()].filter(b => b.owner === "player" && b.capital).length}`
         : "")
     // Rebuild when a selected colony ship crosses a deploy-placement boundary, so its
     // "Deploy as Command Center" button locks/unlocks live as you move it to clear ground.
@@ -689,15 +689,15 @@ function rebuildSelectionPanel(sel) {
   if (spaceport && game.galaxy) {
     const staged = stagedRiders(state, spaceport).length;
     const afford = game.galaxy.credits >= JUMP_COST;
-    const jumper = jumpableCC(state);   // the anchored Capital can't jump — you need a smaller CC
+    const vessel = jumpVessel(state);   // a colony ship staged on the pad carries the jump; a deployed base never travels
     const info = document.createElement("p");
     info.className = "hint";
-    info.textContent = `Relocate a Command Center to another world (◈${JUMP_COST} fuel). ${staged} unit${staged === 1 ? "" : "s"} staged by the pad will jump too — park units near the Spaceport to bring them.`;
+    info.textContent = `Send a Colony Ship to another world (◈${JUMP_COST} fuel), then deploy it there to found a base. ${staged} unit${staged === 1 ? "" : "s"} staged by the pad ride along — park your army near the Spaceport to bring it. Your bases here stay as a colony.`;
     panelEl.appendChild(info);
-    if (!jumper) {
+    if (!vessel) {
       const warn = document.createElement("p");
       warn.className = "hint";
-      warn.textContent = "Your Capital is anchored — build a second (non-capital) Command Center for it to jump.";
+      warn.textContent = "Park a Colony Ship next to the Spaceport to carry the jump (build one at a Command Center).";
       panelEl.appendChild(warn);
     }
 
@@ -717,9 +717,9 @@ function rebuildSelectionPanel(sel) {
       const visited = game.galaxy.planets.has(w) && w !== game.galaxy.activeId;
       panelEl.appendChild(makeButton(`Jump ▸ ${name}${visited ? " · your colony" : ""}`,
         () => performJump(w),
-        { tip: "Relocate a (non-capital) Command Center and staged units to this world",
-          locked: !afford || !jumper,
-          lockTip: !jumper ? "Your Capital is anchored — build a smaller Command Center to jump"
+        { tip: "Carry the staged Colony Ship (and army) to this world — deploy it there to settle",
+          locked: !afford || !vessel,
+          lockTip: !vessel ? "Park a Colony Ship next to the Spaceport to carry the jump"
                            : `Need ◈${JUMP_COST} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
     }
   }
