@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createGalaxy, activeState, jumpCapital, JUMP_COST } from "../engine/galaxy.js";
 import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT } from "../engine/market.js";
 import { createGameState, makeBuilding } from "../engine/state.js";
+import { deployColonyShip } from "../engine/colony.js";
 
 test("createGalaxy hands every world its own price book", () => {
   const g = createGalaxy({ seed: 5 });
@@ -74,6 +75,7 @@ test("you can only sell what you hold and only buy what you can afford", () => {
 test("a jump spends its fuel cost in credits and is refused when you can't pay", () => {
   const g = createGalaxy({ seed: 9 });
   const s = activeState(g);
+  for (const u of [...s.units.values()]) if (u.type === "colonyship") deployColonyShip(s, u.id);   // deploy start ships → CCs
   const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y);
   s.buildings.set(sp.id, sp);

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 import { chargingPlayerWonder } from "../engine/wonder.js";
+import { deployColonyShip } from "../engine/colony.js";
 
 const THINK = 1.5;   // matches ai.js THINK_INTERVAL
 
@@ -43,6 +44,11 @@ test("chargingPlayerWonder is null in a skirmish (a wonder is Odyssey-only, neve
 // player's buildings (incl. the Gate) are all seen — isolating the TARGET choice.
 function siegeWorld(gateCharge) {
   const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  // Deploy the AI's start colony ship so it has a base (its offense needs a CC); drop
+  // the player's start ship — this test provides its own player CC + Gate below.
+  for (const u of [...s.units.values()]) if (u.type === "colonyship") {
+    if (u.owner === "ai") deployColonyShip(s, u.id); else s.units.delete(u.id);
+  }
   s.diplomacy = { stance: -0.95, depletion: 0 };   // deeply hostile → h≈0.94, a real wave
   for (let i = 0; i < 12; i++) {
     const u = makeUnit("skiff", "ai", s.map.bases.ai.x, s.map.bases.ai.y);

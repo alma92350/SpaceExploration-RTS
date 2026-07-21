@@ -5,10 +5,18 @@ import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGa
 import { checkEndlessLoss } from "../engine/victory.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
+import { deployColonyShip, hasColonyShip } from "../engine/colony.js";
 import { tick } from "../engine/sim.js";
 
 const commandCenters = (state, owner) =>
   [...state.buildings.values()].filter(b => b.owner === owner && b.type === "command");
+// Odyssey now starts each side with a colony ship, not a placed CC. Deploying both
+// reconstitutes the classic layout (a CC + 3 workers at each base) — used by tests that
+// exercise DOWNSTREAM mechanics (jump/cargo/capital/domination), not the opening itself.
+function settle(state) {
+  for (const u of [...state.units.values()]) if (u.type === "colonyship") deployColonyShip(state, u.id);
+  return state;
+}
 const playerBuildings = (state, type) =>
   [...state.buildings.values()].filter(b => b.owner === "player" && (!type || b.type === type));
 
@@ -20,14 +28,18 @@ function addSpaceport(state) {
   return sp;
 }
 
-test("createGalaxy settles the player on one world with a single command center", () => {
+test("createGalaxy lands the player on one world with a colony ship (no CC yet)", () => {
   const g = createGalaxy({ seed: 7, difficulty: "medium" });
   assert.ok(ODYSSEY_WORLDS.includes(g.activeId), "the start world is one of the roster");
   assert.equal(g.planets.size, 1, "Phase 1: exactly one planet");
   assert.ok(g.credits > 0, "you start with a credit stipend to fund the first jump");
   const s = activeState(g);
   assert.equal(s.endless, true, "the active planet is an endless (Odyssey) state");
-  assert.equal(commandCenters(s, "player").length, 1, "the player has exactly one Command Center");
+  assert.equal(commandCenters(s, "player").length, 0, "no Command Center is placed yet — you deploy one");
+  assert.ok(hasColonyShip(s, "player"), "the player starts with a mobile colony ship");
+  assert.ok(hasColonyShip(s, "ai"), "the neighbour likewise starts with a colony ship");
+  settle(s);
+  assert.equal(commandCenters(s, "player").length, 1, "deploying the ship founds exactly one Command Center");
   assert.ok(commandCenters(s, "ai").length >= 1, "a neighbour is present to coexist / clash with");
 });
 
@@ -38,17 +50,19 @@ test("endless mode never ends by conquest — razing the enemy CC does not win",
   assert.equal(s.over, false, "losing the enemy CC is not a victory in the open world");
 });
 
-test("endless mode ends in defeat only when the player's Command Center is lost", () => {
+test("endless mode ends in defeat only when the player's last foothold is lost", () => {
   const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
-  assert.equal(s.over, false);
-  for (const b of commandCenters(s, "player")) s.buildings.delete(b.id);   // the capital falls
   checkEndlessLoss(s);
-  assert.equal(s.over, true, "with no capital, the Odyssey is over");
+  assert.equal(s.over, false, "a lone colony ship is a foothold — not a tick-1 defeat");
+  settle(s);                                                    // deploy the ship → a CC + workers
+  for (const b of commandCenters(s, "player")) s.buildings.delete(b.id);   // the capital falls (no ship left, it deployed)
+  checkEndlessLoss(s);
+  assert.equal(s.over, true, "with no CC and no colony ship, the Odyssey is over");
   assert.equal(s.winner, "ai");
 });
 
 test("a second Command Center is an expansion — losing one doesn't end the Odyssey", () => {
-  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  const s = settle(createGameState({ planetId: "ferros", seed: 3, endless: true }));
   const first = commandCenters(s, "player")[0];
   const second = makeBuilding("command", "player", first.x + 300, first.y + 200);   // an expansion base
   s.buildings.set(second.id, second);
@@ -63,7 +77,7 @@ test("a second Command Center is an expansion — losing one doesn't end the Ody
 
 test("on a jump only the primary Command Center relocates; an expansion CC stays as colony", () => {
   const g = createGalaxy({ seed: 7 });
-  const from = activeState(g);
+  const from = settle(activeState(g));
   const primary = commandCenters(from, "player")[0];
   const expansion = makeBuilding("command", "player", primary.x + 300, primary.y + 200);
   from.buildings.set(expansion.id, expansion);      // build a second base before jumping
@@ -77,7 +91,7 @@ test("on a jump only the primary Command Center relocates; an expansion CC stays
 });
 
 test("a Command Center upgrades into the Capital — double HP, charged, one per owner", () => {
-  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  const s = settle(createGameState({ planetId: "ferros", seed: 3, endless: true }));
   const cc = commandCenters(s, "player")[0];
   const baseMax = cc.maxHp;
   s.players.player.resources.ore = 1000;
@@ -94,7 +108,7 @@ test("a Command Center upgrades into the Capital — double HP, charged, one per
 });
 
 test("upgradeToCapital is refused without the resources or on a still-constructing CC", () => {
-  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  const s = settle(createGameState({ planetId: "ferros", seed: 3, endless: true }));
   const cc = commandCenters(s, "player")[0];
   s.players.player.resources.ore = 10;                 // can't afford
   assert.equal(upgradeToCapital(s, cc), false);
@@ -108,7 +122,7 @@ test("upgradeToCapital is refused without the resources or on a still-constructi
 
 test("only a smaller CC jumps — the anchored Capital can't, and a Capital-only world can't launch", () => {
   const g = createGalaxy({ seed: 7 });
-  const from = activeState(g);
+  const from = settle(activeState(g));
   const cc = commandCenters(from, "player")[0];
   addSpaceport(from);
   g.credits = 2000;
@@ -131,7 +145,7 @@ test("only a smaller CC jumps — the anchored Capital can't, and a Capital-only
 
 test("the Capital (flag + raised HP) survives a galaxy save/load", () => {
   const g = createGalaxy({ seed: 5 });
-  const s = activeState(g);
+  const s = settle(activeState(g));
   const cc = commandCenters(s, "player")[0];
   s.players.player.resources.ore = 1000;
   upgradeToCapital(s, cc);
@@ -214,7 +228,7 @@ test("an unsettled destination has only its neighbour — no auto-seeded player 
   const s = addPlanet(g, other, { unsettled: true });
   assert.equal(playerBuildings(s).length, 0, "no player buildings until you land");
   assert.equal([...s.units.values()].filter(u => u.owner === "player").length, 0, "no player units either");
-  assert.ok([...s.buildings.values()].some(b => b.owner === "ai"), "the neighbour is intact");
+  assert.ok([...s.units.values()].some(u => u.owner === "ai"), "the neighbour is intact (its colony ship)");
   assert.equal(s.background, true, "an unvisited world is a background world");
 });
 
@@ -222,7 +236,7 @@ test("an unsettled destination has only its neighbour — no auto-seeded player 
 
 test("a jump relocates the capital + staged units and leaves a colony behind", () => {
   const g = createGalaxy({ seed: 5, difficulty: "easy" });
-  const from = activeState(g);
+  const from = settle(activeState(g));
   const sp = addSpaceport(from);
   const rider = makeUnit("skiff", "player", sp.x + 20, sp.y);       from.units.set(rider.id, rider);
   const stayer = makeUnit("worker", "player", sp.x + 900, sp.y);    from.units.set(stayer.id, stayer);
@@ -245,20 +259,20 @@ test("a jump relocates the capital + staged units and leaves a colony behind", (
 
 test("a jump destination keeps only the arriving capital as the player's presence", () => {
   const g = createGalaxy({ seed: 6 });
-  addSpaceport(activeState(g));
+  addSpaceport(settle(activeState(g)));
   const destId = g.worlds.find(w => w !== g.activeId);
   jumpCapital(g, destId);
   const dest = g.planets.get(destId);
   const pb = playerBuildings(dest);
   assert.equal(pb.length, 1, "exactly one player building on arrival");
   assert.equal(pb[0].type, "command", "and it's the relocated capital");
-  assert.ok([...dest.buildings.values()].some(b => b.owner === "ai"), "the destination's neighbour is intact");
+  assert.ok([...dest.units.values()].some(u => u.owner === "ai"), "the destination's neighbour is intact (its colony ship)");
 });
 
 test("after a jump the abandoned colony keeps evolving and never ends the game", () => {
   const g = createGalaxy({ seed: 7 });
-  addSpaceport(activeState(g));
-  const from = activeState(g);
+  const from = settle(activeState(g));
+  addSpaceport(from);
   const destId = g.worlds.find(w => w !== g.activeId);
   jumpCapital(g, destId);
   for (let i = 0; i < 100; i++) for (const s of g.planets.values()) tick(s, 0.1);
@@ -275,7 +289,7 @@ test("galaxyStatus reports one seat and the rest unexplored, then a colony after
   assert.equal(st.worlds.filter(w => w.status === "unexplored").length, ODYSSEY_WORLDS.length - 1, "everything else unexplored");
   assert.equal(st.worlds.find(w => w.status === "seat").id, g.activeId);
 
-  addSpaceport(activeState(g));
+  addSpaceport(settle(activeState(g)));
   g.credits = 1000;
   const dest = g.worlds.find(w => w !== g.activeId);
   jumpCapital(g, dest);
@@ -296,7 +310,7 @@ test("galaxyStatus reports one seat and the rest unexplored, then a colony after
 test("the galaxy jump is deterministic", () => {
   const run = () => {
     const g = createGalaxy({ seed: 88, difficulty: "medium" });
-    addSpaceport(activeState(g));
+    addSpaceport(settle(activeState(g)));
     const destId = g.worlds.find(w => w !== g.activeId);
     jumpCapital(g, destId);
     const dest = activeState(g), from = g.planets.get([...g.planets.keys()].find(k => k !== g.activeId));

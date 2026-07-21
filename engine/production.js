@@ -100,6 +100,10 @@ export function queueProduction(state, buildingId, unitType) {
   const def = UNITS[unitType];
   const producable = def && BUILDINGS[building.type].produces?.includes(unitType);
   if (!producable) return false;
+  // An Odyssey-only unit (e.g. the Colony Ship) can never be built in a skirmish,
+  // regardless of menu wiring — hard-guarantees it stays out of the byte-identical
+  // skirmish path. A no-op for existing skirmish (no odysseyOnly unit is reachable).
+  if (def.odysseyOnly && !state.endless) return false;
   // Tech gate: a locked unit (its prereq building not yet completed) can't be
   // queued. Checked before affordability so "locked" outranks "too expensive".
   if (!prereqsMet(state, building.owner, def)) {

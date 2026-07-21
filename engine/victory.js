@@ -1,6 +1,7 @@
 "use strict";
 
 import { UNITS, BUILDINGS } from "./entities.js";
+import { hasColonyShip } from "./colony.js";
 
 // A stalemate breaker: if neither side has lost its last Command Center after
 // this many seconds, the match is decided on score instead of running forever.
@@ -32,7 +33,11 @@ export function checkWinCondition(state) {
 // for an endless state (see sim.js).
 export function checkEndlessLoss(state) {
   if (state.over) return;
-  if (!hasCommandCenter(state, "player")) finish(state, "ai");
+  // A foothold is a Command Center OR an undeployed colony ship — so the CC-less
+  // Odyssey start (engine/state.js seedPlayer) isn't an instant tick-1 defeat, and a
+  // player razed to a lone colony ship can still re-found. Only the loss of BOTH ends
+  // it. hasColonyShip is always false in a skirmish, so this path is Odyssey-only.
+  if (!hasCommandCenter(state, "player") && !hasColonyShip(state, "player")) finish(state, "ai");
 }
 
 // Odyssey's terminal WIN check — the twin of checkEndlessLoss. The player wins the

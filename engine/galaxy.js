@@ -27,6 +27,7 @@ import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
 import { checkEndlessWin } from "./victory.js";
+import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
 import { PLANETS } from "../data.js";
 
@@ -199,9 +200,14 @@ export function checkGalaxyWin(galaxy) {
 // DOMINATION — the military, multi-world alternative to the single-world Gate.
 export const DOMINATION_TARGET = 4;
 
+// The AI's foothold on a world — a Command Center OR an undeployed colony ship. The
+// colony-ship clause is what stops checkDomination false-pacifying every world at
+// tick 0 (both sides now START with a CC-less colony ship), and keeps "pacified"
+// meaning "you actually drove them off" — a neighbour reduced to a lone ship can still
+// re-found, so it isn't conquered yet. hasColonyShip is false in a skirmish.
 const hasAiCommand = state => {
   for (const b of state.buildings.values()) if (b.owner === "ai" && b.type === "command" && !b.constructing) return true;
-  return false;
+  return hasColonyShip(state, "ai");
 };
 
 // The MILITARY WIN check. A world is "pacified" the moment its neighbour has no

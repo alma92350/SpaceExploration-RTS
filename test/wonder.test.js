@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy, jumpCapital } from "../engine/galaxy.js";
+import { deployColonyShip } from "../engine/colony.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { updateWonder } from "../engine/wonder.js";
 import { checkEndlessWin } from "../engine/victory.js";
@@ -85,6 +86,7 @@ test("a wonder is Odyssey-only and antimatter can't be bought (must be made)", (
 test("a Gate left charging on a background colony still wins the galaxy", () => {
   const g = createGalaxy({ seed: 5 });
   const home = activeState(g);
+  for (const u of [...home.units.values()]) if (u.type === "colonyship") deployColonyShip(home, u.id);   // deploy start ship → CC (jump needs one)
   const base = home.map.bases.player;
   const sp = makeBuilding("spaceport", "player", base.x + 40, base.y);
   const reactor = makeBuilding("reactor", "player", base.x + 200, base.y + 120);

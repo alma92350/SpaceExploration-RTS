@@ -93,6 +93,7 @@ export function createGameState(opts = {}) {
     fog: createFog(map),    // the player's fog of war — see engine/fog.js
     fogAI: createFog(map),  // the AI's own fog: it must scout for intel too, it's no longer omniscient (see engine/ai.js)
     aiScoutId: null,        // the unit currently out scouting for the AI, if any
+    aiColonyTarget: null,   // Odyssey: the committed {x,y} deploy spot of the AI's in-flight colony ship (ai.js)
     aiApm: opts.aiApm ?? null,   // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
     aiMicro: opts.aiMicro ?? false,   // Tactical AI: unit-level micro (focus-fire, kiting). Off by default (and in tests).
     aiActionBudget: 0,      // accumulated action credits (see engine/ai.js's accrueActionBudget)
@@ -116,6 +117,16 @@ function startingResources() {
 }
 
 function seedPlayer(state, ownerId, basePos) {
+  if (state.endless) {
+    // Odyssey: both sides START with a mobile colony ship instead of a built base —
+    // deploy it (engine/colony.js) to found the first Command Center; the colonists
+    // (opening workers) disembark then. Seeding workers now would strand them: with
+    // no drop-off yet they can't bank ore (engine/gather.js).
+    const ship = makeUnit("colonyship", ownerId, basePos.x, basePos.y);
+    state.units.set(ship.id, ship);
+    return;
+  }
+  // Skirmish — BYTE-IDENTICAL to before: a finished Command Center + 3 workers.
   const cc = makeBuilding("command", ownerId, basePos.x, basePos.y);
   state.buildings.set(cc.id, cc);
   for (let i = 0; i < 3; i++) {

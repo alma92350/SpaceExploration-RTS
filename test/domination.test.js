@@ -4,9 +4,13 @@ import { createGalaxy, activeState, addPlanet, checkDomination, galaxyStatus, DO
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding } from "../engine/state.js";
 
-// Raze the AI's Command Center on a world (what the player's army does in play).
+// Eliminate the AI's foothold on a world — its Command Center AND its (undeployed)
+// colony ship. A world isn't conquered while the neighbour still holds a colony ship it
+// could re-found from (engine/galaxy.js hasAiCommand), so razing only the CC no longer
+// pacifies — you must also destroy the ship, which is what "drove them off" means now.
 function razeAiCommand(state) {
   for (const [id, b] of [...state.buildings]) if (b.owner === "ai" && b.type === "command") state.buildings.delete(id);
+  for (const [id, u] of [...state.units]) if (u.owner === "ai" && u.type === "colonyship") state.units.delete(id);
 }
 
 test("razing a neighbour's Command Center pacifies that world (and queues a toast)", () => {

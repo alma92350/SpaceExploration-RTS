@@ -6,6 +6,7 @@ import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
 import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
+import { deployColonyShip } from "../engine/colony.js";
 
 // The industry helpers read only state.buildings and state.players[owner].resources,
 // so a tiny stub exercises them without a whole map/economy.
@@ -118,6 +119,7 @@ test("production is deterministic — identical setups produce identical stockpi
 test("end-to-end: a built chain refines through the real Odyssey tick, and the alloys sell for credits", () => {
   const g = createGalaxy({ seed: 3 });
   const s = activeState(g);
+  for (const u of [...s.units.values()]) if (u.type === "colonyship") deployColonyShip(s, u.id);   // deploy start ships → CCs
   const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   // Plant the whole chain, completed, next to the capital (added last, so the
   // Smelter ticks before the Assembly Plant → metals are there to alloy same tick).

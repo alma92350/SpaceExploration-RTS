@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
+import { deployColonyShip } from "../engine/colony.js";
 import { updateProduction } from "../engine/industry.js";
 import { queueProduction } from "../engine/production.js";
 import { BUILDINGS, UNITS, prereqsMet } from "../engine/entities.js";
@@ -11,6 +12,7 @@ import { ODYSSEY_WORLDS } from "../engine/galaxy.js";
 // An endless world with a Reactor so the strategic forges have Power.
 function odysseyState(planetId = "kybernet") {
   const s = createGameState({ planetId, endless: true });
+  for (const u of [...s.units.values()]) if (u.type === "colonyship") deployColonyShip(s, u.id);   // settle: CC + workers + supply
   const reactor = makeBuilding("reactor", "player", 600, 480);
   s.buildings.set(reactor.id, reactor);
   return s;

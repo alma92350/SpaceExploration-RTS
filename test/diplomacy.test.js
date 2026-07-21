@@ -5,7 +5,14 @@ import { createDiplomacy, updateDiplomacy, atPeace, hostility, stanceLabel, PEAC
 import { createGalaxy, activeState, addPlanet, jumpCapital, sweepColonies } from "../engine/galaxy.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
+import { deployColonyShip } from "../engine/colony.js";
 import { runAI } from "../engine/ai.js";
+
+// Deploy the Odyssey start colony ships so a world has bases (the pre-colony-ship layout).
+function settle(state) {
+  for (const u of [...state.units.values()]) if (u.type === "colonyship") deployColonyShip(state, u.id);
+  return state;
+}
 
 const THINK = 1.5;   // matches ai.js THINK_INTERVAL — forces a fresh think each call
 
@@ -110,7 +117,7 @@ test("the AI still attacks when there is no diplomacy (a plain skirmish)", () =>
 
 test("sweepColonies reports a colony under attack, then lost, and drains its events", () => {
   const g = createGalaxy({ seed: 5 });
-  const from = activeState(g);
+  const from = settle(activeState(g));
   const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   from.buildings.set(...(() => { const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y); return [sp.id, sp]; })());
   g.credits = 1000;
@@ -144,7 +151,7 @@ test("destroying the neighbour's ships sours the stance at once", () => {
 
 test("a held colony sends home passive income each tick", () => {
   const g = createGalaxy({ seed: 9 });
-  const from = activeState(g);
+  const from = settle(activeState(g));
   const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
   const sp = makeBuilding("spaceport", "player", cc.x + 40, cc.y);
   from.buildings.set(sp.id, sp);

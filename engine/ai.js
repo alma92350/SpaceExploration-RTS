@@ -41,6 +41,7 @@ import { isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint } f
 import { playerBuildings, playerUnits } from "./state.js";
 import { hostility } from "./diplomacy.js";
 import { chargingPlayerWonder } from "./wonder.js";
+import { deployColonyShip } from "./colony.js";
 
 const THINK_INTERVAL = 1.5;
 const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
@@ -65,6 +66,7 @@ const PROBE_MIN = 3;              // Odyssey: smallest wave a wary neighbour sen
 const WAVE_CADENCE_FRAC = 0.3;    // Odyssey: probe spacing as a fraction of attackTimeout, tightening with hostility
 const FORWARD_DROP_MIN = 360;     // ore worked this far from every drop-off is worth a forward Refinery drop-off
 const MAX_AI_REFINERIES = 3;      // hard cap so forward drop-offs never run away with the AI's ore
+const COLONY_ARRIVE = 40;         // Odyssey: an in-flight colony ship this close to its target deploys (ai.js expansion)
 
 // Every commodity that anything the AI builds actually costs — computed once.
 // assignIdleWorkers prefers nodes of these types so a poor-economy world's AI
@@ -89,6 +91,10 @@ export function runAI(state, dt) {
   const rangers = playerUnits(state, "ai").filter(u => u.type === "ranger");
   const buildings = playerBuildings(state, "ai");
   const cc = buildings.find(b => b.type === "command" && !b.constructing);
+  // Odyssey only: the AI's colony ship (start ship, or one expansion ship in flight).
+  // Non-combat + non-worker, so it's untouched by the army/worker/scout filters above.
+  const colonyShip = state.endless
+    ? (playerUnits(state, "ai").find(u => u.type === "colonyship") || null) : null;
   const barracks = buildings.find(b => b.type === "barracks");
   const refinery = buildings.find(b => b.type === "refinery");
   const allBarracks = buildings.filter(b => b.type === "barracks");
@@ -101,6 +107,20 @@ export function runAI(state, dt) {
   updateScout(state, army, rangers, threats.length > 0);   // before worker assignment, so a worker-turned-scout isn't re-tasked to gather
   assignIdleWorkers(state, workers);
 
+  // ODYSSEY — FOUND / SURVIVE: no Command Center but a colony ship in hand → deploy in
+  // place to (re)found the base. Covers the opening AND being razed to a lone ship. It's
+  // EXEMPT from the APM budget (like the attack commit) so even a 1-APM neighbour always
+  // seats a base and the world progresses (otherwise a base-less AI mis-reads as pacified,
+  // engine/galaxy.js). Runs first, at top priority. Skirmish: colonyShip is null → no-op.
+  if (state.endless && !cc && colonyShip) {
+    if (deployColonyShip(state, colonyShip.id)) {
+      state.aiColonyTarget = null;   // re-seating cancels any stale expansion intent
+    } else {
+      const spot = findPlacement(state, "command", colonyShip.x, colonyShip.y);   // slide off bad ground, then retry next think
+      if (spot && (spot.x !== colonyShip.x || spot.y !== colonyShip.y)) issueMove([colonyShip], spot.x, spot.y);
+    }
+  }
+
   // TACTICAL: build one cheap Ranger up front to scout with — far sight,
   // all-terrain, and it doesn't bleed a fighter out of the army the way lending a
   // combat unit does (updateScout prefers it). Standard AI keeps lending a unit,
@@ -111,31 +131,68 @@ export function runAI(state, dt) {
     if (queueProduction(state, cc.id, "ranger")) spend(state);
   }
 
-  // EXPANSION: once home ore runs thin, plant a second Command Center on the
-  // richest unclaimed cluster. Runs before every ore-spending block so it can
-  // reserve the CC's cost (oreReserve) to bank toward it. The reserve pauses
-  // only the lower-priority infrastructure spends (a second Barracks, the
-  // Refinery) — never unit production, so the army keeps flowing while the AI
-  // saves. Gating units too would starve the army indefinitely on an ore-poor
-  // world, where income can't outrun a 400-ore bank before the last seam dries
-  // and it never actually expands. At most one expansion in flight.
-  const ccCost = BUILDINGS.command.cost.ore;
+  // EXPANSION: once home ore runs thin, found a base on the richest unclaimed cluster.
+  // Runs before every ore-spending block so it can reserve the cost (oreReserve) to
+  // bank toward it — pausing only the lower-priority infrastructure spends, never unit
+  // production, so the army keeps flowing while the AI saves. At most one in flight.
   const threshold = archetype.expandWhenNodesBelow || 0;
-  if (threshold > 0 && cc && workers.length > 0
-      && !buildings.some(b => b.type === "command" && b.constructing)) {
-    const myCCs = buildings.filter(b => b.type === "command" && !b.constructing);
-    if (homeOreFraction(state, myCCs) < threshold) {
-      const anchor = bestExpansionCluster(state, myCCs);
-      if (anchor) {
-        oreReserve = ccCost;   // bank toward the CC by pausing infrastructure spend
-        if (ai.resources.ore >= ccCost) {
-          const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // place on the home side of the cluster
+  const myCCs = buildings.filter(b => b.type === "command" && !b.constructing);
+
+  if (state.endless) {
+    // ODYSSEY: expand by COLONY SHIP — produce one, move it to a fresh cluster, deploy
+    // on arrival (no more worker-builds-a-CC). A committed target (state.aiColonyTarget)
+    // keeps the ship homing on a fixed point rather than chasing a shifting cluster.
+    const colonyCost = UNITS.colonyship.cost.ore;
+    if (state.aiColonyTarget && !colonyShip) state.aiColonyTarget = null;   // ship deployed or died → reset the machine
+
+    if (colonyShip && cc) {                                    // an EXPANSION ship is in flight (a start ship has no cc yet — handled above)
+      if (!state.aiColonyTarget) {                             // LAUNCH: commit a target and send it
+        const anchor = bestExpansionCluster(state, myCCs);
+        if (anchor) {
+          const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // aim for the home side of the cluster
           const spot = findPlacement(state, "command",
-            anchor.x + Math.cos(toward) * EXPANSION_STANDOFF,
-            anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
-          if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y)) {
-            spend(state);
-            oreReserve = 0;
+            anchor.x + Math.cos(toward) * EXPANSION_STANDOFF, anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
+          if (spot && canAct(state)) { state.aiColonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
+        }
+      } else {                                                 // HOME IN → DEPLOY on arrival
+        const t = state.aiColonyTarget;
+        if (Math.hypot(colonyShip.x - t.x, colonyShip.y - t.y) <= COLONY_ARRIVE && canAct(state)) {
+          if (deployColonyShip(state, colonyShip.id)) { state.aiColonyTarget = null; spend(state); }
+          else {   // exact spot went invalid → re-aim to nearby valid ground and keep moving
+            const spot = findPlacement(state, "command", colonyShip.x, colonyShip.y);
+            if (spot) { state.aiColonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
+          }
+        } else if (!colonyShip.order && !(colonyShip.orderQueue && colonyShip.orderQueue.length) && canAct(state)) {
+          issueMove([colonyShip], t.x, t.y); spend(state);     // fell idle short of target (blocked) → nudge back on course
+        }
+      }
+    } else if (!colonyShip && cc && workers.length > 0
+               && !buildings.some(b => b.type === "command" && b.constructing)
+               && !cc.queue.some(j => j.unitType === "colonyship")) {
+      // No ship in flight → bank for and PRODUCE one once home ore runs thin and there's somewhere to settle.
+      if (threshold > 0 && homeOreFraction(state, myCCs) < threshold && bestExpansionCluster(state, myCCs)) {
+        oreReserve = colonyCost;                               // pause infrastructure while banking (units keep flowing)
+        if (ai.resources.ore >= colonyCost && canAct(state) && queueProduction(state, cc.id, "colonyship")) { spend(state); oreReserve = 0; }
+      }
+    }
+  } else {
+    // SKIRMISH — byte-for-byte as before: a worker builds an expansion Command Center.
+    const ccCost = BUILDINGS.command.cost.ore;
+    if (threshold > 0 && cc && workers.length > 0
+        && !buildings.some(b => b.type === "command" && b.constructing)) {
+      if (homeOreFraction(state, myCCs) < threshold) {
+        const anchor = bestExpansionCluster(state, myCCs);
+        if (anchor) {
+          oreReserve = ccCost;   // bank toward the CC by pausing infrastructure spend
+          if (ai.resources.ore >= ccCost) {
+            const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // place on the home side of the cluster
+            const spot = findPlacement(state, "command",
+              anchor.x + Math.cos(toward) * EXPANSION_STANDOFF,
+              anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
+            if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y)) {
+              spend(state);
+              oreReserve = 0;
+            }
           }
         }
       }

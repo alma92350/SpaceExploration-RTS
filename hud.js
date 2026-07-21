@@ -22,6 +22,8 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } 
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, stagedRiders, cargoManifest, CARGO_CAPACITY,
          upgradeToCapital, jumpableCC, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
+import { canPlaceBuilding } from "./engine/colliders.js";
+import { deployColonyShip } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
@@ -286,7 +288,13 @@ function renderSelectionPanel() {
     // note) or a jumpable CC appearing/vanishing (Spaceport jump buttons enable/lock).
     + "|" + (game.galaxy
         ? `${jumpableCC(state) ? 1 : 0}:${[...state.buildings.values()].filter(b => b.owner === "player" && b.capital).length}`
-        : "");
+        : "")
+    // Rebuild when a selected colony ship crosses a deploy-placement boundary, so its
+    // "Deploy as Command Center" button locks/unlocks live as you move it to clear ground.
+    + "|" + (() => {
+        const cs = game.galaxy && sel.find(e => e.kind === "unit" && e.type === "colonyship");
+        return cs ? (canPlaceBuilding(state, "command", cs.x, cs.y) ? 1 : 0) : "";
+      })();
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -509,7 +517,11 @@ function rebuildSelectionPanel(sel) {
 
   const cc = sel.find(e => e.kind === "building" && e.type === "command" && !e.constructing);
   if (cc) {
-    for (const t of ["worker", "ranger"]) {
+    // Odyssey: the CC also builds Colony Ships — the mobile seed you deploy to found a
+    // new base (no more building a CC directly). Gated on game.galaxy like the sibling
+    // Odyssey CC panels below, so a skirmish CC shows only Worker/Ranger.
+    const ccUnits = game.galaxy ? ["worker", "ranger", "colonyship"] : ["worker", "ranger"];
+    for (const t of ccUnits) {
       const def = UNITS[t];
       panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
         () => queueProduction(state, cc.id, t), { cost: def.cost, tip: unitTip(def) }));
@@ -712,6 +724,18 @@ function rebuildSelectionPanel(sel) {
     }
   }
 
+  // Colony ship (Odyssey): settle in place into a Command Center. Locked (with the
+  // reason) when the current spot is blocked — move to clear ground and deploy.
+  const colonyShip = sel.find(e => e.kind === "unit" && e.type === "colonyship");
+  if (colonyShip && game.galaxy) {
+    const blocked = !canPlaceBuilding(state, "command", colonyShip.x, colonyShip.y);
+    panelEl.appendChild(makeButton("⛨ Deploy as Command Center",
+      () => deployColonyShip(state, colonyShip.id),
+      { locked: blocked,
+        lockTip: blocked ? "Blocked here — move to open, buildable ground clear of buildings, nodes and rough terrain" : null,
+        tip: "Settle: the colony ship becomes a Command Center on this spot (it can't move again). Colonists disembark as workers." }));
+  }
+
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {
     const buildBtn = t => {
@@ -722,21 +746,21 @@ function rebuildSelectionPanel(sel) {
         { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null });
     };
     if (state.endless) {
-      // Odyssey adds the Spaceport (jump pad) and the whole industry chain, plus
-      // expansion Command Centers — a second base at a fresh ore cluster, same as a
-      // skirmish. That's ~19 buildings — a flat list is a wall — so group them by
-      // purpose. The entry tier of each group is always shown; deeper buildings REVEAL
-      // as their prereqs are met (a greyed button per locked tier would bury the menu),
-      // mirroring how the Barracks hides units you can't yet field. On a jump only your
-      // primary Command Center relocates; any extras stay behind as colony infrastructure.
+      // Odyssey adds the Spaceport (jump pad) and the whole industry chain. You DON'T
+      // build a Command Center here — new bases are founded by deploying a Colony Ship
+      // (build one at a CC, move it, deploy). That's ~18 buildings — a flat list is a
+      // wall — so group them by purpose. The entry tier of each group is always shown;
+      // deeper buildings REVEAL as their prereqs are met (a greyed button per locked
+      // tier would bury the menu), mirroring how the Barracks hides units you can't yet
+      // field.
       const GROUPS = [
-        ["Economy", ["command", "reactor", "smelter", "datacenter", "assembler", "chipfab",
+        ["Economy", ["reactor", "smelter", "datacenter", "assembler", "chipfab",
                      "machineworks", "antimatterforge", "aifoundry", "torpedoworks"]],
         ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
         ["Endgame", ["antimatter_gate"]],
         ["Travel", ["spaceport"]],
       ];
-      const alwaysShow = new Set(["command", "barracks", "foundry", "arsenal", "refinery", "turret",
+      const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
                                   "habitat", "reactor", "smelter", "datacenter", "spaceport"]);
       for (const [title, types] of GROUPS) {
         const shown = types.filter(t => alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t]));

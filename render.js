@@ -677,6 +677,7 @@ function drawUnits(ctx, state, view) {
     else if (u.type === "aegis") drawAegis(ctx, u, def, color);
     else if (u.type === "colossus") drawColossus(ctx, u, def, color);
     else if (u.type === "freighter") drawFreighter(ctx, u, def, color);
+    else if (u.type === "colonyship") drawColonyShip(ctx, u, def, color);
     else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 
     if (u.cargo && u.cargo.qty > 0) {
@@ -753,6 +754,36 @@ function drawRanger(ctx, u, def, color) {
   ctx.arc(nx, ny, r * 0.24, 0, Math.PI * 2);
   ctx.fillStyle = DETAIL;
   ctx.fill();
+}
+
+// Colony Ship (Odyssey) — a mobile Command Center: the CC's octagonal hull at unit
+// scale with a raised central dome so it reads as "a base in transit", and a warm
+// engine flare at the stern so its heading is clear. Deploys (engine/colony.js) into
+// a real Command Center at its parked spot.
+function drawColonyShip(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, cx = u.x, cy = u.y;
+
+  const [fx, fy] = toWorld(cx, cy, angle, -r * 1.35, 0);   // engine flare behind the hull
+  ctx.beginPath();
+  ctx.arc(fx, fy, r * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffb454";
+  ctx.fill();
+
+  pathPoints(ctx, polygonPoints(cx, cy, r, 8, Math.PI / 8));   // octagon hull (echoes the CC)
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = DETAIL;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.beginPath();                                            // raised central dome
+  ctx.arc(cx, cy, r * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = shade(color, 20);
+  ctx.fill();
+  ctx.strokeStyle = "#05070f";
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
 // Mender — a support drone, not a combatant. A rounded octagonal body carrying

@@ -14,7 +14,7 @@ export const BUILDINGS = {
     // The starting CC is still seeded finished by state.js's seedPlayer —
     // makeBuilding without { constructing: true } spawns complete regardless
     // of buildTime. cost/buildTime only gate the issueBuild path.
-    produces: ["worker", "ranger"],
+    produces: ["worker", "ranger", "colonyship"],   // colonyship is Odyssey-only (queueProduction gates it)
     isCommandCenter: true,
     supplyGrants: 10,   // the seeded CC already houses the starting 3 workers with room to grow
     sight: 220,
@@ -330,6 +330,19 @@ export const UNITS = {
     allTerrain: true,    // ice fields and rough ground never slow it (movement.js honours this flag)
     // ...and a "scout mode" (issueScout / order type "scout") where it ranges the
     // map on its own, heading for the nearest unexplored ground — see scout.js.
+  },
+  colonyship: {
+    id: "colonyship", name: "Colony Ship", hp: 600, radius: 13, speed: 48,
+    cost: { ore: 500 }, buildTime: 40, supplyCost: 3,
+    // The mobile seed of a base (Odyssey only): move it to a site and DEPLOY it
+    // (engine/colony.js) into a Command Center; its colonists — the opening workers
+    // — disembark on deploy. Its own non-combat role: unarmed (no `attack`, so it
+    // can never be ordered to fight), never auto-acquires, and is transparent to the
+    // army/threat scans — but the main-acquire still lets enemies shoot it, so it's a
+    // real escort risk on the trek, not incidentally invincible. Pricier than the CC
+    // (400) it replaces: the mobility premium.
+    role: "colony", sight: 200,
+    odysseyOnly: true,
   },
   skiff: {
     id: "skiff", name: "Skiff", hp: 72, radius: 7, speed: 90,

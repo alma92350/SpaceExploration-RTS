@@ -54,6 +54,9 @@ function serPlanet(state) {
       // persisted or a reloaded hostile world fires its next probe a full cadence
       // early (undefined ?? 0 ⇒ immediately wave-ready), breaking continue-identically.
       aiNextWaveAt: state.aiNextWaveAt ?? null,
+      // Odyssey colony-ship expansion target (engine/ai.js) — the committed deploy spot
+      // of an in-flight ship. Persisted so a reload doesn't recompute a different target.
+      aiColonyTarget: state.aiColonyTarget ?? null,
     },
   };
 }
@@ -87,6 +90,7 @@ function rehydratePlanet(P) {
     aiAttackForce: P.ai.aiAttackForce, aiAttackDesperate: P.ai.aiAttackDesperate,
     aiNextAttackAt: P.ai.aiNextAttackAt, aiUnitsBuilt: P.ai.aiUnitsBuilt,
     aiNextWaveAt: P.ai.aiNextWaveAt ?? undefined,
+    aiColonyTarget: P.ai.aiColonyTarget ?? null,
     aiArchetype: archetypeFor(P.planetId),
     events: [],
   };
