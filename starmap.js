@@ -14,7 +14,7 @@
 import { starmapEl, starmapBtn } from "./dom.js";
 import { game } from "./session.js";
 import { galaxyStatus, canJump, activeState, JUMP_COST, jumpCost } from "./engine/galaxy.js";
-import { performJump } from "./boot.js";
+import { performJump, surrenderOdyssey } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
 import { planetName as worldName } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
@@ -61,8 +61,21 @@ export function renderStarmap() {
 
   const foot = document.createElement("p");
   foot.className = "starmap-foot";
-  foot.textContent = "M or Esc to close";
+  foot.textContent = "M or Esc to close · the Odyssey never ends unless you surrender";
   starmapEl.appendChild(foot);
+
+  // Surrender — the ONLY way to end the Odyssey (a wipeout just sends relief). Two-click confirm
+  // so it can't be hit by accident; the armed state lives on this element until the map re-renders.
+  const surrender = document.createElement("button");
+  surrender.className = "starmap-surrender";
+  surrender.textContent = "🏳 Surrender Odyssey";
+  let armed = false;
+  surrender.addEventListener("click", () => {
+    if (!armed) { armed = true; surrender.textContent = "🏳 Click again to confirm surrender"; surrender.classList.add("armed"); return; }
+    closeStarmap();
+    surrenderOdyssey();
+  });
+  starmapEl.appendChild(surrender);
 }
 
 function onWorldClick(w) {

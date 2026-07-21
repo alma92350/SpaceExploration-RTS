@@ -33,11 +33,11 @@ export function checkWinCondition(state) {
 // for an endless state (see sim.js).
 export function checkEndlessLoss(state) {
   if (state.over) return;
-  // In a galaxy, defeat is judged galaxy-wide (engine/galaxy.js checkGalaxyLoss) — you can
-  // be on a world where you hold nothing (a reinforcement hop) while a base stands
-  // elsewhere — so the per-world check must NOT fire here. It still governs a standalone
-  // endless state (tests). A foothold is a Command Center OR an undeployed colony ship, so
-  // the CC-less Odyssey start isn't a tick-1 defeat and a lone ship can still re-found.
+  // In a galaxy there is NO defeat at all — the Odyssey plays forever unless you surrender, and a
+  // total wipeout sends a relief colony ship instead (engine/galaxy.js checkGalaxyRescue). So the
+  // per-world check must NOT fire here; it still governs a standalone endless state (tests). A
+  // foothold is a Command Center OR an undeployed colony ship, so the CC-less Odyssey start isn't
+  // a tick-1 defeat and a lone ship can still re-found.
   if (state.inGalaxy) return;
   if (!hasCommandCenter(state, "player") && !hasColonyShip(state, "player")) finish(state, "ai");
 }

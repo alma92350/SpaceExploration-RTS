@@ -26,7 +26,7 @@ import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
-import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, DOMINATION_TARGET } from "./engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, surrenderGalaxy, DOMINATION_TARGET } from "./engine/galaxy.js";
 import { TECHS } from "./engine/techtree.js";
 import { planetName } from "./data.js";
 import * as sound from "./sound.js";
@@ -133,6 +133,13 @@ export function performJump(destId) {
   return result;
 }
 
+// Voluntarily end the Odyssey — the ONLY way it ends (a wipeout just sends relief). Marks the
+// active seat over; the render loop's over-poll then shows the game-over (surrender) screen.
+export function surrenderOdyssey() {
+  if (!game.galaxy) return;
+  surrenderGalaxy(game.galaxy);
+}
+
 // Repoint the view/input at the galaxy's active planet without restarting the
 // loop (used after a jump). Mirrors bootState's per-state wiring, minus creating
 // the loop and minus touching game.galaxy.
@@ -225,6 +232,12 @@ export function bootState(newState, { intro }) {
           for (const m of game.galaxy.milestones) celebrateMilestone(m);
           game.galaxy.milestones.length = 0;
         }
+        // Relief: a total wipeout is never a defeat — a fresh colony ship is dispatched so you
+        // can re-found. Announce it so the player finds the ship at their landing zone.
+        if (game.galaxy.reliefNote) {
+          game.galaxy.reliefNote = false;
+          showGalaxyToast("A relief colony ship has arrived at your landing zone — re-found your Odyssey.", "warn");
+        }
       } else tick(game.state, dt);
     },
     render: () => {
@@ -240,7 +253,8 @@ export function bootState(newState, { intro }) {
         announced = true;
         loop.stop();
         if (game.state.scenario) showScenarioEnd(game.state, restartToMapSelect);
-        else showGameOver(game.state.winner, game.state.seed, restartToMapSelect, { odyssey: !!game.galaxy, wonBy: game.galaxy?.wonBy });
+        else showGameOver(game.state.winner, game.state.seed, restartToMapSelect,
+          { odyssey: !!game.galaxy, wonBy: game.galaxy?.wonBy, surrendered: !!game.galaxy?.surrendered });
       }
     },
   });

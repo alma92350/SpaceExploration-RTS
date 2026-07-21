@@ -20,7 +20,7 @@
 
 "use strict";
 
-import { createGameState } from "./state.js";
+import { createGameState, makeUnit } from "./state.js";
 import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
 import { tick } from "./sim.js";
@@ -118,8 +118,8 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   }
   state.market = createMarket(state);         // every world has its own price book
   state.diplomacy = createDiplomacy();        // and its own neighbour's stance toward you
-  state.inGalaxy = true;                       // part of a galaxy → defeat is judged galaxy-wide (checkGalaxyLoss),
-                                               // not per-world (so an army-only hop to a world you don't hold isn't a loss)
+  state.inGalaxy = true;                       // part of a galaxy → the per-world defeat check is off (engine/victory.js);
+                                               // the galaxy never loses (checkGalaxyRescue), it only ends by surrender
   galaxy.planets.set(planetId, state);
   return state;
 }
@@ -179,26 +179,44 @@ export function stepGalaxy(galaxy, dt) {
     if (t % BG_STEP === galaxy.worlds.indexOf(id) % BG_STEP) tick(state, dtBg);
   }
   checkDomination(galaxy);      // conquest progress: pacified worlds (per-world toast) + a milestone at the target
-  checkGalaxyProgress(galaxy);  // other milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
-  checkGalaxyLoss(galaxy);      // DEFEAT is the ONLY terminal state now (play-forever): no foothold left on ANY world
+  checkGalaxyProgress(galaxy);  // milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
+  checkGalaxyRescue(galaxy);    // NEVER auto-defeat: a total wipeout sends a relief colony ship so life goes on
 }
 
-// Galaxy-wide DEFEAT — the ONLY terminal state (there are no wins any more; the Odyssey
-// is a play-forever sandbox). You're beaten only when you hold no foothold — no Command
-// Center and no colony ship — on ANY world. So a jump to a world where you have nothing
-// yet (an army-only reinforcement run, or a hop to fetch a colony ship) is never an instant
-// loss while a base or ship still stands somewhere else. The per-world checkEndlessLoss is
-// suppressed for galaxy states (state.inGalaxy, see engine/victory.js), so this is the one
-// authority. Idempotent.
-export function checkGalaxyLoss(galaxy) {
+// The Odyssey NEVER ends in defeat — as long as you haven't surrendered, life goes on
+// (surrenderGalaxy is the only terminal state). So there's no galaxy-wide loss; instead, if you
+// ever hold NO foothold anywhere (every Command Center razed and no colony ship left), a RELIEF
+// colony ship is dispatched to your active world's landing zone so you can re-found and fight on.
+// A short cooldown (in sim time, so it stays deterministic) bounds the churn if relief keeps
+// getting farmed, and its arrival is flagged for a UI toast. Once you hold the ship you have a
+// foothold again, so it won't re-send. The per-world checkEndlessLoss is suppressed for galaxy
+// states (state.inGalaxy, engine/victory.js), so this is the sole authority. Pure + deterministic.
+export const RELIEF_COOLDOWN = 20;   // sim seconds between relief drops (anti-farm)
+export function checkGalaxyRescue(galaxy) {
   const active = activeState(galaxy);
-  if (active.over) return;
+  if (active.over) return;                                         // a surrender already ended it
   for (const state of galaxy.planets.values()) {
     for (const b of state.buildings.values())
-      if (b.owner === "player" && b.type === "command") return;   // a base somewhere → still in the game
+      if (b.owner === "player" && b.type === "command") return;   // a base somewhere → still going
     if (hasColonyShip(state, "player")) return;                   // …or a colony ship to re-found from
   }
-  active.over = true; active.winner = "ai";                       // last foothold anywhere is gone
+  if (active.time - (galaxy.lastReliefTime ?? -Infinity) < RELIEF_COOLDOWN) return;   // still on cooldown
+  galaxy.lastReliefTime = active.time;
+  const lz = active.map.bases.player;
+  const ship = makeUnit("colonyship", "player", lz.x, lz.y);
+  ship.id = "g" + (galaxy.entitySeq = (galaxy.entitySeq || 0) + 1);   // galaxy id scheme (as in jumpCapital)
+  active.units.set(ship.id, ship);
+  galaxy.reliefNote = true;                                        // drained by boot.js for a toast
+}
+
+// The one terminal state: the player voluntarily gives up. Ends the run on the active seat (the
+// boot.js over-poll then shows the game-over screen with the surrender copy). A wipeout alone
+// never triggers this — only an explicit surrender does.
+export function surrenderGalaxy(galaxy) {
+  const active = activeState(galaxy);
+  if (active.over) return;
+  active.over = true; active.winner = "ai";
+  galaxy.surrendered = true;
 }
 
 // Record a one-time progress milestone — a firework, drained UI-side by boot.js. Idempotent

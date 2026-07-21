@@ -146,16 +146,17 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
   gameOverEl.classList.remove("hidden");
   gameOverEl.innerHTML = "";
 
-  // Odyssey has its own victory: you don't raze an enemy CC, you fire the Antimatter
-  // Gate. The loss copy (last Command Center destroyed) is right for both modes.
+  // The Odyssey is a play-forever sandbox — it never ends in defeat, only by surrender (a
+  // wipeout sends a relief colony ship instead). So an Odyssey game-over is always a surrender.
+  // Skirmish/scenario keep the win-or-lose copy.
   const msg = document.createElement("div");
-  msg.textContent = winner === "player"
-    ? (opts.odyssey
-        ? (opts.wonBy === "domination"
-            ? "Conquest — the galaxy bows to your fleet. Rival capitals lie in ruins."
-            : "Victory — the Antimatter Gate fires. The galaxy is yours.")
-        : "Victory — the enemy's last Command Center is destroyed.")
-    : "Defeat — your last Command Center was destroyed.";
+  msg.textContent = opts.odyssey
+    ? (opts.surrendered
+        ? "Surrendered — you lay down your flag. The frontier falls quiet."
+        : "The Odyssey has ended.")
+    : winner === "player"
+        ? "Victory — the enemy's last Command Center is destroyed."
+        : "Defeat — your last Command Center was destroyed.";
   gameOverEl.appendChild(msg);
 
   if (seed != null) {

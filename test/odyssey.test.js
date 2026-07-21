@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS,
-         upgradeToCapital, jumpVessel, canJump, jumpCost, checkGalaxyLoss, JUMP_COST,
+         upgradeToCapital, jumpVessel, canJump, jumpCost, checkGalaxyRescue, surrenderGalaxy, RELIEF_COOLDOWN, JUMP_COST,
          CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT,
          jumpManifest, jumpCapacity, spaceportTier, upgradeSpaceport, checkGalaxyProgress,
          SPACEPORT_MAX_TIER, SPACEPORT_CAPACITY } from "../engine/galaxy.js";
@@ -367,7 +367,7 @@ test("a free reinforcement hop back to a colony carries an army and spends no fu
     "the staged army rode along to reinforce the colony");
 });
 
-test("defeat is galaxy-wide: holding a foothold on ANY world keeps you in the game", () => {
+test("holding a foothold on ANY world means no relief is sent (and never a defeat)", () => {
   const g = createGalaxy({ seed: 35 });
   const home = settle(activeState(g));                          // home has a CC
   // Jump (Spaceport only, no ship) to a fresh world where we hold nothing.
@@ -378,27 +378,54 @@ test("defeat is galaxy-wide: holding a foothold on ANY world keeps you in the ga
   const dest = activeState(g);
   assert.equal(commandCenters(dest, "player").length, 0, "we hold nothing on the world we hopped to");
   assert.equal(hasColonyShip(dest, "player"), false, "…not even a colony ship");
-  checkGalaxyLoss(g);
-  assert.equal(dest.over, false, "still in the game — a base stands back home");
+  checkGalaxyRescue(g);
+  assert.equal(dest.over, false, "never a defeat — a base stands back home");
+  assert.ok(!hasColonyShip(dest, "player"), "and no relief ship is sent while a foothold stands somewhere");
 
   // The per-world check must stay quiet on a galaxy world (inGalaxy), even with no foothold here.
-  dest.over = false;
   checkEndlessLoss(dest);
   assert.equal(dest.over, false, "the per-world loss check is suppressed for a galaxy world");
-
-  // Now raze the home base too — no foothold anywhere → galaxy defeat.
-  for (const b of commandCenters(home, "player")) home.buildings.delete(b.id);
-  checkGalaxyLoss(g);
-  assert.equal(activeState(g).over, true, "with no foothold on any world, the Odyssey is lost");
-  assert.equal(activeState(g).winner, "ai");
 });
 
-test("a lone undeployed colony ship anywhere still counts as a foothold (no galaxy defeat)", () => {
+test("a total wipeout is NOT a defeat — a relief colony ship is dispatched so life goes on", () => {
+  const g = createGalaxy({ seed: 35 });
+  const home = settle(activeState(g));
+  home.time = 1000;                                             // past the relief cooldown
+  for (const b of commandCenters(home, "player")) home.buildings.delete(b.id);   // raze the only base — no foothold anywhere
+  assert.ok(!hasColonyShip(home, "player"), "and the start ship was consumed founding it — truly nothing left");
+  checkGalaxyRescue(g);
+  assert.equal(activeState(g).over, false, "the Odyssey does NOT end — you can't lose, only surrender");
+  assert.ok(hasColonyShip(activeState(g), "player"), "a relief colony ship arrived to re-found from");
+  assert.equal(g.reliefNote, true, "…and its arrival is flagged for a UI toast");
+
+  // Relief is cooldown-bounded: razing that ship immediately doesn't spawn another the same tick.
+  for (const [id, u] of [...activeState(g).units]) if (u.type === "colonyship") activeState(g).units.delete(id);
+  checkGalaxyRescue(g);
+  assert.ok(!hasColonyShip(activeState(g), "player"), "no second relief within the cooldown window");
+  activeState(g).time += RELIEF_COOLDOWN + 1;                   // wait out the cooldown
+  checkGalaxyRescue(g);
+  assert.ok(hasColonyShip(activeState(g), "player"), "after the cooldown, relief comes again — life goes on");
+});
+
+test("a lone undeployed colony ship anywhere is a foothold — no relief needed, no defeat", () => {
   const g = createGalaxy({ seed: 36 });
   // Don't settle: the start world holds only the colony ship (no CC anywhere).
   assert.ok(hasColonyShip(activeState(g), "player"), "the start is a lone colony ship");
-  checkGalaxyLoss(g);
+  const before = [...activeState(g).units.values()].filter(u => u.type === "colonyship").length;
+  checkGalaxyRescue(g);
   assert.equal(activeState(g).over, false, "a lone colony ship can still re-found — not a defeat");
+  assert.equal([...activeState(g).units.values()].filter(u => u.type === "colonyship").length, before,
+    "no extra relief ship — the existing one is already a foothold");
+});
+
+test("surrender is the ONLY terminal state — it ends the Odyssey by the player's choice", () => {
+  const g = createGalaxy({ seed: 37 });
+  settle(activeState(g));
+  assert.equal(activeState(g).over, false, "running");
+  surrenderGalaxy(g);
+  assert.equal(activeState(g).over, true, "surrender ends it");
+  assert.equal(activeState(g).winner, "ai");
+  assert.equal(g.surrendered, true, "…flagged as a surrender (drives the game-over copy)");
 });
 
 /* ---------- 3-tier Spaceport: supply-capacity jumps ---------- */

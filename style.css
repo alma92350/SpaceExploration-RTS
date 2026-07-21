@@ -134,6 +134,15 @@ html, body {
 .starmap-world.pacified { border-color: var(--gold, #fbbf24); }
 .starmap-world.pacified .sm-sub { color: var(--gold, #fbbf24); }
 .starmap-foot { color: var(--muted); font-size: 0.8rem; margin-bottom: 18px; }
+/* Surrender — the only way out of the play-forever Odyssey. Muted by default (it's a rare,
+   deliberate act), turning red once armed for the confirm click. */
+.starmap-surrender {
+  margin-bottom: 20px; padding: 7px 16px; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--muted); border: 1px solid #2b3a5e;
+  font-size: 0.82rem; font-weight: 600; transition: all 0.15s;
+}
+.starmap-surrender:hover { color: var(--text); border-color: #3a4c74; }
+.starmap-surrender.armed { color: var(--bad); border-color: var(--bad); background: rgba(255,80,80,0.08); }
 
 /* Odyssey market panel (hud.js renderMarket): a header plus a compact
    commodity/price + Sell/Buy row per tradeable good. */
