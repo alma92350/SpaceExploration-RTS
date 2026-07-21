@@ -14,7 +14,7 @@ export const BUILDINGS = {
     // The starting CC is still seeded finished by state.js's seedPlayer —
     // makeBuilding without { constructing: true } spawns complete regardless
     // of buildTime. cost/buildTime only gate the issueBuild path.
-    produces: ["worker", "ranger", "colonyship"],   // colonyship is Odyssey-only (queueProduction gates it)
+    produces: ["worker", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"],   // the Odyssey-only ones are gated by queueProduction (def.odysseyOnly)
     isCommandCenter: true,
     supplyGrants: 10,   // the seeded CC already houses the starting 3 workers with room to grow
     sight: 220,

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createGalaxy, activeState, jumpCapital, cargoManifest, freightCapacity } from "../engine/galaxy.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
+import { queueProduction } from "../engine/production.js";
+import { BUILDINGS } from "../engine/entities.js";
 
 // A galaxy with a deployed base + a Spaceport, fuelled and ready to jump. `cargoShips` (unit
 // types) are staged on the pad — the cargo ships whose combined hold sets the jump's freight.
@@ -21,6 +23,19 @@ function readyToJump(seed = 20, cargoShips = []) {
   g.credits = 2000;
   return { g, from, sp, ships, destId: g.worlds.find(w => w !== g.activeId) };
 }
+
+test("a Command Center actually produces cargo ships in Odyssey (the Hauler button works)", () => {
+  const { from } = readyToJump(24, []);   // a deployed CC + a Spaceport (the freighter prereq)
+  const cc = [...from.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  from.players.player.resources.ore = 10000;
+  // The bug was a menu button with no engine wiring: the CC's `produces` list omitted the ships,
+  // so queueProduction silently rejected the click.
+  for (const t of ["hauler", "heavyhauler", "bulkfreighter"]) {
+    assert.ok(BUILDINGS.command.produces.includes(t), `${t} is in the Command Center's produces list`);
+  }
+  assert.equal(queueProduction(from, cc.id, "hauler"), true, "the Hauler queues at the CC");
+  assert.ok(cc.queue.some(j => j.unitType === "hauler"), "…and lands in its production queue");
+});
 
 test("freightCapacity sums the cargo ships' holds and ignores anything without one", () => {
   const { ships } = readyToJump(19, ["hauler", "heavyhauler"]);
