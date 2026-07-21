@@ -20,7 +20,7 @@
 
 "use strict";
 
-import { createGameState, makeUnit } from "./state.js";
+import { createGameState, makeUnit, peekEntityId, restoreEntityId } from "./state.js";
 import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
 import { tick } from "./sim.js";
@@ -121,7 +121,29 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   state.inGalaxy = true;                       // part of a galaxy → the per-world defeat check is off (engine/victory.js);
                                                // the galaxy never loses (checkGalaxyRescue), it only ends by surrender
   galaxy.planets.set(planetId, state);
+  bumpEntityCounterPastGalaxy(galaxy);         // keep future live-built ids galaxy-unique (see below)
   return state;
+}
+
+// createGameState (engine/state.js) resets the GLOBAL entity-id counter to 1 for each world's
+// deterministic seeding — which, once a galaxy holds more than one world, would leave the counter
+// BELOW ids already live on other worlds. The next thing the player then built or produced could
+// reuse an id and silently overwrite an existing entity (e.g. return to a built-up world after
+// visiting a new one and lay down a Spaceport → it clobbers a building that shared the id). So
+// after each world is (re)built in, bump the counter past every b/u id anywhere in the galaxy, so
+// live mints stay unique galaxy-wide. Deterministic — reads only entity ids (no clock/RNG); the
+// seeded ids themselves are untouched, so per-world determinism is preserved.
+function idNum(id) {
+  const n = parseInt(String(id).replace(/^\D+/, ""), 10);   // "b12" | "u7" | "g3" → 12 | 7 | 3
+  return Number.isFinite(n) ? n : 0;
+}
+function bumpEntityCounterPastGalaxy(galaxy) {
+  let max = peekEntityId() - 1;                              // whatever this world's own seeding reached
+  for (const state of galaxy.planets.values()) {
+    for (const id of state.units.keys()) max = Math.max(max, idNum(id));
+    for (const id of state.buildings.keys()) max = Math.max(max, idNum(id));
+  }
+  restoreEntityId(max + 1);
 }
 
 // Run the background colonies each tick: bank their passive income, watch for
@@ -397,6 +419,23 @@ export function canJump(state) {
     .some(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
 }
 
+// A world where the player still has a foothold — a Command Center or an undeployed colony ship
+// (the same notion as the galaxy defeat/relief check). It's a world a stranded force can fall
+// back to and actually operate from: build, re-arm, or fetch a colony ship.
+const playerFoothold = state => !!state && ([...state.buildings.values()]
+  .some(b => b.owner === "player" && b.type === "command") || hasColonyShip(state, "player"));
+
+// Can the player jump to `destId` right now? A Spaceport on the CURRENT world lets you jump
+// anywhere (expand to a new world or hop to a held one). WITHOUT a Spaceport here you can still
+// FALL BACK to any world where you have a foothold — so a force stranded on a portless world
+// (e.g. you hopped an army over and forgot the colony ship) is never trapped: it can always
+// retreat to a base it holds and bring the ship back. Only opening a NEW frontier needs a
+// Spaceport here.
+export function canJumpTo(galaxy, destId) {
+  if (destId === galaxy.activeId) return false;
+  return canJump(activeState(galaxy)) || playerFoothold(galaxy.planets.get(destId));
+}
+
 // The fuel a jump to `destId` costs: FREE to a world you already hold (any world you've
 // visited — a colony you're returning to, reinforcing, or re-settling), and JUMP_COST to
 // reach a NEW world for the first time. So bouncing between your own worlds to defend or
@@ -468,21 +507,35 @@ function loadCargo(from, dest) {
   return manifest;
 }
 
-// Launch an interplanetary jump to `destId`: every player unit staged near the Spaceport
-// — a colony ship (to settle), an army (to reinforce), or nothing — moves to the
-// destination's landing zone, along with the cargo hold. NO deployed base moves: the
-// origin keeps ALL its buildings (and any un-staged units) and becomes a background colony
-// that goes on evolving. Deploy a colony ship at the destination to found a base there.
-// Costs fuel only for a NEW world (jumpCost) — returning to a world you hold is free.
-// Returns a summary, or null if the jump can't run (no Spaceport, same world, or too poor
-// to fuel a new-world jump).
+// Launch an interplanetary jump to `destId`: player units move to the destination's landing
+// zone along with the cargo hold. NO deployed base moves — the origin keeps ALL its buildings
+// and becomes a background colony. Costs fuel only for a NEW world (jumpCost); returning to a
+// held world is free.
+//
+// Two modes:
+//   • With a Spaceport HERE — the normal launch: the capacity-capped expedition staged near the
+//     pad (a colony ship to settle, an army to reinforce, or nothing).
+//   • WITHOUT a Spaceport, falling back to a world you ALREADY HOLD — a stranded-force retreat:
+//     the whole force on this world evacuates (there's no pad to meter it, and you're leaving
+//     the spot). This is what breaks the catch-22 where an army hopped over without a colony
+//     ship couldn't build a Spaceport and so couldn't get back for one. See canJumpTo.
+//
+// Returns a summary, or null if the jump can't run (no way to reach the destination, same world,
+// or too poor to fuel a new-world jump).
 export function jumpCapital(galaxy, destId) {
   const from = activeState(galaxy);
+  if (destId === galaxy.activeId) return null;
   const spaceport = [...from.buildings.values()]
     .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
+  const canFallBack = playerFoothold(galaxy.planets.get(destId));   // a world you hold a base on
+  if (!spaceport && !canFallBack) return null;                      // no port here and nowhere to fall back → can't jump
   const cost = jumpCost(galaxy, destId);
-  if (!spaceport || destId === galaxy.activeId || galaxy.credits < cost) return null;
-  const { riders, leftBehind } = jumpManifest(from, spaceport);   // capacity-capped: overflow waits for the next jump
+  if (galaxy.credits < cost) return null;
+
+  // Spaceport → capacity-capped staged expedition. Stranded fallback → evacuate everyone here.
+  let riders, leftBehind = 0;
+  if (spaceport) ({ riders, leftBehind } = jumpManifest(from, spaceport));
+  else riders = [...from.units.values()].filter(u => u.owner === "player");
   galaxy.credits -= cost;   // fuel — free to a world you already hold
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });

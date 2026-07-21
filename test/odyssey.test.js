@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS,
-         upgradeToCapital, jumpVessel, canJump, jumpCost, checkGalaxyRescue, surrenderGalaxy, RELIEF_COOLDOWN, JUMP_COST,
+         upgradeToCapital, jumpVessel, canJump, canJumpTo, jumpCost, checkGalaxyRescue, surrenderGalaxy, RELIEF_COOLDOWN, JUMP_COST,
          CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT,
          jumpManifest, jumpCapacity, spaceportTier, upgradeSpaceport, checkGalaxyProgress,
          SPACEPORT_MAX_TIER, SPACEPORT_CAPACITY } from "../engine/galaxy.js";
@@ -426,6 +426,86 @@ test("surrender is the ONLY terminal state — it ends the Odyssey by the player
   assert.equal(activeState(g).over, true, "surrender ends it");
   assert.equal(activeState(g).winner, "ai");
   assert.equal(g.surrendered, true, "…flagged as a surrender (drives the game-over copy)");
+});
+
+/* ---------- stranded recovery: no catch-22 without a Spaceport ---------- */
+
+test("canJumpTo: a Spaceport here reaches anywhere; without one, only a world you hold a base on", () => {
+  const g = createGalaxy({ seed: 61 });
+  const home = settle(activeState(g));                       // home: a Command Center (a base we hold)
+  const homeId = g.activeId;
+  // A visited world where we hold NOTHING (contested), and a never-seen world.
+  const contestedId = g.worlds.find(w => w !== homeId);
+  addPlanet(g, contestedId, { unsettled: true });
+  const freshId = g.worlds.find(w => !g.planets.has(w));
+
+  // No Spaceport here yet: we can fall back to our base, but not to a contested world or a new one.
+  assert.equal(canJumpTo(g, homeId), false, "the world we're on is never a jump target");
+  assert.equal(canJumpTo(g, contestedId), false, "a visited world with no base of ours is not a fallback");
+  assert.equal(canJumpTo(g, freshId), false, "and a new world needs a Spaceport");
+
+  // Now hop away so home isn't the active world, and confirm we can fall back TO it.
+  addSpaceport(home);
+  g.credits = 3000;
+  jumpCapital(g, freshId);                                   // Spaceport here → open the new frontier
+  assert.notEqual(g.activeId, homeId, "we left home");
+  assert.equal(canJumpTo(g, homeId), true, "…and can always fall back to the base we hold");
+});
+
+test("stranded army with no Spaceport can fall back to home and evacuates with it (catch-22 fixed)", () => {
+  const g = createGalaxy({ seed: 62 });
+  const home = settle(activeState(g));
+  const homeId = g.activeId;
+  const sp = addSpaceport(home);
+  const trooper = makeUnit("skiff", "player", sp.x, sp.y);   // an army staged on the pad — but NO colony ship
+  home.units.set(trooper.id, trooper);
+  g.credits = 3000;
+  const newId = g.worlds.find(w => w !== homeId);
+  jumpCapital(g, newId);                                     // hop the army over, forgetting the colony ship
+
+  const stranded = activeState(g);
+  assert.equal(commandCenters(stranded, "player").length, 0, "no base on the world we hopped to");
+  assert.ok(![...stranded.buildings.values()].some(b => b.owner === "player" && b.type === "spaceport"),
+    "and no Spaceport — the old rules would trap us here");
+  assert.ok([...stranded.units.values()].some(u => u.owner === "player" && u.type === "skiff"), "our army is here");
+
+  // The fix: we can fall back to home even with no Spaceport here — and the whole force evacuates.
+  assert.equal(canJumpTo(g, newId + "zzz"), false);          // a bogus/new world: still no
+  assert.ok(canJumpTo(g, homeId), "we can retreat to the base we hold");
+  const before = g.credits;
+  const res = jumpCapital(g, homeId);
+  assert.ok(res, "the fallback jump runs");
+  assert.equal(g.credits, before, "returning to a world we hold is free");
+  assert.equal(g.activeId, homeId, "we're back on our home world — where the colony ship is built");
+  assert.ok([...activeState(g).units.values()].some(u => u.owner === "player" && u.type === "skiff"),
+    "the stranded army evacuated back with us");
+  assert.equal([...g.planets.get(newId).units.values()].filter(u => u.owner === "player").length, 0,
+    "nothing player-owned is left stranded on the world we abandoned");
+});
+
+test("a portless world still cannot open a NEW frontier — only a Spaceport expands", () => {
+  const g = createGalaxy({ seed: 63 });
+  const home = settle(activeState(g));
+  addSpaceport(home);
+  g.credits = 3000;
+  const newId = g.worlds.find(w => w !== g.activeId);
+  jumpCapital(g, newId);                                     // strand ourselves (no Spaceport at newId)
+  const fresh = g.worlds.find(w => !g.planets.has(w));
+  assert.equal(canJumpTo(g, fresh), false, "no Spaceport here → can't reach an unvisited world");
+  assert.equal(jumpCapital(g, fresh), null, "…and the jump is refused");
+});
+
+test("live-built ids stay unique across worlds — visiting a new world can't reset the counter into a collision", () => {
+  const g = createGalaxy({ seed: 64 });
+  const home = settle(activeState(g));
+  for (let i = 0; i < 15; i++) { const b = makeBuilding("turret", "player", 300 + i, 300); home.buildings.set(b.id, b); }
+  const homeIds = new Set([...home.buildings.keys()]);
+  addSpaceport(home);
+  g.credits = 3000;
+  jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // visit a NEW world → addPlanet re-seeds it
+  // The next thing built anywhere must not reuse an id already live on home (the old bug clobbered it).
+  const fresh = makeBuilding("turret", "player", 500, 500);
+  assert.ok(!homeIds.has(fresh.id), `a freshly minted id (${fresh.id}) must not collide with home's existing buildings`);
 });
 
 /* ---------- 3-tier Spaceport: supply-capacity jumps ---------- */

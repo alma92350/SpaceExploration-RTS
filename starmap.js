@@ -13,7 +13,7 @@
 
 import { starmapEl, starmapBtn } from "./dom.js";
 import { game } from "./session.js";
-import { galaxyStatus, canJump, activeState, JUMP_COST, jumpCost } from "./engine/galaxy.js";
+import { galaxyStatus, canJump, canJumpTo, activeState, JUMP_COST, jumpCost } from "./engine/galaxy.js";
 import { performJump, surrenderOdyssey } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
 import { planetName as worldName } from "./data.js";
@@ -31,7 +31,7 @@ export function renderStarmap() {
   head.className = "starmap-head";
   const hint = canLaunch
     ? `Click a world to jump — free to a colony you hold, ◈${JUMP_COST} fuel to settle a new one`
-    : "Build a Spaceport to jump between worlds";
+    : "No Spaceport here — click a colony you already hold to fall back to it (build a Spaceport to reach new worlds)";
   head.innerHTML = `<h2>Galaxy</h2>`
     + `<p>Visited ${status.visited}/${status.total} · Conquered ${status.pacified}/${status.dominationTarget} · ◈ ${Math.floor(g.credits)} · ${hint}</p>`;
   starmapEl.appendChild(head);
@@ -81,11 +81,15 @@ export function renderStarmap() {
 function onWorldClick(w) {
   const g = game.galaxy;
   if (!g || w.id === g.activeId) return;
-  if (!canJump(activeState(g))) { showGalaxyToast("Build a Spaceport to jump between worlds.", "warn"); return; }
+  // With no Spaceport here you can still fall back to a world you hold — only a NEW world needs one.
+  if (!canJumpTo(g, w.id)) {
+    showGalaxyToast(`No Spaceport here — you can only fall back to a colony you already hold. Build a Spaceport to reach ${worldName(w.id)}.`, "warn");
+    return;
+  }
   const cost = jumpCost(g, w.id);   // free to a world you hold, JUMP_COST to reach a new one
   if (g.credits < cost) { showGalaxyToast(`Need ◈${cost} fuel to jump to ${worldName(w.id)}.`, "warn"); return; }
   closeStarmap();
-  performJump(w.id);   // carries the staged expedition (Colony Ship and/or army) to the world, repoints the view
+  performJump(w.id);   // carries the expedition (or, if stranded, evacuates the force) to the world
 }
 
 export function openStarmap() { if (!game.galaxy) return; renderStarmap(); starmapEl.classList.remove("hidden"); }
