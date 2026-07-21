@@ -21,7 +21,7 @@ import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, jumpCost, jumpManifest, jumpCapacity, spaceportTier, upgradeSpaceport,
-         SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, cargoManifest, CARGO_CAPACITY,
+         SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, cargoManifest, freightCapacity,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip } from "./engine/colony.js";
@@ -531,11 +531,15 @@ function rebuildSelectionPanel(sel) {
     // Odyssey: the CC also builds Colony Ships — the mobile seed you deploy to found a
     // new base (no more building a CC directly). Gated on game.galaxy like the sibling
     // Odyssey CC panels below, so a skirmish CC shows only Worker/Ranger.
-    const ccUnits = game.galaxy ? ["worker", "ranger", "colonyship"] : ["worker", "ranger"];
+    // Odyssey adds the Colony Ship (found a base) and the three cargo ships (haul goods on a jump —
+    // gated behind the Spaceport, so they surface once you've built the jump pad).
+    const ccUnits = game.galaxy ? ["worker", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"] : ["worker", "ranger"];
     for (const t of ccUnits) {
       const def = UNITS[t];
+      const locked = !prereqsMet(state, "player", def);
       panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
-        () => queueProduction(state, cc.id, t), { cost: def.cost, tip: unitTip(def), icon: { kind: "unit", type: t } }));
+        () => queueProduction(state, cc.id, t),
+        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
@@ -739,15 +743,19 @@ function rebuildSelectionPanel(sel) {
           tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump.` }));
     }
 
-    // Cargo hold: manufactured goods that ride along to be sold at the destination
-    // (they price differently per world). Loaded most-valuable-first, up to capacity.
-    const cargo = cargoManifest(state);
+    // Cargo hold: manufactured goods ride in the CARGO SHIPS staged for this jump — the hold is
+    // their combined capacity (build Haulers/Heavy Haulers/Bulk Freighters at a Command Center and
+    // park them by the pad). Loaded most-valuable-first, up to that capacity.
+    const capacity = freightCapacity(m.riders);
+    const cargo = cargoManifest(state, capacity);
     const cargoTotal = Object.values(cargo).reduce((a, b) => a + b, 0);
     const cargoInfo = document.createElement("p");
     cargoInfo.className = "hint";
-    cargoInfo.textContent = cargoTotal
-      ? `Cargo hold (${cargoTotal}/${CARGO_CAPACITY}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — hauled to sell at the destination.`
-      : `Cargo hold (0/${CARGO_CAPACITY}): empty — manufacture metals/alloys/electronics/machinery to haul and sell elsewhere.`;
+    cargoInfo.textContent = capacity === 0
+      ? "Cargo hold: none — stage a cargo ship (Hauler / Heavy Hauler / Bulk Freighter) by the pad to haul goods."
+      : cargoTotal
+        ? `Cargo hold (${cargoTotal}/${capacity}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — hauled to sell at the destination.`
+        : `Cargo hold (0/${capacity}): empty — manufacture metals/alloys/electronics/machinery to fill your cargo ships.`;
     panelEl.appendChild(cargoInfo);
     for (const w of game.galaxy.worlds) {
       if (w === game.galaxy.activeId) continue;
@@ -951,6 +959,7 @@ function unitTip(def) {
   const bits = [`${def.hp} hp`];
   if (def.attack) bits.push(`${def.attack} dmg`, `rng ${def.range}`);
   if (def.repairRate) bits.push(`heals ${def.repairRate}/s`, `rng ${def.repairRange}`);
+  if (def.cargoHold) bits.push(`cargo ${def.cargoHold}`);
   if (def.speed) bits.push(`spd ${def.speed}`);
   if (def.supplyCost) bits.push(`${def.supplyCost} supply`);
   if (def.supplyGrants) bits.push(`+${def.supplyGrants} supply`);

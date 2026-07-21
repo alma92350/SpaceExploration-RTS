@@ -425,6 +425,30 @@ export const UNITS = {
     role: "freighter", sight: 130,
   },
 
+  /* ---- ODYSSEY FREIGHT — cargo ships in three sizes. A jump's cargo hold is the combined
+     `cargoHold` of the cargo ships staged for it (engine/galaxy.js freightCapacity), so hauling
+     manufactured goods between worlds means building and staging shipping: a bigger fleet, or
+     bigger ships, moves more per trip. Role "freighter" ⇒ they carry no weapon (combat.js never
+     arms them), so they need escorting. Gated behind the Spaceport (no point shipping without a
+     jump pad) and Odyssey-only, so the skirmish roster + its byte-identical replay are untouched.
+     Their supplyCost also draws on the Spaceport's per-jump capacity, so a Bulk Freighter needs a
+     bigger pad to lift alongside an army. ---- */
+  hauler: {
+    id: "hauler", name: "Hauler", hp: 180, radius: 9, speed: 58,
+    cost: { ore: 90 }, buildTime: 12, supplyCost: 1,
+    role: "freighter", sight: 130, cargoHold: 250, odysseyOnly: true, requires: ["spaceport"],
+  },
+  heavyhauler: {
+    id: "heavyhauler", name: "Heavy Hauler", hp: 350, radius: 12, speed: 44,
+    cost: { ore: 220 }, buildTime: 24, supplyCost: 3,
+    role: "freighter", sight: 140, cargoHold: 650, odysseyOnly: true, requires: ["spaceport"],
+  },
+  bulkfreighter: {
+    id: "bulkfreighter", name: "Bulk Freighter", hp: 600, radius: 15, speed: 32,
+    cost: { ore: 480 }, buildTime: 42, supplyCost: 6,
+    role: "freighter", sight: 150, cargoHold: 1600, odysseyOnly: true, requires: ["spaceport"],
+  },
+
   /* ---- Tier-3 SPECIALTY units: one per "rare" surface commodity, so a world's
      deposit specialty shapes which elite you can field (radioactives already
      give the balanced Dreadnought above). All Arsenal-gated, all deliberately

@@ -747,7 +747,7 @@ function drawUnitShape(ctx, u, def, color) {
   else if (u.type === "wraith") drawWraith(ctx, u, def, color);
   else if (u.type === "aegis") drawAegis(ctx, u, def, color);
   else if (u.type === "colossus") drawColossus(ctx, u, def, color);
-  else if (u.type === "freighter") drawFreighter(ctx, u, def, color);
+  else if (u.type === "freighter" || u.type === "hauler" || u.type === "heavyhauler" || u.type === "bulkfreighter") drawFreighter(ctx, u, def, color);
   else if (u.type === "colonyship") drawColonyShip(ctx, u, def, color);
   else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 }

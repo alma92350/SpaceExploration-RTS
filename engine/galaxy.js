@@ -476,20 +476,27 @@ export function jumpManifest(state, spaceport) {
   return { riders, capacity, used, stagedSupply, staged: staged.length, leftBehind: staged.length - riders.length };
 }
 
-// A jump carries a bounded CARGO HOLD of manufactured goods to the destination, so
-// a run of production on one world can be sold on another — the make-here/sell-there
-// loop (produced goods price differently per world, engine/market.js). Loaded
-// most-valuable-first (data.js COM.base: machinery 250 > electronics 95 > alloys 80
-// > metals 22). Raws are too cheap to bother hauling and strategic goods stay put
-// (committed to local wonders/superweapons) — which also means the hold is empty
-// until you've actually industrialized.
-export const CARGO_CAPACITY = 300;
+// A jump carries a CARGO HOLD of manufactured goods to the destination, so a run of production on
+// one world can be sold on another — the make-here/sell-there loop (produced goods price
+// differently per world, engine/market.js). The hold's SIZE is the combined cargoHold of the cargo
+// ships (engine/entities.js: hauler/heavyhauler/bulkfreighter) staged for the jump — no cargo ship
+// means no freight. Loaded most-valuable-first (data.js COM.base: machinery 250 > electronics 95 >
+// alloys 80 > metals 22). Raws are too cheap to bother hauling and strategic goods stay put.
 const CARGO_GOODS = ["machinery", "electronics", "alloys", "metals"];
 
-// What a jump from `from` would haul, as { good: qty } — pure, for the HUD preview
-// and the jump itself (so the shown manifest and the moved goods can never disagree).
-export function cargoManifest(from) {
-  let room = CARGO_CAPACITY;
+// The freight capacity a set of riders provides — the summed cargoHold of the cargo ships among
+// them (anything without a cargoHold carries nothing). Pure.
+export function freightCapacity(riders) {
+  let cap = 0;
+  for (const u of riders) cap += UNITS[u.type]?.cargoHold || 0;
+  return cap;
+}
+
+// What `capacity` units of hold would haul from `from`, as { good: qty } — most-valuable-first, for
+// the HUD preview and the jump itself (so the shown manifest and the moved goods can never
+// disagree). capacity 0 (no cargo ship staged) → an empty hold.
+export function cargoManifest(from, capacity = 0) {
+  let room = Math.max(0, capacity | 0);
   const src = from.players.player.resources;
   const manifest = {};
   for (const com of CARGO_GOODS) {
@@ -500,8 +507,8 @@ export function cargoManifest(from) {
   return manifest;
 }
 
-function loadCargo(from, dest) {
-  const manifest = cargoManifest(from);
+function loadCargo(from, dest, capacity) {
+  const manifest = cargoManifest(from, capacity);
   const src = from.players.player.resources, dst = dest.players.player.resources;
   for (const com in manifest) { src[com] -= manifest[com]; dst[com] = (dst[com] || 0) + manifest[com]; }
   return manifest;
@@ -551,7 +558,7 @@ export function jumpCapital(galaxy, destId) {
     dest.units.set(u.id, u);
   });
 
-  const cargo = loadCargo(from, dest);   // haul the manufactured goods along to sell at the destination
+  const cargo = loadCargo(from, dest, freightCapacity(riders));   // haul goods in the staged cargo ships' holds
 
   from.selection = []; dest.selection = [];
   from.background = true;    // the world you left keeps evolving on its own
