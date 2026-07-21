@@ -28,6 +28,25 @@ function radiusOf(entity) {
   return UNITS[entity.type] ? UNITS[entity.type].radius : 9;
 }
 
+// The formation slot for an escorting unit — a point on a protective ring around the friendly
+// ship it's guarding (order {type:"escort", targetId, slot, slots}). The ring expands if the
+// group is large enough to crowd it, so N escorts space out evenly around the target. Returns
+// null when the target is gone or dead, so the caller drops the order. Pure + deterministic:
+// geometry only (no clock/RNG). The escort re-seeks this point every tick, so it trails the
+// target wherever it's ordered — and a combat escort still auto-acquires threats that come near.
+const ESCORT_GAP = 22;        // arc spacing between neighbouring escorts
+const ESCORT_STANDOFF = 26;   // clearance from the target's hull out to the ring
+export function escortSlot(state, unit) {
+  const o = unit.order;
+  const target = state.units.get(o.targetId);
+  if (!target || target.hp <= 0) return null;
+  const n = Math.max(1, o.slots || 1);
+  const angle = ((o.slot || 0) / n) * Math.PI * 2 - Math.PI / 2;   // start at the top, go round
+  const minR = (n * ESCORT_GAP) / (2 * Math.PI);                   // ring big enough to seat the whole group
+  const R = Math.max(radiusOf(target) + ESCORT_STANDOFF, minR);
+  return { x: target.x + Math.cos(angle) * R, y: target.y + Math.sin(angle) * R };
+}
+
 // Moves `unit` at most `speed * dt` toward (tx, ty). Returns true once it
 // has arrived (within 1 unit), so callers can clear the order that got it
 // there.

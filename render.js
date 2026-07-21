@@ -133,6 +133,7 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
   drawWaypoints(ctx, state);
+  drawEscortLinks(ctx, state);
   drawSelectionRings(ctx, state);
   drawRallyPoint(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
@@ -1502,13 +1503,41 @@ function drawWaypoints(ctx, state) {
   ctx.restore();
 }
 
+// A faint link from each selected escort to the friendly ship it's guarding, plus a ring on the
+// target — so an active escort order reads at a glance (it carries no waypoint line otherwise).
+// Escort green, distinct from the cyan waypoint colour.
+function drawEscortLinks(ctx, state) {
+  const guarded = new Set();
+  ctx.save();
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = "rgba(120, 230, 170, 0.5)";
+  ctx.lineWidth = 1.1;
+  for (const id of state.selection) {
+    const u = state.units.get(id);
+    if (!u || u.owner !== "player" || !u.order || u.order.type !== "escort") continue;
+    const t = state.units.get(u.order.targetId);
+    if (!t || t.hp <= 0) continue;
+    ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(t.x, t.y); ctx.stroke();
+    guarded.add(t);
+  }
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "rgba(120, 230, 170, 0.75)";
+  ctx.lineWidth = 1.4;
+  for (const t of guarded) {
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, (UNITS[t.type]?.radius || 10) + 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // Where an order points on the map, for its waypoint marker — a fixed spot
 // for move/attack-move, or the live position of the unit/building/node it's
 // chasing. Null for an order with nowhere to point.
 function orderPoint(state, order) {
   if (!order) return null;
   if (order.type === "move" || order.type === "attack-move") return { x: order.x, y: order.y };
-  if (order.type === "attack") {
+  if (order.type === "attack" || order.type === "escort") {
     const t = state.units.get(order.targetId) || state.buildings.get(order.targetId);
     return t ? { x: t.x, y: t.y } : null;
   }

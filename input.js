@@ -8,7 +8,7 @@
 
 "use strict";
 
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort } from "./engine/commands.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, dragCamera, pinchZoomPan } from "./camera.js";
@@ -179,6 +179,13 @@ export function attachInput(canvas, state, onChange) {
       const attackers = selected.filter(u => UNITS[u.type].attack);
       if (attackers.length) { issueAttack(attackers, target.id, queue); sound.playOrder(); }
       return;
+    }
+    // A friendly SHIP as the target: the selection forms a protective escort ring around it and
+    // follows it wherever it's ordered (engine/commands.js issueEscort). The target itself is
+    // excluded, so right-clicking a ship that's part of the selection escorts it with the rest.
+    if (target && target.owner === "player" && target.kind === "unit") {
+      const escorts = selected.filter(u => u.id !== target.id);
+      if (escorts.length) { issueEscort(escorts, target.id, queue); sound.playOrder(); return; }
     }
     const node = nodeAt(p.x, p.y);
     if (node) {

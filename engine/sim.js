@@ -6,7 +6,7 @@
 
 "use strict";
 
-import { stepToward } from "./movement.js";
+import { stepToward, escortSlot } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
 import { updateScoutMode } from "./scout.js";
@@ -111,6 +111,13 @@ function updateUnit(state, unit, dt) {
     case "gather":
       updateGather(state, unit, dt);
       break;
+    case "escort": {
+      // A non-combat escort (worker) just keeps station on the ring around the guarded ship.
+      const slot = escortSlot(state, unit);
+      if (!slot) { unit.order = null; break; }
+      stepToward(state, unit, slot.x, slot.y, def.speed, dt);
+      break;
+    }
     case "scout":
       updateScoutMode(state, unit, dt);
       break;
@@ -139,6 +146,14 @@ function updateUnit(state, unit, dt) {
 function updateSupport(state, unit, def, dt) {
   const o = unit.order;
   if (!o) return;
+  // A support escort (Mender) trails the guarded ship in formation, mending whatever's near it
+  // via the global repair pass — a medic keeping station on the fleet it's protecting.
+  if (o.type === "escort") {
+    const slot = escortSlot(state, unit);
+    if (!slot) { unit.order = null; return; }
+    stepToward(state, unit, slot.x, slot.y, def.speed, dt);
+    return;
+  }
   let tx, ty, follow = false;
   if (o.type === "attack") {
     const t = getEntity(state, o.targetId);

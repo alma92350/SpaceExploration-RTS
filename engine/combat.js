@@ -15,7 +15,7 @@
 
 "use strict";
 
-import { stepToward } from "./movement.js";
+import { stepToward, escortSlot } from "./movement.js";
 import { UNITS, BUILDINGS, upgradeMult } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
@@ -77,6 +77,16 @@ export function updateCombat(state, unit, dt) {
   if (unit.order && unit.order.type === "attack-move") {
     const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
     if (arrived) unit.order = null;
+    return;
+  }
+
+  // Escort: with no threat acquired above (that block returns when engaging), keep station on
+  // the protective ring around the guarded ship — a persistent follow, never cleared on arrival,
+  // so the escort trails the target wherever it's ordered until given a new order.
+  if (unit.order && unit.order.type === "escort") {
+    const slot = escortSlot(state, unit);
+    if (!slot) { unit.order = null; return; }
+    stepToward(state, unit, slot.x, slot.y, def.speed, dt);
   }
 }
 

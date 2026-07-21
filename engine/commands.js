@@ -63,6 +63,16 @@ export function issueAttackMove(units, x, y, queue = false) {
   units.forEach((u, i) => dispatch(u, { type: "attack-move", x: spots[i].x, y: spots[i].y }, queue));
 }
 
+// Escort a friendly ship: each unit takes a stable slot on a protective ring around the
+// target and follows it wherever it's ordered (engine/movement.js escortSlot), holding the
+// formation until given another order. A combat escort still auto-acquires threats that come
+// near, then reforms. The target itself is never told to escort (it's filtered out by the
+// caller). `slot`/`slots` fix each unit's place at issue time, so the ring is deterministic.
+export function issueEscort(units, targetId, queue = false) {
+  const n = units.length;
+  units.forEach((u, i) => dispatch(u, { type: "escort", targetId, slot: i, slots: n }, queue));
+}
+
 // Pays the cost up front, drops a constructing building on the spot, and
 // sends the chosen worker to stand at it until it finishes. Placement is
 // validated (and payment withheld) before anything is committed, so a bad
