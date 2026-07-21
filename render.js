@@ -18,7 +18,7 @@ import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
-import { activeEffects } from "./effects.js";
+import { activeEffects, activeFireworks } from "./effects.js";
 
 // A light, near-white accent used for hull details (sensor eyes, canopy
 // glass, engine glow, antenna lights) across both players' colors — the
@@ -102,6 +102,34 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   drawRallyPoint(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
 
+  ctx.restore();
+  drawFireworks(ctx, viewportW, viewportH);   // screen-space (post-camera): milestone celebration, always on-screen
+}
+
+// Screen-space celebratory bursts for Odyssey progress milestones (see effects.js). Drawn
+// AFTER the world/camera transform is popped, so a firework sits in viewport pixels and shows
+// no matter where the camera is. Each spark flies out from its shell along its angle, arcs down
+// under a little gravity, and fades as the shell ages; additive blending makes them glow.
+function drawFireworks(ctx, vw, vh) {
+  const shells = activeFireworks();
+  if (!shells.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const f of shells) {
+    const cx = f.cx * vw, cy = f.cy * vh;
+    const ease = 1 - Math.pow(1 - f.age, 2);   // fast out, then settling
+    const grav = 0.18 * f.age * f.age * vh;    // downward drift over the shell's life
+    const alpha = Math.max(0, 1 - f.age);
+    for (const p of f.parts) {
+      const dist = p.spd * ease * vh;
+      const x = cx + Math.cos(p.a) * dist;
+      const y = cy + Math.sin(p.a) * dist + grav;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${p.hue}, 95%, ${58 + 22 * alpha}%, ${alpha})`;
+      ctx.fill();
+    }
+  }
   ctx.restore();
 }
 
@@ -608,6 +636,17 @@ function drawSpaceport(ctx, b, color) {
   ctx.moveTo(cx - bw, cy + bh * 0.12); ctx.lineTo(cx - bw * 2.1, cy + bh * 0.5); ctx.lineTo(cx - bw, cy + bh * 0.5); ctx.closePath();
   ctx.moveTo(cx + bw, cy + bh * 0.12); ctx.lineTo(cx + bw * 2.1, cy + bh * 0.5); ctx.lineTo(cx + bw, cy + bh * 0.5); ctx.closePath();
   ctx.fill();
+
+  // Tier pips (1–3): the launch pad's jump-capacity rank (engine/galaxy.js), so a bigger
+  // Spaceport reads at a glance on the map.
+  const tier = Math.min(3, Math.max(1, b.tier || 1));
+  const pipR = r * 0.11, gap = pipR * 2.6, py = cy + r * 0.66;
+  for (let i = 0; i < tier; i++) {
+    const px = cx + (i - (tier - 1) / 2) * gap;
+    ctx.beginPath(); ctx.arc(px, py, pipR, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd76a"; ctx.fill();
+    ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1; ctx.stroke();
+  }
 }
 
 // Sentinel Turret — a hexagonal base pad with a single barrel that swings to

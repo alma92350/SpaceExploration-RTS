@@ -36,7 +36,7 @@ test("pacification is sticky — a rebuilt capital can't un-conquer a world", ()
   assert.ok(!activeState(g).over, "one world is not a Domination win");
 });
 
-test("conquering DOMINATION_TARGET worlds wins by Domination", () => {
+test("conquering DOMINATION_TARGET worlds fires the grand conquest milestone (no win — play forever)", () => {
   const g = createGalaxy({ seed: 32 });
   for (const id of g.worlds.slice(0, DOMINATION_TARGET)) {
     const s = g.planets.get(id) || addPlanet(g, id);   // visit it (seeds an AI capital)...
@@ -44,8 +44,11 @@ test("conquering DOMINATION_TARGET worlds wins by Domination", () => {
   }
   checkDomination(g);
   assert.equal(g.pacified.size, DOMINATION_TARGET);
-  assert.ok(activeState(g).over && activeState(g).winner === "player", "the galaxy is conquered");
-  assert.equal(g.wonBy, "domination", "won by the military path, not the Gate");
+  assert.ok(!activeState(g).over, "the sandbox does NOT end — conquest is a milestone, not a victory");
+  assert.ok(g.reached.has("domination"), "the grand conquest milestone is recorded");
+  assert.ok(g.milestones.includes("domination"), "…and queued for a firework");
+  checkDomination(g);                                   // idempotent: the milestone fires only once
+  assert.equal(g.milestones.filter(m => m === "domination").length, 1, "no duplicate firework on a later tick");
 });
 
 test("a fresh, un-razed world is never accidentally pacified", () => {

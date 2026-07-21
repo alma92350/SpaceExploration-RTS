@@ -20,7 +20,8 @@ import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale } fro
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
-import { JUMP_COST, jumpCost, stagedRiders, cargoManifest, CARGO_CAPACITY,
+import { JUMP_COST, jumpCost, jumpManifest, jumpCapacity, spaceportTier, upgradeSpaceport,
+         SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, cargoManifest, CARGO_CAPACITY,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip } from "./engine/colony.js";
@@ -295,6 +296,14 @@ function renderSelectionPanel() {
     + "|" + (() => {
         const cs = game.galaxy && sel.find(e => e.kind === "unit" && e.type === "colonyship");
         return cs ? (canPlaceBuilding(state, "command", cs.x, cs.y) ? 1 : 0) : "";
+      })()
+    // Rebuild the Spaceport panel when its tier changes (upgrade) or the staged fleet crosses
+    // the pad capacity (units enter/leave the pad radius) — so the manifest preview stays live.
+    + "|" + (() => {
+        const sp = game.galaxy && sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
+        if (!sp) return "";
+        const m = jumpManifest(state, sp);
+        return `${spaceportTier(sp)}:${m.used}:${m.leftBehind}:${m.staged}`;
       })();
 
   if (signature !== lastPanelSignature) {
@@ -688,18 +697,45 @@ function rebuildSelectionPanel(sel) {
   // a colony.
   const spaceport = sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
   if (spaceport && game.galaxy) {
-    const staged = stagedRiders(state, spaceport).length;
-    const vessel = jumpVessel(state);   // is a colony ship on the pad? (settles a NEW world) — a hint, not a gate
+    const m = jumpManifest(state, spaceport);   // capacity-capped preview: what lifts, what waits
+    const tier = spaceportTier(spaceport);
+    const vessel = jumpVessel(state);            // is a colony ship on the pad? (settles a NEW world) — a hint, not a gate
+
+    const tierLine = document.createElement("div");
+    tierLine.className = "sel-note good";
+    tierLine.textContent = `Spaceport · Tier ${tier}/${SPACEPORT_MAX_TIER} · jump capacity ${m.capacity} supply`;
+    panelEl.appendChild(tierLine);
+
     const info = document.createElement("p");
     info.className = "hint";
-    info.textContent = `Jump the ${staged} unit${staged === 1 ? "" : "s"} staged by the pad to another world — free to a world you already hold, ◈${JUMP_COST} fuel to reach a new one. Park an army by the pad to reinforce a colony, or a Colony Ship to settle new ground (deploy it there). Your bases here stay as a colony.`;
+    info.textContent = `Jump the fleet staged by the pad to another world — free to a world you already hold, ◈${JUMP_COST} fuel to reach a new one. A jump lifts up to ${m.capacity} supply (ship population); a larger fleet crosses in several jumps. Your bases here stay as a colony.`;
     panelEl.appendChild(info);
+
+    // Staged-fleet manifest: total population vs the pad's capacity, and what waits for the next trip.
+    const fleet = document.createElement("p");
+    fleet.className = m.leftBehind > 0 ? "hint warn" : "hint";
+    fleet.textContent = m.staged === 0
+      ? "No units staged by the pad — a jump will carry only cargo. Park an army (to reinforce) or a Colony Ship (to settle) here to bring it."
+      : m.leftBehind > 0
+        ? `Fleet staged: ${m.stagedSupply} supply, ${m.staged} units. This jump lifts ${m.used}/${m.capacity} — ${m.leftBehind} unit${m.leftBehind === 1 ? "" : "s"} wait for the next trip (or upgrade the pad).`
+        : `Fleet staged: ${m.stagedSupply}/${m.capacity} supply (${m.staged} units) — all fit in one jump.`;
+    panelEl.appendChild(fleet);
+
     const shipHint = document.createElement("p");
     shipHint.className = "hint";
     shipHint.textContent = vessel
       ? "A Colony Ship is loaded — jump to a new world and deploy it to found a base."
       : "No Colony Ship on the pad: you can still hop to a world you hold (to control or reinforce it). To settle a NEW world, build a Colony Ship at a Command Center and park it here first.";
     panelEl.appendChild(shipHint);
+
+    // Upgrade the launch pad (raises jump capacity) — an Odyssey fortification, like the Capital.
+    if (tier < SPACEPORT_MAX_TIER) {
+      const upCost = SPACEPORT_UPGRADE_COST[tier + 1];
+      const nextCap = jumpCapacity({ tier: tier + 1 });
+      panelEl.appendChild(makeButton(`⬆ Upgrade to Tier ${tier + 1} (${costText(upCost)}) — capacity ${nextCap}`,
+        () => upgradeSpaceport(state, spaceport),
+        { cost: upCost, tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump.` }));
+    }
 
     // Cargo hold: manufactured goods that ride along to be sold at the destination
     // (they price differently per world). Loaded most-valuable-first, up to capacity.

@@ -26,7 +26,7 @@ import { updateFog } from "./fog.js";
 import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
-import { checkEndlessWin } from "./victory.js";
+import { UNITS, BUILDINGS } from "./entities.js";
 import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
 import { PLANETS } from "../data.js";
@@ -65,9 +65,11 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     tick: 0,                    // integer galaxy-tick counter (drives the background-world schedule)
     entitySeq: 0,               // fresh-id counter for entities relocated across worlds by a jump
     colonyNotes: new Map(),     // per-planet UI notification bookkeeping (galaxy-side, not sim state)
-    pacified: new Set(),        // worlds where you've razed the neighbour's Command Center (Domination win progress)
-    pacifyNotes: [],            // freshly-pacified world ids awaiting a UI toast (transient, drained by boot.js)
-    wonBy: null,                // "gate" | "domination" — which victory ended the run (drives the win screen copy)
+    pacified: new Set(),        // worlds where you've razed the neighbour's Command Center (a conquest milestone)
+    pacifyNotes: [],            // freshly-pacified world ids awaiting a UI toast + firework (transient, drained by boot.js)
+    reached: new Set(),         // progress milestones already celebrated (see checkGalaxyProgress) — persisted so a reload doesn't re-fire them
+    milestones: [],             // freshly-reached milestones awaiting a UI firework (transient, drained by boot.js)
+    wonBy: null,                // legacy: no Odyssey win any more (play-forever) — kept null for save/skirmish compat
   };
   addPlanet(galaxy, startId);
   return galaxy;
@@ -176,17 +178,18 @@ export function stepGalaxy(galaxy, dt) {
     if (id === galaxy.activeId || !state.background) continue;
     if (t % BG_STEP === galaxy.worlds.indexOf(id) % BG_STEP) tick(state, dtBg);
   }
-  checkGalaxyWin(galaxy);     // ECONOMIC win: an Antimatter Gate finishing on ANY held world
-  checkDomination(galaxy);    // MILITARY win: enough neighbours' Command Centers razed
-  checkGalaxyLoss(galaxy);    // DEFEAT: no player foothold left on ANY world (checked after the wins)
+  checkDomination(galaxy);      // conquest progress: pacified worlds (per-world toast) + a milestone at the target
+  checkGalaxyProgress(galaxy);  // other milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
+  checkGalaxyLoss(galaxy);      // DEFEAT is the ONLY terminal state now (play-forever): no foothold left on ANY world
 }
 
-// Galaxy-wide DEFEAT: you're beaten only when you hold no foothold — no Command Center
-// and no colony ship — on ANY world. So a jump to a world where you have nothing yet (an
-// army-only reinforcement run, or a hop to fetch a colony ship) is never an instant loss
-// while a base or ship still stands somewhere else. The per-world checkEndlessLoss is
+// Galaxy-wide DEFEAT — the ONLY terminal state (there are no wins any more; the Odyssey
+// is a play-forever sandbox). You're beaten only when you hold no foothold — no Command
+// Center and no colony ship — on ANY world. So a jump to a world where you have nothing
+// yet (an army-only reinforcement run, or a hop to fetch a colony ship) is never an instant
+// loss while a base or ship still stands somewhere else. The per-world checkEndlessLoss is
 // suppressed for galaxy states (state.inGalaxy, see engine/victory.js), so this is the one
-// authority. Runs AFTER the win checks, so a same-tick win takes precedence. Idempotent.
+// authority. Idempotent.
 export function checkGalaxyLoss(galaxy) {
   const active = activeState(galaxy);
   if (active.over) return;
@@ -198,26 +201,41 @@ export function checkGalaxyLoss(galaxy) {
   active.over = true; active.winner = "ai";                       // last foothold anywhere is gone
 }
 
-// The galaxy-wide economic WIN check. An Antimatter Gate (engine/wonder.js) can
-// complete on your active seat OR on a colony you left charging in the background.
-// sim.js's per-tick win check only runs on the active (foreground) world, so this
-// sweep catches a Gate finishing off-screen: run the endless-win check on every
-// world, and if any reports a player win, mirror it onto the active state so
-// boot.js's game.state.over poll surfaces the victory screen. Deterministic and
-// idempotent (finish() no-ops once a state is already over).
-export function checkGalaxyWin(galaxy) {
-  const active = activeState(galaxy);
-  if (active.over) return;
-  for (const state of galaxy.planets.values()) {
-    checkEndlessWin(state);
-    if (state.over && state.winner === "player") {
-      active.over = true; active.winner = "player"; galaxy.wonBy = "gate"; return;
-    }
-  }
+// Record a one-time progress milestone — a firework, drained UI-side by boot.js. Idempotent
+// per id, and `reached` persists (engine/persist.js) so a reload never replays a milestone
+// you've already celebrated.
+function reachMilestone(galaxy, id) {
+  if (galaxy.reached.has(id)) return;
+  galaxy.reached.add(id);
+  galaxy.milestones.push(id);
 }
 
-// Worlds you must pacify (raze the neighbour's Command Center on) to win by
-// DOMINATION — the military, multi-world alternative to the single-world Gate.
+// Progress milestones for the play-forever sandbox — the fireworks that mark how far you've
+// come, in place of a victory that would end the run. Swept galaxy-wide each tick, each fired
+// once (reachMilestone): founding your first base and each further WORLD you settle
+// ("world:N"), fortifying your first Capital ("capital"), and bringing an Antimatter Gate
+// online anywhere ("gate" — the former economic victory, now a triumph you keep playing past).
+// Conquest milestones live in checkDomination. Pure — reads only entity state; the firework
+// itself is fired UI-side (boot.js), keeping the engine DOM-free.
+export function checkGalaxyProgress(galaxy) {
+  let settledWorlds = 0, hasCapital = false, gateOnline = false;
+  for (const state of galaxy.planets.values()) {
+    let heldHere = false;
+    for (const b of state.buildings.values()) {
+      if (b.owner !== "player") continue;
+      if (b.type === "command" && !b.constructing) { heldHere = true; if (b.capital) hasCapital = true; }
+      if (BUILDINGS[b.type]?.wonder && (b.charge || 0) >= 1) gateOnline = true;
+    }
+    if (heldHere) settledWorlds++;
+  }
+  for (let n = 1; n <= settledWorlds; n++) reachMilestone(galaxy, "world:" + n);
+  if (hasCapital) reachMilestone(galaxy, "capital");
+  if (gateOnline) reachMilestone(galaxy, "gate");
+}
+
+// Worlds to pacify (raze the neighbour's Command Center on) for the grand CONQUEST
+// milestone — the military, multi-world firework. No longer a win: the galaxy keeps
+// running past it (play-forever).
 export const DOMINATION_TARGET = 4;
 
 // The AI's foothold on a world — a Command Center OR an undeployed colony ship. The
@@ -230,12 +248,12 @@ const hasAiCommand = state => {
   return hasColonyShip(state, "ai");
 };
 
-// The MILITARY WIN check. A world is "pacified" the moment its neighbour has no
-// standing Command Center — you razed it (only two sides fight, and every world is
-// seeded with an AI capital). Pacification is STICKY (recorded on the galaxy, so a
-// neighbour rebuilding can't un-pacify it) and win-progress: pacify DOMINATION_TARGET
-// worlds and you conquer the galaxy. Newly-pacified worlds are queued for a UI toast.
-// Deterministic — reads only entity state.
+// Conquest progress. A world is "pacified" the moment its neighbour has no standing
+// Command Center — you razed it (only two sides fight, and every world is seeded with an
+// AI capital). Pacification is STICKY (recorded on the galaxy, so a neighbour rebuilding
+// can't un-pacify it); each freshly-pacified world is queued for a UI toast + firework
+// (pacifyNotes), and reaching DOMINATION_TARGET fires the grand "domination" milestone —
+// a firework, NOT a win, so the sandbox plays on. Deterministic — reads only entity state.
 export function checkDomination(galaxy) {
   const active = activeState(galaxy);
   if (active.over) return;
@@ -244,9 +262,7 @@ export function checkDomination(galaxy) {
     galaxy.pacified.add(id);
     galaxy.pacifyNotes.push(id);
   }
-  if (galaxy.pacified.size >= DOMINATION_TARGET) {
-    active.over = true; active.winner = "player"; galaxy.wonBy = "domination";
-  }
+  if (galaxy.pacified.size >= DOMINATION_TARGET) reachMilestone(galaxy, "domination");
 }
 
 // A pure snapshot of the galaxy for the starmap: per-world status (your active
@@ -308,6 +324,37 @@ export function upgradeToCapital(state, building) {
   return true;
 }
 
+// The Spaceport comes in THREE tiers. Its jump capacity — how much fleet it can launch
+// at once, measured in ship POPULATION (supply cost), not head-count — scales with the
+// tier, so a very large army has to cross in several jumps through a small pad, or you
+// upgrade to a bigger one. Capacity is indexed by tier (1..3); index 0 is unused.
+export const SPACEPORT_MAX_TIER = 3;
+export const SPACEPORT_CAPACITY = [0, 12, 24, 40];              // supply carried per jump, by tier
+export const SPACEPORT_UPGRADE_COST = { 2: { ore: 250 }, 3: { ore: 500 } };   // ore to reach a tier (escalating)
+
+// A Spaceport's tier (defaults to 1 for a fresh pad or a pre-tier save) and the per-jump
+// capacity it grants.
+export const spaceportTier = b => Math.min(SPACEPORT_MAX_TIER, Math.max(1, b.tier || 1));
+export const jumpCapacity = b => SPACEPORT_CAPACITY[spaceportTier(b)];
+
+// Upgrade a Spaceport one tier (max 3): pay the ore, bump the tier, raising its per-jump
+// capacity. Odyssey-only, deterministic (pure state mutation — no clock/RNG), like the
+// Capital fortification. Returns whether it happened (refused when already max, still
+// under construction, or unaffordable).
+export function upgradeSpaceport(state, building) {
+  if (!building || building.type !== "spaceport" || building.constructing) return false;
+  const tier = spaceportTier(building);
+  if (tier >= SPACEPORT_MAX_TIER) return false;
+  const cost = SPACEPORT_UPGRADE_COST[tier + 1];
+  const res = state.players[building.owner].resources;
+  for (const com in cost) if ((res[com] || 0) < cost[com]) return false;
+  for (const com in cost) res[com] -= cost[com];
+  building.tier = tier + 1;
+  return true;
+}
+
+const unitSupply = u => UNITS[u.type]?.supplyCost || 0;
+
 // The colony ship that would carry an interplanetary jump: a player colony ship staged
 // within JUMP_LOAD_RADIUS of a completed Spaceport. A jump relocates the SHIP (and the
 // rest of the staged expedition) — NOT a deployed base. Deployed Command Centers are
@@ -348,6 +395,28 @@ export function stagedRiders(state, spaceport) {
   for (const u of state.units.values())
     if (u.owner === "player" && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS) out.push(u);
   return out;
+}
+
+// What actually LAUNCHES on one jump, capped by the pad's tier capacity. From the units
+// staged near the Spaceport, fill the hold closest-to-the-pad first by ship population
+// (supply) until the next unit wouldn't fit — a skip-not-break fill, so a heavy unit that
+// doesn't fit is passed over for lighter ones behind it rather than blocking them (workers
+// are supply 1, so a fleet always makes progress and nothing softlocks). The overflow
+// waits at the pad for the next jump. Pure + deterministic: closest-first, ties broken by
+// entity id. One definition, so the HUD preview and the jump's actual move always agree.
+export function jumpManifest(state, spaceport) {
+  const capacity = jumpCapacity(spaceport);
+  const staged = stagedRiders(state, spaceport)
+    .map(u => ({ u, d: Math.hypot(u.x - spaceport.x, u.y - spaceport.y) }))
+    .sort((a, b) => a.d - b.d || (a.u.id < b.u.id ? -1 : 1));
+  const riders = [];
+  let used = 0;
+  for (const { u } of staged) {
+    const s = unitSupply(u);
+    if (used + s <= capacity) { riders.push(u); used += s; }
+  }
+  const stagedSupply = staged.reduce((t, { u }) => t + unitSupply(u), 0);
+  return { riders, capacity, used, stagedSupply, staged: staged.length, leftBehind: staged.length - riders.length };
 }
 
 // A jump carries a bounded CARGO HOLD of manufactured goods to the destination, so
@@ -395,7 +464,7 @@ export function jumpCapital(galaxy, destId) {
     .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
   const cost = jumpCost(galaxy, destId);
   if (!spaceport || destId === galaxy.activeId || galaxy.credits < cost) return null;
-  const riders = stagedRiders(from, spaceport);
+  const { riders, leftBehind } = jumpManifest(from, spaceport);   // capacity-capped: overflow waits for the next jump
   galaxy.credits -= cost;   // fuel — free to a world you already hold
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });
@@ -419,5 +488,5 @@ export function jumpCapital(galaxy, destId) {
   updateFog(dest, dest.fog, "player");
   updateFog(dest, dest.fogAI, "ai");
   updateFog(from, from.fog, "player");
-  return { destId, riders: riders.length, cargo };
+  return { destId, riders: riders.length, leftBehind, cargo };   // leftBehind: staged units the pad couldn't fit this trip
 }

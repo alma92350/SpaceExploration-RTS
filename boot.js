@@ -21,7 +21,7 @@ import { drawFrame, resetFacing } from "./render.js";
 import { drawMinimap } from "./minimap.js";
 import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
-import { addTracer, addDeathFlash, addUnderAttackPing, resetEffects } from "./effects.js";
+import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, resetEffects } from "./effects.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup } from "./setup.js";
@@ -211,11 +211,19 @@ export function bootState(newState, { intro }) {
       if (game.galaxy) {
         stepGalaxy(game.galaxy, dt);   // active world full-rate, colonies on a coarser schedule
         for (const n of sweepColonies(game.galaxy, dt)) notifyColony(n);
-        // Domination progress: a freshly-razed neighbour capital → a toast.
+        // Conquest progress: a freshly-razed neighbour capital → a toast + a small firework.
         if (game.galaxy.pacifyNotes.length) {
-          for (const id of game.galaxy.pacifyNotes)
+          for (const id of game.galaxy.pacifyNotes) {
             showGalaxyToast(`Conquered ${planetName(id)} — ${game.galaxy.pacified.size}/${DOMINATION_TARGET} worlds`, "good");
+            addFireworks(3);
+          }
           game.galaxy.pacifyNotes.length = 0;
+        }
+        // Progress milestones (engine/galaxy.js): a firework show + toast for each, in place of a
+        // victory screen — the Odyssey is a play-forever sandbox, so you keep going.
+        if (game.galaxy.milestones.length) {
+          for (const m of game.galaxy.milestones) celebrateMilestone(m);
+          game.galaxy.milestones.length = 0;
         }
       } else tick(game.state, dt);
     },
@@ -260,6 +268,25 @@ function notifyColony(n) {
   if (last !== undefined && now - last < COLONY_NOTE_THROTTLE_MS) return;   // undefined ⇒ first alert always fires
   lastColonyNote[n.planetId] = now;
   showGalaxyToast(`⚔ Your colony on ${name} is under attack — click to defend ▸`, "warn", jumpThere);
+}
+
+// A reached progress milestone (engine/galaxy.js checkGalaxyProgress / checkDomination) →
+// a firework show + a celebratory toast. The Odyssey has no victory screen any more
+// (play-forever); these mark how far you've come instead. The two grand milestones — the
+// Antimatter Gate coming online and conquering the galaxy — get a bigger show.
+function celebrateMilestone(id) {
+  const [kind, arg] = id.split(":");
+  const grand = kind === "gate" || kind === "domination";
+  const msg =
+      kind === "world"      ? (arg === "1" ? "★ First colony founded — your Odyssey begins!"
+                                           : `★ Colony #${arg} established — your reach grows.`)
+    : kind === "capital"    ? "★ Capital fortified — your anchor world stands strong."
+    : kind === "gate"       ? "★ Antimatter Gate online — a triumph of industry!"
+    : kind === "domination" ? `★ ${DOMINATION_TARGET} worlds conquered — the galaxy trembles before your fleet!`
+    :                         "★ Milestone reached!";
+  addFireworks(grand ? 8 : 5);
+  showGalaxyToast(msg, "good");
+  sound.playBuildingComplete();
 }
 
 // Stereo pan (-1..1) for a world-x, relative to the camera: a fight off the

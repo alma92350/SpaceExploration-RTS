@@ -83,10 +83,10 @@ test("a wonder is Odyssey-only and antimatter can't be bought (must be made)", (
   assert.ok(!skirmish.over || skirmish.winner !== "player" || true, "skirmish resolves by the normal rules, not a wonder");
 });
 
-test("a Gate left charging on a background colony still wins the galaxy", () => {
+test("a Gate completing on a background colony fires the 'gate' milestone (no win — play forever)", () => {
   const g = createGalaxy({ seed: 5 });
   const home = activeState(g);
-  for (const u of [...home.units.values()]) if (u.type === "colonyship") deployColonyShip(home, u.id);   // deploy start ship → CC (jump needs one)
+  for (const u of [...home.units.values()]) if (u.type === "colonyship") deployColonyShip(home, u.id);   // deploy start ship → CC
   const base = home.map.bases.player;
   const sp = makeBuilding("spaceport", "player", base.x + 40, base.y);
   const reactor = makeBuilding("reactor", "player", base.x + 200, base.y + 120);
@@ -94,14 +94,16 @@ test("a Gate left charging on a background colony still wins the galaxy", () => 
   home.buildings.set(sp.id, sp);
   home.buildings.set(reactor.id, reactor);
   home.buildings.set(gate.id, gate);
-  const ship = makeUnit("colonyship", "player", sp.x, sp.y); home.units.set(ship.id, ship);   // vessel to carry the jump
   stockFeed(home.players.player.resources, 1.3);
   g.credits = 2000;
-  jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // sail a colony ship away; the Gate + base stay on the colony
+  jumpCapital(g, g.worlds.find(w => w !== g.activeId));   // hop away; the Gate + base stay on the colony (now a background world)
   assert.notEqual(g.activeId, home.planetId, "we jumped away from the Gate's world");
-  for (let i = 0; i < GATE.chargeTime * 20 && !activeState(g).over; i++) stepGalaxy(g, 0.1);
-  assert.ok(activeState(g).over && activeState(g).winner === "player", "the colony Gate's win propagates to the active seat");
-  assert.equal(g.wonBy, "gate", "recorded as the economic (Gate) victory");
+  for (let i = 0; i < GATE.chargeTime * 20 && !g.reached.has("gate"); i++) stepGalaxy(g, 0.1);
+  assert.ok(g.reached.has("gate"), "a Gate completing anywhere — even a background colony — fires the milestone");
+  assert.ok(g.milestones.includes("gate"), "…queued for a firework");
+  assert.ok(!activeState(g).over, "…but the sandbox does NOT end — the Gate is a triumph, not a victory");
+  const rg = [...home.buildings.values()].find(b => b.type === "antimatter_gate");
+  assert.ok((rg.charge || 0) >= 1, "the colony Gate reached full charge");
 });
 
 test("a mid-charge Gate survives a save/load", () => {

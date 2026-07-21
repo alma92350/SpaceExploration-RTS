@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, addPlanet, jumpCapital, galaxyStatus, stepGalaxy, BG_STEP, ODYSSEY_WORLDS,
          upgradeToCapital, jumpVessel, canJump, jumpCost, checkGalaxyLoss, JUMP_COST,
-         CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "../engine/galaxy.js";
+         CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT,
+         jumpManifest, jumpCapacity, spaceportTier, upgradeSpaceport, checkGalaxyProgress,
+         SPACEPORT_MAX_TIER, SPACEPORT_CAPACITY } from "../engine/galaxy.js";
 import { checkEndlessLoss } from "../engine/victory.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
@@ -397,4 +399,134 @@ test("a lone undeployed colony ship anywhere still counts as a foothold (no gala
   assert.ok(hasColonyShip(activeState(g), "player"), "the start is a lone colony ship");
   checkGalaxyLoss(g);
   assert.equal(activeState(g).over, false, "a lone colony ship can still re-found — not a defeat");
+});
+
+/* ---------- 3-tier Spaceport: supply-capacity jumps ---------- */
+
+// A finished Spaceport placed FAR from the base, so the settle()'d workers near the CC
+// aren't accidentally within the pad's staging radius — the fleet we stage is exactly what
+// the test puts there.
+function farSpaceport(state) {
+  const base = state.map.bases.player;
+  const sp = makeBuilding("spaceport", "player", base.x + 600, base.y + 600);
+  state.buildings.set(sp.id, sp);
+  return sp;
+}
+
+test("a Spaceport starts at Tier 1 and upgrades through Tier 3, raising jump capacity", () => {
+  const s = settle(createGameState({ planetId: "ferros", seed: 3, endless: true }));
+  const sp = addSpaceport(s);
+  assert.equal(spaceportTier(sp), 1, "a fresh pad is Tier 1");
+  assert.equal(jumpCapacity(sp), SPACEPORT_CAPACITY[1]);
+  s.players.player.resources.ore = 10000;
+  assert.equal(upgradeSpaceport(s, sp), true, "Tier 1 → 2");
+  assert.equal(spaceportTier(sp), 2);
+  assert.ok(jumpCapacity(sp) > SPACEPORT_CAPACITY[1], "capacity grows with the tier");
+  assert.equal(upgradeSpaceport(s, sp), true, "Tier 2 → 3");
+  assert.equal(spaceportTier(sp), SPACEPORT_MAX_TIER);
+  assert.equal(jumpCapacity(sp), SPACEPORT_CAPACITY[SPACEPORT_MAX_TIER]);
+  assert.equal(upgradeSpaceport(s, sp), false, "can't upgrade past the max tier");
+});
+
+test("upgradeSpaceport is refused when unaffordable or still constructing", () => {
+  const s = settle(createGameState({ planetId: "ferros", seed: 3, endless: true }));
+  const sp = addSpaceport(s);
+  s.players.player.resources.ore = 0;
+  assert.equal(upgradeSpaceport(s, sp), false, "no ore → no upgrade");
+  assert.equal(spaceportTier(sp), 1);
+  sp.constructing = true;
+  s.players.player.resources.ore = 10000;
+  assert.equal(upgradeSpaceport(s, sp), false, "a half-built pad can't upgrade");
+});
+
+test("a jump lifts only the pad's capacity in ship-supply; the overflow waits for the next trip", () => {
+  const g = createGalaxy({ seed: 41 });
+  const from = settle(activeState(g));
+  const sp = farSpaceport(from);
+  const cap = jumpCapacity(sp);                         // Tier-1 capacity, in supply
+  const total = cap + 6;
+  for (let i = 0; i < total; i++) {                     // supply-1 skiffs, so unit count == supply
+    const u = makeUnit("skiff", "player", sp.x + (i % 5), sp.y + (i % 3)); from.units.set(u.id, u);
+  }
+  const m = jumpManifest(from, sp);
+  assert.equal(m.capacity, cap);
+  assert.equal(m.stagedSupply, total, "every staged skiff is 1 supply");
+  assert.equal(m.used, cap, "the manifest fills exactly to capacity");
+  assert.equal(m.leftBehind, total - cap, "the overflow is held back");
+
+  const destId = g.worlds.find(w => w !== g.activeId);
+  g.credits = 2000;
+  const res = jumpCapital(g, destId);
+  assert.equal(res.riders, cap, "only capacity-worth of fleet crossed");
+  assert.equal(res.leftBehind, total - cap, "the rest stayed at the origin pad");
+  const dest = activeState(g);
+  assert.equal([...dest.units.values()].filter(u => u.owner === "player" && u.type === "skiff").length, cap,
+    "the destination received exactly the capacity");
+  assert.equal([...from.units.values()].filter(u => u.owner === "player" && u.type === "skiff").length, total - cap,
+    "the overflow is still at the origin, ready for a second jump");
+});
+
+test("a bigger pad lifts a bigger fleet in one jump", () => {
+  const g = createGalaxy({ seed: 42 });
+  const from = settle(activeState(g));
+  const sp = farSpaceport(from);
+  from.players.player.resources.ore = 10000;
+  upgradeSpaceport(from, sp); upgradeSpaceport(from, sp);   // → Tier 3
+  const cap = jumpCapacity(sp);
+  for (let i = 0; i < cap; i++) {                            // exactly Tier-3 capacity in supply-1 skiffs
+    const u = makeUnit("skiff", "player", sp.x + (i % 6), sp.y + (i % 4)); from.units.set(u.id, u);
+  }
+  const m = jumpManifest(from, sp);
+  assert.equal(m.leftBehind, 0, "a Tier-3 pad lifts the whole fleet at once");
+  assert.equal(m.used, cap);
+});
+
+/* ---------- progress milestones (fireworks, not wins) ---------- */
+
+test("founding your first base fires the world:1 milestone (and never ends the game)", () => {
+  const g = createGalaxy({ seed: 50 });
+  checkGalaxyProgress(g);
+  assert.ok(!g.reached.has("world:1"), "a lone colony ship hasn't founded a base yet");
+  settle(activeState(g));                                 // deploy the start ship → the first CC
+  checkGalaxyProgress(g);
+  assert.ok(g.reached.has("world:1"), "the first Command Center founds your first colony");
+  assert.ok(g.milestones.includes("world:1"), "…queued for a firework");
+  assert.ok(!activeState(g).over, "a milestone never ends the game");
+});
+
+test("fortifying a Capital fires the capital milestone", () => {
+  const g = createGalaxy({ seed: 51 });
+  const s = settle(activeState(g));
+  const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  s.players.player.resources.ore = 1000;
+  upgradeToCapital(s, cc);
+  checkGalaxyProgress(g);
+  assert.ok(g.reached.has("capital"), "the Capital upgrade is celebrated");
+});
+
+test("a completed Antimatter Gate is a milestone, not a win — the galaxy runs on", () => {
+  const g = createGalaxy({ seed: 53 });
+  const s = settle(activeState(g));
+  const gate = makeBuilding("antimatter_gate", "player", s.map.bases.player.x + 200, s.map.bases.player.y + 120);
+  gate.charge = 1;
+  s.buildings.set(gate.id, gate);
+  checkGalaxyProgress(g);
+  assert.ok(g.reached.has("gate"), "a full-charge Gate fires the gate milestone");
+  assert.ok(!activeState(g).over, "…and does not end the sandbox");
+  tick(s, 0.1);
+  assert.ok(!s.over, "the sim's per-tick win check is suppressed for a galaxy world (play-forever)");
+});
+
+test("milestones fire once and persist across a save/load (no re-firing fireworks)", () => {
+  const g = createGalaxy({ seed: 52 });
+  settle(activeState(g));
+  checkGalaxyProgress(g);
+  assert.ok(g.reached.has("world:1"));
+  g.milestones.length = 0;                                // pretend boot.js drained the firework
+  checkGalaxyProgress(g);
+  assert.equal(g.milestones.length, 0, "an already-reached milestone doesn't re-fire");
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  assert.ok(restored.reached.has("world:1"), "reached milestones persist");
+  checkGalaxyProgress(restored);
+  assert.equal(restored.milestones.length, 0, "a reload doesn't replay the firework");
 });
