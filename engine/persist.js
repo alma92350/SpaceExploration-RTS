@@ -24,6 +24,43 @@ import { createDiplomacy } from "./diplomacy.js";
 export const SAVE_VERSION = 1;
 export const GALAXY_SAVE_VERSION = 1;
 
+// --- load-time sanitization -------------------------------------------------
+// A save loaded from a file or localStorage is UNTRUSTED input (a user can hand-edit a file, and
+// localStorage is reachable by any script/devtools). The sim never eval()s save data, so there's
+// no classic code-injection vector — but a hostile or corrupt payload could still (a) smuggle a
+// prototype-polluting key (__proto__/constructor/prototype — JSON.parse makes these OWN props that
+// can poison later object ops) or (b) be a node/string/depth "bomb" that hangs the load. So before
+// a parsed save reaches the deserializer we walk it and reject anything that isn't plain, bounded
+// JSON data. Correctness (version, shape) is still the deserializer's job; this is purely the
+// safety gate. Throws with a clear reason; returns the input so it can be chained.
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const MAX_SAVE_NODES = 600000;   // total values — a whole galaxy is well under this; a bomb isn't
+const MAX_SAVE_DEPTH = 200;
+const MAX_STRING_LEN = 4096;
+
+export function sanitizeSave(input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input))
+    throw new Error("save is not a valid object");
+  let nodes = 0;
+  const walk = (v, depth) => {
+    if (depth > MAX_SAVE_DEPTH) throw new Error("save is too deeply nested");
+    if (++nodes > MAX_SAVE_NODES) throw new Error("save is too large");
+    if (v === null || typeof v === "number" || typeof v === "boolean") return;
+    if (typeof v === "string") { if (v.length > MAX_STRING_LEN) throw new Error("save has an oversized string"); return; }
+    if (Array.isArray(v)) { for (const el of v) walk(el, depth + 1); return; }
+    if (typeof v === "object") {
+      for (const k of Object.getOwnPropertyNames(v)) {   // getOwnPropertyNames also catches a non-enumerable __proto__
+        if (FORBIDDEN_KEYS.has(k)) throw new Error(`save contains a forbidden key: ${k}`);
+        walk(v[k], depth + 1);
+      }
+      return;
+    }
+    throw new Error("save contains an unsupported value");   // functions/symbols can't come from JSON, but be explicit
+  };
+  walk(input, 0);
+  return input;
+}
+
 function serPlayer(p) {
   return { id: p.id, faction: p.faction, isAI: p.isAI, color: p.color,
     resources: { ...p.resources }, upgrades: { ...p.upgrades } };
@@ -109,6 +146,7 @@ export function serializeGame(state) {
 }
 
 export function deserializeGame(input) {
+  sanitizeSave(input);                              // reject unsafe/oversized payloads before anything else
   const save = JSON.parse(JSON.stringify(input));   // detach + normalise
   if (save.v !== SAVE_VERSION) throw new Error(`unsupported save version ${save.v}`);
   const state = rehydratePlanet(save);
@@ -137,6 +175,7 @@ export function serializeGalaxy(galaxy) {
 }
 
 export function deserializeGalaxy(input) {
+  sanitizeSave(input);                              // reject unsafe/oversized payloads before anything else
   const save = JSON.parse(JSON.stringify(input));
   if (save.v !== GALAXY_SAVE_VERSION) throw new Error(`unsupported galaxy save version ${save.v}`);
 

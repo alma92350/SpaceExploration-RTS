@@ -14,6 +14,7 @@ import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame, hasOdysseySave, loadOdyssey } from "./saveload.js";
+import { APP_VERSION } from "./version.js";
 import { startGame, startScenario, startRaider, startBounty, startOdyssey } from "./boot.js";
 import * as sound from "./sound.js";
 
@@ -218,6 +219,11 @@ export function renderMapSelect() {
   const title = document.createElement("h2");
   title.textContent = copy ? copy.title : "Configure the skirmish";
   mapSelectEl.appendChild(title);
+
+  const ver = document.createElement("p");
+  ver.className = "setup-version";
+  ver.textContent = `Stellar Frontier v${APP_VERSION}`;
+  mapSelectEl.appendChild(ver);
 
   // Mode toggle: skirmish, the open-world Odyssey, or a scripted scenario.
   // Picking one re-renders this screen so the setup rows + start action match.

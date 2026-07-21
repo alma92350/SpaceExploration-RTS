@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "saveVersion": 1,
+  "galaxySaveVersion": 1,
+  "minSaveVersion": 1,
+  "minGalaxySaveVersion": 1,
+  "notes": "First versioned release: save/load to a file, browser autosave with Continue, and in-app update checks."
+}

@@ -24,6 +24,7 @@ import * as sound from "./sound.js";
 import { buildHelpOverlay } from "./overlays.js";
 import { renderMapSelect } from "./setup.js";
 import "./starmap.js";   // self-wires the galaxy-map button + M key
+import "./update.js";    // self-wires the version chip + auto-update check
 
 idleWorkersEl.addEventListener("click", () => { if (game.input) game.input.focusIdleWorker(); });
 

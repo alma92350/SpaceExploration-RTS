@@ -505,6 +505,29 @@ html, body {
 .seed-chip.copied { border-color: var(--accent); color: var(--accent); }
 .seed-chip.hidden { display: none; }
 
+/* App version chip (topbar) + the menu version line. */
+.app-version { font-size: 0.66rem; color: var(--muted); opacity: 0.75; letter-spacing: 0.04em; white-space: nowrap; }
+.setup-version { margin: 0 0 10px; color: var(--muted); font-size: 0.78rem; letter-spacing: 0.04em; }
+
+/* Auto-update banner (update.js): a slim strip at the very top of the app. */
+.update-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 8px 16px; background: #13233f; border-bottom: 1px solid var(--accent);
+  color: var(--text); font-size: 0.85rem; z-index: 60;
+}
+.update-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.update-notes { color: var(--muted); font-weight: 400; }
+.update-compat { font-size: 0.8rem; color: var(--muted); }
+.update-compat.ok  { color: var(--good, #4ade80); }
+.update-compat.bad { color: var(--warn); }
+.update-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.update-btn {
+  padding: 6px 14px; border-radius: 7px; cursor: pointer; font-size: 0.82rem; font-weight: 600;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+}
+.update-btn:hover { color: var(--text); border-color: var(--accent-2); }
+.update-btn.primary { background: var(--accent); color: #05070f; border-color: var(--accent); }
+
 .faction-chip {
   font-size: 0.7rem;
   color: var(--accent);

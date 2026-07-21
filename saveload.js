@@ -25,11 +25,20 @@ import * as sound from "./sound.js";
 const SAVE_KEY = "stellarfrontier.save.v1";
 const ODYSSEY_KEY = "stellarfrontier.odyssey.v1";
 const AUTOSAVE_INTERVAL_MS = 12000;   // how often the current game is checkpointed to localStorage
+const MAX_SAVE_BYTES = 8 * 1024 * 1024;   // reject an implausibly large import before parsing it (a real save is ≪ this)
 
 const read = key => { try { return localStorage.getItem(key); } catch (e) { return null; } };
 
 export function hasSave() { return !!read(SAVE_KEY); }
 export function hasOdysseySave() { return !!read(ODYSSEY_KEY); }
+
+// The save-format version of each stored save (null when absent/unparseable) — used by the
+// update check (version.js saveImpact) to tell the player whether a new release keeps their data.
+export function storedSaveVersions() {
+  const ver = raw => { try { const o = JSON.parse(raw); return typeof o?.v === "number" ? o.v : null; } catch (e) { return null; } };
+  const s = read(SAVE_KEY), o = read(ODYSSEY_KEY);
+  return { skirmish: s ? ver(s) : null, odyssey: o ? ver(o) : null };
+}
 
 /* ---------- localStorage: the automatic checkpoint (resume) ---------- */
 
@@ -119,8 +128,10 @@ function loadFromFile() {
   input.addEventListener("change", () => {
     const file = input.files && input.files[0];
     if (!file) return;
+    if (file.size > MAX_SAVE_BYTES) { flashButton(loadBtn, "File too large"); return; }   // bound before we parse it
     const reader = new FileReader();
     reader.onload = () => {
+      // JSON.parse first (never eval), then deserialize sanitizes the shape (engine/persist.js).
       try { importSave(JSON.parse(reader.result)); }
       catch (e) { flashButton(loadBtn, "Load failed"); }
     };
