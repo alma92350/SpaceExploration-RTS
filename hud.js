@@ -222,7 +222,12 @@ function countByType(units) {
 // path this already sits alongside.
 function queueSignature(sel) {
   const b = sel.length === 1 && sel[0].kind === "building" ? sel[0] : null;
-  return b && b.queue ? b.queue.map(j => j.unitType).join(",") : "";
+  if (!b) return "";
+  const prod = b.queue ? b.queue.map(j => j.unitType).join(",") : "";
+  // The Datacenter's tech research is its own queue — include it so queuing/finishing a
+  // research rebuilds the panel (the progress % itself is then live-patched each tick).
+  const research = b.researchQueue ? b.researchQueue.map(j => j.techId).join(",") : "";
+  return prod + "#" + research;
 }
 
 // Fingerprint of what the player can currently afford and which completed
@@ -340,6 +345,21 @@ function renderSelectionPanel() {
       queueLabels[i].textContent = i === 0 ? `${def.name} — ${Math.round(job.progress * 100)}%` : `${def.name} (queued)`;
     });
   }
+
+  // Same live patch for the Datacenter's tech research (its own researchQueue) — otherwise the
+  // "Researching … — N%" row would sit frozen at whatever % it had on the last rebuild.
+  if (building && building.researchQueue && building.researchQueue.length) {
+    const row = panelEl.querySelector(".research-progress");
+    if (row) row.textContent = researchRowText(building.researchQueue);
+  }
+}
+
+// The Datacenter research header text — shared by the rebuild and the live patch so the two
+// never drift.
+function researchRowText(queue) {
+  const head = TECHS[queue[0].techId];
+  return `Researching ${head.name} — ${Math.round(queue[0].progress * 100)}%`
+    + (queue.length > 1 ? ` (+${queue.length - 1} queued)` : "");
 }
 
 function renderQueueRows(building) {
@@ -600,11 +620,9 @@ function rebuildSelectionPanel(sel) {
     const queue = datacenter.researchQueue || [];
     const queued = new Set(queue.map(j => j.techId));
     if (queue.length) {
-      const head = TECHS[queue[0].techId];
       const row = document.createElement("div");
-      row.className = "sel-row";
-      row.textContent = `Researching ${head.name} — ${Math.round(queue[0].progress * 100)}%`
-        + (queue.length > 1 ? ` (+${queue.length - 1} queued)` : "");
+      row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
+      row.textContent = researchRowText(queue);
       panelEl.appendChild(row);
     }
     Object.values(TECHS).forEach(t => {
