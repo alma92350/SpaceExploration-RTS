@@ -29,26 +29,29 @@ import { canAfford, payCost, prereqsMet } from "./entities.js";
 // a PASSIVE that multiplies industry (powerMult / rateMult / yieldMult, read by
 // techMult). The three unlock nodes form the buildable spine; the three passives
 // branch off it so "research next building" vs "boost what I have" is a real fork.
+// `ico` reuses the data.js commodity icons where a node maps to a good (metals ⛓️, electronics
+// 🖥️, antimatter 🌀, AI cores 🧠), or a thematic emoji for the pure boosts — so the research
+// buttons carry the same iconography as the rest of the game (hud.js).
 export const TECHS = {
-  metallurgy: { id: "metallurgy", name: "Metallurgy", cost: { crystals: 80 }, time: 20,
+  metallurgy: { id: "metallurgy", name: "Metallurgy", ico: "⛓️", cost: { crystals: 80 }, time: 20,
     desc: "Unlock the Assembly Plant — refine metals into alloys." },
-  reactors: { id: "reactors", name: "Fusion Containment", cost: { crystals: 70 }, time: 18,
+  reactors: { id: "reactors", name: "Fusion Containment", ico: "⚡", cost: { crystals: 70 }, time: 18,
     powerMult: 1.5, desc: "+50% Power from every Reactor." },
-  heavyalloys: { id: "heavyalloys", name: "Heavy Alloys", cost: { crystals: 110 }, time: 24, requires: ["metallurgy"],
+  heavyalloys: { id: "heavyalloys", name: "Heavy Alloys", ico: "🔩", cost: { crystals: 110 }, time: 24, requires: ["metallurgy"],
     yieldMult: 1.4, desc: "+40% output from the Smelter and Assembly Plant." },
-  electronics: { id: "electronics", name: "Microelectronics", cost: { crystals: 120 }, time: 28, requires: ["metallurgy"],
+  electronics: { id: "electronics", name: "Microelectronics", ico: "🖥️", cost: { crystals: 120 }, time: 28, requires: ["metallurgy"],
     desc: "Unlock the Chip Fab — make electronics from crystals and metals." },
-  automation: { id: "automation", name: "Factory Automation", cost: { crystals: 130, radioactives: 40 }, time: 30, requires: ["electronics"],
+  automation: { id: "automation", name: "Factory Automation", ico: "🤖", cost: { crystals: 130, radioactives: 40 }, time: 30, requires: ["electronics"],
     rateMult: 1.25, desc: "+25% production speed at every factory." },
-  machining: { id: "machining", name: "Precision Machining", cost: { crystals: 150, radioactives: 60 }, time: 36, requires: ["electronics"],
+  machining: { id: "machining", name: "Precision Machining", ico: "🛠️", cost: { crystals: 150, radioactives: 60 }, time: 36, requires: ["electronics"],
     desc: "Unlock the Machine Works — build machinery from alloys and electronics." },
   // The strategic capstone (Phase 3): unlocks the Antimatter Forge, and with it the
   // Antimatter Gate — Odyssey's endgame. The deepest, priciest node on the tree.
-  antimatter: { id: "antimatter", name: "Antimatter Containment", cost: { crystals: 220, radioactives: 100 }, time: 44, requires: ["machining"],
+  antimatter: { id: "antimatter", name: "Antimatter Containment", ico: "🌀", cost: { crystals: 220, radioactives: 100 }, time: 44, requires: ["machining"],
     desc: "Unlock the Antimatter Forge — the top of the chain, and the key to the Antimatter Gate." },
   // The full Strategic tier: the two remaining strategic goods, which fuel the
   // Antimatter Gate and the Leviathan capital ship.
-  aicores: { id: "aicores", name: "Machine Minds", cost: { crystals: 260, radioactives: 130 }, time: 48, requires: ["antimatter"],
+  aicores: { id: "aicores", name: "Machine Minds", ico: "🧠", cost: { crystals: 260, radioactives: 130 }, time: 48, requires: ["antimatter"],
     desc: "Unlock the AI Foundry and Torpedo Works — cultivate AI Cores and Plasma Torpedoes." },
 };
 

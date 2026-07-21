@@ -233,22 +233,24 @@ export function isDropOff(type) {
 // no-brainer. Multipliers stack multiplicatively in combat.js and apply live to
 // the whole army. Assault costs radioactives, Bulwark crystals — so a world's
 // deposit specialty tilts which doctrine comes easier.
+// `ico` is the doctrine's emblem (assault ⚔️, bulwark 🛡️, logistics 📦), reused on the Refinery
+// research buttons so the doctrine reads at a glance — same iconography as the rest of the HUD.
 export const UPGRADES = {
   overchargedWeapons: {
-    id: "overchargedWeapons", name: "Overcharged Weapons", doctrine: "assault", tier: 1,
+    id: "overchargedWeapons", name: "Overcharged Weapons", doctrine: "assault", tier: 1, ico: "⚔️",
     cost: { radioactives: 150 }, desc: "+15% damage dealt by all combat units", damageDealtMult: 1.15,
   },
   overchargedCore: {
-    id: "overchargedCore", name: "Overcharged Core", doctrine: "assault", tier: 2,
+    id: "overchargedCore", name: "Overcharged Core", doctrine: "assault", tier: 2, ico: "⚔️",
     cost: { radioactives: 200, ore: 120 }, requires: ["overchargedWeapons"],
     desc: "+15% more damage dealt (stacks with Overcharged Weapons)", damageDealtMult: 1.15,
   },
   reinforcedPlating: {
-    id: "reinforcedPlating", name: "Reinforced Plating", doctrine: "bulwark", tier: 1,
+    id: "reinforcedPlating", name: "Reinforced Plating", doctrine: "bulwark", tier: 1, ico: "🛡️",
     cost: { crystals: 150 }, desc: "-12% damage taken by all combat units", damageTakenMult: 0.88,
   },
   reinforcedBulwark: {
-    id: "reinforcedBulwark", name: "Reinforced Bulwark", doctrine: "bulwark", tier: 2,
+    id: "reinforcedBulwark", name: "Reinforced Bulwark", doctrine: "bulwark", tier: 2, ico: "🛡️",
     cost: { crystals: 200, ore: 120 }, requires: ["reinforcedPlating"],
     desc: "-12% more damage taken (stacks with Reinforced Plating)", damageTakenMult: 0.88,
   },
@@ -259,11 +261,11 @@ export const UPGRADES = {
   // free third buy. gatherYieldMult/produceTimeMult are read by gather.js and
   // production.js the same data-driven way the damage mults are read by combat.js.
   logisticsNetwork: {
-    id: "logisticsNetwork", name: "Logistics Network", doctrine: "logistics", tier: 1,
+    id: "logisticsNetwork", name: "Logistics Network", doctrine: "logistics", tier: 1, ico: "📦",
     cost: { crystals: 140 }, desc: "+25% resource yield from every haul", gatherYieldMult: 1.25,
   },
   rapidFabrication: {
-    id: "rapidFabrication", name: "Rapid Fabrication", doctrine: "logistics", tier: 2,
+    id: "rapidFabrication", name: "Rapid Fabrication", doctrine: "logistics", tier: 2, ico: "📦",
     cost: { crystals: 160, ore: 120 }, requires: ["logisticsNetwork"],
     desc: "-20% unit & building production time", produceTimeMult: 0.8,
   },

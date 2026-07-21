@@ -16,7 +16,7 @@ import { game } from "./session.js";
 import { galaxyStatus, canJump, canJumpTo, activeState, JUMP_COST, jumpCost } from "./engine/galaxy.js";
 import { performJump, surrenderOdyssey } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
-import { planetName as worldName } from "./data.js";
+import { planetName as worldName, FACTIONS } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { stanceLabel } from "./engine/diplomacy.js";
 
@@ -53,7 +53,10 @@ export function renderStarmap() {
     // Industry drives factory speed + finished-good prices; Tech drives research
     // speed — so the badge is what makes "where to settle" an informed decision.
     const stats = `<span class="sm-stats">⚙ ${w.industry} · 🔬 ${w.tech}</span>`;
-    node.innerHTML = `<span class="sm-name">${worldName(w.id)}</span><span class="sm-sub">${sub}</span>${stats}`;
+    // The world's controlling-faction emblem (data.js FACTIONS) — the same icon the turn-based
+    // meta uses — so a world reads by its faction at a glance on the map.
+    const ico = (w.faction && FACTIONS[w.faction]?.ico) || "🪐";
+    node.innerHTML = `<span class="sm-ico">${ico}</span><span class="sm-name">${worldName(w.id)}</span><span class="sm-sub">${sub}</span>${stats}`;
     node.addEventListener("click", () => onWorldClick(w));
     field.appendChild(node);
   });

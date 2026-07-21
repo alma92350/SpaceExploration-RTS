@@ -358,7 +358,7 @@ function renderSelectionPanel() {
 // never drift.
 function researchRowText(queue) {
   const head = TECHS[queue[0].techId];
-  return `Researching ${head.name} — ${Math.round(queue[0].progress * 100)}%`
+  return `${head.ico ? head.ico + " " : ""}Researching ${head.name} — ${Math.round(queue[0].progress * 100)}%`
     + (queue.length > 1 ? ` (+${queue.length - 1} queued)` : "");
 }
 
@@ -402,7 +402,9 @@ function renderMarket(state) {
 
     const label = document.createElement("span");
     label.className = "market-com";
-    label.textContent = `${com} ◈${Math.round(unitPrice(state.market, com, "sell"))}`;
+    // Reuse the commodity's data icon (data.js COM) — the same emblem the resource readout uses.
+    const meta = COM[com];
+    label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} ◈${Math.round(unitPrice(state.market, com, "sell"))}`;
     row.appendChild(label);
 
     const have = Math.floor(res[com] || 0);
@@ -596,7 +598,7 @@ function rebuildSelectionPanel(sel) {
       if (upgrades[u.id]) {
         const row = document.createElement("div");
         row.className = "sel-row";
-        row.textContent = `${u.name} (${label[u.doctrine]}) — researched`;
+        row.textContent = `${u.ico ? u.ico + " " : ""}${u.name} (${label[u.doctrine]}) — researched`;
         panelEl.appendChild(row);
         return;
       }
@@ -607,7 +609,7 @@ function rebuildSelectionPanel(sel) {
         : tierLocked ? `Requires ${UPGRADES[(u.requires || [])[0]]?.name || "its Tier 1"}` : null;
       panelEl.appendChild(makeButton(`Research ${u.name} · ${label[u.doctrine]} (${costText(u.cost)})`,
         () => researchUpgrade(state, refinery.id, u.id),
-        { cost: u.cost, tip: u.desc, locked, lockTip }));
+        { cost: u.cost, tip: u.desc, locked, lockTip, icon: u.ico ? { emoji: u.ico } : null }));
     });
   }
 
@@ -629,7 +631,7 @@ function rebuildSelectionPanel(sel) {
       if (upgrades[t.id]) {
         const row = document.createElement("div");
         row.className = "sel-row";
-        row.textContent = `${t.name} — researched`;
+        row.textContent = `${t.ico ? t.ico + " " : ""}${t.name} — researched`;
         panelEl.appendChild(row);
         return;
       }
@@ -638,7 +640,7 @@ function rebuildSelectionPanel(sel) {
       const ready = (t.requires || []).every(r => queued.has(r) || prereqsMet(state, "player", { requires: [r] }));
       panelEl.appendChild(makeButton(`Research ${t.name} (${costText(t.cost)})`,
         () => researchTech(state, datacenter.id, t.id),
-        { cost: t.cost, tip: t.desc, locked: !ready, lockTip: !ready ? lockTipFor(t) : null }));
+        { cost: t.cost, tip: t.desc, locked: !ready, lockTip: !ready ? lockTipFor(t) : null, icon: t.ico ? { emoji: t.ico } : null }));
     });
   }
 
@@ -938,19 +940,24 @@ function makeButton(label, onClick, { cost = null, tip = null, locked = false, l
   const { state } = game;
   const btn = document.createElement("button");
   btn.className = "btn";
-  // An optional sprite icon (the actual unit/building art) sits left of the label — the same
-  // silhouette the map draws, so a build/produce button shows what it makes at a glance.
-  const url = icon ? spriteIcon(icon.kind, icon.type, state.players.player.color) : "";
-  if (url) {
+  // An optional icon sits left of the label: a SPRITE ({kind,type}) — the actual unit/building
+  // art the map draws — or an EMOJI ({emoji}) reused from the game's data icons (data.js COM /
+  // FACTIONS, tech/doctrine icons), so a research or planet button reads at a glance too.
+  let iconEl = null;
+  if (icon && icon.emoji) {
+    iconEl = document.createElement("span");
+    iconEl.className = "btn-icon btn-emoji";
+    iconEl.textContent = icon.emoji;
+  } else if (icon && icon.kind && icon.type) {
+    const url = spriteIcon(icon.kind, icon.type, state.players.player.color);
+    if (url) { iconEl = document.createElement("img"); iconEl.className = "btn-icon"; iconEl.src = url; iconEl.alt = ""; }
+  }
+  if (iconEl) {
     btn.classList.add("has-icon");
-    const img = document.createElement("img");
-    img.className = "btn-icon";
-    img.src = url;
-    img.alt = "";
     const span = document.createElement("span");
     span.className = "btn-label";
     span.textContent = label;
-    btn.append(img, span);
+    btn.append(iconEl, span);
   } else {
     btn.textContent = label;
   }
