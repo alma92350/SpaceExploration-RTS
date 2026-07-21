@@ -1,11 +1,17 @@
 /* ============================================================
-   Save / load to localStorage. Because the sim is deterministic and
-   seed-driven, a save is just the serialized dynamic state (engine/persist.js);
-   the map regenerates from the seed on load. The topbar Save / Load buttons
-   branch on the mode: a skirmish saves/loads a single state (SAVE_KEY); an
-   Odyssey saves/loads the whole galaxy (ODYSSEY_KEY). The map-select "Resume"
-   buttons (setup.js) reuse hasSave/loadGame (skirmish) and
-   hasOdysseySave/loadOdyssey (Odyssey).
+   Save / load. Because the sim is deterministic and seed-driven, a save is just
+   the serialized dynamic state (engine/persist.js); the map regenerates from the
+   seed on load. Two channels, by design:
+
+     • The topbar Save / Load buttons move a save to and from a FILE — an explicit
+       backup/transfer you keep on disk (download a .json, or pick one to import).
+     • AutoSave keeps the CURRENT game in browser localStorage on a timer (and on
+       tab-hide / unload), so the map-select "Continue" buttons (setup.js) can
+       resume exactly where you left off without any manual save.
+
+   Both channels branch on the mode: a skirmish is a single state (SAVE_KEY /
+   serializeGame); an Odyssey is the whole galaxy (ODYSSEY_KEY / serializeGalaxy).
+   A file import auto-detects which by shape (a galaxy carries `planets`).
    ============================================================ */
 
 "use strict";
@@ -18,52 +24,111 @@ import * as sound from "./sound.js";
 
 const SAVE_KEY = "stellarfrontier.save.v1";
 const ODYSSEY_KEY = "stellarfrontier.odyssey.v1";
+const AUTOSAVE_INTERVAL_MS = 12000;   // how often the current game is checkpointed to localStorage
 
 const read = key => { try { return localStorage.getItem(key); } catch (e) { return null; } };
 
 export function hasSave() { return !!read(SAVE_KEY); }
 export function hasOdysseySave() { return !!read(ODYSSEY_KEY); }
 
-// Save button — routes to the galaxy or single-state serializer by mode.
-function save() {
-  try {
-    if (game.galaxy) localStorage.setItem(ODYSSEY_KEY, JSON.stringify(serializeGalaxy(game.galaxy)));
-    else if (game.state) localStorage.setItem(SAVE_KEY, JSON.stringify(serializeGame(game.state)));
-    else return;
-    flashButton(saveBtn, "Saved ✓");
-  } catch (e) {
-    flashButton(saveBtn, "Save failed");
-  }
+/* ---------- localStorage: the automatic checkpoint (resume) ---------- */
+
+// Serialize the current game to a plain object, by mode — or null when there's
+// nothing resumable (no game, a finished one, or a scripted scenario, which can't
+// be saved). One place both channels agree on what "the current game" is.
+function snapshot() {
+  if (!game.state || game.state.over || game.state.scenario) return null;
+  return game.galaxy
+    ? { key: ODYSSEY_KEY, mode: "odyssey", data: serializeGalaxy(game.galaxy) }
+    : { key: SAVE_KEY, mode: "skirmish", data: serializeGame(game.state) };
 }
 
-// Load an Odyssey galaxy from storage (topbar Load in Odyssey, or the setup
-// "Resume Odyssey" button).
+// Checkpoint the current game to localStorage. Cheap, silent, and safe to call
+// often — a quota/serialize error is swallowed (the next tick, or the file save,
+// is the fallback). Runs on a timer, when the tab is hidden, on unload, and on a
+// deliberate "Save & Exit".
+export function autoSave() {
+  const snap = snapshot();
+  if (!snap) return;
+  try { localStorage.setItem(snap.key, JSON.stringify(snap.data)); } catch (e) { /* quota — ignore */ }
+}
+
+// Resume the autosaved Odyssey galaxy from localStorage (topbar-less; used by the
+// setup "Continue Odyssey" button).
 export function loadOdyssey() {
   const raw = read(ODYSSEY_KEY);
   if (!raw) { flashButton(loadBtn, "No save"); return; }
   try {
     sound.unlockAudio();
     bootGalaxy(deserializeGalaxy(JSON.parse(raw)), { intro: false });
-  } catch (e) {
-    flashButton(loadBtn, "Load failed");
-  }
+  } catch (e) { flashButton(loadBtn, "Load failed"); }
 }
 
-// Load a single skirmish from storage (topbar Load in a skirmish, or the setup
-// "Resume saved game" button).
+// Resume the autosaved skirmish from localStorage (setup "Continue" button).
 export function loadGame() {
   const raw = read(SAVE_KEY);
   if (!raw) { flashButton(loadBtn, "No save"); return; }
   try {
     sound.unlockAudio();
     bootState(deserializeGame(JSON.parse(raw)), { intro: false });
-  } catch (e) {
-    flashButton(loadBtn, "Load failed");
-  }
+  } catch (e) { flashButton(loadBtn, "Load failed"); }
 }
 
-// Topbar Load — routes by the current mode.
-function load() { if (game.galaxy) loadOdyssey(); else loadGame(); }
+/* ---------- file: the explicit backup/transfer (Save / Load buttons) ---------- */
+
+function stamp() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+function downloadJSON(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Save button — download the current game as a .json file (galaxy or skirmish).
+function saveToFile() {
+  try {
+    if (game.galaxy) {
+      downloadJSON(`stellar-frontier-odyssey-${stamp()}.json`, serializeGalaxy(game.galaxy));
+    } else if (game.state) {
+      downloadJSON(`stellar-frontier-skirmish-seed${game.state.seed}-${stamp()}.json`, serializeGame(game.state));
+    } else { flashButton(saveBtn, "No game"); return; }
+    flashButton(saveBtn, "Saved ✓");
+  } catch (e) { flashButton(saveBtn, "Save failed"); }
+}
+
+// Boot a parsed save, auto-detecting the mode by shape — a galaxy carries `planets`.
+function importSave(parsed) {
+  sound.unlockAudio();
+  if (parsed && Array.isArray(parsed.planets)) bootGalaxy(deserializeGalaxy(parsed), { intro: false });
+  else bootState(deserializeGame(parsed), { intro: false });
+}
+
+// Load button — open a file picker and import the chosen .json save.
+function loadFromFile() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json,.json";
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { importSave(JSON.parse(reader.result)); }
+      catch (e) { flashButton(loadBtn, "Load failed"); }
+    };
+    reader.onerror = () => flashButton(loadBtn, "Load failed");
+    reader.readAsText(file);
+  });
+  input.click();
+}
 
 function flashButton(btn, msg) {
   if (!btn) return;
@@ -74,9 +139,10 @@ function flashButton(btn, msg) {
   btn._flashTimer = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1100);
 }
 
-// Home button — return to the menu, first asking whether to save. A scenario can't be
-// resumed, so it's a plain "leave?" confirm there; a skirmish/Odyssey offers Save & Exit.
-// A lightweight modal built on the fly (Cancel / backdrop / Esc dismiss it).
+// Home button — return to the menu, first asking whether to keep progress. A scenario
+// can't be resumed, so it's a plain "leave?" confirm there; a skirmish/Odyssey offers
+// "Save & Exit", which checkpoints to localStorage so the setup "Continue" button can
+// pick it up. A lightweight modal built on the fly (Cancel / backdrop / Esc dismiss it).
 function goHome() {
   const scenario = !!(game.state && game.state.scenario);
 
@@ -89,7 +155,7 @@ function goHome() {
   const p = document.createElement("p");
   p.textContent = scenario
     ? "A scenario can't be saved — leaving abandons this run."
-    : "Save your progress before you go?";
+    : "Your progress autosaves — Save & Exit checkpoints it now so you can Continue later.";
   const actions = document.createElement("div");
   actions.className = "home-actions";
   card.append(h, p, actions);
@@ -105,7 +171,7 @@ function goHome() {
     actions.appendChild(b);
   };
 
-  if (!scenario) act("Save & Exit", () => { save(); restartToMapSelect(); }, "primary");
+  if (!scenario) act("Save & Exit", () => { autoSave(); restartToMapSelect(); }, "primary");
   act(scenario ? "Leave" : "Exit without Saving", () => restartToMapSelect(), scenario ? "primary" : "");
   act("Cancel", () => {}, "ghost");
 
@@ -114,6 +180,13 @@ function goHome() {
   document.body.appendChild(overlay);
 }
 
-if (saveBtn) saveBtn.addEventListener("click", save);
-if (loadBtn) loadBtn.addEventListener("click", load);
+if (saveBtn) saveBtn.addEventListener("click", saveToFile);
+if (loadBtn) loadBtn.addEventListener("click", loadFromFile);
 if (homeBtn) homeBtn.addEventListener("click", goHome);
+
+// Keep the current game checkpointed without any manual step: on a timer, whenever the
+// tab is hidden (task-switch / phone lock), and on unload (tab close / refresh). These
+// are the writes the setup "Continue" buttons read back.
+setInterval(autoSave, AUTOSAVE_INTERVAL_MS);
+window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") autoSave(); });
+window.addEventListener("beforeunload", autoSave);

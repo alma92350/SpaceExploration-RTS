@@ -224,11 +224,12 @@ export function renderMapSelect() {
   mapSelectEl.appendChild(optionGroup(setup.mode, MODES.map(m => ({ label: m.label, mult: m.key, note: m.note })),
     key => { setup.mode = key; renderMapSelect(); }));
 
-  // Offer to pick up a saved skirmish before starting a fresh one (skirmish only).
+  // Offer to pick up the autosaved skirmish before starting a fresh one (skirmish only).
   if (setup.mode === "skirmish" && hasSave()) {
     const resume = document.createElement("button");
     resume.className = "btn resume-btn";
-    resume.textContent = "▶ Resume saved game";
+    resume.textContent = "▶ Continue — resume autosave";
+    resume.title = "Resume your last skirmish from its browser autosave";
     resume.addEventListener("click", loadGame);
     mapSelectEl.appendChild(resume);
   }
@@ -250,7 +251,8 @@ export function renderMapSelect() {
     if (hasOdysseySave()) {
       const resume = document.createElement("button");
       resume.className = "btn resume-btn";
-      resume.textContent = "▶ Resume Odyssey";
+      resume.textContent = "▶ Continue Odyssey — resume autosave";
+      resume.title = "Resume your Odyssey from its browser autosave";
       resume.addEventListener("click", () => { sound.unlockAudio(); mapSelectEl.classList.add("hidden"); loadOdyssey(); });
       mapSelectEl.appendChild(resume);
     }
