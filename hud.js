@@ -28,6 +28,7 @@ import { deployColonyShip } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
+import { spriteIcon } from "./render.js";
 import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
 
@@ -473,7 +474,7 @@ function renderCapital(state, cc) {
   if ([...state.buildings.values()].some(b => b.owner === "player" && b.capital)) return;  // one Capital already
   panelEl.appendChild(makeButton(`◆ Upgrade to Capital (${costText(CAPITAL_UPGRADE_COST)})`,
     () => { upgradeToCapital(state, cc); },
-    { cost: CAPITAL_UPGRADE_COST,
+    { cost: CAPITAL_UPGRADE_COST, icon: { kind: "building", type: "command" },
       tip: `Fortify this Command Center into your anchored Capital: ×${CAPITAL_HP_MULT} HP. The Capital never jumps — only a smaller CC relocates.` }));
 }
 
@@ -534,7 +535,7 @@ function rebuildSelectionPanel(sel) {
     for (const t of ccUnits) {
       const def = UNITS[t];
       panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
-        () => queueProduction(state, cc.id, t), { cost: def.cost, tip: unitTip(def) }));
+        () => queueProduction(state, cc.id, t), { cost: def.cost, tip: unitTip(def), icon: { kind: "unit", type: t } }));
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
@@ -557,7 +558,7 @@ function rebuildSelectionPanel(sel) {
       const locked = !prereqsMet(state, "player", def);
       panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
         () => queueProduction(state, barracks.id, t),
-        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null }));
+        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
     }
     if (barracks.queue.length) renderQueueRows(barracks);
   }
@@ -628,7 +629,7 @@ function rebuildSelectionPanel(sel) {
     const locked = !prereqsMet(state, "player", def);
     panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
       () => queueProduction(state, stardock.id, "leviathan"),
-      { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null }));
+      { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: "leviathan" } }));
     if (stardock.queue.length) renderQueueRows(stardock);
   }
 
@@ -734,7 +735,8 @@ function rebuildSelectionPanel(sel) {
       const nextCap = jumpCapacity({ tier: tier + 1 });
       panelEl.appendChild(makeButton(`⬆ Upgrade to Tier ${tier + 1} (${costText(upCost)}) — capacity ${nextCap}`,
         () => upgradeSpaceport(state, spaceport),
-        { cost: upCost, tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump.` }));
+        { cost: upCost, icon: { kind: "building", type: "spaceport" },
+          tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump.` }));
     }
 
     // Cargo hold: manufactured goods that ride along to be sold at the destination
@@ -769,7 +771,7 @@ function rebuildSelectionPanel(sel) {
     const blocked = !canPlaceBuilding(state, "command", colonyShip.x, colonyShip.y);
     panelEl.appendChild(makeButton("⛨ Deploy as Command Center",
       () => deployColonyShip(state, colonyShip.id),
-      { locked: blocked,
+      { locked: blocked, icon: { kind: "building", type: "command" },
         lockTip: blocked ? "Blocked here — move to open, buildable ground clear of buildings, nodes and rough terrain" : null,
         tip: "Settle: the colony ship becomes a Command Center on this spot (it can't move again). Colonists disembark as workers." }));
   }
@@ -781,7 +783,7 @@ function rebuildSelectionPanel(sel) {
       const locked = !prereqsMet(state, "player", def);
       return makeButton(`Build ${def.name} (${costText(def.cost)})`,
         () => input.startBuild(t),
-        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null });
+        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "building", type: t } });
     };
     if (state.endless) {
       // Odyssey adds the Spaceport (jump pad) and the whole industry chain. You DON'T
@@ -906,11 +908,26 @@ function controlsLegend() {
 // afford it, the button greys out and a click just plays the denied buzz — so a
 // broke click gives feedback instead of silently doing nothing (previously the
 // only "can't" feedback was the supply block). `tip` becomes a hover tooltip.
-function makeButton(label, onClick, { cost = null, tip = null, locked = false, lockTip = null } = {}) {
+function makeButton(label, onClick, { cost = null, tip = null, locked = false, lockTip = null, icon = null } = {}) {
   const { state } = game;
   const btn = document.createElement("button");
   btn.className = "btn";
-  btn.textContent = label;
+  // An optional sprite icon (the actual unit/building art) sits left of the label — the same
+  // silhouette the map draws, so a build/produce button shows what it makes at a glance.
+  const url = icon ? spriteIcon(icon.kind, icon.type, state.players.player.color) : "";
+  if (url) {
+    btn.classList.add("has-icon");
+    const img = document.createElement("img");
+    img.className = "btn-icon";
+    img.src = url;
+    img.alt = "";
+    const span = document.createElement("span");
+    span.className = "btn-label";
+    span.textContent = label;
+    btn.append(img, span);
+  } else {
+    btn.textContent = label;
+  }
   btn.title = locked && lockTip ? lockTip : (tip || "");
   const affordable = !cost || canAfford(state.players.player.resources, cost);
   if (locked || !affordable) {

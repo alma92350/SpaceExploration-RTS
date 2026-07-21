@@ -58,6 +58,41 @@ export function resetFacing() {
   facing.clear();
 }
 
+// A small sprite ICON for a unit or building type — the SAME art the map draws, rendered once
+// to an offscreen canvas and cached as a data URL for the HUD's build/produce buttons. Source
+// radii vary a lot, so every icon is normalized to a common size, tinted with the owner colour,
+// and drawn at 2× for crispness. `kind` is "unit" | "building". Never throws — if canvas is
+// unavailable it returns "" and the button just stays text-only.
+const ICON_BOX = 40;      // css px of the square icon
+const ICON_R = 14;        // normalized sprite radius inside the box
+const iconCache = new Map();
+export function spriteIcon(kind, type, color = "#8fd3ff") {
+  const key = `${kind}:${type}:${color}`;
+  if (iconCache.has(key)) return iconCache.get(key);
+  let url = "";
+  try {
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = ICON_BOX * scale;
+    const c = canvas.getContext("2d");
+    c.scale(scale, scale);
+    const def = kind === "unit" ? UNITS[type] : BUILDINGS[type];
+    const actualR = (def && def.radius) || 16;
+    c.translate(ICON_BOX / 2, ICON_BOX / 2);
+    c.scale(ICON_R / actualR, ICON_R / actualR);      // normalize the sprite to ICON_R
+    if (kind === "unit") {
+      c.fillStyle = color; c.strokeStyle = DETAIL; c.lineWidth = 1.5;
+      drawUnitShape(c, { id: "__icon__", type, x: 0, y: 0 }, def, color);
+    } else {
+      drawBuildingShape(c, { units: new Map(), buildings: new Map() }, { id: "__icon__", type, x: 0, y: 0, radius: actualR }, color);
+    }
+    facing.delete("__icon__");                          // don't leave a stray orientation in the shared map
+    url = canvas.toDataURL();
+  } catch (e) { url = ""; }
+  iconCache.set(key, url);
+  return url;
+}
+
 // The world-space rectangle currently on screen, padded so an entity straddling
 // an edge still draws. Everything outside it is skipped — on a Gigantic (4x)
 // map the vast majority of the field, its fog cells, and its entities are
@@ -331,6 +366,21 @@ function drawGasNode(ctx, n, r) {
 
 /* ---------- buildings ---------- */
 
+// The shape dispatch, factored out of drawBuildings so the HUD's button icons
+// (spriteIcon) render the exact same silhouette the map does. Only the turret reads
+// `state` (it aims at its live target); an icon passes a stub state with empty Maps.
+function drawBuildingShape(ctx, state, b, color) {
+  if (b.type === "command") drawCommandCenter(ctx, b, color);
+  else if (b.type === "barracks") drawBarracks(ctx, b, color);
+  else if (b.type === "refinery") drawRefinery(ctx, b, color);
+  else if (b.type === "foundry") drawFoundry(ctx, b, color);
+  else if (b.type === "arsenal") drawArsenal(ctx, b, color);
+  else if (b.type === "turret") drawTurret(ctx, state, b, color);
+  else if (b.type === "habitat") drawHabitat(ctx, b, color);
+  else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
+  else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
+}
+
 function drawBuildings(ctx, state, view) {
   const selSet = new Set(state.selection);
   for (const b of state.buildings.values()) {
@@ -339,15 +389,7 @@ function drawBuildings(ctx, state, view) {
     const color = state.players[b.owner].color;
     ctx.globalAlpha = b.constructing ? 0.5 : 1;
 
-    if (b.type === "command") drawCommandCenter(ctx, b, color);
-    else if (b.type === "barracks") drawBarracks(ctx, b, color);
-    else if (b.type === "refinery") drawRefinery(ctx, b, color);
-    else if (b.type === "foundry") drawFoundry(ctx, b, color);
-    else if (b.type === "arsenal") drawArsenal(ctx, b, color);
-    else if (b.type === "turret") drawTurret(ctx, state, b, color);   // only this draw takes state — it aims at its live target
-    else if (b.type === "habitat") drawHabitat(ctx, b, color);
-    else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
-    else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
+    drawBuildingShape(ctx, state, b, color);
 
     ctx.globalAlpha = 1;
     // A foe marker under every enemy building, matching the one under enemy units:
@@ -688,6 +730,27 @@ function turretFacing(state, b) {
 
 /* ---------- units ---------- */
 
+// The unit shape dispatch, factored out of drawUnits so the HUD's button icons render
+// the exact same sprite. The caller sets ctx.fillStyle (owner colour) + strokeStyle
+// (DETAIL) first, as drawUnits does. Oriented hulls default to facing "up" for a static
+// icon (updateFacing has no movement to read).
+function drawUnitShape(ctx, u, def, color) {
+  if (u.type === "worker") drawWorker(ctx, u, def, color);
+  else if (u.type === "ranger") drawRanger(ctx, u, def, color);
+  else if (u.type === "skiff") drawSkiff(ctx, u, def, color);
+  else if (u.type === "bastion") drawBastion(ctx, u, def, color);
+  else if (u.type === "lancer") drawLancer(ctx, u, def, color);
+  else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
+  else if (u.type === "dreadnought") drawDreadnought(ctx, u, def, color);
+  else if (u.type === "mender") drawMender(ctx, u, def, color);
+  else if (u.type === "wraith") drawWraith(ctx, u, def, color);
+  else if (u.type === "aegis") drawAegis(ctx, u, def, color);
+  else if (u.type === "colossus") drawColossus(ctx, u, def, color);
+  else if (u.type === "freighter") drawFreighter(ctx, u, def, color);
+  else if (u.type === "colonyship") drawColonyShip(ctx, u, def, color);
+  else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
+}
+
 function drawUnits(ctx, state, view) {
   const selSet = new Set(state.selection);
   for (const u of state.units.values()) {
@@ -704,20 +767,7 @@ function drawUnits(ctx, state, view) {
     ctx.strokeStyle = DETAIL;
     ctx.lineWidth = 1.5;
 
-    if (u.type === "worker") drawWorker(ctx, u, def, color);
-    else if (u.type === "ranger") drawRanger(ctx, u, def, color);
-    else if (u.type === "skiff") drawSkiff(ctx, u, def, color);
-    else if (u.type === "bastion") drawBastion(ctx, u, def, color);
-    else if (u.type === "lancer") drawLancer(ctx, u, def, color);
-    else if (u.type === "breacher") drawBreacher(ctx, u, def, color);
-    else if (u.type === "dreadnought") drawDreadnought(ctx, u, def, color);
-    else if (u.type === "mender") drawMender(ctx, u, def, color);
-    else if (u.type === "wraith") drawWraith(ctx, u, def, color);
-    else if (u.type === "aegis") drawAegis(ctx, u, def, color);
-    else if (u.type === "colossus") drawColossus(ctx, u, def, color);
-    else if (u.type === "freighter") drawFreighter(ctx, u, def, color);
-    else if (u.type === "colonyship") drawColonyShip(ctx, u, def, color);
-    else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
+    drawUnitShape(ctx, u, def, color);
 
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
