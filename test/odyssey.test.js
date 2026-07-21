@@ -452,7 +452,7 @@ test("canJumpTo: a Spaceport here reaches anywhere; without one, only a world yo
   assert.equal(canJumpTo(g, homeId), true, "…and can always fall back to the base we hold");
 });
 
-test("stranded army with no Spaceport can fall back to home and evacuates with it (catch-22 fixed)", () => {
+test("stranded without a Spaceport, falling back to home is a CONTROL SWITCH — the fleet stays put (catch-22 fixed, no drag)", () => {
   const g = createGalaxy({ seed: 62 });
   const home = settle(activeState(g));
   const homeId = g.activeId;
@@ -467,20 +467,22 @@ test("stranded army with no Spaceport can fall back to home and evacuates with i
   assert.equal(commandCenters(stranded, "player").length, 0, "no base on the world we hopped to");
   assert.ok(![...stranded.buildings.values()].some(b => b.owner === "player" && b.type === "spaceport"),
     "and no Spaceport — the old rules would trap us here");
-  assert.ok([...stranded.units.values()].some(u => u.owner === "player" && u.type === "skiff"), "our army is here");
+  const armyBefore = [...stranded.units.values()].filter(u => u.owner === "player" && u.type === "skiff").length;
+  assert.equal(armyBefore, 1, "our army is here");
 
-  // The fix: we can fall back to home even with no Spaceport here — and the whole force evacuates.
-  assert.equal(canJumpTo(g, newId + "zzz"), false);          // a bogus/new world: still no
+  // The fix: we can fall back to the base we hold — but it's a control switch, NOT an evacuation:
+  // the fleet we transported over STAYS where we left it (we go back for a colony ship, not to drag it home).
   assert.ok(canJumpTo(g, homeId), "we can retreat to the base we hold");
   const before = g.credits;
   const res = jumpCapital(g, homeId);
   assert.ok(res, "the fallback jump runs");
+  assert.equal(res.riders, 0, "no units ride a portless fallback — it's a pure control switch");
   assert.equal(g.credits, before, "returning to a world we hold is free");
   assert.equal(g.activeId, homeId, "we're back on our home world — where the colony ship is built");
-  assert.ok([...activeState(g).units.values()].some(u => u.owner === "player" && u.type === "skiff"),
-    "the stranded army evacuated back with us");
-  assert.equal([...g.planets.get(newId).units.values()].filter(u => u.owner === "player").length, 0,
-    "nothing player-owned is left stranded on the world we abandoned");
+  assert.equal([...g.planets.get(newId).units.values()].filter(u => u.owner === "player" && u.type === "skiff").length, 1,
+    "the transported fleet stays on the world we left — it is NOT dragged back");
+  assert.ok(![...activeState(g).units.values()].some(u => u.id === trooper.id),
+    "…and it did not reappear on home");
 });
 
 test("a portless world still cannot open a NEW frontier — only a Spaceport expands", () => {

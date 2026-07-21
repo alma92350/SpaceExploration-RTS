@@ -514,11 +514,12 @@ function loadCargo(from, dest) {
 //
 // Two modes:
 //   • With a Spaceport HERE — the normal launch: the capacity-capped expedition staged near the
-//     pad (a colony ship to settle, an army to reinforce, or nothing).
-//   • WITHOUT a Spaceport, falling back to a world you ALREADY HOLD — a stranded-force retreat:
-//     the whole force on this world evacuates (there's no pad to meter it, and you're leaving
-//     the spot). This is what breaks the catch-22 where an army hopped over without a colony
-//     ship couldn't build a Spaceport and so couldn't get back for one. See canJumpTo.
+//     pad (a colony ship to settle, an army to reinforce, or nothing) rides along.
+//   • WITHOUT a Spaceport, falling back to a world you ALREADY HOLD — a pure CONTROL SWITCH that
+//     moves NO units: with no launch pad there's no way to load a fleet, so the force you left on
+//     this world STAYS PUT. This is the catch-22 escape (hop back to a base to fetch a colony
+//     ship) WITHOUT dragging a garrison home — you bring the ship to the stranded force, not the
+//     force back. To actually ferry units off a world, build a Spaceport there. See canJumpTo.
 //
 // Returns a summary, or null if the jump can't run (no way to reach the destination, same world,
 // or too poor to fuel a new-world jump).
@@ -532,10 +533,10 @@ export function jumpCapital(galaxy, destId) {
   const cost = jumpCost(galaxy, destId);
   if (galaxy.credits < cost) return null;
 
-  // Spaceport → capacity-capped staged expedition. Stranded fallback → evacuate everyone here.
-  let riders, leftBehind = 0;
+  // Spaceport → the capacity-capped staged expedition. No Spaceport (a fallback) → nothing rides:
+  // a control switch that leaves every unit on this world where it is.
+  let riders = [], leftBehind = 0;
   if (spaceport) ({ riders, leftBehind } = jumpManifest(from, spaceport));
-  else riders = [...from.units.values()].filter(u => u.owner === "player");
   galaxy.credits -= cost;   // fuel — free to a world you already hold
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });
