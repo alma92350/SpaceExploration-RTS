@@ -423,7 +423,7 @@ function drawBuildingShape(ctx, state, b, color) {
   else if (b.type === "turret") drawTurret(ctx, state, b, color);
   else if (b.type === "habitat") drawHabitat(ctx, b, color);
   else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
-  else if (BUILDINGS[b.type] && BUILDINGS[b.type].recipe) drawFactory(ctx, b, color);   // Odyssey factories: stamp their product's glyph
+  else if (factoryGlyph(b.type)) drawFactory(ctx, b, color);   // Odyssey factories + reactor/datacenter/etc: stamp a function glyph
   else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
 }
 
@@ -701,16 +701,25 @@ function drawArsenal(ctx, b, color) {
 // recipe id -> the commodity it OUTPUTS (data.js RECIPES), so a factory can show what it makes.
 const RECIPE_OUT = Object.fromEntries(RECIPES.map(r => [r.id, r.out]));
 
-// Every recipe-running factory (Smelter, Assembly Plant, Chip Fab, Machine Works, the Reactor,
-// the Tier-3 forges) otherwise shares the plain hex silhouette below — indistinguishable on the
-// map and in the build menu. Stamp the emoji of the commodity it PRODUCES (RECIPES.out ->
-// COM.ico) on a dark disc, so each reads at a glance as what it makes. Keyed on the building
-// TYPE, so the HUD button icon (spriteIcon renders this same shape) gets the glyph too.
+// A distinguishing glyph for buildings that otherwise share the plain hex silhouette. A
+// recipe-running factory shows the commodity it OUTPUTS; a handful of non-recipe industrial
+// buildings get an explicit emoji for what they DO — the Reactor grants Power (⚡), the Datacenter
+// runs research (🔬), the Stardock is a capital-ship yard (🛰️), the Antimatter Gate is the wonder (🌀).
+const BUILDING_GLYPH = { reactor: "⚡", datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀" };
+function factoryGlyph(type) {
+  const def = BUILDINGS[type];
+  if (def && def.recipe && RECIPE_OUT[def.recipe]) return COM[RECIPE_OUT[def.recipe]]?.ico || null;
+  return BUILDING_GLYPH[type] || null;
+}
+
+// Every recipe-running factory (Smelter, Assembly Plant, Chip Fab, …) and the non-recipe industrial
+// buildings above otherwise share the plain hex silhouette below — indistinguishable on the map and
+// in the build menu. Stamp the building's glyph (its product's emoji, or the explicit icon) on a
+// dark disc so each reads at a glance as what it does. Keyed on the building TYPE, so the HUD button
+// icon (spriteIcon renders this same shape) gets the glyph too.
 function drawFactory(ctx, b, color) {
   drawGenericBuilding(ctx, b, color);
-  const def = BUILDINGS[b.type];
-  const out = def && def.recipe ? RECIPE_OUT[def.recipe] : null;
-  const ico = out && COM[out] ? COM[out].ico : null;
+  const ico = factoryGlyph(b.type);
   if (!ico) return;
   const r = b.radius;
   ctx.beginPath();
