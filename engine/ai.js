@@ -84,36 +84,59 @@ export function runAI(state, dt) {
   if (state.ai.think > 0) return;
   state.ai.think = THINK_INTERVAL;
 
+  // One snapshot of the AI's world, threaded through every decision phase below. Order is
+  // load-bearing: each phase can spend from a shared per-cycle action budget (canAct/spend),
+  // and an earlier phase can bank ore (ctx.*Reserve) that a later one must leave alone.
+  const ctx = aiContext(state);
+
+  // Scout + worker assignment run first — a worker turned scout mustn't then be re-tasked to gather.
+  updateScout(state, ctx.army, ctx.rangers, ctx.threats.length > 0);
+  assignIdleWorkers(state, ctx.workers);
+
+  aiFoundOrSurvive(state, ctx);    // Odyssey: (re)seat a razed / opening base from a colony ship
+  aiExpand(state, ctx);            // scout Ranger + found a second base once home ore thins (sets ctx.oreReserve)
+  aiBaseAndTech(state, ctx);       // workers, supply, Barracks, the Foundry/Arsenal tech gates, the Mender
+  aiProduceAndFortify(state, ctx); // the shared unit-production cycle, Turrets, a 2nd Barracks, Refineries
+  aiResearch(state, ctx);          // one doctrine upgrade per think cycle
+  aiMilitary(state, ctx);          // defend a pressed base, else muster and commit the next wave
+
+  // TACTICAL micro (opt-in via aiMicro): concentrate the army's fire on one target so kills land
+  // faster and incoming damage drops sooner — layered on top of the wave logic above without
+  // touching it. A no-op unless real enemy combat is in sight, so the resolve guarantee holds.
+  if (state.ai.micro) applyFocusFire(state, ctx.army);
+}
+
+// Snapshot the AI's world once per think cycle: the archetype (+ an `arch` reader that lets its
+// Odyssey overlay win), the AI's own units bucketed by role, its buildings and the key ones by
+// type, and the enemy combat pressing home. The three *Reserve fields start at 0 and are the
+// running ore holdbacks the phases pass forward. See the AiContext typedef in engine/types.js.
+/** @param {State} state @returns {AiContext} */
+function aiContext(state) {
   const archetype = state.ai.archetype;
-  // Effective archetype field: in ODYSSEY (state.diplomacy present) an archetype's `odyssey`
-  // overlay wins for the fields it specifies, so a neighbour's temperament reads differently in
-  // the play-forever meta than in a resolve-to-a-winner skirmish (aiArchetypes.js). In a
-  // SKIRMISH there's no diplomacy, so this is always the base field — the skirmish AI path is
-  // byte-for-byte unchanged.
   const arch = field => (state.diplomacy && archetype.odyssey && archetype.odyssey[field] != null)
     ? archetype.odyssey[field] : archetype[field];
-  const ai = state.players.ai;
-  const workers = playerUnits(state, "ai").filter(u => u.type === "worker");
-  const army = playerUnits(state, "ai").filter(u => UNITS[u.type].role === "combat");
-  const rangers = playerUnits(state, "ai").filter(u => u.type === "ranger");
   const buildings = playerBuildings(state, "ai");
-  const cc = buildings.find(b => b.type === "command" && !b.constructing);
-  // Odyssey only: the AI's colony ship (start ship, or one expansion ship in flight).
-  // Non-combat + non-worker, so it's untouched by the army/worker/scout filters above.
-  const colonyShip = state.endless
-    ? (playerUnits(state, "ai").find(u => u.type === "colonyship") || null) : null;
-  const barracks = buildings.find(b => b.type === "barracks");
-  const refinery = buildings.find(b => b.type === "refinery");
-  const allBarracks = buildings.filter(b => b.type === "barracks");
-  let oreReserve = 0;
+  return {
+    archetype, arch,
+    ai: state.players.ai,
+    workers: playerUnits(state, "ai").filter(u => u.type === "worker"),
+    army: playerUnits(state, "ai").filter(u => UNITS[u.type].role === "combat"),
+    rangers: playerUnits(state, "ai").filter(u => u.type === "ranger"),
+    buildings,
+    cc: buildings.find(b => b.type === "command" && !b.constructing),
+    colonyShip: state.endless ? (playerUnits(state, "ai").find(u => u.type === "colonyship") || null) : null,
+    barracks: buildings.find(b => b.type === "barracks"),
+    refinery: buildings.find(b => b.type === "refinery"),
+    allBarracks: buildings.filter(b => b.type === "barracks"),
+    threats: visibleThreatsNearHome(state),
+    oreReserve: 0, foundryReserve: 0, refineryReserve: 0,
+  };
+}
 
-  // Computed once and reused by the attack block below: enemy combat units the
-  // AI can see pressing its base. Under threat it won't lend a new scout — every
-  // unit is needed at home.
-  const threats = visibleThreatsNearHome(state);
-  updateScout(state, army, rangers, threats.length > 0);   // before worker assignment, so a worker-turned-scout isn't re-tasked to gather
-  assignIdleWorkers(state, workers);
-
+// Odyssey found/survive: no Command Center but a colony ship in hand -> deploy in place. Budget-exempt so even a 1-APM neighbour always seats a base (else it mis-reads as pacified). Skirmish: colonyShip is null -> no-op.
+/** @param {State} state @param {AiContext} ctx */
+function aiFoundOrSurvive(state, ctx) {
+  const { cc, colonyShip } = ctx;
   // ODYSSEY — FOUND / SURVIVE: no Command Center but a colony ship in hand → deploy in
   // place to (re)found the base. Covers the opening AND being razed to a lone ship. It's
   // EXEMPT from the APM budget (like the attack commit) so even a 1-APM neighbour always
@@ -127,19 +150,24 @@ export function runAI(state, dt) {
       if (spot && (spot.x !== colonyShip.x || spot.y !== colonyShip.y)) issueMove([colonyShip], spot.x, spot.y);
     }
   }
+}
 
+// Scout Ranger (Tactical) + EXPANSION: once home ore runs thin, found a base on the richest unclaimed cluster (Odyssey by colony ship, skirmish by a worker). Banks toward it via ctx.oreReserve, pausing only lower-priority infrastructure spends.
+/** @param {State} state @param {AiContext} ctx */
+function aiExpand(state, ctx) {
+  const { ai, cc, workers, rangers, buildings, colonyShip, arch } = ctx;
   // TACTICAL: build one cheap Ranger up front to scout with — far sight,
   // all-terrain, and it doesn't bleed a fighter out of the army the way lending a
   // combat unit does (updateScout prefers it). Standard AI keeps lending a unit,
   // so its economy/opening is untouched. Ore-only and tiny (45), reserve-aware.
   if (state.ai.micro && cc && workers.length > 0 && rangers.length === 0
       && !cc.queue.some(j => j.unitType === "ranger")
-      && canAffordKeeping(ai.resources, UNITS.ranger.cost, oreReserve) && canAct(state)) {
+      && canAffordKeeping(ai.resources, UNITS.ranger.cost, ctx.oreReserve) && canAct(state)) {
     if (queueProduction(state, cc.id, "ranger")) spend(state);
   }
 
   // EXPANSION: once home ore runs thin, found a base on the richest unclaimed cluster.
-  // Runs before every ore-spending block so it can reserve the cost (oreReserve) to
+  // Runs before every ore-spending block so it can reserve the cost (ctx.oreReserve) to
   // bank toward it — pausing only the lower-priority infrastructure spends, never unit
   // production, so the army keeps flowing while the AI saves. At most one in flight.
   const threshold = arch("expandWhenNodesBelow") || 0;   // Odyssey overlay can turn a never-expand Rusher into one that does
@@ -178,8 +206,8 @@ export function runAI(state, dt) {
                && !cc.queue.some(j => j.unitType === "colonyship")) {
       // No ship in flight → bank for and PRODUCE one once home ore runs thin and there's somewhere to settle.
       if (threshold > 0 && homeOreFraction(state, myCCs) < threshold && bestExpansionCluster(state, myCCs)) {
-        oreReserve = colonyCost;                               // pause infrastructure while banking (units keep flowing)
-        if (ai.resources.ore >= colonyCost && canAct(state) && queueProduction(state, cc.id, "colonyship")) { spend(state); oreReserve = 0; }
+        ctx.oreReserve = colonyCost;                               // pause infrastructure while banking (units keep flowing)
+        if (ai.resources.ore >= colonyCost && canAct(state) && queueProduction(state, cc.id, "colonyship")) { spend(state); ctx.oreReserve = 0; }
       }
     }
   } else {
@@ -190,7 +218,7 @@ export function runAI(state, dt) {
       if (homeOreFraction(state, myCCs) < threshold) {
         const anchor = bestExpansionCluster(state, myCCs);
         if (anchor) {
-          oreReserve = ccCost;   // bank toward the CC by pausing infrastructure spend
+          ctx.oreReserve = ccCost;   // bank toward the CC by pausing infrastructure spend
           if (ai.resources.ore >= ccCost) {
             const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // place on the home side of the cluster
             const spot = findPlacement(state, "command",
@@ -198,14 +226,19 @@ export function runAI(state, dt) {
               anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
             if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y)) {
               spend(state);
-              oreReserve = 0;
+              ctx.oreReserve = 0;
             }
           }
         }
       }
     }
   }
+}
 
+// Core base build-out + the tech gates: more workers, a Habitat before the supply cap bites, the first Barracks, the Foundry (Tier-2 gate) and Arsenal (Tier-3 gate), and one Mender (Tactical). Sets ctx.foundryReserve / ctx.refineryReserve for the production phase.
+/** @param {State} state @param {AiContext} ctx */
+function aiBaseAndTech(state, ctx) {
+  const { cc, workers, ai, buildings, barracks, refinery, allBarracks, archetype, arch } = ctx;
   if (cc && workers.length < arch("workerTarget") && cc.queue.length === 0 && canAct(state)) {
     if (queueProduction(state, cc.id, "worker")) spend(state);
   }
@@ -244,7 +277,7 @@ export function runAI(state, dt) {
   const wantsFoundry = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("foundry") && affordableOnSurface(state, t));
   let hasFoundry = buildings.some(b => b.type === "foundry");   // built or still constructing
   if (wantsFoundry && !hasFoundry && barracks && !barracks.constructing && cc && workers.length > 0
-      && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, oreReserve)) {
+      && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, ctx.oreReserve)) {
     const spot = findPlacement(state, "foundry", cc.x - 90, cc.y + 90);
     if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "foundry", spot.x, spot.y)) {
       spend(state);
@@ -257,7 +290,7 @@ export function runAI(state, dt) {
   // counts), so the pause is only the brief banking window — then units resume
   // at full flow while it builds. Zero for a rusher/legacy profile that doesn't
   // want a Foundry, so their army is never gated.
-  const foundryReserve = wantsFoundry && !hasFoundry ? BUILDINGS.foundry.cost.ore : 0;
+  ctx.foundryReserve = wantsFoundry && !hasFoundry ? BUILDINGS.foundry.cost.ore : 0;
   const foundryHandled = !wantsFoundry || hasFoundry;
 
   // ARSENAL — the Tier-3 gate, one step past the Foundry (unlocks the
@@ -269,12 +302,12 @@ export function runAI(state, dt) {
   const wantsArsenal = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("arsenal") && affordableOnSurface(state, t));
   const hasArsenal = buildings.some(b => b.type === "arsenal");
   if (wantsArsenal && !hasArsenal && foundryHandled && barracks && !barracks.constructing && cc && workers.length > 0
-      && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, oreReserve + BARRACKS_BUFFER)) {
+      && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, ctx.oreReserve + BARRACKS_BUFFER)) {
     const spot = findPlacement(state, "arsenal", cc.x - 90, cc.y - 30);
     if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "arsenal", spot.x, spot.y)) spend(state);
   }
   // Refinery reserve, sequenced after the Foundry (Arsenal is unreserved above).
-  const refineryReserve = archetype.wantsRefinery && !refinery && foundryHandled && oreReserve === 0
+  ctx.refineryReserve = archetype.wantsRefinery && !refinery && foundryHandled && ctx.oreReserve === 0
     ? BUILDINGS.refinery.cost.ore : 0;
 
   // TACTICAL: keep exactly one Mender at home for army-sustain — it repairs
@@ -291,12 +324,17 @@ export function runAI(state, dt) {
       || allBarracks.some(b => b.queue.some(j => j.unitType === "mender"));
     const idleRax = allBarracks.find(b => !b.constructing && b.queue.length === 0);
     if (!haveMender && idleRax
-        && canAffordKeeping(ai.resources, UNITS.mender.cost, oreReserve + BARRACKS_BUFFER)
+        && canAffordKeeping(ai.resources, UNITS.mender.cost, ctx.oreReserve + BARRACKS_BUFFER)
         && canAct(state)) {
       if (queueProduction(state, idleRax.id, "mender")) spend(state);
     }
   }
+}
 
+// The shared unit-production cycle across every idle Barracks (Foundry/Refinery reserves held back), Sentinel Turrets along the approach lane, a second Barracks, and the research Refinery plus forward drop-off Refineries out at far seams.
+/** @param {State} state @param {AiContext} ctx */
+function aiProduceAndFortify(state, ctx) {
+  const { allBarracks, ai, archetype, cc, barracks, workers, buildings } = ctx;
   // One shared production cycle across every completed Barracks: consecutive
   // barracks pick up consecutive mix entries, so two of them drain the same
   // sequence twice as fast rather than each running its own. Map insertion
@@ -309,7 +347,7 @@ export function runAI(state, dt) {
     if (b.constructing || b.queue.length > 0) continue;
     if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
     const nextType = pickNextUnitType(state, archetype);
-    if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, foundryReserve + refineryReserve)) continue;   // hold back ore while banking the Foundry / Refinery
+    if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, ctx.foundryReserve + ctx.refineryReserve)) continue;   // hold back ore while banking the Foundry / Refinery
     if (queueProduction(state, b.id, nextType)) {
       spend(state);
       state.ai.unitsBuilt = (state.ai.unitsBuilt || 0) + 1;
@@ -339,7 +377,7 @@ export function runAI(state, dt) {
   // ones, so it never founds a third while the second is still going up).
   if (barracks && !barracks.constructing && cc && workers.length > 0
       && allBarracks.length < (archetype.maxBarracks || 1)
-      && canAffordKeeping(ai.resources, BUILDINGS.barracks.cost, oreReserve + BARRACKS_BUFFER)) {
+      && canAffordKeeping(ai.resources, BUILDINGS.barracks.cost, ctx.oreReserve + BARRACKS_BUFFER)) {
     const spot = findPlacement(state, "barracks", cc.x + 90, cc.y + 90);
     if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y)) spend(state);
   }
@@ -364,7 +402,7 @@ export function runAI(state, dt) {
   if ((buildResearchRefinery || buildForwardDropoff) && barracks && !barracks.constructing && cc && workers.length > 0) {
     // The research build banks behind an expansion; a forward drop-off spends
     // only genuine surplus (keeps the expansion reserve AND a mix buffer back).
-    const keep = buildForwardDropoff ? oreReserve + BARRACKS_BUFFER : oreReserve;
+    const keep = buildForwardDropoff ? ctx.oreReserve + BARRACKS_BUFFER : ctx.oreReserve;
     if (canAffordKeeping(ai.resources, BUILDINGS.refinery.cost, keep)) {
       let spot;
       if (buildForwardDropoff) {
@@ -378,7 +416,12 @@ export function runAI(state, dt) {
       if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "refinery", spot.x, spot.y)) spend(state);
     }
   }
+}
 
+// Research along this archetype's chosen doctrine only, lowest tier first, one purchase per think cycle.
+/** @param {State} state @param {AiContext} ctx */
+function aiResearch(state, ctx) {
+  const { refinery, ai, archetype } = ctx;
   // Research along this archetype's chosen doctrine only (rusher/balanced go
   // Assault, economist Bulwark), lowest tier first — so it commits to one path
   // and deepens it (T1 then T2) instead of dabbling in both. The doctrine lock
@@ -391,7 +434,12 @@ export function runAI(state, dt) {
       if (researchUpgrade(state, refinery.id, u.id)) { spend(state); break; }
     }
   }
+}
 
+// DEFENSE first: if enemy combat is seen pressing a building, recall the army (bar the scout) to meet it. Otherwise OFFENSE: retreat a ground-down wave, then muster and commit the next one (skirmish armyAttackSize, or an Odyssey hostility-paced probe).
+/** @param {State} state @param {AiContext} ctx */
+function aiMilitary(state, ctx) {
+  const { army, threats } = ctx;
   // DEFENSE first: if the AI can SEE enemy combat units pressing one of its
   // buildings, the whole army (bar the scout) drops what it's doing and rushes
   // that spot — including units already committed forward. This is the recall
@@ -422,6 +470,17 @@ export function runAI(state, dt) {
       }
     }
   } else {
+    aiOffense(state, ctx, nonScout);
+  }
+}
+
+// OFFENSE: retreat a ground-down, non-desperation wave that's still facing live opposition, then
+// muster and commit the next one. Two regimes split on state.diplomacy: SKIRMISH musters
+// armyAttackSize (throwing everything on the desperation timeout — the resolves-to-a-winner path);
+// ODYSSEY paces escalating probes by hostility. Always keeps a home guard unless it's a timeout commit.
+/** @param {State} state @param {AiContext} ctx @param {Unit[]} nonScout */
+function aiOffense(state, ctx, nonScout) {
+  const { buildings, archetype } = ctx;
     // OFFENSE. "Home" army is whatever hasn't already been sent off to attack —
     // a freshly produced or still-idle unit has order null/'move' (its walk to
     // the rally point), while a committed one is mid attack-move (see combat.js).
@@ -512,15 +571,6 @@ export function runAI(state, dt) {
       state.ai.attackForce = attackers.length + strike.length;
       state.ai.attackDesperate = desperate;
     }
-  }
-
-  // TACTICAL micro (opt-in via aiMicro): concentrate the army's fire on one
-  // target so kills land faster and incoming damage drops sooner — a skilled
-  // player's focus-fire, layered on top of the wave logic above without touching
-  // it. Deliberately a no-op unless real enemy combat is in sight, so razing an
-  // undefended base (every resolve test) is unchanged and the resolve guarantee
-  // holds regardless of the setting.
-  if (state.ai.micro) applyFocusFire(state, army);
 }
 
 const FOCUS_RANGE = 340;   // only army units this close to the chosen target concentrate on it

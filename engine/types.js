@@ -227,6 +227,31 @@
  * @property {*} [anvils]            per-tick Aegis anvil index (engine/sim.js collectAnvils)
  */
 
+// ---- AI ------------------------------------------------------------------------
+
+/**
+ * The per-think-cycle snapshot the AI's decision phases share (engine/ai.js). Built once by
+ * aiContext(); the three *Reserve fields are running ore holdbacks one phase passes to the next
+ * (an expansion banks ore that the infrastructure phases then leave alone).
+ * @typedef {Object} AiContext
+ * @property {Archetype} archetype
+ * @property {(field: string) => *} arch   reads the archetype field, letting its Odyssey overlay win
+ * @property {Player} ai
+ * @property {Unit[]} workers
+ * @property {Unit[]} army
+ * @property {Unit[]} rangers
+ * @property {Building[]} buildings
+ * @property {Building|undefined} cc
+ * @property {Unit|null} colonyShip
+ * @property {Building|undefined} barracks
+ * @property {Building|undefined} refinery
+ * @property {Building[]} allBarracks
+ * @property {Object[]} threats
+ * @property {number} oreReserve
+ * @property {number} foundryReserve
+ * @property {number} refineryReserve
+ */
+
 // ---- Odyssey galaxy -------------------------------------------------------------
 
 /**
