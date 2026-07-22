@@ -22,6 +22,7 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } 
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, jumpCost, jumpManifest, jumpCapacity, spaceportTier, upgradeSpaceport,
          SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, cargoManifest, freightCapacity,
+         loadFreighter, unloadFreighter, freightUsed, freightRoom,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip } from "./engine/colony.js";
@@ -354,6 +355,14 @@ function renderSelectionPanel() {
         if (!sp) return "";
         const m = jumpManifest(state, sp);
         return `${spaceportTier(sp)}:${m.used}:${m.leftBehind}:${m.staged}`;
+      })()
+    // Rebuild the freighter cargo panel when its hold or the loadable stockpile changes, so the
+    // Load/Unload buttons and the used/cap readout stay live as goods move in and out of the hold.
+    + "|" + (() => {
+        const f = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
+        if (!f) return "";
+        const res = state.players.player.resources;
+        return freightUsed(f) + ":" + JSON.stringify(f.freight) + ":" + tradeables(state).map(c => Math.floor(res[c] || 0)).join(",");
       })();
 
   if (signature !== lastPanelSignature) {
@@ -474,6 +483,80 @@ function renderMarket(state) {
     });
     row.appendChild(buyBtn);
 
+    panelEl.appendChild(row);
+  }
+}
+
+// Freighter cargo hold (Odyssey): load specific goods off THIS world's stockpile into the selected
+// freighter, or unload them back — the manual control over what each ship carries on a jump
+// (engine/galaxy.js load/unloadFreighter). A hold left empty still auto-fills at jump time, so this
+// is optional fine-grained control (ship cheap spice to an industrial world, hold ore back), not a
+// chore. Reuses the market row styling.
+function renderFreight(state, f) {
+  const cap = UNITS[f.type].cargoHold, used = freightUsed(f), room = freightRoom(f);
+  const res = state.players.player.resources;
+
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = `🚚 ${UNITS[f.type].name} — hold ${Math.round(used)}/${cap}`;
+  panelEl.appendChild(head);
+
+  // Bulk shortcuts: fill the remaining room most-valuable-first, or empty the whole hold to stock.
+  const bulk = document.createElement("div");
+  bulk.className = "market-row";
+  const autoBtn = document.createElement("button");
+  autoBtn.className = "market-btn" + (room <= 0 ? " disabled" : "");
+  autoBtn.textContent = "Auto-load ▲";
+  autoBtn.title = "Fill the remaining hold with the most valuable goods on this world";
+  autoBtn.addEventListener("click", () => {
+    const manifest = cargoManifest(state, freightRoom(f));
+    let any = false;
+    for (const com in manifest) if (loadFreighter(state, f.id, com, manifest[com]) > 0) any = true;
+    if (any) renderHUD(); else sound.playProductionBlocked();
+  });
+  bulk.appendChild(autoBtn);
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "market-btn" + (used <= 0 ? " disabled" : "");
+  clearBtn.textContent = "Unload all ▼";
+  clearBtn.title = "Unload the whole hold back onto this world's stockpile";
+  clearBtn.addEventListener("click", () => {
+    let any = false;
+    for (const com of Object.keys(f.freight)) if (unloadFreighter(state, f.id, com, f.freight[com]) > 0) any = true;
+    if (any) renderHUD(); else sound.playProductionBlocked();
+  });
+  bulk.appendChild(clearBtn);
+  panelEl.appendChild(bulk);
+
+  // One row per commodity that's either aboard already or sitting in this world's stockpile: load
+  // all of it that fits, or unload all that's aboard, in one tap each.
+  const coms = [...new Set([...Object.keys(f.freight), ...tradeables(state).filter(c => (res[c] || 0) >= 1)])];
+  for (const com of coms) {
+    const meta = COM[com];
+    const aboard = Math.floor(f.freight[com] || 0), stock = Math.floor(res[com] || 0);
+    const row = document.createElement("div");
+    row.className = "market-row";
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} · ${aboard} aboard`;
+    row.appendChild(label);
+
+    const loadBtn = document.createElement("button");
+    loadBtn.className = "market-btn" + (stock < 1 || room <= 0 ? " disabled" : "");
+    loadBtn.textContent = "Load";
+    loadBtn.title = `Load ${meta?.name || com} onto the ${UNITS[f.type].name} (as much as fits)`;
+    loadBtn.addEventListener("click", () => {
+      if (loadFreighter(state, f.id, com, freightRoom(f)) > 0) renderHUD(); else sound.playProductionBlocked();
+    });
+    row.appendChild(loadBtn);
+
+    const unBtn = document.createElement("button");
+    unBtn.className = "market-btn" + (aboard < 1 ? " disabled" : "");
+    unBtn.textContent = "Unload";
+    unBtn.title = `Unload ${meta?.name || com} back onto this world`;
+    unBtn.addEventListener("click", () => {
+      if (unloadFreighter(state, f.id, com, f.freight[com] || 0) > 0) renderHUD(); else sound.playProductionBlocked();
+    });
+    row.appendChild(unBtn);
     panelEl.appendChild(row);
   }
 }
@@ -865,6 +948,10 @@ function rebuildSelectionPanel(sel) {
         lockTip: blocked ? "Blocked here — move to open, buildable ground clear of buildings, nodes and rough terrain" : null,
         tip: "Settle: the colony ship becomes a Command Center on this spot (it can't move again). Colonists disembark as workers." }));
   }
+
+  // Freighter (Odyssey cargo ship): a load/unload cargo panel for the first one selected.
+  const freighter = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
+  if (freighter) renderFreight(state, freighter);
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {

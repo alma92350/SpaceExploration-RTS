@@ -1384,8 +1384,10 @@ function drawFreighter(ctx, u, def, color) {
   ctx.fill();
   ctx.stroke();
 
-  // Cargo containers stacked down the hull.
-  ctx.fillStyle = shade(color, -30);
+  // Cargo containers stacked down the hull — gold when the freighter is actually laden (a player
+  // hand-loaded hold, engine/galaxy.js freight), dim when empty, so a loaded ship reads at a glance.
+  const laden = !!(u.freight && Object.keys(u.freight).length);
+  ctx.fillStyle = laden ? "#e8b23a" : shade(color, -30);
   for (const fx of [0.35, -0.05, -0.45]) {
     pathOriented(ctx, cx, cy, angle, [
       [L * fx + r * 0.18, W * 0.72], [L * fx + r * 0.18, -W * 0.72],
