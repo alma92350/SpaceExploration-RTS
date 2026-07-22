@@ -175,12 +175,21 @@ export function sweepColonies(galaxy, dt = 0) {
     const buildings = playerBuildingCount(state);
     galaxy.credits += incomeBuildingCount(state) * COLONY_INCOME_PER_BUILDING * dt;   // capped, turret-excluded passive income
     const rec = galaxy.colonyNotes.get(id) || { hadColony: false, colonyLost: false };
-    if (buildings > 0) rec.hadColony = true;
+    // A standing colony resets the lost latch, so retaking and rebuilding a world re-arms
+    // its alerts — without this, a world lost once was muted forever (a second razing never
+    // re-announced, and the rebuilt colony's under-attack pings stayed suppressed).
+    if (buildings > 0) { rec.hadColony = true; rec.colonyLost = false; }
     if (rec.hadColony && buildings === 0 && !rec.colonyLost) {
       rec.colonyLost = true;
       out.push({ type: "lost", planetId: id });
-    } else if (!rec.colonyLost && state.events.some(e => e.type === "entityKilled" && e.owner === "player")) {
-      out.push({ type: "attacked", planetId: id });
+    } else if (!rec.colonyLost) {
+      // A background world's diplomacy keeps drifting (diplomacy.js CREEP_RATE), so a
+      // neighbour eventually declares war — but its neighbourHostile event has no other
+      // consumer here and used to be silently drained, so the FIRST warning was the colony
+      // already dying. Surface the declaration (once — diplomacy latches warAnnounced), else
+      // the ongoing raid (fresh player losses this tick).
+      if (state.events.some(e => e.type === "neighbourHostile")) out.push({ type: "hostile", planetId: id });
+      else if (state.events.some(e => e.type === "entityKilled" && e.owner === "player")) out.push({ type: "attacked", planetId: id });
     }
     galaxy.colonyNotes.set(id, rec);
     state.events.length = 0;   // drain: a background colony's events have no other consumer
@@ -324,6 +333,10 @@ export function checkDomination(galaxy) {
     galaxy.pacifyNotes.push(id);
   }
   if (galaxy.pacified.size >= DOMINATION_TARGET) reachMilestone(galaxy, "domination");
+  // The maximal achievement in a play-forever sandbox — pacifying EVERY world — gets its
+  // own grander milestone, so the conquest-minded player who pushes hours past the 4-world
+  // target isn't met with silence (and a per-conquest toast reading "Conquered 11/4").
+  if (galaxy.pacified.size >= galaxy.worlds.length) reachMilestone(galaxy, "domination:all");
 }
 
 // A pure snapshot of the galaxy for the starmap: per-world status (your active

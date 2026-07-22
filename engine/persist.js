@@ -254,6 +254,11 @@ export function deserializeGalaxy(input) {
   const known = new Set(ODYSSEY_WORLDS);
   const worlds = save.worlds.filter(id => known.has(id));
   if (!worlds.length) throw new Error("galaxy save has no recognised worlds");
+  // Append any roster worlds the save predates (the roster is append-only, so this is
+  // index-stable): a pre-Phase-4 save froze `worlds` at nine, permanently hiding the newer
+  // worlds from the starmap AND — because the BG scheduler keys on worlds.indexOf(id) — any
+  // planet missing from the roster would get index -1 and never tick again.
+  for (const id of ODYSSEY_WORLDS) if (!worlds.includes(id)) worlds.push(id);
 
   const galaxy = {
     seed: save.seed, credits: num(save.credits, 0), activeId: save.activeId, worlds,

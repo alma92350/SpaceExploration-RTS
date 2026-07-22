@@ -140,6 +140,21 @@ export function surrenderOdyssey() {
   surrenderGalaxy(game.galaxy);
 }
 
+// Per-world UI bookkeeping that must NOT carry across a world change (a fresh boot or a
+// jump): the Gate-progress high-water mark, the remembered under-attack hit + banner, and
+// the supply-warning window. Shared by bootState and focusActivePlanet so the next field
+// added can't drift between them — the bug this fixes was focusActivePlanet resetting none
+// of it, so after a jump the old world's Gate% swallowed the new world's toasts and the
+// under-attack click panned to stale coordinates on the wrong map.
+function resetWorldUiBookkeeping() {
+  gateMilestone = 0;
+  lastAttackAt = null;
+  lastUnderAttackAt = -Infinity;
+  game.supplyBlockedUntil = 0;
+  underAttackEl.classList.add("hidden");
+  clearTimeout(underAttackTimer);
+}
+
 // Repoint the view/input at the galaxy's active planet without restarting the
 // loop (used after a jump). Mirrors bootState's per-state wiring, minus creating
 // the loop and minus touching game.galaxy.
@@ -157,6 +172,7 @@ function focusActivePlanet() {
   resetEffects();
   resetFacing();
   resetPanelSignature();
+  resetWorldUiBookkeeping();   // don't carry the previous world's Gate%, under-attack hit, or supply window
   showSeedChip(state.seed);
   showFactionChip(state);
   renderHUD();
@@ -213,10 +229,8 @@ export function bootState(newState, { intro }) {
   resetFacing();
   announced = false;
   lastHud = 0;
-  gateMilestone = 0;
   resetPanelSignature();
-  lastUnderAttackAt = -Infinity;
-  game.supplyBlockedUntil = 0;
+  resetWorldUiBookkeeping();
   let lastFrame = performance.now();
 
   loop = createLoop({
@@ -286,6 +300,9 @@ function notifyColony(n) {
       showGalaxyToast(`Build a Spaceport on your current world to jump to ${name}.`, "warn");
   };
   if (n.type === "lost") { showGalaxyToast(`⚠ Your colony on ${name} has fallen — click to retake ▸`, "bad", jumpThere); return; }
+  // A background world's neighbour has just declared war (fires once — diplomacy latches it).
+  // Surface it so the first warning isn't the colony already dying; clicking jumps to reinforce.
+  if (n.type === "hostile") { showGalaxyToast(`⚔ The neighbour on ${name} has turned hostile — click to reinforce ▸`, "warn", jumpThere); return; }
   const now = performance.now();
   const last = lastColonyNote[n.planetId];
   if (last !== undefined && now - last < COLONY_NOTE_THROTTLE_MS) return;   // undefined ⇒ first alert always fires
@@ -299,15 +316,17 @@ function notifyColony(n) {
 // Antimatter Gate coming online and conquering the galaxy — get a bigger show.
 function celebrateMilestone(id) {
   const [kind, arg] = id.split(":");
+  const dominAll = kind === "domination" && arg === "all";   // every world pacified — the maximal feat
   const grand = kind === "gate" || kind === "domination";
   const msg =
       kind === "world"      ? (arg === "1" ? "★ First colony founded — your Odyssey begins!"
                                            : `★ Colony #${arg} established — your reach grows.`)
     : kind === "capital"    ? "★ Capital fortified — your anchor world stands strong."
     : kind === "gate"       ? "★ Antimatter Gate online — a triumph of industry!"
+    : dominAll              ? "★ Every world pacified — the galaxy is yours!"
     : kind === "domination" ? `★ ${DOMINATION_TARGET} worlds conquered — the galaxy trembles before your fleet!`
     :                         "★ Milestone reached!";
-  addFireworks(grand ? 8 : 5);
+  addFireworks(dominAll ? 12 : grand ? 8 : 5);
   showGalaxyToast(msg, "good");
   sound.playBuildingComplete();
 }
