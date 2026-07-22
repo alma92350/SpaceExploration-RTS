@@ -105,6 +105,12 @@ function cleanEntity(e, def, map) {
   } else if (e.freight !== undefined) {
     delete e.freight;
   }
+  // A Plasma Rig's dig state is untrusted too: clamp digProgress into a sane band (a tampered huge
+  // value would otherwise drive the dig loop to mint resources) and floor the dig counter.
+  if (def.rig) {
+    e.digProgress = Math.max(0, Math.min(num(e.digProgress, 0), 2));
+    e.digCount = Math.max(0, Math.floor(num(e.digCount, 0)));
+  }
   return e;
 }
 

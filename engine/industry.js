@@ -71,6 +71,9 @@ export function powerDraw(state, owner) {
     // with the factories for Reactor Power (engine/wonder.js) — making the finale a
     // real "feed the factories vs charge the Gate" call, and Fusion Containment worth it.
     else if (def.wonder && (b.charge || 0) < 1) draw += def.powerDraw || 0;
+    // A Plasma Rig's arc is a heavy draw too (engine/rig.js) — so it competes with the factories
+    // for Power and its digs slow when the grid is short. A paused rig frees its reserved Power.
+    else if (def.rig && !b.paused) draw += def.rig.power || 0;
   }
   return draw;
 }

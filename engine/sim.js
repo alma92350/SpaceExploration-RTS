@@ -14,6 +14,7 @@ import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { updateProduction } from "./industry.js";
+import { updatePlasmaRig } from "./rig.js";
 import { updateResearch } from "./techtree.js";
 import { updateWonder } from "./wonder.js";
 import { applySeparation } from "./separation.js";
@@ -54,6 +55,7 @@ export function tick(state, dt) {
     updateBuildingConstruction(state, building, dt);
     updateProductionQueue(state, building, dt);
     updateProduction(state, building, dt);   // Odyssey factories refine raw hauls into goods (no-op without a recipe)
+    updatePlasmaRig(state, building, dt);    // Odyssey Plasma Rig digs raw materials from the core (no-op without a rig def)
     updateResearch(state, building, dt);     // Odyssey Datacenter develops the tech tree (no-op for any other building)
     updateWonder(state, building, dt);       // Odyssey Antimatter Gate charges toward the galaxy win (no-op off a wonder)
     updateBuildingCombat(state, building, dt);

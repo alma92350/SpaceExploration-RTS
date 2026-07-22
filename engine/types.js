@@ -108,6 +108,12 @@
  * @property {{x:number, y:number}} rally
  * @property {number} [tier]          Spaceport upgrade tier (engine/galaxy.js)
  * @property {Array<{techId:string, progress:number}>} [researchQueue]  Datacenter (engine/techtree.js)
+ * @property {boolean} [paused]       player-paused factory / rig (frees its Power)
+ * @property {number} [charge]        wonder charge 0..1 (engine/wonder.js)
+ * @property {number} [digProgress]   Plasma Rig dig-cycle progress (engine/rig.js)
+ * @property {number} [digCount]      Plasma Rig completed digs (drives the deterministic yield roll)
+ * @property {string} [lastTier]      Plasma Rig last strike tier (HUD)
+ * @property {number} [lastYield]     Plasma Rig last strike amount (HUD)
  */
 
 /**

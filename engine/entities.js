@@ -170,6 +170,21 @@ export const BUILDINGS = {
     requires: ["antimatterforge", "aicores"],
     odysseyOnly: true,
   },
+  plasmarig: {
+    id: "plasmarig", name: "Plasma Rig", hp: 560, radius: 18,
+    // Expensive and high-tech: MANUFACTURED materials to build (machinery + electronics) and an
+    // installed AI to pilot it (ai cores), on top of a big ore frame.
+    cost: { ore: 500, machinery: 8, electronics: 5, ai: 3 },
+    buildTime: 46, sight: 130,
+    requires: ["aifoundry", "reactor"],   // needs the AI (pilot) and a Reactor (the plasma/power grid)
+    odysseyOnly: true,
+    // Deep-core extraction: an UNLIMITED source of one raw commodity (its "vein", fixed by where
+    // you place it), dug in cycles at a PROBABILISTIC yield tier (low → overwhelming) whose odds
+    // rise with the spot's + planet's richness. Draws heavy Power (the plasma arc — taxes the grid
+    // like a factory, so digs slow when power is short) and burns radioactives per dig ("nuclear to
+    // exploit"). See engine/rig.js.
+    rig: { power: 16, nuclear: 1.4, digTime: 6, base: 6 },
+  },
   stardock: {
     id: "stardock", name: "Star Dock", hp: 600, radius: 22,
     cost: { ore: 350 }, buildTime: 40, sight: 160,
