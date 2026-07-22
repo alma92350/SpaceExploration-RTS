@@ -224,10 +224,19 @@ export function stepGalaxy(galaxy, dt) {
     if (id === galaxy.activeId || !state.background) continue;
     if (t % BG_STEP === galaxy.worlds.indexOf(id) % BG_STEP) tick(state, dtBg);
   }
-  checkDomination(galaxy);      // conquest progress: pacified worlds (per-world toast) + a milestone at the target
-  checkGalaxyProgress(galaxy);  // milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
-  checkGalaxyRescue(galaxy);    // NEVER auto-defeat: a total wipeout sends a relief colony ship so life goes on
+  // These galaxy-wide scans (conquest progress, milestones, no-foothold relief) all change on a
+  // minutes timescale, so running them every frame (20 Hz) is wasted work that grows with the
+  // colony count. Throttle to ~1/sec on the same deterministic integer schedule the BG round-
+  // robin uses — a milestone/pacification/rescue firing up to a second later is imperceptible,
+  // and RELIEF_COOLDOWN (20 s) dwarfs it. Runs on tick 1 too, so a freshly-stepped galaxy is
+  // checked immediately. Pure integer arithmetic on galaxy.tick — no wall-clock, deterministic.
+  if (t === 1 || t % PROGRESS_CHECK_EVERY === 0) {
+    checkDomination(galaxy);      // conquest progress: pacified worlds (per-world toast) + a milestone at the target
+    checkGalaxyProgress(galaxy);  // milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
+    checkGalaxyRescue(galaxy);    // NEVER auto-defeat: a total wipeout sends a relief colony ship so life goes on
+  }
 }
+const PROGRESS_CHECK_EVERY = 20;   // galaxy-wide scans run ~once per second (20 Hz sim), not every frame
 
 // The Odyssey NEVER ends in defeat — as long as you haven't surrendered, life goes on
 // (surrenderGalaxy is the only terminal state). So there's no galaxy-wide loss; instead, if you

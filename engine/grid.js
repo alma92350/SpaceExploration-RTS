@@ -21,22 +21,28 @@
 "use strict";
 
 const CELL = 96;
+// Integer cell key instead of a "cx,cy" string: the old key allocated + hashed a string for
+// every unit inserted AND every cell queried, every tick — pure per-tick garbage on the hot
+// path. Packing (cx,cy) into one int is a plain arithmetic Map key. KEY_PAD offsets the few
+// negative cells the query pad reaches; KEY_STRIDE exceeds the max cells-per-axis of any map
+// (Gigantic ≈ 67), so the packing is collision-free. This changes NOTHING observable: cells
+// bucket the same units in the same order, and queryNeighbors visits cells in the same fixed
+// loop, so candidate lists are byte-for-byte identical — the determinism test stays green.
+const KEY_PAD = 16;      // headroom for the most negative cell any query pad reaches (radius up to ~1400px)
+const KEY_STRIDE = 4096;  // > max cells per axis (a huge map is ~67), so (cx+PAD) and (cy+PAD) never overlap
+function cellKey(cx, cy) { return (cx + KEY_PAD) * KEY_STRIDE + (cy + KEY_PAD); }
 
 export function buildUnitGrid(state) {
   const buckets = new Map();
   let i = 0;
   for (const u of state.units.values()) {
     u._gi = i++;   // stable Map-order index: lets separation process each pair once, deterministically
-    const k = keyOf(u.x, u.y);
+    const k = cellKey(Math.floor(u.x / CELL), Math.floor(u.y / CELL));
     let arr = buckets.get(k);
     if (!arr) buckets.set(k, (arr = []));
     arr.push(u);
   }
   return { cell: CELL, buckets };
-}
-
-function keyOf(x, y) {
-  return Math.floor(x / CELL) + "," + Math.floor(y / CELL);
 }
 
 // Candidate units in every cell overlapping the (radius, +1 ring of padding)
@@ -52,7 +58,7 @@ export function queryNeighbors(grid, x, y, radius) {
   const out = [];
   for (let cy = mincy; cy <= maxcy; cy++) {
     for (let cx = mincx; cx <= maxcx; cx++) {
-      const arr = grid.buckets.get(cx + "," + cy);
+      const arr = grid.buckets.get(cellKey(cx, cy));
       if (arr) for (const u of arr) out.push(u);
     }
   }

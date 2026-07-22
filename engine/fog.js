@@ -78,12 +78,15 @@ export function nearestUnexploredPoint(fog, fromX, fromY) {
 function reveal(fog, x, y, sight) {
   const { cx, cy } = cellOf(fog, x, y);
   const reach = Math.ceil(sight / FOG_CELL_SIZE);
-  for (let gy = Math.max(0, cy - reach); gy <= Math.min(fog.rows - 1, cy + reach); gy++) {
-    for (let gx = Math.max(0, cx - reach); gx <= Math.min(fog.cols - 1, cx + reach); gx++) {
-      const cellCx = gx * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
-      const cellCy = gy * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
-      if (Math.hypot(cellCx - x, cellCy - y) > sight) continue;
-      const idx = gy * fog.cols + gx;
+  const sightSq = sight * sight;   // compare squared distances — no per-cell sqrt (Math.hypot)
+  const gyMax = Math.min(fog.rows - 1, cy + reach), gxMax = Math.min(fog.cols - 1, cx + reach);
+  for (let gy = Math.max(0, cy - reach); gy <= gyMax; gy++) {
+    const row = gy * fog.cols;                                // hoisted out of the inner loop
+    const dy = gy * FOG_CELL_SIZE + FOG_CELL_SIZE / 2 - y;
+    for (let gx = Math.max(0, cx - reach); gx <= gxMax; gx++) {
+      const dx = gx * FOG_CELL_SIZE + FOG_CELL_SIZE / 2 - x;
+      if (dx * dx + dy * dy > sightSq) continue;
+      const idx = row + gx;
       fog.visible[idx] = 1;
       fog.explored[idx] = 1;
     }
