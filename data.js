@@ -83,6 +83,16 @@ export const TIERS = ["Raw", "Refined", "Component", "Finished", "Luxury", "Stra
 /* ---------- Production recipes ----------
    out: commodity produced, qty: per-batch yield, in: input map, req: tech id
    kind: "refine" | "make" (for grouping); boosted differently by modules
+
+   LIVE vs LEGACY: the Odyssey RTS wires factories to a subset of these by id
+   (engine/entities.js BUILDINGS[].recipe → smelt/alloy/chipfab/machine/antifab/
+   plasmafab/aifab, plus reactor/gasgen for power). The rest are carried-over
+   turn-based data and are UNREACHABLE in the RTS: their `req` tokens (gasfuel,
+   biotech, weapontech, dronetech) are NOT nodes in engine/techtree.js TECHS, no
+   building runs them, and engine/industry.js never even reads `recipe.req`. Their
+   outputs (chemicals, goods, weapons, drones, medicine, luxury) have no consumer
+   or market listing. Treat anything not on the wired list above as legacy — do NOT
+   assume `req` gates a new factory (it won't) without adding the tech + wiring.
 */
 export const RECIPES = [
   { id: "smelt",   out: "metals",      qty: 2, in: { ore: 2, energy: 2 },                         kind: "refine" },
@@ -108,11 +118,20 @@ export const RECIPES = [
   { id: "plasmafab", out: "plasmatorp", qty: 1, in: { antimatter: 1, alloys: 2, radioactives: 2, energy: 2 }, req: "antimatter", kind: "make" },
 ];
 
-/* ---------- Planets (10) ----------
+/* ---------- Planets ----------
    deposits: { commodityId: yieldMult }  — what can be extracted HERE
    salvage / bounty: special capture actions available here
    enforce: 0..1 contraband enforcement strength
    faction: controlling faction id
+
+   LIVE vs LEGACY: only the ids in engine/aiArchetypes.js ODYSSEY_WORLDS (the nine
+   PLANET_ARCHETYPE worlds + the two ODYSSEY_EXTRA_ARCHETYPE worlds) are ever
+   reachable — the skirmish map picker and the Odyssey starmap iterate that roster.
+   Every other planet below (and the flags that only they carry: `colonizable`,
+   `hidden`, `enforce`, `illegalAt`, `bounty`, and the "Deep-Space Survey" comment)
+   is carried-over turn-based data with NO live system behind it in the RTS. Kept for
+   reference / possible future promotion (a "hidden world" could become a premium
+   late-game jump destination), but do not read these flags as active mechanics.
 */
 export const PLANETS = [
   { id: "terra", name: "Terra Nova", tag: "Capital • Garden World", color: "#3b82f6", x: 0,
