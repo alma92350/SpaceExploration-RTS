@@ -117,6 +117,16 @@ test("loadFreighter refuses a non-freighter and an unknown commodity", () => {
   assert.equal(from.players.player.resources.alloys, 100, "…and nothing left the stockpile");
 });
 
+test("strategic goods (antimatter / AI cores / plasma torpedoes) are loadable, though no market buys them", () => {
+  const { from, ships } = readyToJump(34, ["hauler"]);   // 250 hold
+  Object.assign(from.players.player.resources, { antimatter: 30, ai: 12, plasmatorp: 8 });
+  assert.equal(loadFreighter(from, ships[0].id, "antimatter", 30), 30, "antimatter loads (its only sinks — Gate/Leviathan — are on other worlds)");
+  assert.equal(loadFreighter(from, ships[0].id, "ai", 12), 12, "AI cores load");
+  assert.equal(loadFreighter(from, ships[0].id, "plasmatorp", 8), 8, "plasma torpedoes load");
+  assert.equal(from.players.player.resources.antimatter, 0, "…and left the origin stockpile");
+  assert.equal(freightUsed(ships[0]), 50, "all 50 units are aboard");
+});
+
 test("a hand-loaded freighter ships EXACTLY what the player put aboard (not the auto-pick)", () => {
   const { g, from, destId, ships } = readyToJump(32, ["hauler"]);   // 250 hold
   Object.assign(from.players.player.resources, { spice: 100, machinery: 100 });

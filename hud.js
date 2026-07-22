@@ -362,7 +362,7 @@ function renderSelectionPanel() {
         const f = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
         if (!f) return "";
         const res = state.players.player.resources;
-        return freightUsed(f) + ":" + JSON.stringify(f.freight) + ":" + tradeables(state).map(c => Math.floor(res[c] || 0)).join(",");
+        return freightUsed(f) + ":" + JSON.stringify(f.freight) + ":" + loadableComs(state, f).map(c => Math.floor(res[c] || 0)).join(",");
       })();
 
   if (signature !== lastPanelSignature) {
@@ -487,6 +487,19 @@ function renderMarket(state) {
   }
 }
 
+// Commodities a freighter panel offers to load: anything already aboard, or anything the player
+// holds in stock on this world (excluding `energy` — that's Power, a utility, not freight). This
+// deliberately goes beyond the market's tradeables, so the STRATEGIC goods (antimatter, AI cores,
+// plasma torpedoes) — which no market buys — can still be loaded and shipped to the world charging
+// your Antimatter Gate or building Leviathans at a Stardock, their only real sinks.
+function loadableComs(state, f) {
+  const res = state.players.player.resources;
+  return [...new Set([
+    ...Object.keys(f.freight || {}),
+    ...Object.keys(COM).filter(c => c !== "energy" && Math.floor(res[c] || 0) >= 1),
+  ])];
+}
+
 // Freighter cargo hold (Odyssey): load specific goods off THIS world's stockpile into the selected
 // freighter, or unload them back — the manual control over what each ship carries on a jump
 // (engine/galaxy.js load/unloadFreighter). A hold left empty still auto-fills at jump time, so this
@@ -529,7 +542,7 @@ function renderFreight(state, f) {
 
   // One row per commodity that's either aboard already or sitting in this world's stockpile: load
   // all of it that fits, or unload all that's aboard, in one tap each.
-  const coms = [...new Set([...Object.keys(f.freight), ...tradeables(state).filter(c => (res[c] || 0) >= 1)])];
+  const coms = loadableComs(state, f);
   for (const com of coms) {
     const meta = COM[com];
     const aboard = Math.floor(f.freight[com] || 0), stock = Math.floor(res[com] || 0);
