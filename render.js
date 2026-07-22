@@ -32,6 +32,39 @@ const DETAIL = "#dce6ff";
 // point the way the unit is actually moving.
 const facing = new Map();
 
+// --- render interpolation ---------------------------------------------------
+// The sim ticks at a fixed 20 Hz but the screen paints at 60–144 Hz, so drawing raw sim
+// positions makes every unit teleport in 50 ms steps. boot.js snapshots each unit's position
+// BEFORE each tick (snapshotPositions), the loop hands render the leftover fraction (alpha),
+// and we draw at prev + (cur - prev) * alpha — pure render-side smoothing that never touches
+// the deterministic sim (drawFrame's "never mutates" contract holds). A unit that JUMPED this
+// step (relief spawn, world relocation) moves too far to slide, so we snap it instead.
+const prevPos = new Map();     // unit id -> { x, y } at the start of the current tick
+const TELEPORT_SQ = 60 * 60;   // a one-tick move past this is a teleport, not motion — don't lerp it
+const _lerpPt = { x: 0, y: 0 };   // reused scratch so per-frame interpolation allocates nothing
+
+// Record every live unit's current position as the interpolation baseline. Called by boot.js
+// immediately before each tick(); reuses stored objects, so it allocates only for new units.
+export function snapshotPositions(state) {
+  for (const u of state.units.values()) {
+    const p = prevPos.get(u.id);
+    if (p) { p.x = u.x; p.y = u.y; } else prevPos.set(u.id, { x: u.x, y: u.y });
+  }
+}
+
+// The position to DRAW unit `u` at, given the frame's interpolation alpha (0..1). Returns the
+// live unit when there's no baseline (a unit spawned this tick), at a full step (alpha ≥ 1), or
+// across a teleport; otherwise a reused {x,y} scratch on the prev→cur segment. Read it
+// immediately — the scratch is overwritten on the next call.
+function lerpXY(u, alpha) {
+  const p = prevPos.get(u.id);
+  if (!p || alpha >= 1) return u;
+  const dx = u.x - p.x, dy = u.y - p.y;
+  if (dx * dx + dy * dy >= TELEPORT_SQ) return u;
+  _lerpPt.x = p.x + dx * alpha; _lerpPt.y = p.y + dy * alpha;
+  return _lerpPt;
+}
+
 // Cached once: whether the viewer asked the OS to reduce motion. Used to swap
 // the repeating alert pulses for a static cue (see drawEffects).
 let _reducedMotion = null;
@@ -51,11 +84,15 @@ function pruneFacing(state) {
   for (const id of facing.keys()) {
     if (!state.units.has(id) && !state.buildings.has(id)) facing.delete(id);
   }
+  for (const id of prevPos.keys()) {
+    if (!state.units.has(id)) prevPos.delete(id);   // interpolation baselines for dead units
+  }
 }
 
-// Cleared on a fresh game so orientations from a previous match don't linger.
+// Cleared on a fresh game so orientations/positions from a previous match don't linger.
 export function resetFacing() {
   facing.clear();
+  prevPos.clear();
 }
 
 // A small sprite ICON for a unit or building type — the SAME art the map draws, rendered once
@@ -109,7 +146,7 @@ function inView(view, x, y, r = 0) {
   return x + r >= view.minX && x - r <= view.maxX && y + r >= view.minY && y - r <= view.maxY;
 }
 
-export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost) {
+export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost, alpha = 1) {
   pruneFacing(state);
   ctx.save();
   ctx.fillStyle = "#05070f";
@@ -128,13 +165,13 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   drawNodes(ctx, state, view);
   if (state.scenario) drawScenario(ctx, state);   // the convoy route + stations, under the units
   drawBuildings(ctx, state, view);
-  drawUnits(ctx, state, view);
+  drawUnits(ctx, state, view, alpha);
   drawJumpStaging(ctx, state, view);   // staging ring around a selected Spaceport (Odyssey)
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
   drawWaypoints(ctx, state);
   drawEscortLinks(ctx, state);
-  drawSelectionRings(ctx, state);
+  drawSelectionRings(ctx, state, alpha);
   drawRallyPoint(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
 
@@ -756,11 +793,14 @@ function drawUnitShape(ctx, u, def, color) {
   else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 }
 
-function drawUnits(ctx, state, view) {
+const _disp = {};   // reused scratch: a shallow view of a unit at its interpolated draw position
+function drawUnits(ctx, state, view, alpha = 1) {
   const selSet = new Set(state.selection);
   for (const u of state.units.values()) {
-    if (view && !inView(view, u.x, u.y, 16)) continue;   // off-screen unit
-    if (u.owner !== "player" && !isVisibleAt(state.fog, u.x, u.y)) continue;
+    const d = lerpXY(u, alpha);   // interpolated {x,y} (or the live unit when there's no baseline / a teleport)
+    const dx = d.x, dy = d.y;
+    if (view && !inView(view, dx, dy, 16)) continue;   // off-screen unit
+    if (u.owner !== "player" && !isVisibleAt(state.fog, dx, dy)) continue;
     const def = UNITS[u.type];
     const color = state.players[u.owner].color;
     ctx.fillStyle = color;
@@ -772,19 +812,23 @@ function drawUnits(ctx, state, view) {
     ctx.strokeStyle = DETAIL;
     ctx.lineWidth = 1.5;
 
-    drawUnitShape(ctx, u, def, color);
+    // Draw the hull at the interpolated position via a shallow scratch copy, so every
+    // shape helper (and updateFacing, which it calls) sees the smoothed coordinates
+    // without threading them through each one. The scratch is reused — no per-unit alloc.
+    Object.assign(_disp, u); _disp.x = dx; _disp.y = dy;
+    drawUnitShape(ctx, _disp, def, color);
 
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
-      ctx.arc(u.x, u.y - def.radius - 5, 3, 0, Math.PI * 2);
+      ctx.arc(dx, dy - def.radius - 5, 3, 0, Math.PI * 2);
       ctx.fillStyle = "#ffd166";
       ctx.fill();
     }
     // A small downward pip marks hostile units — a SHAPE cue, so telling friend
     // from foe in a melee doesn't rely on the cyan-vs-red colour alone (which a
     // colourblind player can't count on). Friendlies carry no marker.
-    if (u.owner !== "player") drawEnemyPip(ctx, u.x, u.y + def.radius + 6);
-    drawHealthBar(ctx, u.x, u.y - def.radius - 9, 16, u.hp, u.maxHp, selSet.has(u.id));
+    if (u.owner !== "player") drawEnemyPip(ctx, dx, dy + def.radius + 6);
+    drawHealthBar(ctx, dx, dy - def.radius - 9, 16, u.hp, u.maxHp, selSet.has(u.id));
   }
 }
 
@@ -1443,7 +1487,7 @@ function drawHealthBar(ctx, cx, y, w, hp, maxHp, force = false) {
   ctx.fillRect(cx - w / 2, y, w * pct, 3);
 }
 
-function drawSelectionRings(ctx, state) {
+function drawSelectionRings(ctx, state, alpha = 1) {
   ctx.strokeStyle = "#4fd1ff";
   ctx.lineWidth = 2;
   for (const id of state.selection) {
@@ -1452,8 +1496,9 @@ function drawSelectionRings(ctx, state) {
     if (!e) continue;
     const baseRadius = unit ? UNITS[unit.type].radius : e.radius;
     const r = baseRadius + 4;
+    const d = unit ? lerpXY(unit, alpha) : e;   // ring follows the interpolated hull (buildings are static)
     ctx.beginPath();
-    ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+    ctx.arc(d.x, d.y, r, 0, Math.PI * 2);
     ctx.stroke();
   }
 }

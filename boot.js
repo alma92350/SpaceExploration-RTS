@@ -17,7 +17,7 @@ import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { isVisibleAt } from "./engine/fog.js";
-import { drawFrame, resetFacing } from "./render.js";
+import { drawFrame, resetFacing, snapshotPositions } from "./render.js";
 import { drawMinimap } from "./minimap.js";
 import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
@@ -270,6 +270,7 @@ export function bootState(newState, { intro }) {
     // one match state ticks.
     update: dt => {
       if (pauseReasons.size) return;   // paused: skip the sim; render still draws the frozen frame + overlays
+      snapshotPositions(game.state);   // interpolation baseline: positions BEFORE this tick moves them (render.js)
       if (game.galaxy) {
         stepGalaxy(game.galaxy, dt);   // active world full-rate, colonies on a coarser schedule
         for (const n of sweepColonies(game.galaxy, dt)) notifyColony(n);
@@ -295,12 +296,15 @@ export function bootState(newState, { intro }) {
         }
       } else tick(game.state, dt);
     },
-    render: () => {
+    render: (alpha) => {
       const now = performance.now();
       game.input.tickCamera((now - lastFrame) / 1000);
       lastFrame = now;
 
-      drawFrame(ctx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, game.input.getDragBox(), game.input.getBuildGhost());
+      // While paused no tick runs, so the leftover fraction wobbles with the accumulator —
+      // pin alpha to 1 (settled/live positions) so paused units sit still instead of jittering.
+      const a = pauseReasons.size ? 1 : alpha;
+      drawFrame(ctx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, game.input.getDragBox(), game.input.getBuildGhost(), a);
       drawMinimap(minimapCtx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, MINIMAP_W, MINIMAP_H);
       processFrameEvents();
       if (now - lastHud > 150) { lastHud = now; renderHUD(); }
