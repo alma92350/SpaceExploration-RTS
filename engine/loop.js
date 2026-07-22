@@ -38,7 +38,7 @@ export function createLoop({ update, render, hz = 20, now = () => performance.no
     }
     if (acc > dtFixed) acc = 0;   // over the cap: drop the backlog rather than carry it forward
     render(acc / dtFixed);
-    rafId = requestAnimationFrame(frame);
+    rafId = requestAnimationFrame(frame);   // browser-exempt: the render loop IS the browser seam; drives no sim state
   }
 
   return {
@@ -46,11 +46,11 @@ export function createLoop({ update, render, hz = 20, now = () => performance.no
       if (running) return;
       running = true;
       last = null;
-      rafId = requestAnimationFrame(frame);
+      rafId = requestAnimationFrame(frame);   // browser-exempt: render-loop seam only
     },
     stop() {
       running = false;
-      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (rafId !== null) cancelAnimationFrame(rafId);   // browser-exempt: render-loop seam only
     },
     get running() { return running; },
   };
