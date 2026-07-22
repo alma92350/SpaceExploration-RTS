@@ -19,17 +19,14 @@
 
 import { COM, PLANETS } from "../data.js";
 
-// The RTS deposit commodities you can actually hold and trade. Equilibrium base
-// prices come straight from the commodity table (data.js COM.base) — the single
-// source of truth — so the two can never drift (data.js is pure data; engine/map.js
-// already imports it). biomass/spice are included so Verdani (the agri-world, whose
-// mineable wealth is almost entirely those two — data.js) can sell its surplus for
-// credits instead of mining into a dead counter nothing reads.
-// The refined goods (metals, alloys) the Odyssey production chain manufactures
-// (engine/industry.js) are tradeable too — and since no world DEPOSITS them,
-// createMarket prices them at the "scarce" ceiling everywhere, so refining a raw
-// haul into them and selling is the whole point of building a factory.
-const TRADEABLE = ["ore", "crystals", "radioactives", "gas", "ice", "relics", "biomass", "spice", "metals", "alloys", "electronics", "machinery"];
+// EVERY commodity is tradeable — the whole catalog (data.js COM), so nothing you can hold is a
+// dead counter. Equilibrium base prices come straight from the commodity table (COM.base), the
+// single source of truth, so the two can never drift. Raws are priced by local abundance (a world
+// rich in ore sells it cheap); manufactured goods — everything the Odyssey production chain makes,
+// which no world deposits — are priced by the world's INDUSTRY rating and can be glutted, so
+// make-here / sell-there is the whole point of building factories. The strategic goods (AI cores,
+// antimatter, plasma torpedoes) are tradeable too: no market gate, so a surplus is always credits.
+const TRADEABLE = Object.keys(COM);
 const BASE = Object.fromEntries(TRADEABLE.map(id => [id, COM[id].base]));
 
 export const TRADE_LOT = 25;      // units bought/sold per click
@@ -40,7 +37,7 @@ const SPREAD = 1.15;              // a buy costs 15% more than the matching sell
 // single world (the "credit printer"); a wide raw spread means a local buy-refine-sell
 // loop loses money, so profit only comes from a real inter-world price gap (haul-and-sell).
 const RAW_SPREAD = 1.5;
-const RAW = new Set(["ore", "crystals", "radioactives", "gas", "ice", "relics", "biomass", "spice"]);
+const RAW = new Set(TRADEABLE.filter(c => COM[c].tier === "Raw"));   // the deposited/gathered commodities (data.js COM.tier)
 const SLIP_PER_LOT = 0.05;        // each lot traded moves the (fast) price pressure this much
 const PRESSURE_FLOOR = -0.6, PRESSURE_CEIL = 0.6;   // price swings within 40%..160% of equilibrium
 const RECOVERY = 0.06;            // pressure relaxes toward equilibrium at this rate per second (~17s constant)
@@ -62,7 +59,11 @@ function buySpread(com) { return RAW.has(com) ? RAW_SPREAD : SPREAD; }
 // world's INDUSTRY rating instead of by local ore: an industrial world floods its
 // own finished-goods market (cheap, pays little), a frontier world can't make them
 // so pays dear. This is what gives a low-industry world an economic niche.
-const PRODUCED = new Set(["metals", "alloys", "electronics", "machinery"]);
+// Everything that isn't a deposited raw is MANUFACTURED (data.js COM.tier ≠ Raw): no world deposits
+// it, so it's priced by the world's industry rating and saturates (gluts) when dumped — the same
+// treatment metals/alloys always had, now applied to the whole production chain up through the
+// strategic goods (AI cores, antimatter, plasma torpedoes).
+const PRODUCED = new Set(TRADEABLE.filter(c => COM[c].tier !== "Raw"));
 
 export function createMarket(state) {
   const total = {}; let sum = 0;
