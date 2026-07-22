@@ -130,6 +130,13 @@ export function sampleTerrain(terrain, x, y) {
   return TERRAIN[terrain.type[gy * terrain.cols + gx]] || TERRAIN[0];
 }
 
+/**
+ * Deterministically generate a world's map (deposits, bases, terrain) from a seeded rng.
+ * @param {string} [planetId]
+ * @param {() => number} [rng]
+ * @param {{ sizeMult?: number, resourceMult?: number }} [opts]
+ * @returns {GameMap}
+ */
 export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {   // deterministic-exempt: unseeded default rng
   const planet = PLANETS.find(p => p.id === planetId);
   if (!planet) throw new Error(`Unknown planet: ${planetId}`);

@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Fog of war: a coarse grid tracks which cells are currently in sight of
    an owner's unit/building (recomputed fresh every tick) and which have
@@ -21,6 +22,7 @@ import { sampleTerrain, sideMod } from "./map.js";
 
 export const FOG_CELL_SIZE = 40;
 
+/** @param {GameMap} map @returns {Fog} */
 export function createFog(map) {
   const cols = Math.ceil(map.width / FOG_CELL_SIZE);
   const rows = Math.ceil(map.height / FOG_CELL_SIZE);
@@ -35,6 +37,7 @@ function inBounds(fog, cx, cy) {
   return cx >= 0 && cy >= 0 && cx < fog.cols && cy < fog.rows;
 }
 
+/** @param {Fog} fog @param {number} wx @param {number} wy @returns {boolean} */
 export function isVisibleAt(fog, wx, wy) {
   const { cx, cy } = cellOf(fog, wx, wy);
   return inBounds(fog, cx, cy) && fog.visible[cy * fog.cols + cx] === 1;
@@ -50,6 +53,7 @@ export function isExploredAt(fog, wx, wy) {
 // memory doubles as the discovery record, so a found cache stays on the map
 // even after the scout moves on. Used by render/minimap/input alike so what
 // shows, what the minimap dots, and what a right-click can target all agree.
+/** @param {Fog} fog @param {ResourceNode} node @returns {boolean} */
 export function isNodeDiscovered(fog, node) {
   return !node.hidden || isExploredAt(fog, node.x, node.y);
 }
@@ -61,6 +65,7 @@ export function isNodeDiscovered(fog, node) {
 // dark ground to reveal it) and the AI's hunt for a hidden Command Center (sweeps
 // unexplored ground when it can see no enemy). Cheap enough at this grid
 // resolution to call on demand, and only ever when a new target is needed.
+/** @param {Fog} fog @param {number} fromX @param {number} fromY */
 export function nearestUnexploredPoint(fog, fromX, fromY) {
   let best = null, bestD = Infinity;
   for (let cy = 0; cy < fog.rows; cy++) {
@@ -95,6 +100,7 @@ function reveal(fog, x, y, sight) {
 
 // Recomputes `visible` from scratch each call (cheap at this grid
 // resolution) and folds newly-seen cells permanently into `explored`.
+/** @param {State} state @param {Fog} fog @param {string} owner */
 export function updateFog(state, fog, owner) {
   fog.visible.fill(0);
   // A world's sight modifier scales every reveal radius (see PLANET_MODIFIERS).

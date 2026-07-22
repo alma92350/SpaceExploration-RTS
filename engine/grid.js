@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Uniform spatial hash over units, rebuilt once per tick by sim.js. It's a
    BROAD PHASE only: a query returns candidate units whose cell is near a point,
@@ -32,6 +33,7 @@ const KEY_PAD = 16;      // headroom for the most negative cell any query pad re
 const KEY_STRIDE = 4096;  // > max cells per axis (a huge map is ~67), so (cx+PAD) and (cy+PAD) never overlap
 function cellKey(cx, cy) { return (cx + KEY_PAD) * KEY_STRIDE + (cy + KEY_PAD); }
 
+/** @param {State} state */
 export function buildUnitGrid(state) {
   const buckets = new Map();
   let i = 0;
@@ -49,6 +51,7 @@ export function buildUnitGrid(state) {
 // box around (x, y). A superset of the units within `radius` — callers filter
 // by exact distance. Cells are visited in a fixed numeric order and bucket
 // contents keep Map insertion order, so iteration is fully deterministic.
+/** @param {*} grid @param {number} x @param {number} y @param {number} radius @returns {(Unit)[]} */
 export function queryNeighbors(grid, x, y, radius) {
   const cell = grid.cell;
   const mincx = Math.floor((x - radius) / cell) - 1;

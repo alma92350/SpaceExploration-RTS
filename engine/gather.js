@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Worker gather/deposit loop: walk to node -> mine into cargo -> walk to
    the nearest completed drop-off -> deposit -> repeat until the node runs
@@ -22,6 +23,7 @@ const DROP_REACH = 30;
 // node's per-worker efficiency is the average. Floors above 0 (never softlocks
 // a lone remaining seam). No cap field on the def (or no miner count, as in the
 // direct-call unit tests) means no penalty — full rate, exactly as before.
+/** @param {ResourceNode} node @param {*} def @returns {number} */
 function miningEfficiency(node, def) {
   const cap = def.minerSoftCap ?? Infinity;
   const m = node.miners || 0;
@@ -32,11 +34,13 @@ function miningEfficiency(node, def) {
 
 // Stable per-worker angle around the node, so a group sent to the same
 // node spreads out around it instead of converging on one point.
+/** @param {ResourceNode} node @param {string} unitId @returns {{x:number, y:number}} */
 function orbitSpot(node, unitId) {
   const angle = (hashStr(unitId) % 360) * (Math.PI / 180);
   return { x: node.x + Math.cos(angle) * ORBIT_RADIUS, y: node.y + Math.sin(angle) * ORBIT_RADIUS };
 }
 
+/** @param {State} state @param {Unit} unit @param {number} dt */
 export function updateGather(state, unit, dt) {
   const def = UNITS[unit.type];
   const order = unit.order;
@@ -97,6 +101,7 @@ export function updateGather(state, unit, dt) {
 // or any of its industrial proxies (Refinery/Foundry/Arsenal). Picking the
 // closest is what makes a forward industrial building act as a local collection
 // point — the haul goes to it instead of all the way back to the base.
+/** @param {State} state @param {string} owner @param {number} x @param {number} y @returns {Building|null} */
 function nearestDropoff(state, owner, x, y) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {

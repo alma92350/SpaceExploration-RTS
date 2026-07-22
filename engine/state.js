@@ -1,7 +1,9 @@
+// @ts-check
 /* ============================================================
    Game state: the mutable simulation world. No rendering, no input,
    no DOM — engine/sim.js mutates this each fixed tick, render.js only
-   reads it.
+   reads it. Core shapes (State/Unit/Building/…) are defined in
+   engine/types.js; this file is `// @ts-check`ed against them.
    ============================================================ */
 
 "use strict";
@@ -23,8 +25,16 @@ function newId(prefix) { return `${prefix}${nextEntityId++}`; }
 // Save/load (engine/persist.js) needs to snapshot and restore the id counter so a
 // loaded game keeps minting fresh, non-colliding ids from where it left off.
 export function peekEntityId() { return nextEntityId; }
+/** @param {number} n */
 export function restoreEntityId(n) { nextEntityId = n; }
 
+/**
+ * @param {string} type   a key of UNITS (engine/entities.js)
+ * @param {string} owner  "player" | "ai"
+ * @param {number} x
+ * @param {number} y
+ * @returns {Unit}
+ */
 export function makeUnit(type, owner, x, y) {
   const def = UNITS[type];
   return {
@@ -38,6 +48,14 @@ export function makeUnit(type, owner, x, y) {
   };
 }
 
+/**
+ * @param {string} type   a key of BUILDINGS (engine/entities.js)
+ * @param {string} owner  "player" | "ai"
+ * @param {number} x
+ * @param {number} y
+ * @param {{ hp?: number, constructing?: boolean }} [opts]
+ * @returns {Building}
+ */
 export function makeBuilding(type, owner, x, y, opts = {}) {
   const def = BUILDINGS[type];
   return {
@@ -51,6 +69,14 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
   };
 }
 
+/**
+ * Build a fresh simulation world. A pure function of its inputs (seed + options): the map
+ * regenerates deterministically from the seed, so two same-option runs are identical.
+ * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
+ *   resourceMult?: number, endless?: boolean, aiApm?: number, aiMicro?: boolean,
+ *   playerFaction?: string, aiFaction?: string }} [opts]
+ * @returns {State}
+ */
 export function createGameState(opts = {}) {
   nextEntityId = 1;   // fresh game -> deterministic ids from the seed (see newId above)
   const planetId = opts.planetId || "ferros";
@@ -125,10 +151,16 @@ export function createGameState(opts = {}) {
   return state;
 }
 
+/** @returns {Resources} */
 function startingResources() {
   return { ore: 300, crystals: 0, radioactives: 0 };
 }
 
+/**
+ * @param {State} state
+ * @param {string} ownerId
+ * @param {{ x: number, y: number }} basePos
+ */
 function seedPlayer(state, ownerId, basePos) {
   if (state.endless) {
     // Odyssey: both sides START with a mobile colony ship instead of a built base —
@@ -148,23 +180,46 @@ function seedPlayer(state, ownerId, basePos) {
   }
 }
 
+/**
+ * @param {State} state
+ * @returns {(Unit|Building)[]}
+ */
 export function allEntities(state) {
   return [...state.units.values(), ...state.buildings.values()];
 }
 
+/**
+ * @param {State} state
+ * @param {string} id
+ * @returns {Unit|Building|undefined}
+ */
 export function getEntity(state, id) {
   return state.units.get(id) || state.buildings.get(id);
 }
 
+/**
+ * @param {State} state
+ * @param {string} id
+ */
 export function removeEntity(state, id) {
   state.units.delete(id) || state.buildings.delete(id);
   state.selection = state.selection.filter(sid => sid !== id);
 }
 
+/**
+ * @param {State} state
+ * @param {string} owner
+ * @returns {Building[]}
+ */
 export function playerBuildings(state, owner) {
   return [...state.buildings.values()].filter(b => b.owner === owner);
 }
 
+/**
+ * @param {State} state
+ * @param {string} owner
+ * @returns {Unit[]}
+ */
 export function playerUnits(state, owner) {
   return [...state.units.values()].filter(u => u.owner === owner);
 }

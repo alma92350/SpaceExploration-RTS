@@ -6,7 +6,8 @@
   "description": "Real-time strategy game in the Stellar Frontier universe. No dependencies, no build step.",
   "scripts": {
     "start": "node tools/serve.js",
-    "test": "node --test"
+    "test": "node --test",
+    "typecheck": "tsc -p jsconfig.json"
   },
   "engines": {
     "node": ">=20"

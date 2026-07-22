@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    General collision separation: any two same-owner units — any type,
    however they got where they are (a shared rally point, a group order,
@@ -21,6 +22,7 @@ import { MAX_UNIT_RADIUS } from "./movement.js";
 const PUSH_SPEED = 60;   // units/sec of separation at full overlap
 const SEP_RADIUS = 2 * MAX_UNIT_RADIUS;   // two largest hulls touching — the widest possible minDist; derived, never stale
 
+/** @param {State} state @param {number} dt */
 export function applySeparation(state, dt) {
   const grid = state.unitGrid;
   if (!grid) {

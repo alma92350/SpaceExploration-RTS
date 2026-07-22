@@ -1,0 +1,18 @@
+{
+  "//": "Editor + `npm run typecheck` config. NOT a build step — nothing is emitted (noEmit) and the shipped code stays plain ES modules. checkJs is off, so ONLY files that opt in with a `// @ts-check` pragma are error-checked; this lets type coverage grow file-by-file. The shared shapes live in engine/types.js.",
+  "compilerOptions": {
+    "checkJs": false,
+    "allowJs": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": ["*.js", "engine/**/*.js"],
+  "exclude": ["node_modules", "test"]
+}

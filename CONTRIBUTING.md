@@ -62,6 +62,31 @@ Save data is untrusted input and is version-gated:
 - Loading always sanitizes and coerces (`sanitizeSave`, `cleanEntity`) — never trust a field's
   type or range straight off the wire.
 
+## Types (JSDoc + `// @ts-check`)
+
+The core sim shapes — `State`, `Unit`, `Building`, `Player`, `Galaxy`, and friends — are defined
+as JSDoc `@typedef`s in `engine/types.js`. That file has **no runtime code** and is never
+imported; it exists purely so the type checker (and any editor with the bundled TypeScript
+language service — e.g. VS Code out of the box) can verify field access against a real model
+instead of an untyped bag. **No build step, no runtime dependency** — the shipped code stays plain
+ES modules.
+
+Type checking is **opt-in per file**: a file is checked only if it starts with a `// @ts-check`
+pragma. The core engine data + hot-path modules already opt in (`state.js`, `movement.js`,
+`gather.js`, `grid.js`, `fog.js`, `separation.js`); expand coverage file-by-file by adding the
+pragma and annotating the functions' `state`/`unit`/`building` params with the shared typedefs.
+This is what catches the silent-`undefined`-field class of bug — a mistyped or renamed field is a
+check-time error, not a wrong result the same-seed determinism test can't see.
+
+```
+npm run typecheck        # runs `tsc -p jsconfig.json` — needs a TypeScript compiler available
+                         # (global `tsc`, or `npx -y typescript` / a local install). Editors with
+                         # the TS language service check the annotated files live, with no install.
+```
+
+When you add or rename a field on a core shape, update its `@typedef` in `engine/types.js` in the
+same change.
+
 ## Style
 
 Match the surrounding code: the same comment density (this codebase explains *why*, not *what*),
@@ -82,7 +107,8 @@ one-liner. Add or update a test for any behavioural change.
 
 When cutting a release:
 
-1. `npm test` is green (determinism + purity + static-integrity included).
+1. `npm test` is green (determinism + purity + static-integrity included), and `npm run typecheck`
+   reports no errors on the `// @ts-check`ed files.
 2. Smoke-test in a real browser (`npm start`) — start a skirmish and an Odyssey, save and reload
    both.
 3. Bump `APP_VERSION` in `version.js` **and** `version` in `package.json` to the new semver, and

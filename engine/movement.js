@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Movement with local avoidance: a unit senses same-owner neighbors
    ahead of it and steers sideways around them, instead of walking
@@ -31,6 +32,7 @@ const AVOID_WEIGHT = 1.6;   // how strongly a sensed neighbor bends the seek dir
 // exact-distance check still filters identically, so replays stay byte-identical.
 export const MAX_UNIT_RADIUS = Math.max(...Object.values(UNITS).map(u => u.radius || 0));
 
+/** @param {Unit|Building} entity @returns {number} */
 function radiusOf(entity) {
   return UNITS[entity.type] ? UNITS[entity.type].radius : 9;
 }
@@ -43,6 +45,7 @@ function radiusOf(entity) {
 // target wherever it's ordered — and a combat escort still auto-acquires threats that come near.
 const ESCORT_GAP = 22;        // arc spacing between neighbouring escorts
 const ESCORT_STANDOFF = 26;   // clearance from the target's hull out to the ring
+/** @param {State} state @param {Unit} unit @returns {{x:number, y:number}|null} */
 export function escortSlot(state, unit) {
   const o = unit.order;
   const target = state.units.get(o.targetId);
@@ -59,6 +62,7 @@ export function escortSlot(state, unit) {
 // branches (combat ship, worker, support drone) did exactly this by hand, so the shared
 // escortSlot→drop-or-step logic lives here once. Pure follow: never cleared on arrival, so the
 // escort trails the target wherever it goes.
+/** @param {State} state @param {Unit} unit @param {number} speed @param {number} dt @returns {boolean} */
 export function keepEscortStation(state, unit, speed, dt) {
   const slot = escortSlot(state, unit);
   if (!slot) { unit.order = null; return false; }
@@ -69,6 +73,7 @@ export function keepEscortStation(state, unit, speed, dt) {
 // Moves `unit` at most `speed * dt` toward (tx, ty). Returns true once it
 // has arrived (within 1 unit), so callers can clear the order that got it
 // there.
+/** @param {State} state @param {Unit} unit @param {number} tx @param {number} ty @param {number} speed @param {number} dt @returns {boolean} */
 export function stepToward(state, unit, tx, ty, speed, dt) {
   const dx0 = tx - unit.x, dy0 = ty - unit.y;
   const distToTarget = Math.hypot(dx0, dy0);
@@ -105,6 +110,7 @@ export function stepToward(state, unit, tx, ty, speed, dt) {
 // ahead of the unit and within sensing range — positive means "steer
 // left of the seek direction," negative "steer right." A neighbor
 // behind the unit (already passed) is ignored.
+/** @param {State} state @param {Unit} unit @param {number} seekX @param {number} seekY @returns {number} */
 function senseLateralAvoidance(state, unit, seekX, seekY) {
   const perpX = -seekY, perpY = seekX;
   const selfR = radiusOf(unit);
@@ -135,6 +141,7 @@ function senseLateralAvoidance(state, unit, seekX, seekY) {
 
 // Stable per-pair left/right pick for a neighbor sitting exactly on the
 // travel line, so the dodge direction doesn't flicker tick to tick.
+/** @param {string} idA @param {string} idB @returns {number} */
 function tieBreak(idA, idB) {
   return hashStr(idA + idB) % 2 === 0 ? 1 : -1;
 }
