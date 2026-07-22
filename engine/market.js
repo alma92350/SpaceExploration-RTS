@@ -22,22 +22,39 @@ import { COM, PLANETS } from "../data.js";
 // The RTS deposit commodities you can actually hold and trade. Equilibrium base
 // prices come straight from the commodity table (data.js COM.base) — the single
 // source of truth — so the two can never drift (data.js is pure data; engine/map.js
-// already imports it). TRADEABLE stays an explicit curated list: it deliberately
-// omits deposit commodities like biomass/spice that the RTS doesn't trade.
+// already imports it). biomass/spice are included so Verdani (the agri-world, whose
+// mineable wealth is almost entirely those two — data.js) can sell its surplus for
+// credits instead of mining into a dead counter nothing reads.
 // The refined goods (metals, alloys) the Odyssey production chain manufactures
 // (engine/industry.js) are tradeable too — and since no world DEPOSITS them,
 // createMarket prices them at the "scarce" ceiling everywhere, so refining a raw
 // haul into them and selling is the whole point of building a factory.
-const TRADEABLE = ["ore", "crystals", "radioactives", "gas", "ice", "relics", "metals", "alloys", "electronics", "machinery"];
+const TRADEABLE = ["ore", "crystals", "radioactives", "gas", "ice", "relics", "biomass", "spice", "metals", "alloys", "electronics", "machinery"];
 const BASE = Object.fromEntries(TRADEABLE.map(id => [id, COM[id].base]));
 
 export const TRADE_LOT = 25;      // units bought/sold per click
-const SPREAD = 1.15;              // a buy costs 15% more than the matching sell — the market's cut
-const SLIP_PER_LOT = 0.05;        // each lot traded moves the price pressure this much
+const SPREAD = 1.15;              // a buy costs 15% more than the matching sell — the market's cut on refined goods
+// Raw inputs cost MUCH more to buy than to sell. The game's law is "the resources you
+// gather are the resources you spend" (entities.js) — you're meant to mine ore, not buy
+// it. A tight spread let credits→ore→refine→metals→credits round-trip for free on a
+// single world (the "credit printer"); a wide raw spread means a local buy-refine-sell
+// loop loses money, so profit only comes from a real inter-world price gap (haul-and-sell).
+const RAW_SPREAD = 1.5;
+const RAW = new Set(["ore", "crystals", "radioactives", "gas", "ice", "relics", "biomass", "spice"]);
+const SLIP_PER_LOT = 0.05;        // each lot traded moves the (fast) price pressure this much
 const PRESSURE_FLOOR = -0.6, PRESSURE_CEIL = 0.6;   // price swings within 40%..160% of equilibrium
-const RECOVERY = 0.06;            // pressure relaxes toward equilibrium at this rate per second
+const RECOVERY = 0.06;            // pressure relaxes toward equilibrium at this rate per second (~17s constant)
+// A SLOW, deep saturation term on FACTORY OUTPUT only: dumping produced goods on one
+// world builds a cumulative glut that decays over minutes, not the ~17s of pressure. So
+// a run of production genuinely floods its local market and pushes you to the intended
+// make-here / sell-there loop (cargoManifest/freightCapacity exist for exactly this),
+// instead of letting one world absorb unlimited output at a near-flat price.
+const GLUT_PER_LOT = 0.05;        // each lot of produced output sold deepens the local glut this much
+const GLUT_CEIL = 0.85;           // a fully-saturated local market pays as little as 15% of equilibrium
+const GLUT_RECOVERY = 1 / 480;    // glut relaxes over ~8 min — far slower than pressure
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function buySpread(com) { return RAW.has(com) ? RAW_SPREAD : SPREAD; }
 
 // Build a planet's price book: equilibrium price per tradeable commodity, scaled
 // by how abundant that commodity is in the planet's own deposits.
@@ -51,7 +68,7 @@ export function createMarket(state) {
   const total = {}; let sum = 0;
   for (const n of state.map.nodes) { total[n.com] = (total[n.com] || 0) + n.max; sum += n.max; }
   const industry = PLANETS.find(p => p.id === state.planetId)?.industry ?? 5;
-  const base = {}, pressure = {};
+  const base = {}, pressure = {}, glut = {};
   for (const com of TRADEABLE) {
     let mult;
     if (PRODUCED.has(com)) {
@@ -66,49 +83,83 @@ export function createMarket(state) {
     }
     base[com] = Math.max(1, Math.round(BASE[com] * mult));
     pressure[com] = 0;
+    glut[com] = 0;
   }
-  return { base, pressure };
+  return { base, pressure, glut };
 }
 
-// Current unit price for a side of the trade (buy pays the spread over sell).
+// Current unit price for a side of the trade. The (fast) pressure and the (slow) glut
+// both push the equilibrium price down as you sell; the buy side pays the tier spread
+// on top. Glut applies only to produced goods (it's zero for raws), so it's the lever
+// that saturates a factory-output market without touching raw-commodity pricing.
 export function unitPrice(market, com, side = "sell") {
-  const p = market.base[com] * (1 + (market.pressure[com] || 0));
-  return side === "buy" ? p * SPREAD : p;
+  const glut = PRODUCED.has(com) ? (market.glut?.[com] || 0) : 0;
+  const p = market.base[com] * (1 + (market.pressure[com] || 0)) * (1 - glut);
+  return side === "buy" ? p * buySpread(com) : p;
 }
 
-// Sell up to `qty` of `com` from the player's local stock for galaxy credits;
-// pushes the local price down. Returns the credits earned (0 if nothing sold).
+// Move `com`'s pressure (and, for produced goods, its glut) by one lot's worth of trade,
+// signed +1 for a buy, -1 for a sell. Fractional lots (a partial final lot) scale it.
+function applySlippage(market, com, lots, sign) {
+  market.pressure[com] = clamp((market.pressure[com] || 0) + sign * lots * SLIP_PER_LOT, PRESSURE_FLOOR, PRESSURE_CEIL);
+  if (sign < 0 && PRODUCED.has(com))   // only SELLING produced output deepens the glut
+    market.glut[com] = clamp((market.glut[com] || 0) + lots * GLUT_PER_LOT, 0, GLUT_CEIL);
+}
+
+// Sell up to `qty` of `com` from the player's local stock for galaxy credits, walking the
+// price DOWN across the trade in TRADE_LOT chunks so a big sell is priced marginally (each
+// lot at the price after the previous lot's slippage) instead of the whole quantity at the
+// pre-trade price. That makes bulk trades self-limiting by construction — a future "Sell
+// All" can't dump 1000 units at full price. The 25-per-click UI trades exactly one lot, so
+// its numbers are unchanged. Returns the credits earned (0 if nothing sold).
 export function sell(galaxy, state, com, qty) {
   const res = state.players.player.resources;
-  const q = Math.min(qty, Math.floor(res[com] || 0));
-  if (q <= 0) return 0;
-  const proceeds = Math.round(unitPrice(state.market, com, "sell") * q);
-  res[com] = (res[com] || 0) - q;
+  let remaining = Math.min(qty, Math.floor(res[com] || 0));
+  if (remaining <= 0) return 0;
+  let proceeds = 0;
+  while (remaining > 0) {
+    const lot = Math.min(TRADE_LOT, remaining);
+    proceeds += Math.round(unitPrice(state.market, com, "sell") * lot);
+    res[com] -= lot;
+    applySlippage(state.market, com, lot / TRADE_LOT, -1);
+    remaining -= lot;
+  }
   galaxy.credits += proceeds;
-  state.market.pressure[com] = clamp(state.market.pressure[com] - (q / TRADE_LOT) * SLIP_PER_LOT, PRESSURE_FLOOR, PRESSURE_CEIL);
   return proceeds;
 }
 
-// Buy up to `qty` of `com` with galaxy credits (capped by what you can afford);
-// pushes the local price up. Returns the credits spent (0 if nothing bought).
+// Buy up to `qty` of `com` with galaxy credits (capped by what you can afford), walking the
+// price UP across the trade in lots — the buy-side mirror of sell(). Each lot is priced and
+// afford-checked at the current (rising) price; the trade stops at the first lot the player
+// can't cover. Returns the credits spent (0 if nothing bought).
 export function buy(galaxy, state, com, qty) {
-  const price = unitPrice(state.market, com, "buy");
-  const q = Math.min(qty, Math.floor(galaxy.credits / price));
-  if (q <= 0) return 0;
-  const cost = Math.round(price * q);
-  galaxy.credits -= cost;
   const res = state.players.player.resources;
-  res[com] = (res[com] || 0) + q;
-  state.market.pressure[com] = clamp(state.market.pressure[com] + (q / TRADE_LOT) * SLIP_PER_LOT, PRESSURE_FLOOR, PRESSURE_CEIL);
+  let remaining = qty, cost = 0, bought = 0;
+  while (remaining > 0) {
+    const price = unitPrice(state.market, com, "buy");
+    const lot = Math.min(TRADE_LOT, remaining);
+    const affordable = Math.min(lot, Math.floor((galaxy.credits - cost) / price));
+    if (affordable <= 0) break;
+    cost += Math.round(price * affordable);
+    res[com] = (res[com] || 0) + affordable;
+    bought += affordable;
+    applySlippage(state.market, com, affordable / TRADE_LOT, +1);
+    if (affordable < lot) break;   // ran out of credits mid-lot
+    remaining -= lot;
+  }
+  galaxy.credits -= cost;
   return cost;
 }
 
 // Relax every commodity's trade pressure back toward equilibrium (called per tick
-// for a planet that has a market — see sim.js).
+// for a planet that has a market — see sim.js). The slow glut on produced goods relaxes
+// on its own, much longer, time constant, so a saturated market takes minutes to recover.
 export function updateMarket(state, dt) {
   const p = state.market.pressure;
   const k = Math.min(1, dt * RECOVERY);
   for (const com in p) p[com] -= p[com] * k;
+  const g = state.market.glut;
+  if (g) { const kg = Math.min(1, dt * GLUT_RECOVERY); for (const com in g) g[com] -= g[com] * kg; }
 }
 
 // Commodities worth showing on this world's market: those it deposits, plus any

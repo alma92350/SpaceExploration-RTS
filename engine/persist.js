@@ -229,7 +229,7 @@ export function serializeGalaxy(galaxy) {
     planets: [...galaxy.planets.values()].map(state => ({
       ...serPlanet(state),
       background: !!state.background,
-      market: { pressure: { ...state.market.pressure } },
+      market: { pressure: { ...state.market.pressure }, glut: { ...(state.market.glut || {}) } },
       diplomacy: { ...state.diplomacy },          // stance, depletion, lastAiUnits
     })),
   }));
@@ -269,7 +269,8 @@ export function deserializeGalaxy(input) {
     if (!known.has(P.planetId)) continue;                    // skip a planet payload with an unrecognised id
     const state = rehydratePlanet(P);
     state.market = createMarket(state);                    // base recomputed from the (regenerated) nodes...
-    Object.assign(state.market.pressure, P.market.pressure); // ...then overlay the saved running pressure
+    Object.assign(state.market.pressure, P.market.pressure); // ...then overlay the saved running pressure...
+    if (P.market.glut) Object.assign(state.market.glut, P.market.glut);   // ...and the slow produced-goods glut
     state.diplomacy = { ...createDiplomacy(), ...P.diplomacy };
     state.background = !!P.background;
     state.inGalaxy = true;                                    // galaxy member → galaxy-wide defeat (engine/galaxy.js)

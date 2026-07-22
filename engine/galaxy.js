@@ -85,14 +85,27 @@ export const JUMP_LOAD_RADIUS = 150;
 export const JUMP_COST = 400;
 
 // A held background colony sends home this many credits per second per surviving
-// player building — passive income, so the worlds you leave keep working for you
-// (and a razed colony, down to no buildings, quietly stops paying).
+// income-earning player building — passive income, so the worlds you leave keep working
+// for you (and a razed colony, down to no buildings, quietly stops paying).
 export const COLONY_INCOME_PER_BUILDING = 0.3;
+// …but only up to this many buildings per world. Without a cap, spamming the cheapest
+// building (a 75-ore Habitat, a turret) on a pacified world — where the razed neighbour
+// can never strike back — was an unbounded credit annuity that made the counter a
+// meaningless up-only number. The cap bounds a colony's yield to a real economy's worth.
+export const COLONY_INCOME_CAP = 6;
 
 const playerBuildingCount = state => {
   let n = 0;
   for (const b of state.buildings.values()) if (b.owner === "player") n++;
   return n;
+};
+
+// Buildings that count toward passive income: everything except the pure-defensive
+// turret (a turret wall isn't an economy), capped per world (see COLONY_INCOME_CAP).
+const incomeBuildingCount = state => {
+  let n = 0;
+  for (const b of state.buildings.values()) if (b.owner === "player" && b.type !== "turret") n++;
+  return Math.min(COLONY_INCOME_CAP, n);
 };
 
 // Build (or rebuild) a planet's engine state into the galaxy. Reuses the exact
@@ -160,7 +173,7 @@ export function sweepColonies(galaxy, dt = 0) {
   for (const [id, state] of galaxy.planets) {
     if (!state.background) continue;
     const buildings = playerBuildingCount(state);
-    galaxy.credits += buildings * COLONY_INCOME_PER_BUILDING * dt;   // passive colony income
+    galaxy.credits += incomeBuildingCount(state) * COLONY_INCOME_PER_BUILDING * dt;   // capped, turret-excluded passive income
     const rec = galaxy.colonyNotes.get(id) || { hadColony: false, colonyLost: false };
     if (buildings > 0) rec.hadColony = true;
     if (rec.hadColony && buildings === 0 && !rec.colonyLost) {
@@ -336,7 +349,7 @@ export function galaxyStatus(galaxy) {
         // building there; once razed it's "contested" — visited but no longer
         // yours (so the map doesn't keep calling a lost world your colony).
         status = buildings > 0 ? "colony" : "contested";
-        income = Math.round(buildings * COLONY_INCOME_PER_BUILDING * 60);   // credits/min
+        income = Math.round(incomeBuildingCount(s) * COLONY_INCOME_PER_BUILDING * 60);   // credits/min (capped, turret-excluded)
       }
       // Industry/Tech ratings (data.js) drive factory speed + research speed and
       // finished-good prices — surfaced so "where to settle/jump" is an informed call.
@@ -444,12 +457,18 @@ export function canJumpTo(galaxy, destId) {
   return canJump(activeState(galaxy)) || playerFoothold(galaxy.planets.get(destId));
 }
 
+const planetX = id => PLANETS.find(p => p.id === id)?.x ?? 0;
+
 // The fuel a jump to `destId` costs: FREE to a world you already hold (any world you've
-// visited — a colony you're returning to, reinforcing, or re-settling), and JUMP_COST to
-// reach a NEW world for the first time. So bouncing between your own worlds to defend or
-// ferry a colony ship is friction-free; only expanding the frontier costs fuel.
+// visited — a colony you're returning to, reinforcing, or re-settling), so bouncing between
+// your own worlds to defend or ferry a colony ship stays friction-free. Reaching a NEW world
+// costs fuel that SCALES WITH DISTANCE across the frontier (data.js planet x, 0..~18): a near
+// hop is close to the base fee, settling a distant world is a real, growing credit sink and a
+// strategic choice — so exploration spend isn't the old flat, quickly-capped ~4,000 lifetime.
 export function jumpCost(galaxy, destId) {
-  return galaxy.planets.has(destId) ? 0 : JUMP_COST;
+  if (galaxy.planets.has(destId)) return 0;
+  const dist = Math.abs(planetX(destId) - planetX(galaxy.activeId));
+  return Math.round(JUMP_COST * (0.8 + dist / 18));   // ~340 next-door … ~720 across the map
 }
 
 // The player units staged near a Spaceport — the expedition that rides along on a
@@ -489,8 +508,10 @@ export function jumpManifest(state, spaceport) {
 // differently per world, engine/market.js). The hold's SIZE is the combined cargoHold of the cargo
 // ships (engine/entities.js: hauler/heavyhauler/bulkfreighter) staged for the jump — no cargo ship
 // means no freight. Loaded most-valuable-first (data.js COM.base: machinery 250 > electronics 95 >
-// alloys 80 > metals 22). Raws are too cheap to bother hauling and strategic goods stay put.
-const CARGO_GOODS = ["machinery", "electronics", "alloys", "metals"];
+// alloys 80 > spice 34 > metals 22). spice is here so Verdani's agri surplus can be exported and
+// sold dear on an industrial world (it's cheap where it's mined, precious where it isn't); cheaper
+// raws aren't worth a cargo slot and strategic goods stay put.
+const CARGO_GOODS = ["machinery", "electronics", "alloys", "spice", "metals"];
 
 // The freight capacity a set of riders provides — the summed cargoHold of the cargo ships among
 // them (anything without a cargoHold carries nothing). Pure.

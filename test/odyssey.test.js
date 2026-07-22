@@ -336,14 +336,24 @@ test("the galaxy jump is deterministic", () => {
 
 /* ---------- free travel between held worlds + galaxy-wide defeat ---------- */
 
-test("a jump is free to a world you already hold and costs fuel only to reach a new one", () => {
+test("a jump is free to a world you already hold and costs distance-scaled fuel to reach a new one", () => {
   const g = createGalaxy({ seed: 33 });
   settle(activeState(g));
   const newWorld = g.worlds.find(w => !g.planets.has(w));
-  assert.equal(jumpCost(g, newWorld), JUMP_COST, "reaching a never-visited world costs fuel");
+  assert.ok(jumpCost(g, newWorld) > 0, "reaching a never-visited world costs fuel");
   addPlanet(g, newWorld, { unsettled: true });                 // now it's a world you've been to
   assert.equal(jumpCost(g, newWorld), 0, "returning to a world you hold is free");
   assert.equal(jumpCost(g, g.activeId), 0, "your current seat is free too");
+});
+
+test("new-world jump fuel scales with frontier distance", () => {
+  const g = createGalaxy({ seed: 33 });
+  // Rank the unvisited worlds by |x - activeX|; the farthest must cost strictly more fuel
+  // than the nearest — the distance sink, not a flat fee.
+  const costs = g.worlds.filter(w => !g.planets.has(w)).map(w => jumpCost(g, w));
+  assert.ok(costs.length >= 2, "several worlds to reach");
+  assert.ok(Math.max(...costs) > Math.min(...costs), "a farther world costs more fuel than a nearer one");
+  assert.ok(Math.min(...costs) > 0, "every new world still costs something");
 });
 
 test("a free reinforcement hop back to a colony carries an army and spends no fuel", () => {

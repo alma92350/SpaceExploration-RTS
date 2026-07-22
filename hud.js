@@ -736,7 +736,7 @@ function rebuildSelectionPanel(sel) {
 
     const info = document.createElement("p");
     info.className = "hint";
-    info.textContent = `Jump the fleet staged by the pad to another world — free to a world you already hold, ◈${JUMP_COST} fuel to reach a new one. A jump lifts up to ${m.capacity} supply (ship population); a larger fleet crosses in several jumps. Your bases here stay as a colony.`;
+    info.textContent = `Jump the fleet staged by the pad to another world — free to a world you already hold, fuel scaled by distance to reach a new one. A jump lifts up to ${m.capacity} supply (ship population); a larger fleet crosses in several jumps. Your bases here stay as a colony.`;
     panelEl.appendChild(info);
 
     // Staged-fleet manifest: total population vs the pad's capacity, and what waits for the next trip.

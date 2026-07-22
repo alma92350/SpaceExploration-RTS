@@ -13,7 +13,7 @@
 
 import { starmapEl, starmapBtn } from "./dom.js";
 import { game } from "./session.js";
-import { galaxyStatus, canJump, canJumpTo, activeState, JUMP_COST, jumpCost } from "./engine/galaxy.js";
+import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost } from "./engine/galaxy.js";
 import { performJump, surrenderOdyssey } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
 import { planetName as worldName, FACTIONS } from "./data.js";
@@ -30,7 +30,7 @@ export function renderStarmap() {
   const head = document.createElement("div");
   head.className = "starmap-head";
   const hint = canLaunch
-    ? `Click a world to jump — free to a colony you hold, ◈${JUMP_COST} fuel to settle a new one`
+    ? "Click a world to jump — free to a colony you hold, fuel scaled by distance to settle a new one"
     : "No Spaceport here — click a colony you already hold to fall back to it (build a Spaceport to reach new worlds)";
   // textContent, not innerHTML: `status` counts and credits derive from a (possibly
   // hand-edited) save, and building them as text can't inject markup even if a value

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, jumpCapital, JUMP_COST } from "../engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST } from "../engine/galaxy.js";
 import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT } from "../engine/market.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
@@ -81,12 +81,14 @@ test("a jump spends its fuel cost in credits and is refused when you can't pay",
   s.buildings.set(sp.id, sp);
   const ship = makeUnit("colonyship", "player", sp.x, sp.y); s.units.set(ship.id, ship);   // vessel on the pad
   const dest = g.worlds.find(w => w !== g.activeId);
+  const cost = jumpCost(g, dest);        // distance-scaled fuel to reach a new world
+  assert.ok(cost > 0, "a new world costs fuel");
 
-  g.credits = JUMP_COST - 1;
+  g.credits = cost - 1;
   assert.equal(jumpCapital(g, dest), null, "a jump you can't fund is refused");
   assert.equal(g.activeId, s.planetId, "and you stay put");
 
-  g.credits = JUMP_COST + 250;
+  g.credits = cost + 250;
   const res = jumpCapital(g, dest);
   assert.ok(res, "a funded jump runs");
   assert.equal(g.credits, 250, "the fuel cost came out of credits");
