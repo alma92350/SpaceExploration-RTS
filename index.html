@@ -18,6 +18,7 @@
       <span id="seedChip" class="seed-chip hidden" title="Match seed — click to copy. Enter it on the setup screen to replay this map."></span>
       <input id="volume" class="volume" type="range" min="0" max="100" value="90" title="Sound volume" aria-label="Sound volume">
       <button id="muteBtn" class="mute-btn" title="Mute sound" aria-pressed="false">🔊</button>
+      <button id="pauseBtn" class="chip-btn hidden" title="Pause / resume (P)">⏸ Pause</button>
       <button id="starmapBtn" class="chip-btn hidden" title="Galaxy map (M)">🗺 Galaxy</button>
       <button id="saveBtn" class="chip-btn" title="Save game to a file (download). Your progress also autosaves for Continue.">⭳ Save</button>
       <button id="loadBtn" class="chip-btn" title="Load a game from a file">⭱ Load</button>
@@ -30,6 +31,7 @@
         <div id="underAttackAlert" class="under-attack hidden" title="Click to jump to the attack">⚠ Under Attack ▸</div>
         <div id="galaxyToast" class="galaxy-toast-stack hidden"></div>
         <div id="groupChips" class="group-chips hidden"></div>
+        <div id="uiHint" class="ui-hint hidden"></div>
         <div id="starmap" class="starmap-overlay hidden"></div>
         <div id="objectives" class="objectives hidden"></div>
         <div id="scenarioBar" class="scenario-bar hidden">

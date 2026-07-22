@@ -458,8 +458,15 @@ export function attachInput(canvas, state, onChange) {
 
   window.addEventListener("keydown", e => {
     const k = e.key.toLowerCase();
-    heldKeys.add(k);   // still feeds the WASD/arrow camera pan
+    heldKeys.add(k);   // still feeds the WASD/arrow camera pan (kept above the focus guard)
     if (e.repeat) return;
+    // Don't hijack keys meant for a FOCUSED control (a HUD button, the Home-confirm modal's
+    // buttons, a text input): Space would otherwise e.preventDefault() the button's own
+    // activation, and a letter would fire a game command instead of reaching the control.
+    // During normal play focus sits on <body>/the canvas, so every hotkey still works.
+    const t = e.target;
+    if (t && t !== document.body && t !== canvas && typeof t.closest === "function"
+        && t.closest("button, input, textarea, select, [tabindex]")) return;
     // Match on e.code, not e.key: with Shift held the number row's e.key becomes
     // "!@#…", so only the physical Digit1–9 code is reliable for the bind case.
     const digit = /^Digit([1-9])$/.exec(e.code);

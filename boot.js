@@ -10,7 +10,7 @@
 "use strict";
 
 import { game } from "./session.js";
-import { canvas, ctx, minimapCtx, mapSelectEl, gameOverEl, underAttackEl, MINIMAP_W, MINIMAP_H } from "./dom.js";
+import { canvas, ctx, minimapCtx, mapSelectEl, gameOverEl, underAttackEl, pauseBtn, MINIMAP_W, MINIMAP_H } from "./dom.js";
 import { createGameState } from "./engine/state.js";
 import { mulberry32 } from "./engine/rng.js";
 import { createLoop } from "./engine/loop.js";
@@ -69,14 +69,19 @@ underAttackEl.addEventListener("click", () => {
 // the fixed-dt tick sequence — hence replay determinism — is untouched. The PAUSED banner
 // (style.css body.paused) shows only for the MANUAL pause; Help/Home carry their own UI.
 const pauseReasons = new Set();
-function syncPause() { document.body.classList.toggle("paused", pauseReasons.has("manual")); }
+function syncPause() {
+  const manual = pauseReasons.has("manual");
+  document.body.classList.toggle("paused", manual);   // the centered PAUSED banner (style.css) — manual only
+  if (pauseBtn) pauseBtn.textContent = manual ? "▶ Resume" : "⏸ Pause";   // the topbar affordance (touch has no P key)
+}
 function clearPause() { pauseReasons.clear(); syncPause(); }
 export function pauseLoop(reason = "manual") { pauseReasons.add(reason); syncPause(); }
 export function resumeLoop(reason = "manual") { pauseReasons.delete(reason); syncPause(); }
 export function togglePause() {
-  if (!game.state) return;   // nothing to pause on the menu
+  if (!game.state || game.state.over) return;   // nothing to pause on the menu or after the match has ended
   if (pauseReasons.has("manual")) resumeLoop("manual"); else pauseLoop("manual");
 }
+if (pauseBtn) pauseBtn.addEventListener("click", togglePause);   // touch-reachable pause (mirrors the P key)
 
 export function startGame(planetId) {
   // Seed the sim so the match is reproducible: a player can note the seed and
@@ -213,6 +218,7 @@ export function restartToMapSelect() {
   game.state = null;
   game.galaxy = null;
   clearPause();   // leaving a game clears any pause + the PAUSED banner
+  pauseBtn.classList.add("hidden");   // …and the topbar pause control (no game to pause)
   renderMapSelect();
   mapSelectEl.classList.remove("hidden");
 }

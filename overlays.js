@@ -9,7 +9,7 @@
 
 "use strict";
 
-import { seedChipEl, factionChipEl, objectivesEl, helpOverlayEl, helpBtn, gameOverEl, galaxyToastEl } from "./dom.js";
+import { seedChipEl, factionChipEl, objectivesEl, helpOverlayEl, helpBtn, gameOverEl, galaxyToastEl, uiHintEl } from "./dom.js";
 import { FACTIONS } from "./engine/factions.js";
 import { pauseLoop, resumeLoop, togglePause } from "./boot.js";   // runtime-only calls; the boot↔overlays cycle resolves via live bindings
 import * as sound from "./sound.js";
@@ -96,6 +96,21 @@ export function showGalaxyToast(msg, kind = "warn", onClick = null) {
   el._timer = setTimeout(remove, clickable ? 8000 : 5000);
   stack.appendChild(el);
   return el;
+}
+
+/* ---------- transient UI hint ---------- */
+
+// A brief, single-slot bottom-center hint for immediate button feedback — chiefly the touch
+// "why is this greyed" tip (hud.js makeButton). Deliberately SEPARATE from the galaxy-toast
+// stack: that channel is capacity-limited and protects clickable colony alerts, so routing
+// button feedback through it could let a full stack of alerts swallow the tip. This one is
+// user-initiated and always shows (a new hint just replaces the last).
+let uiHintTimer;
+export function flashHint(msg) {
+  uiHintEl.textContent = msg;
+  uiHintEl.classList.remove("hidden");
+  clearTimeout(uiHintTimer);
+  uiHintTimer = setTimeout(() => uiHintEl.classList.add("hidden"), 2600);
 }
 
 /* ---------- help overlay ---------- */

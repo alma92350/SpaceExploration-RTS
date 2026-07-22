@@ -12,7 +12,7 @@ import { game } from "./session.js";
 import {
   resourcesEl, clockEl, panelEl, idleWorkersEl, isTouchMode,
   scenarioBarEl, scenarioBannerEl, scenarioStatusEl, repairBtn, departBtn,
-  starmapBtn, saveBtn, loadBtn, groupChipsEl,
+  starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
@@ -28,7 +28,7 @@ import { deployColonyShip } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
-import { showGalaxyToast } from "./overlays.js";
+import { flashHint } from "./overlays.js";
 import { spriteIcon } from "./render.js";
 import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
@@ -54,6 +54,7 @@ export function renderHUD() {
   starmapBtn.classList.toggle("hidden", !game.galaxy);
   saveBtn.classList.toggle("hidden", !!state.scenario);
   loadBtn.classList.toggle("hidden", !!state.scenario);
+  pauseBtn.classList.remove("hidden");   // pause is available in every mode (touch has no P key)
 
   if (state.scenario) {
     // A scenario has no economy: its budget + clock live in the scenario bar,
@@ -156,7 +157,11 @@ function renderGroupChips() {
     chip.className = "group-chip";
     chip.textContent = `${digit}:${count}`;
     chip.title = `Control group ${digit} (${count} unit${count === 1 ? "" : "s"}) — tap to select, tap again to jump`;
-    chip.addEventListener("click", () => input.recallGroup(digit));
+    // Read game.input LIVE in the handler, not the controller captured at build time: an
+    // Odyssey jump swaps the controller, and if the chip counts happen to match (same sig)
+    // the row isn't rebuilt — a captured handler would then recall on the old, destroyed
+    // world's controller. recallGroup reads game.groups[planetId] live, so this is correct.
+    chip.addEventListener("click", () => game.input && game.input.recallGroup(digit));
     groupChipsEl.appendChild(chip);
   }
 }
@@ -1012,12 +1017,15 @@ function makeButton(label, onClick, { cost = null, tip = null, locked = false, l
   const affordable = !cost || canAfford(state.players.player.resources, cost);
   if (locked || !affordable) {
     btn.classList.add("disabled");   // a tech-locked or unaffordable option greys and just buzzes on click
-    // On TOUCH there's no hover, so the title tip (why it's locked / what it costs) is
-    // otherwise unreachable — surface it as a toast on the tap that would just buzz.
-    const reason = tipText || (!affordable ? "Not enough resources" : "");
+    // On TOUCH there's no hover, so the reason a button is greyed is otherwise unreachable —
+    // surface it on the tap that would just buzz. Prefer the BLOCK reason (the tech-lock, or
+    // the affordability shortfall) over the stat tip, and use the dedicated hint channel, NOT
+    // the capacity-limited galaxy-alert stack (colony alerts could otherwise suppress it).
+    const reason = locked ? (lockTip || tip)
+      : (!affordable ? `Not enough — needs ${costText(cost)}` : tip);
     btn.addEventListener("click", () => {
       sound.playProductionBlocked();
-      if (isTouchMode() && reason) showGalaxyToast(reason, "warn");
+      if (isTouchMode() && reason) flashHint(reason);
     });
   } else {
     btn.addEventListener("click", () => { onClick(); renderHUD(); });

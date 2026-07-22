@@ -114,6 +114,16 @@ html, body {
 }
 .group-chip:hover { background: #1a2c4d; border-color: var(--accent, #4fd1ff); }
 
+/* Transient UI hint (touch "why is this greyed" feedback) — bottom-center, its own channel
+   so it never competes with the galaxy-alert stack. */
+.ui-hint {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+  padding: 8px 16px; border-radius: 8px; font-size: 0.9rem; font-weight: 600;
+  background: #12203a; border: 1px solid var(--warn); color: var(--warn);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 22; pointer-events: none; max-width: 80%;
+}
+.ui-hint.hidden { display: none; }
+
 /* Starmap overlay (starmap.js): a full-screen galaxy map with world nodes on a
    ring, coloured by your relationship to each. */
 .starmap-overlay {
@@ -267,7 +277,7 @@ body.scenario .under-attack { top: 64px; z-index: 6; }
    modal carry their own overlays, so ONLY the manual pause shows this. pointer-events:none
    so it never intercepts a click (the camera still pans while paused). */
 body.paused::after {
-  content: "⏸  PAUSED — press P to resume";
+  content: "⏸  PAUSED";
   position: fixed;
   top: 50%;
   left: 50%;
