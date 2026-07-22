@@ -84,6 +84,7 @@
  * @property {string|null} [focusId]  AI focus-fire target (ai.js / combat.js)
  * @property {boolean} [hold]         hold-stance flag (combat.js)
  * @property {string|null} [targetId] aim target (combat.js / render.js)
+ * @property {Object.<string, number>} [freight]  a freighter's player-managed cargo hold, commodity → qty (engine/galaxy.js)
  */
 
 /**

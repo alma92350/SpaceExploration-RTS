@@ -21,6 +21,7 @@ import { peekEntityId, restoreEntityId } from "./state.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
 import { UNITS, BUILDINGS } from "./entities.js";
+import { COM } from "../data.js";
 import { ODYSSEY_WORLDS } from "./galaxy.js";
 
 export const SAVE_VERSION = 1;
@@ -86,6 +87,24 @@ function cleanEntity(e, def, map) {
   e.hp = Math.max(0, Math.min(num(e.hp, e.maxHp), e.maxHp));
   e.x = Math.max(0, Math.min(num(e.x, 0), map.width));
   e.y = Math.max(0, Math.min(num(e.y, 0), map.height));
+  // A freighter's `freight` hold is untrusted save data (a hand-edited file could smuggle in a
+  // negative, NaN, or over-capacity haul, or a bogus commodity): keep only real commodities with a
+  // positive finite qty, and clamp the total to the ship's cargoHold. A non-freighter can't carry
+  // freight at all, so strip any that a tampered save bolted on.
+  if (def.cargoHold) {
+    const clean = {};
+    let used = 0;
+    if (e.freight && typeof e.freight === "object") {
+      for (const com of Object.keys(e.freight)) {
+        if (!COM[com] || used >= def.cargoHold) continue;
+        const q = num(e.freight[com], 0);
+        if (q > 0) { const take = Math.min(q, def.cargoHold - used); clean[com] = take; used += take; }
+      }
+    }
+    e.freight = clean;
+  } else if (e.freight !== undefined) {
+    delete e.freight;
+  }
   return e;
 }
 

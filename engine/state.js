@@ -37,7 +37,8 @@ export function restoreEntityId(n) { nextEntityId = n; }
  */
 export function makeUnit(type, owner, x, y) {
   const def = UNITS[type];
-  return {
+  /** @type {Unit} */
+  const u = {
     kind: "unit", id: newId("u"), type, owner,
     x, y, hp: def.hp, maxHp: def.hp,
     order: null,          // { type: 'move'|'gather'|'attack'|'attack-move'|'build', ... } — the active order
@@ -46,6 +47,11 @@ export function makeUnit(type, owner, x, y) {
     attackTimer: 0,
     autoTarget: null,     // sticky auto-acquired target id (combat.js) — commit to a foe, don't re-dogpile the nearest each tick
   };
+  // A freighter (Odyssey cargo ship) carries `freight` — a player-managed, multi-commodity hold,
+  // filled and emptied by hand at a world (engine/galaxy.js load/unloadFreighter) and shipped on a
+  // jump. Named `freight`, not `hold`, to stay clear of the combat hold-stance flag (unit.hold).
+  if (def.cargoHold) u.freight = {};
+  return u;
 }
 
 /**

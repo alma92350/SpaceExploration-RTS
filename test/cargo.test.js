@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, jumpCapital, cargoManifest, freightCapacity } from "../engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, cargoManifest, freightCapacity,
+         loadFreighter, unloadFreighter, freightUsed, freightRoom } from "../engine/galaxy.js";
+import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { queueProduction } from "../engine/production.js";
@@ -81,4 +83,67 @@ test("a bigger fleet of cargo ships hauls proportionally more", () => {
   assert.equal(cap, 2100);
   from.players.player.resources.alloys = 5000;
   assert.equal(cargoManifest(from, cap).alloys, 2100, "the whole combined hold loads");
+});
+
+/* ---------- manual load / unload (a player-managed hold per freighter) ---------- */
+
+test("loadFreighter moves stockpile → hold (clamped to room and stock); unloadFreighter reverses it", () => {
+  const { from, ships } = readyToJump(30, ["hauler"]);   // cargoHold 250
+  const f = ships[0];
+  Object.assign(from.players.player.resources, { alloys: 300, spice: 40 });
+
+  assert.equal(loadFreighter(from, f.id, "alloys", 100), 100, "loads 100 alloys");
+  assert.equal(f.freight.alloys, 100, "…into the hold");
+  assert.equal(from.players.player.resources.alloys, 200, "…and off the stockpile");
+  assert.equal(freightUsed(f), 100);
+  assert.equal(freightRoom(f), 150);
+
+  assert.equal(loadFreighter(from, f.id, "spice", 999), 40, "clamps to what's in stock (40 spice)");
+  assert.equal(loadFreighter(from, f.id, "alloys", 999), 110, "then clamps to the 250 hold (110 room left)");
+  assert.equal(freightUsed(f), 250, "the hold is full");
+  assert.equal(loadFreighter(from, f.id, "alloys", 50), 0, "a full hold takes nothing more");
+
+  assert.equal(unloadFreighter(from, f.id, "alloys", 50), 50, "unloads 50 alloys");
+  assert.equal(f.freight.alloys, 160);
+  assert.equal(from.players.player.resources.alloys, 140, "…back onto the stockpile");
+});
+
+test("loadFreighter refuses a non-freighter and an unknown commodity", () => {
+  const { from, ships } = readyToJump(31, ["hauler"]);
+  from.players.player.resources.alloys = 100;
+  const skiff = makeUnit("skiff", "player", 0, 0); from.units.set(skiff.id, skiff);
+  assert.equal(loadFreighter(from, skiff.id, "alloys", 10), 0, "a combat ship has no hold");
+  assert.equal(loadFreighter(from, ships[0].id, "notacommodity", 10), 0, "an unknown commodity is rejected");
+  assert.equal(from.players.player.resources.alloys, 100, "…and nothing left the stockpile");
+});
+
+test("a hand-loaded freighter ships EXACTLY what the player put aboard (not the auto-pick)", () => {
+  const { g, from, destId, ships } = readyToJump(32, ["hauler"]);   // 250 hold
+  Object.assign(from.players.player.resources, { spice: 100, machinery: 100 });
+  loadFreighter(from, ships[0].id, "spice", 60);   // deliberately ship the CHEAP good, not machinery
+  const res = jumpCapital(g, destId);
+  const dest = activeState(g);
+  assert.equal(res.cargo.spice, 60, "the jump delivered the 60 spice loaded");
+  assert.ok(!res.cargo.machinery, "…and NOT the auto-load's most-valuable pick");
+  assert.equal(dest.players.player.resources.spice, 60, "spice banked at the destination");
+  assert.equal(from.players.player.resources.machinery, 100, "machinery stayed on the origin — never auto-loaded");
+});
+
+test("a freighter's loaded hold survives a save/load, and a tampered hold is clamped on the way in", () => {
+  const { g, from, ships } = readyToJump(33, ["bulkfreighter"]);   // 1600 hold
+  from.players.player.resources.alloys = 500;
+  loadFreighter(from, ships[0].id, "alloys", 500);
+
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  const rf = [...activeState(restored).units.values()].find(u => u.type === "bulkfreighter");
+  assert.equal(rf.freight.alloys, 500, "the loaded alloys survive the round-trip");
+
+  const save = serializeGalaxy(g);   // detached payload
+  const tampered = save.planets.flatMap(p => p.units).find(u => u.type === "bulkfreighter");
+  tampered.freight = { alloys: 1e9, notreal: 50, metals: -5 };   // over-cap + bogus + negative
+  const r2 = deserializeGalaxy(JSON.parse(JSON.stringify(save)));
+  const f2 = [...activeState(r2).units.values()].find(u => u.type === "bulkfreighter");
+  assert.ok(f2.freight.alloys <= 1600, "over-capacity haul clamped to the ship's cargoHold");
+  assert.ok(!("notreal" in f2.freight), "a bogus commodity is dropped");
+  assert.ok(!("metals" in f2.freight), "a negative qty is dropped");
 });

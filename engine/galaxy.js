@@ -29,7 +29,7 @@ import { createDiplomacy } from "./diplomacy.js";
 import { UNITS, BUILDINGS } from "./entities.js";
 import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
-import { PLANETS } from "../data.js";
+import { PLANETS, COM } from "../data.js";
 
 // The worlds an Odyssey can settle: the skirmish nine PLUS the Odyssey-only extras
 // (a research capital, an agri world) — appended AFTER the nine so the skirmish
@@ -561,11 +561,70 @@ export function cargoManifest(from, capacity = 0) {
   return manifest;
 }
 
-function loadCargo(from, dest, capacity) {
-  const manifest = cargoManifest(from, capacity);
+// How full a freighter's hold is (sum of its commodity quantities). 0 for a non-freighter.
+export function freightUsed(unit) {
+  let n = 0;
+  if (unit && unit.freight) for (const com in unit.freight) n += unit.freight[com] || 0;
+  return n;
+}
+
+// A freighter's remaining hold room = its cargoHold minus what's aboard.
+export function freightRoom(unit) {
+  const cap = unit ? (UNITS[unit.type]?.cargoHold || 0) : 0;
+  return Math.max(0, cap - freightUsed(unit));
+}
+
+// Load up to `qty` of commodity `com` from the CURRENT world's player stockpile into a freighter's
+// hold, clamped to the hold's room and what's actually in stock. Returns the amount loaded (0 if
+// it's not a player freighter, the commodity is unknown, or nothing could move). The goods leave
+// the stockpile immediately — they're aboard the ship now, to ride the next jump.
+export function loadFreighter(state, unitId, com, qty) {
+  const u = state.units.get(unitId);
+  if (!u || u.owner !== "player" || !u.freight || !COM[com] || !(UNITS[u.type]?.cargoHold)) return 0;
+  const res = state.players.player.resources;
+  const move = Math.min(Math.floor(qty) || 0, freightRoom(u), Math.floor(res[com] || 0));
+  if (move <= 0) return 0;
+  res[com] -= move;
+  u.freight[com] = (u.freight[com] || 0) + move;
+  return move;
+}
+
+// Unload up to `qty` of `com` from a freighter's hold back onto the CURRENT world's player
+// stockpile. Returns the amount unloaded. Works wherever the ship is — the origin (to undo a
+// load) or a world it jumped to (to bank the haul and sell it at that market).
+export function unloadFreighter(state, unitId, com, qty) {
+  const u = state.units.get(unitId);
+  if (!u || u.owner !== "player" || !u.freight) return 0;
+  const move = Math.min(Math.floor(qty) || 0, u.freight[com] || 0);
+  if (move <= 0) return 0;
+  u.freight[com] -= move;
+  if (u.freight[com] <= 0) delete u.freight[com];
+  const res = state.players.player.resources;
+  res[com] = (res[com] || 0) + move;
+  return move;
+}
+
+// A jump delivers every staged freighter's HOLD to the destination colony's stockpile. A freighter
+// the player left EMPTY auto-fills from the origin stockpile most-valuable-first first — the
+// zero-effort "produce here, sell there" default, unchanged — while one the player hand-loaded
+// ships exactly what they chose. Returns the combined delivered manifest (for the arrival toast).
+// `riders` are the units that lifted off; non-freighters (no hold) are skipped.
+function loadCargo(from, dest, riders) {
   const src = from.players.player.resources, dst = dest.players.player.resources;
-  for (const com in manifest) { src[com] -= manifest[com]; dst[com] = (dst[com] || 0) + manifest[com]; }
-  return manifest;
+  const delivered = {};
+  for (const u of riders) {
+    if (!u.freight || !(UNITS[u.type]?.cargoHold)) continue;
+    if (freightUsed(u) === 0) {                                  // empty hold → auto-fill from what's left on the origin
+      const manifest = cargoManifest(from, UNITS[u.type].cargoHold);
+      for (const com in manifest) { src[com] -= manifest[com]; u.freight[com] = manifest[com]; }
+    }
+    for (const com in u.freight) {                               // deliver the hold to the destination colony
+      dst[com] = (dst[com] || 0) + u.freight[com];
+      delivered[com] = (delivered[com] || 0) + u.freight[com];
+    }
+    u.freight = {};
+  }
+  return delivered;
 }
 
 // Launch an interplanetary jump to `destId`: player units move to the destination's landing
@@ -611,7 +670,7 @@ export function jumpCapital(galaxy, destId) {
     dest.units.set(u.id, u);
   });
 
-  const cargo = loadCargo(from, dest, freightCapacity(riders));   // haul goods in the staged cargo ships' holds
+  const cargo = loadCargo(from, dest, riders);   // deliver each staged freighter's hold (empty ones auto-fill)
 
   from.selection = []; dest.selection = [];
   from.background = true;    // the world you left keeps evolving on its own
