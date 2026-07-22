@@ -17,6 +17,7 @@ import {
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale } from "./engine/industry.js";
+import { rigInfo } from "./engine/rig.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
@@ -363,6 +364,14 @@ function renderSelectionPanel() {
         if (!f) return "";
         const res = state.players.player.resources;
         return freightUsed(f) + ":" + JSON.stringify(f.freight) + ":" + loadableComs(state, f).map(c => Math.floor(res[c] || 0)).join(",");
+      })()
+    // Rebuild a selected Plasma Rig's status as it digs — its progress, last strike (each dig
+    // increments digCount), and its power/nuclear situation — without a per-tick rebuild.
+    + "|" + (() => {
+        const rig = game.galaxy && sel.find(e => e.kind === "building" && BUILDINGS[e.type].rig && !e.constructing);
+        if (!rig) return "";
+        const info = rigInfo(state, rig);
+        return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}`;
       })();
 
   if (signature !== lastPanelSignature) {
@@ -861,6 +870,37 @@ function rebuildSelectionPanel(sel) {
                             : "Stop consuming inputs — banks and draws nothing until resumed" }));
   }
 
+  // Plasma Rig (Odyssey): deep-core extraction. Say what it mines, how rich the seam is, its dig
+  // progress + last strike, and why it's slow/stalled (out of nuclear, or a starved Power grid).
+  const rig = sel.find(e => e.kind === "building" && BUILDINGS[e.type].rig && !e.constructing);
+  if (rig) {
+    const info = rigInfo(state, rig);
+    const meta = COM[info.vein];
+    const head = document.createElement("div");
+    head.className = "sel-row";
+    head.textContent = `⛏ Mining ${meta?.ico || ""} ${meta?.name || info.vein} · seam: ${info.richLabel}`;
+    panelEl.appendChild(head);
+
+    const progRow = document.createElement("div");
+    progRow.className = "sel-note";
+    progRow.textContent = `Dig ${Math.round(info.progress * 100)}%`
+      + (info.lastTier ? ` · last strike: ${info.lastTier} (+${Math.round(info.lastYield)} ${meta?.name || info.vein})` : " · warming up…");
+    panelEl.appendChild(progRow);
+
+    let cls = "good", text = "Digging at full power";
+    if (!info.nuclearOk) { cls = "bad"; text = "Stalled — out of radioactives (no nuclear to exploit)"; }
+    else if (info.throttle <= 0) { cls = "bad"; text = "Stalled — no Power for the plasma arc (build a Reactor)"; }
+    else if (info.throttle < 0.995) { cls = "warn"; text = `Throttled ${Math.round(info.throttle * 100)}% — low Power`; }
+    const stRow = document.createElement("div");
+    stRow.className = "sel-note " + cls;
+    stRow.textContent = text;
+    panelEl.appendChild(stRow);
+
+    panelEl.appendChild(makeButton(rig.paused ? "▶ Resume digging" : "⏸ Pause digging",
+      () => { rig.paused = !rig.paused; },
+      { tip: rig.paused ? "Restart the plasma arc" : "Stop drawing Power and burning radioactives until resumed" }));
+  }
+
   // Reactor (Odyssey): grants Power to the grid rather than running a recipe, so
   // it has no factory panel — say what it feeds and why it matters.
   const reactor = sel.find(e => e.kind === "building" && e.type === "reactor" && !e.constructing);
@@ -985,7 +1025,7 @@ function rebuildSelectionPanel(sel) {
       // field.
       const GROUPS = [
         ["Economy", ["reactor", "smelter", "datacenter", "assembler", "chipfab",
-                     "machineworks", "antimatterforge", "aifoundry", "torpedoworks"]],
+                     "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
         ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
         ["Endgame", ["antimatter_gate"]],
         ["Travel", ["spaceport"]],
