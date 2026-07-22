@@ -10,7 +10,7 @@ const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force 
 
 test("the AI cycles through its archetype's exact unit mix instead of pure Skiff spam", () => {
   const state = createGameState({ planetId: "ferros" });
-  const mix = state.aiArchetype.unitMix;
+  const mix = state.ai.archetype.unitMix;
   const barracks = makeBuilding("barracks", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
   state.buildings.set(barracks.id, barracks);
   stockedFoundry(state); stockedArsenal(state);   // Tier-2 + Tier-3 unlocked so the full mix cycles (drives the mix directly, not the AI's tech-up)
@@ -38,7 +38,7 @@ test("the AI cycles through its archetype's exact unit mix instead of pure Skiff
 
 test("the AI's attack wave includes all three combat types, not just Skiffs", () => {
   const state = createGameState({ planetId: "ferros" });
-  state.time = state.aiArchetype.attackTimeout + 50;   // well past the timeout, so it commits regardless of army size
+  state.time = state.ai.archetype.attackTimeout + 50;   // well past the timeout, so it commits regardless of army size
 
   const skiff = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
   const bastion = makeUnit("bastion", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
@@ -56,9 +56,9 @@ test("the AI's attack wave includes all three combat types, not just Skiffs", ()
 
 test("a throttled AI still commits its attack — the wave is exempt from the APM budget", () => {
   const state = createGameState({ planetId: "ferros" });
-  state.aiApm = 1;            // slowed to a crawl...
-  state.aiActionBudget = 0;   // ...with no action credits banked
-  state.time = state.aiArchetype.attackTimeout + 50;
+  state.ai.apm = 1;            // slowed to a crawl...
+  state.ai.actionBudget = 0;   // ...with no action credits banked
+  state.time = state.ai.archetype.attackTimeout + 50;
   const skiff = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
   state.units.set(skiff.id, skiff);
 
@@ -69,14 +69,14 @@ test("a throttled AI still commits its attack — the wave is exempt from the AP
 
 test("the AI launches repeated attack waves, not just one", () => {
   const state = createGameState({ planetId: "ferros" });
-  const archetype = state.aiArchetype;
+  const archetype = state.ai.archetype;
   state.time = archetype.attackTimeout + 1;
 
   const waveOne = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
   state.units.set(waveOne.id, waveOne);
   runAI(state, THINK_INTERVAL);
   assert.equal(waveOne.order?.type, "attack-move", "the first wave should commit past the timeout");
-  const firstNextAttackAt = state.aiNextAttackAt;
+  const firstNextAttackAt = state.ai.nextAttackAt;
   assert.ok(firstNextAttackAt > state.time, "committing a wave should schedule the next one instead of never attacking again");
 
   // Simulate that wave being wiped out, and a fresh batch produced at home
@@ -116,7 +116,7 @@ test("the AI biases production toward the counter of a player army it can SEE", 
     }
   }
 
-  assert.equal(builtTypes[0], state.aiArchetype.unitMix[0], "the very first build should still follow the archetype's mix");
+  assert.equal(builtTypes[0], state.ai.archetype.unitMix[0], "the very first build should still follow the archetype's mix");
   assert.equal(builtTypes[3], "bastion", "the 4th unit built (the first counter-pick slot) should directly counter the seen Skiff-heavy army");
   assert.equal(builtTypes[6], "bastion", "the counter-pick recurs every 3rd unit thereafter");
 });
@@ -142,7 +142,7 @@ test("the AI does NOT counter a player army it hasn't seen — no free intel", (
     if (barracks.queue.length) { built.push(barracks.queue[barracks.queue.length - 1].unitType); barracks.queue.length = 0; }
   }
 
-  const mix = state.aiArchetype.unitMix;
+  const mix = state.ai.archetype.unitMix;
   assert.deepEqual(built, Array.from({ length: 7 }, (_, i) => mix[i % mix.length]),
     "with the player army unseen, every slot follows the plain mix — no reactive counter");
 });
@@ -191,7 +191,7 @@ test("the Economist adds a second Barracks once it can afford one, and never a t
 test("two completed Barracks drain a single shared mix cycle", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   fundAll(state);
-  const mix = state.aiArchetype.unitMix;   // ferros has every commodity, so the full economist mix survives
+  const mix = state.ai.archetype.unitMix;   // ferros has every commodity, so the full economist mix survives
   const b1 = stockedBarracks(state, -100);
   const b2 = stockedBarracks(state, 100);
   stockedFoundry(state); stockedArsenal(state);   // unlock Tier-2 + Tier-3 so the full shared cycle is what's under test
@@ -352,8 +352,8 @@ test("the AI retreats a ground-down attack that still faces opposition, saving t
   const cc = [...state.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
   // A wave that launched 10 strong is down to 3 survivors, out at midfield (far
   // enough from the AI base that it's an OFFENSE situation, not a home defense).
-  state.aiAttackForce = 10;
-  state.aiAttackDesperate = false;
+  state.ai.attackForce = 10;
+  state.ai.attackDesperate = false;
   const survivors = [];
   for (let i = 0; i < 3; i++) {
     const u = makeUnit("skiff", "ai", 800, 480 + i * 8);
@@ -380,8 +380,8 @@ test("the AI retreats a ground-down attack that still faces opposition, saving t
 
 test("the AI does NOT retreat a ground-down attack once its opposition is gone (it finishes the job)", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
-  state.aiAttackForce = 10;
-  state.aiAttackDesperate = false;
+  state.ai.attackForce = 10;
+  state.ai.attackDesperate = false;
   const survivors = [];
   for (let i = 0; i < 3; i++) {
     const u = makeUnit("skiff", "ai", 800, 480 + i * 8);
@@ -407,7 +407,7 @@ test("a size-triggered attack keeps a home guard back; a timeout commit throws e
   const scout = makeUnit("skiff", "ai", cc.x, cc.y - 200);
   scout.order = { type: "move", x: 100, y: 100 };
   state.units.set(scout.id, scout);
-  state.aiScoutId = scout.id;
+  state.ai.scoutId = scout.id;
   const squad = [];
   for (let i = 0; i < 12; i++) {
     const u = makeUnit("skiff", "ai", cc.x - 30 - i * 4, cc.y);
@@ -425,7 +425,7 @@ test("a size-triggered attack keeps a home guard back; a timeout commit throws e
 
 test("the AI marches on a SEEN enemy building rather than the fixed start coordinate", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
-  state.time = state.aiArchetype.attackTimeout + 50;   // force a commit
+  state.time = state.ai.archetype.attackTimeout + 50;   // force a commit
   const aiBase = state.map.bases.ai;
   // A player expansion the AI has vision of, placed away from the player's
   // start. Sits just inside the AI CC's sight so it counts as "seen".
@@ -443,7 +443,7 @@ test("the AI marches on a SEEN enemy building rather than the fixed start coordi
 
 test("with no enemy in sight, the AI beelines to the player's start while it's still uncharted", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
-  state.time = state.aiArchetype.attackTimeout + 50;   // force a commit
+  state.time = state.ai.archetype.attackTimeout + 50;   // force a commit
   const aiBase = state.map.bases.ai;
   const u = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
   state.units.set(u.id, u);
@@ -459,7 +459,7 @@ test("with no enemy in sight, the AI beelines to the player's start while it's s
 
 test("once the start is charted and empty, the AI searches unexplored ground for a hidden CC", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
-  state.time = state.aiArchetype.attackTimeout + 50;
+  state.time = state.ai.archetype.attackTimeout + 50;
   const aiBase = state.map.bases.ai;
   const u = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
   state.units.set(u.id, u);
@@ -619,12 +619,12 @@ test("the AI spreads workers across ore nodes instead of over-piling one under s
 
 test("a legacy archetype without the Tier 4 fields still runs without throwing", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
-  state.aiArchetype = { name: "Legacy", workerTarget: 4, armyAttackSize: 4, attackTimeout: 90, unitMix: ["skiff"] };
+  state.ai.archetype = { name: "Legacy", workerTarget: 4, armyAttackSize: 4, attackTimeout: 90, unitMix: ["skiff"] };
   const barracks = stockedBarracks(state);
   state.players.ai.resources.ore = 100000;
 
   assert.doesNotThrow(() => { for (let i = 0; i < 5; i++) runAI(state, THINK_INTERVAL); });
-  assert.ok(barracks.queue.length > 0 || state.aiUnitsBuilt > 0, "it still queues Skiffs from the bare mix");
+  assert.ok(barracks.queue.length > 0 || state.ai.unitsBuilt > 0, "it still queues Skiffs from the bare mix");
 });
 
 test("the Tactical AI focus-fires: it points its army at the lowest-HP visible enemy", () => {
@@ -679,7 +679,7 @@ test("the Tactical AI builds a Ranger and scouts with it instead of lending a fi
   for (let i = 0; i < 2000 && !state.over; i++) {
     tick(state, 0.1);
     const ranger = [...state.units.values()].find(u => u.owner === "ai" && u.type === "ranger");
-    if (ranger) { sawRanger = true; if (state.aiScoutId === ranger.id) rangerScouted = true; }
+    if (ranger) { sawRanger = true; if (state.ai.scoutId === ranger.id) rangerScouted = true; }
   }
   assert.ok(sawRanger, "the Tactical AI builds a Ranger");
   assert.ok(rangerScouted, "and hands it the scouting job");
@@ -728,7 +728,7 @@ test("the Standard AI recalls the whole army to a threat — feint-resistance is
 test("Tactical AI raids the economy: a raid wave targets a visible player worker, not the base", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5, aiMicro: true });
   state.time = 0;              // not a desperation timeout commit
-  state.aiWaveCount = 2;       // so this commit is the 3rd wave -> a raid
+  state.ai.waveCount = 2;       // so this commit is the 3rd wave -> a raid
   const aiBase = state.map.bases.ai;
   const squad = [];
   for (let i = 0; i < 12; i++) { const u = makeUnit("skiff", "ai", aiBase.x - 20 - i * 4, aiBase.y); state.units.set(u.id, u); squad.push(u); }

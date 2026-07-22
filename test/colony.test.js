@@ -107,7 +107,7 @@ test("the AI deploys its start colony ship into a base on its first think", () =
 
 test("the AI's start deploy is APM-exempt — even a throttled AI seats a base", () => {
   const s = createGameState({ planetId: "ferros", seed: 3, endless: true, aiApm: 1 });
-  s.aiActionBudget = 0;                       // no action credits at all
+  s.ai.actionBudget = 0;                       // no action credits at all
   runAI(s, THINK);
   assert.ok(ccs(s, "ai").length >= 1, "a 1-APM AI still founds its base (progress is guaranteed)");
 });

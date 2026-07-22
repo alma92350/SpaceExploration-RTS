@@ -93,9 +93,9 @@ test("the Odyssey AI wave-cadence clock survives a save/load (continue-identical
   const g = createGalaxy({ seed: 4 });
   const s = activeState(g);
   s.diplomacy.stance = -0.4;     // a hostile world that has scheduled its next probe
-  s.aiNextWaveAt = 123.5;        // a future cadence time — must not reset to 0 on reload
+  s.ai.nextWaveAt = 123.5;        // a future cadence time — must not reset to 0 on reload
   const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
-  assert.equal(activeState(restored).aiNextWaveAt, 123.5, "the next-wave clock is preserved, not reset to wave-ready");
+  assert.equal(activeState(restored).ai.nextWaveAt, 123.5, "the next-wave clock is preserved, not reset to wave-ready");
 });
 
 test("researched tech and an in-progress Datacenter project survive a save/load", () => {

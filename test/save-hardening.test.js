@@ -87,13 +87,13 @@ test("a low or missing nextEntityId can't mint an id that collides with a loaded
 test("aiWaveCount round-trips (continue-identically for the economy-raid cadence)", () => {
   const a = createGameState({ planetId: "ferros", seed: 9, rng: mulberry32(9), aiMicro: true });
   for (let i = 0; i < 50; i++) tick(a, 0.1);
-  a.aiWaveCount = 7;
+  a.ai.waveCount = 7;
   const st = deserializeGame(serializeGame(a));
-  assert.equal(st.aiWaveCount, 7, "the committed-wave counter survives a save/reload");
+  assert.equal(st.ai.waveCount, 7, "the committed-wave counter survives a save/reload");
 
   const save = serializeGame(a);
-  delete save.ai.aiWaveCount;                          // an old save predating the field
-  assert.equal(deserializeGame(save).aiWaveCount, 0, "an old save loads with the counter defaulted to 0");
+  delete save.ai.aiWaveCount;                          // an old save predating the field (wire key stays aiWaveCount)
+  assert.equal(deserializeGame(save).ai.waveCount, 0, "an old save loads with the counter defaulted to 0");
 });
 
 /* ---------- galaxy structural + roster guards ---------- */

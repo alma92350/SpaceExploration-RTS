@@ -64,8 +64,8 @@ export function galaxySnapshot(galaxy) {
       // zero, an unscheduled wave is "none". Otherwise a live world's `undefined` vs a reloaded
       // world's serialize-defaulted 0/null would read as a difference when the sim treats them
       // identically — a false failure that isn't a real divergence.
-      s.aiNextWaveAt == null ? "-" : s.aiNextWaveAt,
-      Number(s.aiWaveCount) || 0,
+      s.ai.nextWaveAt == null ? "-" : s.ai.nextWaveAt,
+      Number(s.ai.waveCount) || 0,
     ].join("::"));
   return JSON.stringify({
     seed: galaxy.seed, credits: galaxy.credits, activeId: galaxy.activeId,

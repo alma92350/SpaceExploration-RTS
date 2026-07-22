@@ -125,24 +125,24 @@ function serPlanet(state) {
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],
     ai: {
-      aiThink: state.aiThink ?? 0, aiScoutId: state.aiScoutId ?? null,
-      aiApm: state.aiApm ?? null, aiMicro: !!state.aiMicro,
-      aiActionBudget: state.aiActionBudget ?? 0,
-      aiAttackForce: state.aiAttackForce ?? 0, aiAttackDesperate: !!state.aiAttackDesperate,
-      aiNextAttackAt: state.aiNextAttackAt ?? null, aiUnitsBuilt: state.aiUnitsBuilt ?? 0,
+      aiThink: state.ai.think ?? 0, aiScoutId: state.ai.scoutId ?? null,
+      aiApm: state.ai.apm ?? null, aiMicro: !!state.ai.micro,
+      aiActionBudget: state.ai.actionBudget ?? 0,
+      aiAttackForce: state.ai.attackForce ?? 0, aiAttackDesperate: !!state.ai.attackDesperate,
+      aiNextAttackAt: state.ai.nextAttackAt ?? null, aiUnitsBuilt: state.ai.unitsBuilt ?? 0,
       // Committed-wave counter (engine/ai.js): drives the economy-raid cadence
       // (aiWaveCount % RAID_EVERY). Omitting it reset the counter to 0 on every reload,
       // shifting all subsequent raid-vs-base decisions — the same continue-identically
       // break the aiNextWaveAt note below warns about. Additive + `|| 0`-defaulted in
       // ai.js, so old saves without it load fine.
-      aiWaveCount: state.aiWaveCount ?? 0,
+      aiWaveCount: state.ai.waveCount ?? 0,
       // Odyssey offense cadence (engine/ai.js) — a scheduled future time. Must be
       // persisted or a reloaded hostile world fires its next probe a full cadence
       // early (undefined ?? 0 ⇒ immediately wave-ready), breaking continue-identically.
-      aiNextWaveAt: state.aiNextWaveAt ?? null,
+      aiNextWaveAt: state.ai.nextWaveAt ?? null,
       // Odyssey colony-ship expansion target (engine/ai.js) — the committed deploy spot
       // of an in-flight ship. Persisted so a reload doesn't recompute a different target.
-      aiColonyTarget: state.aiColonyTarget ?? null,
+      aiColonyTarget: state.ai.colonyTarget ?? null,
     },
   };
 }
@@ -178,15 +178,20 @@ function rehydratePlanet(P) {
     buildings,
     selection: [],
     fog, fogAI,
-    aiScoutId: P.ai.aiScoutId, aiThink: P.ai.aiThink,
-    aiApm: P.ai.aiApm, aiMicro: P.ai.aiMicro,
-    aiActionBudget: P.ai.aiActionBudget,
-    aiAttackForce: P.ai.aiAttackForce, aiAttackDesperate: P.ai.aiAttackDesperate,
-    aiNextAttackAt: P.ai.aiNextAttackAt, aiUnitsBuilt: P.ai.aiUnitsBuilt,
-    aiWaveCount: P.ai.aiWaveCount ?? 0,
-    aiNextWaveAt: P.ai.aiNextWaveAt ?? undefined,
-    aiColonyTarget: P.ai.aiColonyTarget ?? null,
-    aiArchetype: archetypeFor(P.planetId),
+    // Restore the AI controller's bookkeeping into the grouped `state.ai` (see engine/state.js).
+    // Wire keys stay `aiThink`/`aiScoutId`/… under the save's `ai:` object for backward compat;
+    // only the live shape is nested. The archetype is re-derived from the planet id, not persisted.
+    ai: {
+      scoutId: P.ai.aiScoutId, think: P.ai.aiThink,
+      apm: P.ai.aiApm, micro: P.ai.aiMicro,
+      actionBudget: P.ai.aiActionBudget,
+      attackForce: P.ai.aiAttackForce, attackDesperate: P.ai.aiAttackDesperate,
+      nextAttackAt: P.ai.aiNextAttackAt, unitsBuilt: P.ai.aiUnitsBuilt,
+      waveCount: P.ai.aiWaveCount ?? 0,
+      nextWaveAt: P.ai.aiNextWaveAt ?? undefined,
+      colonyTarget: P.ai.aiColonyTarget ?? null,
+      archetype: archetypeFor(P.planetId),
+    },
     events: [],
   };
   updateFog(state, state.fog, "player");

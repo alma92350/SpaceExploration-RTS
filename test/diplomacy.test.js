@@ -98,17 +98,17 @@ test("odyssey probes are spaced by a cadence, not launched every tick", () => {
   runAI(s, THINK);
   const first = attacking(army);
   assert.ok(first >= 1, "the first probe launches");
-  assert.ok(s.aiNextWaveAt > 0, "the next wave is scheduled ahead");
+  assert.ok(s.ai.nextWaveAt > 0, "the next wave is scheduled ahead");
   runAI(s, THINK);   // same tick — the reserve must wait
   assert.equal(attacking(army), first, "no second probe before the cadence elapses");
-  s.time = s.aiNextWaveAt + 1;
+  s.time = s.ai.nextWaveAt + 1;
   runAI(s, THINK);
   assert.ok(attacking(army) > first, "a fresh probe launches once the cadence elapses");
 });
 
 test("the AI still attacks when there is no diplomacy (a plain skirmish)", () => {
   const state = createGameState({ planetId: "ferros" });
-  state.time = state.aiArchetype.attackTimeout + 1;
+  state.time = state.ai.archetype.attackTimeout + 1;
   const unit = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
   state.units.set(unit.id, unit);
   runAI(state, THINK);

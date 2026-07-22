@@ -24,7 +24,7 @@
 
    How aggressively vs. how patiently it plays — worker/army targets, attack
    timing, unit mix, how many turrets and barracks, when to expand — all comes
-   from state.aiArchetype (see engine/aiArchetypes.js), which is picked by
+   from state.ai.archetype (see engine/aiArchetypes.js), which is picked by
    which planet the match is on. This file just executes whatever profile it's
    handed; every Tier 4 field is read with a use-site default so a legacy
    profile that predates them still runs.
@@ -80,11 +80,11 @@ const SPENDABLE = (() => {
 
 export function runAI(state, dt) {
   accrueActionBudget(state, dt);   // every tick, so credits build up between think cycles
-  state.aiThink = (state.aiThink || 0) - dt;
-  if (state.aiThink > 0) return;
-  state.aiThink = THINK_INTERVAL;
+  state.ai.think = (state.ai.think || 0) - dt;
+  if (state.ai.think > 0) return;
+  state.ai.think = THINK_INTERVAL;
 
-  const archetype = state.aiArchetype;
+  const archetype = state.ai.archetype;
   // Effective archetype field: in ODYSSEY (state.diplomacy present) an archetype's `odyssey`
   // overlay wins for the fields it specifies, so a neighbour's temperament reads differently in
   // the play-forever meta than in a resolve-to-a-winner skirmish (aiArchetypes.js). In a
@@ -121,7 +121,7 @@ export function runAI(state, dt) {
   // engine/galaxy.js). Runs first, at top priority. Skirmish: colonyShip is null → no-op.
   if (state.endless && !cc && colonyShip) {
     if (deployColonyShip(state, colonyShip.id)) {
-      state.aiColonyTarget = null;   // re-seating cancels any stale expansion intent
+      state.ai.colonyTarget = null;   // re-seating cancels any stale expansion intent
     } else {
       const spot = findPlacement(state, "command", colonyShip.x, colonyShip.y);   // slide off bad ground, then retry next think
       if (spot && (spot.x !== colonyShip.x || spot.y !== colonyShip.y)) issueMove([colonyShip], spot.x, spot.y);
@@ -132,7 +132,7 @@ export function runAI(state, dt) {
   // all-terrain, and it doesn't bleed a fighter out of the army the way lending a
   // combat unit does (updateScout prefers it). Standard AI keeps lending a unit,
   // so its economy/opening is untouched. Ore-only and tiny (45), reserve-aware.
-  if (state.aiMicro && cc && workers.length > 0 && rangers.length === 0
+  if (state.ai.micro && cc && workers.length > 0 && rangers.length === 0
       && !cc.queue.some(j => j.unitType === "ranger")
       && canAffordKeeping(ai.resources, UNITS.ranger.cost, oreReserve) && canAct(state)) {
     if (queueProduction(state, cc.id, "ranger")) spend(state);
@@ -147,27 +147,27 @@ export function runAI(state, dt) {
 
   if (state.endless) {
     // ODYSSEY: expand by COLONY SHIP — produce one, move it to a fresh cluster, deploy
-    // on arrival (no more worker-builds-a-CC). A committed target (state.aiColonyTarget)
+    // on arrival (no more worker-builds-a-CC). A committed target (state.ai.colonyTarget)
     // keeps the ship homing on a fixed point rather than chasing a shifting cluster.
     const colonyCost = UNITS.colonyship.cost.ore;
-    if (state.aiColonyTarget && !colonyShip) state.aiColonyTarget = null;   // ship deployed or died → reset the machine
+    if (state.ai.colonyTarget && !colonyShip) state.ai.colonyTarget = null;   // ship deployed or died → reset the machine
 
     if (colonyShip && cc) {                                    // an EXPANSION ship is in flight (a start ship has no cc yet — handled above)
-      if (!state.aiColonyTarget) {                             // LAUNCH: commit a target and send it
+      if (!state.ai.colonyTarget) {                             // LAUNCH: commit a target and send it
         const anchor = bestExpansionCluster(state, myCCs);
         if (anchor) {
           const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // aim for the home side of the cluster
           const spot = findPlacement(state, "command",
             anchor.x + Math.cos(toward) * EXPANSION_STANDOFF, anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
-          if (spot && canAct(state)) { state.aiColonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
+          if (spot && canAct(state)) { state.ai.colonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
         }
       } else {                                                 // HOME IN → DEPLOY on arrival
-        const t = state.aiColonyTarget;
+        const t = state.ai.colonyTarget;
         if (Math.hypot(colonyShip.x - t.x, colonyShip.y - t.y) <= COLONY_ARRIVE && canAct(state)) {
-          if (deployColonyShip(state, colonyShip.id)) { state.aiColonyTarget = null; spend(state); }
+          if (deployColonyShip(state, colonyShip.id)) { state.ai.colonyTarget = null; spend(state); }
           else {   // exact spot went invalid → re-aim to nearby valid ground and keep moving
             const spot = findPlacement(state, "command", colonyShip.x, colonyShip.y);
-            if (spot) { state.aiColonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
+            if (spot) { state.ai.colonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
           }
         } else if (!colonyShip.order && !(colonyShip.orderQueue && colonyShip.orderQueue.length) && canAct(state)) {
           issueMove([colonyShip], t.x, t.y); spend(state);     // fell idle short of target (blocked) → nudge back on course
@@ -286,7 +286,7 @@ export function runAI(state, dt) {
   // only surplus ore (a mix buffer stays back), and it never attacks or defends —
   // so the resolves-to-a-winner guarantee holds even in the aiMicro resolve variant.
   const foundryDone = buildings.some(b => b.type === "foundry" && !b.constructing);
-  if (state.aiMicro && foundryDone) {
+  if (state.ai.micro && foundryDone) {
     const haveMender = playerUnits(state, "ai").some(u => u.type === "mender")
       || allBarracks.some(b => b.queue.some(j => j.unitType === "mender"));
     const idleRax = allBarracks.find(b => !b.constructing && b.queue.length === 0);
@@ -312,7 +312,7 @@ export function runAI(state, dt) {
     if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, foundryReserve + refineryReserve)) continue;   // hold back ore while banking the Foundry / Refinery
     if (queueProduction(state, b.id, nextType)) {
       spend(state);
-      state.aiUnitsBuilt = (state.aiUnitsBuilt || 0) + 1;
+      state.ai.unitsBuilt = (state.ai.unitsBuilt || 0) + 1;
     }
   }
 
@@ -400,11 +400,11 @@ export function runAI(state, dt) {
   // regardless while its economy burns. Exempt from the APM budget, same as the
   // attack commit, so a slow AI still always defends. Once the threat clears
   // vision, the army re-forms at home and the offensive logic below takes over.
-  const nonScout = army.filter(u => u.id !== state.aiScoutId);
+  const nonScout = army.filter(u => u.id !== state.ai.scoutId);
   if (threats.length > 0) {
     if (nonScout.length > 0) {
       const focus = threatCentroid(threats);
-      if (state.aiMicro && nonScout.length > threats.length * 2) {
+      if (state.ai.micro && nonScout.length > threats.length * 2) {
         // FEINT-RESISTANT (Tactical): a small poke can no longer yank the whole
         // army out of position. Commit only a proportionate defence — the closest
         // units, ~2x the seen threat — and leave the rest on their assignment, so
@@ -440,16 +440,16 @@ export function runAI(state, dt) {
     // retreats, and a retreat only fires while the AI can SEE enemy combat units
     // near the fight — so against an undefended base (every headless resolve
     // test) it never triggers and the AI razes the base exactly as before.
-    if (!state.aiAttackDesperate && state.aiAttackForce > 0 && attackers.length > 0
-        && attackers.length < state.aiAttackForce * RETREAT_FRACTION && cc) {
+    if (!state.ai.attackDesperate && state.ai.attackForce > 0 && attackers.length > 0
+        && attackers.length < state.ai.attackForce * RETREAT_FRACTION && cc) {
       const focus = threatCentroid(attackers);
       if (visibleEnemyCombatNear(state, focus.x, focus.y, RETREAT_SIGHT) >= attackers.length) {
         issueMove(attackers, cc.x, cc.y);   // plain move disengages: combat.js skips auto-acquire on a 'move' order
-        state.aiAttackForce = 0;
+        state.ai.attackForce = 0;
       }
     }
 
-    const nextAttackAt = state.aiNextAttackAt ?? archetype.attackTimeout;
+    const nextAttackAt = state.ai.nextAttackAt ?? archetype.attackTimeout;
     const timedOut = state.time >= nextAttackAt;
 
     // Build this cycle's strike force. Two regimes, split on whether this world has
@@ -473,7 +473,7 @@ export function runAI(state, dt) {
         const h = hostility(state);
         const pm = (archetype.odyssey && archetype.odyssey.probeMin) || PROBE_MIN;   // archetype's Odyssey probe floor (Rusher 5 > Economist 4 > default 3)
         const muster = Math.max(pm, Math.round(archetype.armyAttackSize * h));
-        const waveReady = state.time >= (state.aiNextWaveAt ?? 0);
+        const waveReady = state.time >= (state.ai.nextWaveAt ?? 0);
         if (h > 0 && waveReady && homeArmy.length >= muster) {
           const available = withoutHomeGuard(homeArmy, cc, archetype.garrison || 0);   // always hold the home guard
           const commit = Math.min(available.length, Math.max(pm, Math.round(available.length * h)));
@@ -487,7 +487,7 @@ export function runAI(state, dt) {
       // player's worker line, this one goes for the economy instead of grinding the
       // defended main base — sniping production the way a human harasses. A
       // desperation (timeout) commit always goes for the base so the game resolves.
-      state.aiWaveCount = (state.aiWaveCount || 0) + 1;
+      state.ai.waveCount = (state.ai.waveCount || 0) + 1;
       // ODYSSEY FINALE: once the AI can SEE the player's charging Gate, every wave
       // converges on it — razing the galaxy-ender outranks even an economy raid. Still
       // fog-gated (it has to have eyes on the Gate) and Odyssey-only: in a skirmish
@@ -495,22 +495,22 @@ export function runAI(state, dt) {
       // byte-for-byte the original `raid || chooseAttackTarget(...)`.
       const charging = state.diplomacy && chargingPlayerWonder(state);
       const gate = charging && isVisibleAt(state.fogAI, charging.x, charging.y) ? charging : null;
-      const raid = !gate && state.aiMicro && !desperate && state.aiWaveCount % RAID_EVERY === 0 && raidTarget(state);
+      const raid = !gate && state.ai.micro && !desperate && state.ai.waveCount % RAID_EVERY === 0 && raidTarget(state);
       const target = gate || raid || chooseAttackTarget(state, cc);
       issueAttackMove(strike, target.x, target.y);
       // Cadence: a skirmish keeps the single attackTimeout clock (unchanged);
       // Odyssey paces the NEXT probe by hostility on its own timer — sparse when
       // merely wary, tight when hostile — so the skirmish clock is never touched.
       if (state.diplomacy) {
-        state.aiNextWaveAt = state.time + archetype.attackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state));
+        state.ai.nextWaveAt = state.time + archetype.attackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state));
       } else {
-        state.aiNextAttackAt = state.time + archetype.attackTimeout;
+        state.ai.nextAttackAt = state.time + archetype.attackTimeout;
       }
       // Reset the retreat baseline to the whole committed force (survivors of a
       // prior wave plus this reinforcement) so a topped-up wave doesn't read as
       // "ground down".
-      state.aiAttackForce = attackers.length + strike.length;
-      state.aiAttackDesperate = desperate;
+      state.ai.attackForce = attackers.length + strike.length;
+      state.ai.attackDesperate = desperate;
     }
   }
 
@@ -520,7 +520,7 @@ export function runAI(state, dt) {
   // it. Deliberately a no-op unless real enemy combat is in sight, so razing an
   // undefended base (every resolve test) is unchanged and the resolve guarantee
   // holds regardless of the setting.
-  if (state.aiMicro) applyFocusFire(state, army);
+  if (state.ai.micro) applyFocusFire(state, army);
 }
 
 const FOCUS_RANGE = 340;   // only army units this close to the chosen target concentrate on it
@@ -656,7 +656,7 @@ function chooseAttackTarget(state, cc) {
 // and a counter is only chosen when this map can actually build it.
 function pickNextUnitType(state, archetype) {
   const mix = effectiveMix(state, archetype);
-  const built = state.aiUnitsBuilt || 0;
+  const built = state.ai.unitsBuilt || 0;
   if (built > 0 && built % COUNTER_EVERY === 0) {
     const counter = counterToPlayerArmy(state);
     if (counter && mix.includes(counter)) return counter;
@@ -687,24 +687,24 @@ function counterToPlayerArmy(state) {
 /* ---------- action budget (the configurable AI speed / APM) ---------- */
 
 // The AI's "speed" is an actions-per-minute allowance, set from the splash
-// screen (state.aiApm). Every command it issues — produce, build, expand,
+// screen (state.ai.apm). Every command it issues — produce, build, expand,
 // research, send the scout — costs one action; the attack commit is the one
 // exemption, so a slow AI still throws whatever it has at you and the game
 // always resolves. Credits accrue continuously and cap at a few seconds' worth,
 // so a busy AI can't hoard a giant burst. When aiApm is null (the default, and
 // every headless test) the AI is unthrottled — behaviour is exactly as before.
 function accrueActionBudget(state, dt) {
-  if (state.aiApm == null) return;
-  const cap = Math.max(2, state.aiApm * APM_BURST_FRAC);
-  state.aiActionBudget = Math.min((state.aiActionBudget || 0) + (state.aiApm / 60) * dt, cap);
+  if (state.ai.apm == null) return;
+  const cap = Math.max(2, state.ai.apm * APM_BURST_FRAC);
+  state.ai.actionBudget = Math.min((state.ai.actionBudget || 0) + (state.ai.apm / 60) * dt, cap);
 }
 
 function canAct(state) {
-  return state.aiApm == null || (state.aiActionBudget || 0) >= 1;
+  return state.ai.apm == null || (state.ai.actionBudget || 0) >= 1;
 }
 
 function spend(state) {
-  if (state.aiApm != null) state.aiActionBudget -= 1;
+  if (state.ai.apm != null) state.ai.actionBudget -= 1;
 }
 
 // Keep one spare unit ranging across the contested middle so the AI earns its
@@ -726,14 +726,14 @@ function updateScout(state, army, rangers, defending = false) {
   } else {
     // No Ranger: fall back to lending a combat unit, but only if one isn't already
     // out — don't pull a second fighter off the line.
-    const current = state.aiScoutId ? state.units.get(state.aiScoutId) : null;
+    const current = state.ai.scoutId ? state.units.get(state.ai.scoutId) : null;
     if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;
-    if (army.length < 4) { state.aiScoutId = null; return; }   // need a genuine spare to lend
-    scout = army.find(u => u.id !== state.aiScoutId);
+    if (army.length < 4) { state.ai.scoutId = null; return; }   // need a genuine spare to lend
+    scout = army.find(u => u.id !== state.ai.scoutId);
   }
   if (!scout || !canAct(state)) return;   // no spare, or no action budget to send one out yet
   spend(state);
-  state.aiScoutId = scout.id;
+  state.ai.scoutId = scout.id;
   const w = state.map.width, h = state.map.height;
   const home = { x: scout.x, y: scout.y };
   const pb = state.map.bases.player;

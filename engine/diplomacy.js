@@ -101,7 +101,7 @@ export function updateDiplomacy(state, dt) {
   // sours it faster, so a "Warlord World" neighbour turns hostile sooner than a patient one —
   // the temperament the world advertises. Defaults (no overlay / bare test state) leave the
   // stock constants exactly as before.
-  const od = state.aiArchetype && state.aiArchetype.odyssey;
+  const od = state.ai.archetype && state.ai.archetype.odyssey;
   const grace = GRACE_TIME * ((od && od.graceMult) || 1);
   const grievance = GRIEVANCE_PER_KILL * ((od && od.grievanceMult) || 1);
   const creep = CREEP_RATE * ((od && od.grievanceMult) || 1);

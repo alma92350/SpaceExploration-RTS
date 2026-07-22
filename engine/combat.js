@@ -68,7 +68,7 @@ export function updateCombat(state, unit, dt) {
         const died = performAttack(state, unit, def, target);
         unit.attackTimer = def.cooldown;
         if (died && unit.order && unit.order.targetId === target.id) unit.order = null;
-      } else if (state.aiMicro && unit.owner === "ai" && def.range >= KITE_MIN_RANGE) {
+      } else if (state.ai?.micro && unit.owner === "ai" && def.range >= KITE_MIN_RANGE) {
         maybeKite(state, unit, def, dt);   // in range but reloading — a Tactical ranged unit stutter-steps back
       }
       return;

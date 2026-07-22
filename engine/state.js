@@ -92,14 +92,27 @@ export function createGameState(opts = {}) {
     selection: [],          // unit/building ids currently selected by the human player
     fog: createFog(map),    // the player's fog of war — see engine/fog.js
     fogAI: createFog(map),  // the AI's own fog: it must scout for intel too, it's no longer omniscient (see engine/ai.js)
-    aiScoutId: null,        // the unit currently out scouting for the AI, if any
-    aiColonyTarget: null,   // Odyssey: the committed {x,y} deploy spot of the AI's in-flight colony ship (ai.js)
-    aiApm: opts.aiApm ?? null,   // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
-    aiMicro: opts.aiMicro ?? false,   // Tactical AI: unit-level micro (focus-fire, kiting). Off by default (and in tests).
-    aiActionBudget: 0,      // accumulated action credits (see engine/ai.js's accrueActionBudget)
-    aiAttackForce: 0,       // size of the current committed attack at its peak — drives the retreat check (ai.js)
-    aiAttackDesperate: false, // whether the current attack is a fight-to-death timeout commit (never retreats)
-    aiArchetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
+    // The AI OPPONENT's runtime bookkeeping, grouped under one key so it doesn't clutter the
+    // top-level state (which is the shared sim world). This is the AI *controller's* scratch
+    // state — distinct from state.players.ai, which is the AI's economy/faction. Serialized under
+    // the save's `ai:` key (engine/persist.js). The think/wave/attack-schedule fields used to be
+    // set lazily by ai.js on first tick; initialising them here keeps the shape complete and
+    // self-documenting, and is behaviourally identical (they were read `|| 0` / `?? …` anyway).
+    ai: {
+      think: 0,               // countdown to the AI's next decision pass (engine/ai.js THINK_INTERVAL)
+      scoutId: null,          // the unit currently out scouting for the AI, if any
+      colonyTarget: null,     // Odyssey: the committed {x,y} deploy spot of the AI's in-flight colony ship (ai.js)
+      apm: opts.aiApm ?? null,      // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
+      micro: opts.aiMicro ?? false, // Tactical AI: unit-level micro (focus-fire, kiting). Off by default (and in tests).
+      actionBudget: 0,        // accumulated action credits (see engine/ai.js's accrueActionBudget)
+      attackForce: 0,         // size of the current committed attack at its peak — drives the retreat check (ai.js)
+      attackDesperate: false, // whether the current attack is a fight-to-death timeout commit (never retreats)
+      nextAttackAt: null,     // scheduled time of the next attack commit; null ⇒ use the archetype timeout
+      unitsBuilt: 0,          // total combat units the AI has produced (drives its build cadence)
+      waveCount: 0,           // committed-wave counter — drives the economy-raid cadence (waveCount % RAID_EVERY)
+      nextWaveAt: null,       // Odyssey: scheduled time of the next offensive wave; null ⇒ wave-ready
+      archetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
+    },
     events: [],              // sim events this tick (unitSpawned/attackHit/entityKilled/buildingComplete) — pushed by
                               // production.js/combat.js, drained and turned into sound by main.js each render frame
   };

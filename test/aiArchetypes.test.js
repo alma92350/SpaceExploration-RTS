@@ -27,7 +27,7 @@ test("Rusher attacks sooner and with less economy than Economist", () => {
 
 test("createGameState wires the resolved archetype onto state, matching the chosen planet", () => {
   const state = createGameState({ planetId: "korrath" });
-  assert.equal(state.aiArchetype, ARCHETYPES.rusher);
+  assert.equal(state.ai.archetype, ARCHETYPES.rusher);
 });
 
 test("every archetype carries sane Tier 4 fields", () => {
