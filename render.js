@@ -13,7 +13,7 @@
 
 "use strict";
 
-import { COM } from "./data.js";
+import { COM, RECIPES } from "./data.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
@@ -423,6 +423,7 @@ function drawBuildingShape(ctx, state, b, color) {
   else if (b.type === "turret") drawTurret(ctx, state, b, color);
   else if (b.type === "habitat") drawHabitat(ctx, b, color);
   else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
+  else if (BUILDINGS[b.type] && BUILDINGS[b.type].recipe) drawFactory(ctx, b, color);   // Odyssey factories: stamp their product's glyph
   else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
 }
 
@@ -697,6 +698,31 @@ function drawArsenal(ctx, b, color) {
 // to it (every type above is handled), but it guarantees the "every entity has
 // a graphical representation" invariant holds for anything added later, so a new
 // building can never ship as an invisible click target.
+// recipe id -> the commodity it OUTPUTS (data.js RECIPES), so a factory can show what it makes.
+const RECIPE_OUT = Object.fromEntries(RECIPES.map(r => [r.id, r.out]));
+
+// Every recipe-running factory (Smelter, Assembly Plant, Chip Fab, Machine Works, the Reactor,
+// the Tier-3 forges) otherwise shares the plain hex silhouette below — indistinguishable on the
+// map and in the build menu. Stamp the emoji of the commodity it PRODUCES (RECIPES.out ->
+// COM.ico) on a dark disc, so each reads at a glance as what it makes. Keyed on the building
+// TYPE, so the HUD button icon (spriteIcon renders this same shape) gets the glyph too.
+function drawFactory(ctx, b, color) {
+  drawGenericBuilding(ctx, b, color);
+  const def = BUILDINGS[b.type];
+  const out = def && def.recipe ? RECIPE_OUT[def.recipe] : null;
+  const ico = out && COM[out] ? COM[out].ico : null;
+  if (!ico) return;
+  const r = b.radius;
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, r * 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(5,7,15,0.74)"; ctx.fill();
+  ctx.font = `${Math.round(r * 0.95)}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(ico, b.x, b.y);
+  ctx.textBaseline = "alphabetic";   // restore the canvas default so later text draws aren't shifted
+}
+
 function drawGenericBuilding(ctx, b, color) {
   const r = b.radius, cx = b.x, cy = b.y;
   pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));
