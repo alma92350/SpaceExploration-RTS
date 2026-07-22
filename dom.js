@@ -8,42 +8,51 @@
 
 "use strict";
 
-export const canvas = document.getElementById("field");
-export const ctx = canvas.getContext("2d");
-export const minimapCanvas = document.getElementById("minimap");
-export const minimapCtx = minimapCanvas.getContext("2d");
-export const resourcesEl = document.getElementById("resources");
-export const clockEl = document.getElementById("matchClock");
-export const panelEl = document.getElementById("selectionPanel");
-export const gameOverEl = document.getElementById("gameOver");
-export const mapSelectEl = document.getElementById("mapSelect");
-export const muteBtn = document.getElementById("muteBtn");
-export const underAttackEl = document.getElementById("underAttackAlert");
-export const seedChipEl = document.getElementById("seedChip");
-export const factionChipEl = document.getElementById("factionChip");
-export const sheetToggleEl = document.getElementById("sheetToggle");
-export const idleWorkersEl = document.getElementById("idleWorkers");
-export const objectivesEl = document.getElementById("objectives");
-export const helpOverlayEl = document.getElementById("helpOverlay");
-export const helpBtn = document.getElementById("helpBtn");
-export const saveBtn = document.getElementById("saveBtn");
-export const loadBtn = document.getElementById("loadBtn");
-export const homeBtn = document.getElementById("homeBtn");
-export const starmapBtn = document.getElementById("starmapBtn");
-export const pauseBtn = document.getElementById("pauseBtn");
-export const starmapEl = document.getElementById("starmap");
-export const volumeEl = document.getElementById("volume");
-export const galaxyToastEl = document.getElementById("galaxyToast");
-export const groupChipsEl = document.getElementById("groupChips");
-export const uiHintEl = document.getElementById("uiHint");
-export const scenarioBarEl = document.getElementById("scenarioBar");
-export const scenarioBannerEl = document.getElementById("scenarioBanner");
-export const scenarioStatusEl = document.getElementById("scenarioStatus");
-export const repairBtn = document.getElementById("repairBtn");
-export const departBtn = document.getElementById("departBtn");
+// Resolve `document` defensively: in the browser it's the real thing, under Node (`node --test`
+// importing a UI module for its pure logic) it's absent. Guarding here — instead of touching the
+// global directly on every line below — means every UI module that imports this file becomes
+// import-safe under Node: the element handles come back null rather than throwing at load. In a
+// real browser `doc` IS document and every handle resolves exactly as before, so nothing changes.
+const doc = typeof document !== "undefined" ? document : null;
+const byId = id => (doc ? doc.getElementById(id) : null);
+const context2d = el => (el ? el.getContext("2d") : null);
+
+export const canvas = byId("field");
+export const ctx = context2d(canvas);
+export const minimapCanvas = byId("minimap");
+export const minimapCtx = context2d(minimapCanvas);
+export const resourcesEl = byId("resources");
+export const clockEl = byId("matchClock");
+export const panelEl = byId("selectionPanel");
+export const gameOverEl = byId("gameOver");
+export const mapSelectEl = byId("mapSelect");
+export const muteBtn = byId("muteBtn");
+export const underAttackEl = byId("underAttackAlert");
+export const seedChipEl = byId("seedChip");
+export const factionChipEl = byId("factionChip");
+export const sheetToggleEl = byId("sheetToggle");
+export const idleWorkersEl = byId("idleWorkers");
+export const objectivesEl = byId("objectives");
+export const helpOverlayEl = byId("helpOverlay");
+export const helpBtn = byId("helpBtn");
+export const saveBtn = byId("saveBtn");
+export const loadBtn = byId("loadBtn");
+export const homeBtn = byId("homeBtn");
+export const starmapBtn = byId("starmapBtn");
+export const pauseBtn = byId("pauseBtn");
+export const starmapEl = byId("starmap");
+export const volumeEl = byId("volume");
+export const galaxyToastEl = byId("galaxyToast");
+export const groupChipsEl = byId("groupChips");
+export const uiHintEl = byId("uiHint");
+export const scenarioBarEl = byId("scenarioBar");
+export const scenarioBannerEl = byId("scenarioBanner");
+export const scenarioStatusEl = byId("scenarioStatus");
+export const repairBtn = byId("repairBtn");
+export const departBtn = byId("departBtn");
 
 export const MINIMAP_W = 200, MINIMAP_H = 125;
 
 // Touch mode is a body-class flag (set by the first touch — see input.js and
 // main.js). Read by hud (legend/hints phrasing) and overlays.
-export function isTouchMode() { return document.body.classList.contains("touch"); }
+export function isTouchMode() { return !!doc && doc.body.classList.contains("touch"); }

@@ -32,7 +32,7 @@ export function showFactionChip(st) {
   factionChipEl.classList.remove("hidden");
 }
 
-seedChipEl.addEventListener("click", () => {
+if (seedChipEl) seedChipEl.addEventListener("click", () => {
   const s = seedChipEl.dataset.seed;
   if (s && navigator.clipboard) navigator.clipboard.writeText(s).catch(() => {});
   seedChipEl.classList.add("copied");
@@ -163,13 +163,17 @@ function toggleHelp(force) {
   helpOverlayEl.classList.toggle("hidden", !show);
   if (show) pauseLoop("help"); else resumeLoop("help");   // the sim holds while the reference is open
 }
-helpBtn.addEventListener("click", () => toggleHelp());
-helpOverlayEl.addEventListener("click", () => toggleHelp(false));
-window.addEventListener("keydown", e => {
-  if (e.key === "F1" || e.key === "?") { e.preventDefault(); toggleHelp(); }
-  else if (e.key === "Escape" && !helpOverlayEl.classList.contains("hidden")) toggleHelp(false);
-  else if ((e.key === "p" || e.key === "P") && !e.ctrlKey && !e.metaKey) { e.preventDefault(); togglePause(); }
-});
+// Browser-only wiring: the help toggle button + the global F1/?/Esc/P hotkeys. Guarded so this
+// module imports cleanly under Node (where the elements are null and `window` doesn't exist).
+if (typeof window !== "undefined") {
+  helpBtn.addEventListener("click", () => toggleHelp());
+  helpOverlayEl.addEventListener("click", () => toggleHelp(false));
+  window.addEventListener("keydown", e => {
+    if (e.key === "F1" || e.key === "?") { e.preventDefault(); toggleHelp(); }
+    else if (e.key === "Escape" && !helpOverlayEl.classList.contains("hidden")) toggleHelp(false);
+    else if ((e.key === "p" || e.key === "P") && !e.ctrlKey && !e.metaKey) { e.preventDefault(); togglePause(); }
+  });
+}
 
 /* ---------- game-over overlay ---------- */
 

@@ -20,6 +20,7 @@ import { game } from "./session.js";
 import { saveBtn, loadBtn, homeBtn } from "./dom.js";
 import { serializeGame, serializeGameString, deserializeGame, serializeGalaxy, serializeGalaxyString, deserializeGalaxy } from "./engine/persist.js";
 import { bootState, bootGalaxy, restartToMapSelect, pauseLoop, resumeLoop } from "./boot.js";
+import { isGalaxySave, resumableMode } from "./saveShape.js";
 import * as sound from "./sound.js";
 
 const SAVE_KEY = "stellarfrontier.save.v1";
@@ -46,10 +47,11 @@ export function storedSaveVersions() {
 // nothing resumable (no game, a finished one, or a scripted scenario, which can't
 // be saved). One place both channels agree on what "the current game" is.
 function snapshot() {
-  if (!game.state || game.state.over || game.state.scenario) return null;
+  const mode = resumableMode(game);
+  if (!mode) return null;
   // The JSON STRING directly (serialize*String) — autoSave writes it straight to localStorage,
   // so the fog-heavy payload is stringified once, not stringify→parse→stringify.
-  return game.galaxy
+  return mode === "galaxy"
     ? { key: ODYSSEY_KEY, str: serializeGalaxyString(game.galaxy) }
     : { key: SAVE_KEY, str: serializeGameString(game.state) };
 }
@@ -121,7 +123,7 @@ function saveToFile() {
 // Boot a parsed save, auto-detecting the mode by shape — a galaxy carries `planets`.
 function importSave(parsed) {
   sound.unlockAudio();
-  if (parsed && Array.isArray(parsed.planets)) bootGalaxy(deserializeGalaxy(parsed), { intro: false });
+  if (isGalaxySave(parsed)) bootGalaxy(deserializeGalaxy(parsed), { intro: false });
   else bootState(deserializeGame(parsed), { intro: false });
 }
 
@@ -209,7 +211,11 @@ if (homeBtn) homeBtn.addEventListener("click", goHome);
 
 // Keep the current game checkpointed without any manual step: on a timer, whenever the
 // tab is hidden (task-switch / phone lock), and on unload (tab close / refresh). These
-// are the writes the setup "Continue" buttons read back.
-setInterval(autoSave, AUTOSAVE_INTERVAL_MS);
-window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") autoSave(); });
-window.addEventListener("beforeunload", autoSave);
+// are the writes the setup "Continue" buttons read back. Guarded so importing this module
+// under Node (to unit-test its pure logic) doesn't start a real autosave timer or touch a
+// non-existent `window` — the whole block is browser-only wiring.
+if (typeof window !== "undefined") {
+  setInterval(autoSave, AUTOSAVE_INTERVAL_MS);
+  window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") autoSave(); });
+  window.addEventListener("beforeunload", autoSave);
+}
