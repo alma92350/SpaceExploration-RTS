@@ -97,6 +97,15 @@ export function updateDiplomacy(state, dt) {
   const dip = state.diplomacy;
   const wasPeaceful = dip.stance > PEACE_THRESHOLD;
 
+  // An aggressive archetype's Odyssey overlay (aiArchetypes.js) shortens its grace window and
+  // sours it faster, so a "Warlord World" neighbour turns hostile sooner than a patient one —
+  // the temperament the world advertises. Defaults (no overlay / bare test state) leave the
+  // stock constants exactly as before.
+  const od = state.aiArchetype && state.aiArchetype.odyssey;
+  const grace = GRACE_TIME * ((od && od.graceMult) || 1);
+  const grievance = GRIEVANCE_PER_KILL * ((od && od.grievanceMult) || 1);
+  const creep = CREEP_RATE * ((od && od.grievanceMult) || 1);
+
   let cur = 0, max = 0;
   for (const n of state.map.nodes) { cur += n.amount; max += n.max; }
   dip.depletion = max > 0 ? clamp(1 - cur / max, 0, 1) : 0;
@@ -109,7 +118,7 @@ export function updateDiplomacy(state, dt) {
   let ai = 0;
   for (const u of state.units.values()) if (u.owner === "ai") ai++;
   if (dip.lastAiUnits !== undefined && ai < dip.lastAiUnits) {
-    dip.stance = clamp(dip.stance - (dip.lastAiUnits - ai) * GRIEVANCE_PER_KILL, -1, 1);
+    dip.stance = clamp(dip.stance - (dip.lastAiUnits - ai) * grievance, -1, 1);
   }
   dip.lastAiUnits = ai;
 
@@ -123,12 +132,12 @@ export function updateDiplomacy(state, dt) {
   // hostility curve never plateaus. Zero at grace-end (onset stays scarcity-driven),
   // it only bites deep into a long game — an overstay turns lethal, a mined-out world
   // is already at -1 so this can't worsen the worst case, only the mild middle band.
-  if (state.time > GRACE_TIME) target -= CREEP_RATE * (state.time - GRACE_TIME);
+  if (state.time > grace) target -= creep * (state.time - grace);
 
   // Opening grace: floor the target at cordial for the first 7 minutes so a fresh
   // world (incl. a Gate briefly charging on a new background colony) can't be dragged
   // to war before the player has established.
-  if (state.time < GRACE_TIME) target = Math.max(target, GRACE_FLOOR);
+  if (state.time < grace) target = Math.max(target, GRACE_FLOOR);
 
   // PAID TRUCE (tribute): a decaying window in which the target can't fall below the
   // truce line, so the drift doesn't instantly undo an appeasement. Overridden by the
@@ -143,7 +152,7 @@ export function updateDiplomacy(state, dt) {
   // on an already-hostile world it changes nothing; on a still-rich world where the
   // player rushed a Gate, it's what guarantees the finale is fought, not waited out.
   const gate = chargingPlayerWonder(state);
-  if (gate && state.time >= GRACE_TIME)
+  if (gate && state.time >= grace)
     target = Math.min(target, GATE_WAR_TARGET - GATE_WAR_SLOPE * gate.charge);
 
   dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * DRIFT_RATE), -1, 1);

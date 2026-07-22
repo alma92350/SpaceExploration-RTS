@@ -85,6 +85,13 @@ export function runAI(state, dt) {
   state.aiThink = THINK_INTERVAL;
 
   const archetype = state.aiArchetype;
+  // Effective archetype field: in ODYSSEY (state.diplomacy present) an archetype's `odyssey`
+  // overlay wins for the fields it specifies, so a neighbour's temperament reads differently in
+  // the play-forever meta than in a resolve-to-a-winner skirmish (aiArchetypes.js). In a
+  // SKIRMISH there's no diplomacy, so this is always the base field — the skirmish AI path is
+  // byte-for-byte unchanged.
+  const arch = field => (state.diplomacy && archetype.odyssey && archetype.odyssey[field] != null)
+    ? archetype.odyssey[field] : archetype[field];
   const ai = state.players.ai;
   const workers = playerUnits(state, "ai").filter(u => u.type === "worker");
   const army = playerUnits(state, "ai").filter(u => UNITS[u.type].role === "combat");
@@ -135,7 +142,7 @@ export function runAI(state, dt) {
   // Runs before every ore-spending block so it can reserve the cost (oreReserve) to
   // bank toward it — pausing only the lower-priority infrastructure spends, never unit
   // production, so the army keeps flowing while the AI saves. At most one in flight.
-  const threshold = archetype.expandWhenNodesBelow || 0;
+  const threshold = arch("expandWhenNodesBelow") || 0;   // Odyssey overlay can turn a never-expand Rusher into one that does
   const myCCs = buildings.filter(b => b.type === "command" && !b.constructing);
 
   if (state.endless) {
@@ -199,7 +206,7 @@ export function runAI(state, dt) {
     }
   }
 
-  if (cc && workers.length < archetype.workerTarget && cc.queue.length === 0 && canAct(state)) {
+  if (cc && workers.length < arch("workerTarget") && cc.queue.length === 0 && canAct(state)) {
     if (queueProduction(state, cc.id, "worker")) spend(state);
   }
 
@@ -464,11 +471,12 @@ export function runAI(state, dt) {
         }
       } else {
         const h = hostility(state);
-        const muster = Math.max(PROBE_MIN, Math.round(archetype.armyAttackSize * h));
+        const pm = (archetype.odyssey && archetype.odyssey.probeMin) || PROBE_MIN;   // archetype's Odyssey probe floor (Rusher 5 > Economist 4 > default 3)
+        const muster = Math.max(pm, Math.round(archetype.armyAttackSize * h));
         const waveReady = state.time >= (state.aiNextWaveAt ?? 0);
         if (h > 0 && waveReady && homeArmy.length >= muster) {
           const available = withoutHomeGuard(homeArmy, cc, archetype.garrison || 0);   // always hold the home guard
-          const commit = Math.min(available.length, Math.max(PROBE_MIN, Math.round(available.length * h)));
+          const commit = Math.min(available.length, Math.max(pm, Math.round(available.length * h)));
           strike = available.slice(available.length - commit);   // send the forward-most; the rest reinforce
         }
       }

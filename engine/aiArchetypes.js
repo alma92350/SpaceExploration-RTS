@@ -21,6 +21,14 @@ export const ARCHETYPES = {
     garrison: 0,           // all-in: keeps nothing back, every unit joins the push.
     doctrine: "assault",   // all-in aggression favours the offensive upgrade path.
     faction: "syndicate",  // all-in firepower on a lean economy — the rush hits harder (factions.js)
+    // ODYSSEY overlay (read only when state.diplomacy exists, so the skirmish path stays
+    // byte-identical). In the play-forever meta the skirmish desperation-timeout never
+    // fires and diplomacy guarantees a long peace, so the Rusher's identity vanished —
+    // it sat on 4 workers forever and probed in the same 3-unit dribble as everyone else.
+    // Here it turns hostile in HALF the grace window, sours faster when you bleed it, sends
+    // BIGGER early probes, and — crucially for a mode with no end — sustains an economy and
+    // expands, so a "Warlord World" actually plays like the galaxy's most dangerous neighbour.
+    odyssey: { graceMult: 0.5, grievanceMult: 2, probeMin: 5, workerTarget: 6, expandWhenNodesBelow: 0.3 },
   },
   economist: {
     name: "Economist",
@@ -37,6 +45,11 @@ export const ARCHETYPES = {
     doctrine: "bulwark",   // out-scales and turtles behind turrets — the defensive path suits it.
     wantsRefinery: true,   // patient enough to bank for a Refinery and research its doctrine.
     faction: "miners",     // industry to reinforce the out-scale plan (factions.js)
+    // ODYSSEY overlay: stays patient (full grace, no extra grievance) but leans into the
+    // long game — a fatter worker economy, earlier/greedier expansion, and probes that
+    // start a touch larger, so a settled Economist neighbour steadily out-scales into a
+    // real threat rather than sending the same 3-unit probe forever.
+    odyssey: { workerTarget: 11, expandWhenNodesBelow: 0.55, probeMin: 4 },
   },
   balanced: {
     name: "Balanced",
