@@ -49,11 +49,21 @@ window.addEventListener("contextmenu", e => e.preventDefault());
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = canvas.clientWidth * dpr;
-  canvas.height = canvas.clientHeight * dpr;
+  canvas.width = Math.round(canvas.clientWidth * dpr);    // round so a fractional DPR (e.g. 1.25) doesn't
+  canvas.height = Math.round(canvas.clientHeight * dpr);  // leave a sub-pixel sliver unrendered at the edges
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener("resize", resizeCanvas);
+
+// A monitor move (or an OS scaling change) can change devicePixelRatio WITHOUT firing a resize
+// event — the CSS layout size is unchanged — leaving the backing store at the old DPR (blurry on
+// the sharper screen, oversampled on the other). matchMedia on the current dppx fires once when
+// the ratio leaves it; refit both canvases and re-arm for the new ratio.
+function watchDPR() {
+  if (!window.matchMedia) return;
+  window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    .addEventListener("change", () => { resizeCanvas(); resizeMinimap(); watchDPR(); }, { once: true });
+}
 
 // Portrait bottom-sheet collapse: hide the panel to reclaim the whole screen,
 // then resize the canvas into the freed space. The button only shows in the
@@ -67,8 +77,8 @@ sheetToggleEl.addEventListener("click", () => {
 
 function resizeMinimap() {
   const dpr = window.devicePixelRatio || 1;
-  minimapCanvas.width = MINIMAP_W * dpr;
-  minimapCanvas.height = MINIMAP_H * dpr;
+  minimapCanvas.width = Math.round(MINIMAP_W * dpr);
+  minimapCanvas.height = Math.round(MINIMAP_H * dpr);
   minimapCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener("resize", resizeMinimap);
@@ -120,3 +130,4 @@ buildHelpOverlay();
 renderMapSelect();
 resizeCanvas();
 resizeMinimap();
+watchDPR();

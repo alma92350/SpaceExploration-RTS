@@ -108,7 +108,9 @@ export function spriteIcon(kind, type, color = "#8fd3ff") {
   if (iconCache.has(key)) return iconCache.get(key);
   let url = "";
   try {
-    const scale = 2;
+    // Rasterize at device-pixel density (min 2×) so button art stays crisp next to the
+    // DPR-scaled map art on a 3× display, instead of a fixed 2×.
+    const scale = Math.max(2, Math.ceil((typeof window !== "undefined" && window.devicePixelRatio) || 1));
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = ICON_BOX * scale;
     const c = canvas.getContext("2d");
@@ -126,8 +128,8 @@ export function spriteIcon(kind, type, color = "#8fd3ff") {
     facing.delete("__icon__");                          // don't leave a stray orientation in the shared map
     url = canvas.toDataURL();
   } catch (e) { url = ""; }
-  iconCache.set(key, url);
-  return url;
+  if (url) iconCache.set(key, url);   // cache only a SUCCESSFUL render — a transient failure must retry, not
+  return url;                          // permanently downgrade this button to text-only for the whole session
 }
 
 // The world-space rectangle currently on screen, padded so an entity straddling
@@ -164,8 +166,9 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   // fog, on top of the dimmed backdrop.
   drawNodes(ctx, state, view);
   if (state.scenario) drawScenario(ctx, state);   // the convoy route + stations, under the units
-  drawBuildings(ctx, state, view);
-  drawUnits(ctx, state, view, alpha);
+  drawBuildings(ctx, state, view);     // building hulls + foe pips (bars deferred below)
+  drawUnits(ctx, state, view, alpha);  // unit hulls, then unit overlays (two passes)
+  drawBuildingBars(ctx, state, view);  // building health bars last, so a passing ship can't paint them out
   drawJumpStaging(ctx, state, view);   // staging ring around a selected Spaceport (Odyssey)
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
@@ -424,7 +427,6 @@ function drawBuildingShape(ctx, state, b, color) {
 }
 
 function drawBuildings(ctx, state, view) {
-  const selSet = new Set(state.selection);
   for (const b of state.buildings.values()) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;   // off-screen (pad for the hp bar above it)
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
@@ -438,6 +440,16 @@ function drawBuildings(ctx, state, view) {
     // friend/foe is then a SHAPE cue, not colour alone, so a colourblind player can
     // tell an enemy base from their own without relying on the cyan-vs-red hue.
     if (b.owner !== "player") drawEnemyPip(ctx, b.x, b.y + b.radius + 8);
+  }
+}
+
+// Building health bars, drawn in a LATER pass than every hull (see drawFrame) so a ship
+// passing over a base no longer paints out the base's bar.
+function drawBuildingBars(ctx, state, view) {
+  const selSet = new Set(state.selection);
+  for (const b of state.buildings.values()) {
+    if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;
+    if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
   }
 }
@@ -796,39 +808,43 @@ function drawUnitShape(ctx, u, def, color) {
 const _disp = {};   // reused scratch: a shallow view of a unit at its interpolated draw position
 function drawUnits(ctx, state, view, alpha = 1) {
   const selSet = new Set(state.selection);
+  // Two passes over the same culled set: ALL hulls first, then ALL overlays (health bars,
+  // enemy pips, cargo dots). Otherwise, in a dense melee, a unit drawn later paints its hull
+  // over an earlier unit's health bar — exactly when the bar matters most. lerp+cull recompute
+  // per pass is cheap (a Map.get + a couple of mults) and allocates nothing.
   for (const u of state.units.values()) {
     const d = lerpXY(u, alpha);   // interpolated {x,y} (or the live unit when there's no baseline / a teleport)
-    const dx = d.x, dy = d.y;
-    if (view && !inView(view, dx, dy, 16)) continue;   // off-screen unit
-    if (u.owner !== "player" && !isVisibleAt(state.fog, dx, dy)) continue;
+    if (view && !inView(view, d.x, d.y, 16)) continue;   // off-screen unit
+    if (u.owner !== "player" && !isVisibleAt(state.fog, d.x, d.y)) continue;
     const def = UNITS[u.type];
     const color = state.players[u.owner].color;
     ctx.fillStyle = color;
-    // A dark outline disappears against the (equally dark) background —
-    // it only ever separated overlapping same-color units, never defined
-    // the silhouette. A light one keeps the shape crisp at small sizes,
-    // where anti-aliasing otherwise blurs a hull's corners into looking
-    // like just another blob.
+    // A dark outline disappears against the (equally dark) background — it only ever separated
+    // overlapping same-color units, never defined the silhouette. A light one keeps the shape
+    // crisp at small sizes, where anti-aliasing otherwise blurs a hull's corners into a blob.
     ctx.strokeStyle = DETAIL;
     ctx.lineWidth = 1.5;
-
-    // Draw the hull at the interpolated position via a shallow scratch copy, so every
-    // shape helper (and updateFacing, which it calls) sees the smoothed coordinates
-    // without threading them through each one. The scratch is reused — no per-unit alloc.
-    Object.assign(_disp, u); _disp.x = dx; _disp.y = dy;
+    // Draw the hull at the interpolated position via a shallow scratch copy, so every shape
+    // helper (and updateFacing, which it calls) sees the smoothed coordinates without threading
+    // them through each one. The scratch is reused — no per-unit alloc.
+    Object.assign(_disp, u); _disp.x = d.x; _disp.y = d.y;
     drawUnitShape(ctx, _disp, def, color);
-
+  }
+  for (const u of state.units.values()) {
+    const d = lerpXY(u, alpha);
+    if (view && !inView(view, d.x, d.y, 16)) continue;
+    if (u.owner !== "player" && !isVisibleAt(state.fog, d.x, d.y)) continue;
+    const def = UNITS[u.type];
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();
-      ctx.arc(dx, dy - def.radius - 5, 3, 0, Math.PI * 2);
+      ctx.arc(d.x, d.y - def.radius - 5, 3, 0, Math.PI * 2);
       ctx.fillStyle = "#ffd166";
       ctx.fill();
     }
-    // A small downward pip marks hostile units — a SHAPE cue, so telling friend
-    // from foe in a melee doesn't rely on the cyan-vs-red colour alone (which a
-    // colourblind player can't count on). Friendlies carry no marker.
-    if (u.owner !== "player") drawEnemyPip(ctx, dx, dy + def.radius + 6);
-    drawHealthBar(ctx, dx, dy - def.radius - 9, 16, u.hp, u.maxHp, selSet.has(u.id));
+    // A small downward pip marks hostile units — a SHAPE cue, so telling friend from foe in a
+    // melee doesn't rely on the cyan-vs-red colour alone. Friendlies carry no marker.
+    if (u.owner !== "player") drawEnemyPip(ctx, d.x, d.y + def.radius + 6);
+    drawHealthBar(ctx, d.x, d.y - def.radius - 9, 16, u.hp, u.maxHp, selSet.has(u.id));
   }
 }
 

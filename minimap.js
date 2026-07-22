@@ -9,6 +9,57 @@
 
 import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 
+// The minimap's two heavy layers — the explored-fog wash and the terrain features — were
+// re-scanned cell-by-cell EVERY animation frame (16k+ fillRects on a big map, into a 200x125
+// canvas where each cell is sub-pixel). Both are static or near-static (terrain never changes
+// after generateMap; fog.explored only ever flips false→true), so we render them ONCE into an
+// offscreen canvas and blit it each frame, rebuilding it only on a coarse cadence (or a new
+// map). Nodes, entity dots and the camera rectangle stay live per-frame. Pure render-side.
+let underlay = null, underlayCtx = null, underlayMap = null, underlayW = 0, underlayH = 0, underlayAge = 0;
+const UNDERLAY_REFRESH = 12;   // rebuild the static layers at most every ~12 frames (fog growth is slow)
+
+function ensureUnderlay(mmW, mmH) {
+  if (underlay && underlayW === mmW && underlayH === mmH) return;
+  underlay = document.createElement("canvas");
+  underlay.width = mmW; underlay.height = mmH;
+  underlayCtx = underlay.getContext("2d");
+  underlayW = mmW; underlayH = mmH;
+  underlayMap = null;   // size changed → force a rebuild
+}
+
+function renderUnderlay(state, mmW, mmH) {
+  const c = underlayCtx, { map } = state;
+  const sx = mmW / map.width, sy = mmH / map.height;
+  c.clearRect(0, 0, mmW, mmH);   // transparent — the main draw fills the backdrop before blitting this
+
+  // Dim wash over ever-explored ground so the minimap reads as "known space" at a glance.
+  const fog = state.fog;
+  if (fog) {
+    c.fillStyle = "rgba(79, 209, 255, 0.06)";
+    for (let gy = 0; gy < fog.rows; gy++) {
+      const row = gy * fog.cols;
+      for (let gx = 0; gx < fog.cols; gx++) {
+        if (!fog.explored[row + gx]) continue;
+        c.fillRect(gx * FOG_CELL_SIZE * sx, gy * FOG_CELL_SIZE * sy, FOG_CELL_SIZE * sx + 1, FOG_CELL_SIZE * sy + 1);
+      }
+    }
+  }
+
+  // Terrain features — high ground warm, rough ground cool. Feature cells only (OPEN draws nothing).
+  const terr = map.terrain;
+  if (terr) {
+    for (let gy = 0; gy < terr.rows; gy++) {
+      const row = gy * terr.cols;
+      for (let gx = 0; gx < terr.cols; gx++) {
+        const code = terr.type[row + gx];
+        if (!code) continue;
+        c.fillStyle = code === 2 ? "rgba(255, 209, 102, 0.20)" : "rgba(120, 140, 180, 0.18)";
+        c.fillRect(gx * terr.cell * sx, gy * terr.cell * sy, terr.cell * sx + 1, terr.cell * sy + 1);
+      }
+    }
+  }
+}
+
 export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH) {
   const { map } = state;
   const sx = mmW / map.width, sy = mmH / map.height;
@@ -17,34 +68,15 @@ export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH) 
   ctx.fillStyle = "#05070f";
   ctx.fillRect(0, 0, mmW, mmH);
 
-  // Dim wash over ever-explored ground so the minimap reads as "known
-  // space" at a glance -- no separate visible/explored distinction at
-  // this scale, since the entity dots below already show what's live.
+  // The static/near-static layers, cached and refreshed coarsely (or immediately on a new map).
+  ensureUnderlay(mmW, mmH);
+  if (underlayMap !== map || ++underlayAge >= UNDERLAY_REFRESH) {
+    renderUnderlay(state, mmW, mmH);
+    underlayMap = map; underlayAge = 0;
+  }
+  ctx.drawImage(underlay, 0, 0);
+
   const fog = state.fog;
-  if (fog) {
-    ctx.fillStyle = "rgba(79, 209, 255, 0.06)";
-    for (let gy = 0; gy < fog.rows; gy++) {
-      for (let gx = 0; gx < fog.cols; gx++) {
-        if (!fog.explored[gy * fog.cols + gx]) continue;
-        ctx.fillRect(gx * FOG_CELL_SIZE * sx, gy * FOG_CELL_SIZE * sy, FOG_CELL_SIZE * sx + 1, FOG_CELL_SIZE * sy + 1);
-      }
-    }
-  }
-
-  // Terrain features at a glance — high ground warm, rough ground cool. Feature
-  // cells only (OPEN draws nothing), same whole-map scale as the fog wash above.
-  const terr = map.terrain;
-  if (terr) {
-    for (let gy = 0; gy < terr.rows; gy++) {
-      for (let gx = 0; gx < terr.cols; gx++) {
-        const code = terr.type[gy * terr.cols + gx];
-        if (!code) continue;
-        ctx.fillStyle = code === 2 ? "rgba(255, 209, 102, 0.20)" : "rgba(120, 140, 180, 0.18)";
-        ctx.fillRect(gx * terr.cell * sx, gy * terr.cell * sy, terr.cell * sx + 1, terr.cell * sy + 1);
-      }
-    }
-  }
-
   ctx.fillStyle = "#ffd166";
   ctx.globalAlpha = 0.7;
   for (const n of map.nodes) {
