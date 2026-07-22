@@ -41,6 +41,10 @@ export function tick(state, dt) {
   // Frozen before any worker mines so every miner on a node sees the same count
   // regardless of Map iteration order (determinism).
   countMiners(state);
+  // Aura projectors (Aegis) for this tick, read by combat.js attackDamage. Collected
+  // once here (a tiny list — the units are Tier-3 and rare) so a landed hit costs O(anvils)
+  // not O(units); positions are frozen at tick start like the grid above (deterministic).
+  collectAnvils(state);
 
   for (const unit of state.units.values()) updateUnit(state, unit, dt);
   applySeparation(state, dt);
@@ -70,6 +74,21 @@ export function tick(state, dt) {
   if (state.diplomacy) updateDiplomacy(state, dt);  // Odyssey: drift the neighbour's stance with scarcity
   state.time += dt;
   state.tick++;
+}
+
+// Collect this tick's aura projectors (units with a guardAura, i.e. the Aegis) into a
+// flat list on the state, so combat.js can look up "is this target inside a friendly
+// aura" against a handful of entries instead of scanning every unit per hit. Transient
+// (never serialized), rebuilt each tick from live positions — deterministic. Exported so
+// combat-only test harnesses (which drive updateCombat directly, bypassing tick) can build
+// the same list before a fight.
+export function collectAnvils(state) {
+  const out = [];
+  for (const u of state.units.values()) {
+    const g = UNITS[u.type]?.guardAura;
+    if (g && u.hp > 0) out.push({ id: u.id, owner: u.owner, x: u.x, y: u.y, range: g.range, mult: g.damageTakenMult });
+  }
+  state.anvils = out;
 }
 
 // Tally how many workers (both sides) are assigned to gather each node this

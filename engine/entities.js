@@ -358,12 +358,14 @@ export const UNITS = {
   bastion: {
     id: "bastion", name: "Bastion", hp: 160, radius: 9, speed: 68,
     cost: { ore: 160 }, buildTime: 18, supplyCost: 2,
-    role: "combat", attack: 10, range: 24, cooldown: 1.2,
-    sight: 130, aggroRange: 100,
-    // Its job is to catch and crush Skiffs, so it's a bit quicker (68) and
-    // longer-reaching (24) than before — a kiting Skiff can no longer simply
-    // outrun and outrange the very unit built to hard-counter it.
-    bonusVs: { skiff: 14 },
+    role: "combat", attack: 10, range: 44, cooldown: 1.2,
+    sight: 130, aggroRange: 110,
+    // Its job is to catch and crush Skiffs. It now OUT-RANGES the Skiff (44 vs 40) —
+    // just barely, still under the AI's KITE_MIN_RANGE 50 so it stands and trades rather
+    // than kiting — so a player-microed Skiff can no longer sit at 40 and orbit forever
+    // outside the reach of the very unit built to hard-counter it. bonusVs trimmed to 10
+    // (from 14) so the head-on time-to-kill stays close to before despite the extra reach.
+    bonusVs: { skiff: 10 },
   },
   lancer: {
     id: "lancer", name: "Lancer", hp: 70, radius: 8, speed: 75,
@@ -469,13 +471,17 @@ export const UNITS = {
     requires: ["arsenal"],
   },
   aegis: {
-    id: "aegis", name: "Aegis", hp: 360, radius: 11, speed: 40,
+    id: "aegis", name: "Aegis", hp: 360, radius: 11, speed: 48,
     cost: { ore: 160, ice: 90 }, buildTime: 26, supplyCost: 4,
     role: "combat", attack: 11, range: 26, cooldown: 1.3,
     sight: 140, aggroRange: 110,
-    // A cryo-armoured wall: the tankiest hull in the game with an almost token
-    // gun. It doesn't kill things — it soaks fire so the army behind it lives,
-    // the anvil to the Wraith's hammer. Ice (coolant/plating) is its armour.
+    // A cryo-armoured wall: the tankiest hull in the game with an almost token gun. It
+    // doesn't kill things — it projects a cryo-armour bubble that REDUCES the damage its
+    // nearby allies take (guardAura, read in combat.js attackDamage), so the army fighting
+    // around it lives longer wherever it stands — no need to pre-position it as a literal
+    // wall, and enemy targeting doesn't have to cooperate. The anvil to the Wraith's hammer.
+    // Faster now (48) so it can keep formation with the line it shields. Ice is its armour.
+    guardAura: { range: 96, damageTakenMult: 0.82 },
     requires: ["arsenal"],
   },
   colossus: {

@@ -105,8 +105,10 @@ test("unit and building defs carry the fields the sim depends on", () => {
   assert.ok(BUILDINGS.barracks.produces.includes("bastion"));
 });
 
-test("Bastion is the deliberate Skiff counter: bonus damage vs skiff, but slower and costlier", () => {
-  assert.equal(UNITS.bastion.bonusVs.skiff, 14);
+test("Bastion is the deliberate Skiff counter: out-ranges the Skiff, but slower and costlier", () => {
+  assert.equal(UNITS.bastion.bonusVs.skiff, 10);
+  assert.ok(UNITS.bastion.range > UNITS.skiff.range, "the Skiff's counter out-reaches it, so it can't be kited forever");
+  assert.ok(UNITS.bastion.range < 50, "…but still under the AI's kite threshold, so it stands and trades");
   assert.ok(UNITS.bastion.speed < UNITS.skiff.speed, "Bastion should be slower, not a strict upgrade");
   assert.ok(UNITS.bastion.cost.ore > UNITS.skiff.cost.ore, "Bastion should cost more, not a strict upgrade");
   assert.ok(UNITS.bastion.hp > UNITS.skiff.hp);
@@ -120,7 +122,7 @@ test("Lancer is the deliberate Bastion counter: bonus damage vs bastion, but squ
 
 test("the rock-paper-scissors triangle closes: Skiff beats Lancer, Bastion beats Skiff, Lancer beats Bastion", () => {
   assert.equal(UNITS.skiff.bonusVs.lancer, 10);
-  assert.equal(UNITS.bastion.bonusVs.skiff, 14);
+  assert.equal(UNITS.bastion.bonusVs.skiff, 10);
   assert.equal(UNITS.lancer.bonusVs.bastion, 20);
   assert.equal(UNITS.lancer.role, "combat");
   assert.ok(BUILDINGS.barracks.produces.includes("lancer"));

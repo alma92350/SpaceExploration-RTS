@@ -4,6 +4,7 @@ import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
 import { buildUnitGrid } from "../engine/grid.js";
 import { updateCombat, updateBuildingCombat } from "../engine/combat.js";
 import { applySeparation } from "../engine/separation.js";
+import { collectAnvils } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
 
 // These are BALANCE regression tests: they run the real combat sim as an
@@ -67,6 +68,39 @@ test("the rock-paper-scissors triangle holds in actual auto-battle", () => {
   assert.ok(beats("bastion", "skiff"), "Bastion should beat Skiff");
   assert.ok(beats("skiff", "lancer"), "Skiff should beat Lancer");
   assert.ok(beats("lancer", "bastion"), "Lancer should beat Bastion");
+});
+
+test("the Bastion out-ranges the Skiff it counters, so a kiting Skiff can't orbit it forever", () => {
+  // The kite exploit was static: Skiff range 40 > Bastion range, so a microed Skiff sat at
+  // 40 and fired while the Bastion never closed. The counter now reaches past the Skiff.
+  assert.ok(UNITS.bastion.range > UNITS.skiff.range, "Bastion reaches past the Skiff");
+  assert.ok(UNITS.bastion.range < 50, "…but under KITE_MIN_RANGE 50, so the AI stands and trades with it");
+});
+
+test("an Aegis makes the army fighting around it die slower — the anvil finally soaks", () => {
+  // Same fight, with and without an Aegis mixed into the player's line: the Aegis's
+  // damage-reduction aura should leave more player survivors after a fixed exchange.
+  function survivorsWithAegis(withAegis, maxTicks = 400) {
+    const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+    state.units.clear(); state.buildings.clear();
+    place(state, "skiff", "player", 8, 620, 480, 940, 500);
+    if (withAegis) {
+      const a = makeUnit("aegis", "player", 660, 500);
+      a.order = { type: "attack-move", x: 940, y: 500 };
+      state.units.set(a.id, a);
+    }
+    place(state, "skiff", "ai", 10, 940, 480, 620, 500);   // a slightly bigger enemy force so losses are real
+    for (let t = 0; t < maxTicks; t++) {
+      state.unitGrid = buildUnitGrid(state);
+      collectAnvils(state);
+      for (const u of [...state.units.values()]) updateCombat(state, u, 0.1);
+      applySeparation(state, 0.1);
+      if (!aliveCount(state, "player") || !aliveCount(state, "ai")) break;
+    }
+    return [...state.units.values()].filter(u => u.owner === "player" && u.type === "skiff").length;
+  }
+  assert.ok(survivorsWithAegis(true) > survivorsWithAegis(false),
+    "the aura leaves more of the shielded army standing");
 });
 
 test("the triangle is a genuine cycle — no combat unit wins both its matchups", () => {

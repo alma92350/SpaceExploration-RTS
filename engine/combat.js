@@ -216,7 +216,26 @@ function attackDamage(state, unit, def, target) {
   // triangle is untouched. OPEN / map-less states read 1.
   if (state.map?.terrain) dmg *= sampleTerrain(state.map.terrain, unit.x, unit.y).combatMult;
 
+  // A friendly Aegis nearby projects a cryo-armour bubble that reduces the damage its
+  // allies take — the anvil's real value, applied wherever it stands (no targeting change
+  // needed). Reads the tick's precomputed anvil list (sim.js), so it's O(anvils) — usually
+  // zero. An Aegis never shields itself, so it can still be focused down.
+  dmg *= anvilAura(state, target);
+
   return dmg;
+}
+
+// The damage multiplier from any friendly aura projector (Aegis) covering `target`. 1 when
+// none is in range (or the list isn't built — a bare test state). Deterministic: positions
+// are the tick-start snapshot in state.anvils.
+function anvilAura(state, target) {
+  const anvils = state.anvils;
+  if (!anvils) return 1;
+  for (const a of anvils) {
+    if (a.owner !== target.owner || a.id === target.id) continue;   // shields allies, never itself
+    if (Math.hypot(a.x - target.x, a.y - target.y) <= a.range) return a.mult;
+  }
+  return 1;
 }
 
 // How many of the nearest in-weapon-range enemies attackers fan out across,
