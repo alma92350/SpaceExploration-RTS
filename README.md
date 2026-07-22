@@ -1,49 +1,195 @@
 # Stellar Frontier: RTS
 
-A real-time strategy game set in the same universe as [Stellar Frontier](https://github.com/alma92350/SpaceExploration) (the turn-based space trading/exploration game) — a separate, standalone game, not a mode bolted onto the original.
-
-## Why a separate repo
-
-The original game has no build step and no module system: ~30 script-tag files all read and mutate one global state singleton, built entirely around discrete player-action "cycles." A real-time game needs a wall-clock delta-time loop and a different state/update model, so retrofitting it into that engine would mean a large, risky rewrite of a game that already works. This repo starts clean instead — same universe, new engine.
-
-## What carried over from the original repo, and what didn't
-
-- **`data.js` — copied verbatim.** Genuinely pure data (factions, the commodity catalog, production recipes, the 20 charted worlds) with zero dependency on the original's turn/state engine. Safe to reuse as-is.
-- **`style.css` palette** — the `:root` color variables only, so the two games read as the same universe. The rest of the original's stylesheet is laid out for a turn-based tab/panel UI and doesn't apply here.
-- **`catalogs.js` and `galaxygen.js` were *not* copied.** Both looked like reusable content tables at a glance, but on inspection they're logic-coupled to the original's global `S` state and its turn/political systems (`policyActive`, office terms, per-cycle frontier generation, etc.) — copying them would just import dead or broken references. Anything worth reusing from them (ship upgrade tiers, tech tree shape, mission structure) is design inspiration to rebuild deliberately for a real-time model, not code to drag over.
-
-## Status
-
-A 1v1 skirmish against a scripted AI on one of nine charted worlds, picked at the start of each match. Gather ore/crystals/radioactives with Workers, build a Barracks, produce a mixed army, expand and fortify, fight under fog of war, and win by destroying the enemy's last Command Center (or lose yours). A defensive stall can't run forever: if neither side is finished off, a match time limit settles it on score (banked resources plus the built value of everything you own), so there's always a terminal state. No tech tree, no multiplayer yet — see `engine/` for the sim (fixed-timestep loop, movement + local avoidance, gather, combat, production, supply, placement validation, fog of war, AI) and `render.js`/`input.js`/`camera.js` for the canvas view, camera, and mouse/keyboard controls.
-
-The splash screen configures the skirmish before you pick a world. **AI speed** is a 1–150 actions-per-minute cap on the opponent — every command it takes (produce, build, expand, research, scout) spends one action, so a low setting is a sluggish, forgiving foe and a high one is relentless (its attack commit is exempt, so it always resolves the game). **Map size** scales the field from Small (1600×1000) up to Gigantic (4×) with more caches to find in the bigger space, and **Resources** (Rare / Normal / Abundant) scales every deposit's yield. Whatever the world, every map guarantees a near-base surface source of ore, crystals, and radioactives so all builds are possible — the planet's own deposit table just shapes how much of each there is.
-
-Four combat units. Three of them form a genuine rock-paper-scissors triangle, not just a single hard counter: Skiff (fast, cheap) beats Lancer, Bastion (slow, short-ranged, tanky) beats Skiff, and Lancer (long-ranged, armor-piercing) beats Bastion — each unit's bonus damage targets exactly the matchup that would otherwise be its worst, and nothing beats all three at once. The fourth, the Breacher, sits deliberately *outside* the triangle: a slow siege platform that outranges static defenses and tears through buildings, but has the worst anti-unit damage in the game and folds to massed Skiffs for a fraction of its cost — a turtle-breaker that's helpless without an escort. Scouting what the enemy is building, and countering it, matters.
-
-Controls: left-drag to select your units (Ctrl+drag adds to the selection), right-click to move (ignores enemies) or gather/assist-build/attack/set-rally-point depending on what's selected and under the cursor, Ctrl+right-click to queue that order as a waypoint (chain several to lay down a path — combat units attack-move along it, engaging anything encountered), mouse wheel to zoom, WASD/arrow keys or the screen edge to pan. Control groups bind with Shift+1–9 and recall with 1–9; double-click a unit to grab every on-screen unit of that type; **Q** selects your whole army, **X** halts the selection, and **`** cycles to the next idle worker. Right-click the minimap to order the selection somewhere off-screen. Click a Worker or a completed building for build/produce/research options in the side panel (unaffordable options are greyed out); a controls reference sits in the panel whenever nothing is selected. Sound can be muted or its volume set from the top bar. The full control list is in the empty selection panel in-game.
-
-Fog of war hides enemy units and buildings outside your current vision. The charted surface deposits near each base are always shown — they're map knowledge, not battlefield intel — but the map also hides several resource **caches** out in the contested middle and along the edges: extra deposits the survey missed, invisible until one of your units scouts their location, then marked permanently once found. They often hold the crystals or radioactives a world's surface lacks, so scouting can unlock a resource — and the tech that needs it — you'd otherwise have no access to.
-
-The AI plays under its own fog too — it is not omniscient. It keeps a scout ranging across the map, and only reacts to what it has actually seen: it counter-builds against your army only once it spots it, and it can only mine or expand to caches it has discovered. Both sides start knowing only their own corner and have to explore for the rest.
-
-A Refinery (built by a Worker, like the Barracks) researches army-wide upgrades — applied live to your whole army, not just future production — but they're two **mutually-exclusive doctrines**, so this is a real commitment, not a buy-both. **Assault** (Overcharged Weapons → Overcharged Core) stacks more damage dealt; **Bulwark** (Reinforced Plating → Reinforced Bulwark) stacks less damage taken. Researching either one locks the other out, and each has a Tier-2 that deepens your chosen path — so you pick offense or defense to fit your plan and matchup, and can't hedge into both. Assault costs radioactives and Bulwark crystals, so a world's deposit specialty (Korrath has no crystals, Vesper no radioactives) tilts which doctrine comes easier. Crystals and radioactives also fund the structures below, so they don't dead-end.
-
-**Expanding and fortifying.** The Command Center is buildable now (steep — 400 ore, slow to raise), so taking a second base is a real mid-game decision: nodes deplete, and a fresh field plus a fresh drop-off point is how you outlast a drained home economy. The Sentinel Turret is static defense (crystal-funded) that makes raids cost something and base layout matter; the Breacher is the answer to a wall of them.
-
-**Supply.** Army size is capped by supply, not just ore: every unit costs some, Command Centers grant a baseline, and a cheap Habitat raises the ceiling. It's a genuine macro choice (army now vs. infrastructure now), a raidable weak point (burn a Habitat and push someone over their cap), and it keeps late-game battles bounded. Losing a Habitat can leave you legally over cap — nothing dies, but production blocks until you rebuild.
-
-Each world gives the AI a different temperament — Rusher (small economy, commits early), Economist (out-scales before attacking, expands and turtles behind turrets), or Balanced — and it plays the whole toolkit: it attacks in repeated waves, not just once (a fresh batch of units becomes the next wave once it's big enough or the timeout comes back around); it scouts, building the direct counter to whatever combat type the player fields most every third unit; and it expands when its home ore runs thin, fortifies the approach lane with turrets, runs multiple Barracks, and raises Habitats to stay under supply. Six of the nine worlds also carry a single rule modifier that applies to both sides — Glacius's ice slows everyone, Nimbus's storms shorten sight, Pyralis's open dunes lengthen it, Helix packs an extra crystal field, Oort's deposits run rich, and Forge's industry speeds construction — so where you fight changes how the fight plays, not just what you can build. Six of the nine worlds also carry **terrain**: rough ground you cross slower (Glacius's ice fields, Forge's industrial sprawl, and Oort's rugged flanks funnel armies through the open lanes) and high ground that sees farther and hits harder — Pyralis's central mesa, Helix's crystal ridge, and Nimbus's vantages (doubly worth taking on a storm-shortened world, since high ground extends sight) are real objectives to seize. Terrain is never impassable — it slows and shapes, it doesn't wall — and it's mirrored, so both sides face the same ground. You can't build on rough ground, so base and turret layout have to work around it. The three original worlds (Ferros, Korrath, Vesper) stay clean open plains.
-
-Two worlds are **asymmetric matchups** — the modifier hits the two sides *differently*, so which corner you start in defines your plan. On Oort ("Contested frontier") your claim struck a rich vein (your hauls bank 20% more) while the enemy's forward base is a war factory (18% faster construction) — you out-mine, they out-build. On Nimbus ("Storm front") the storm has half-cleared your side (you see almost normally where the enemy is half-blind) but the enemy surges fast out of the murk (12% quicker units) — you out-scout, they out-tempo. The card flags these, so you know the matchup before you commit.
-
-A minimap (bottom-left) shows the whole map at a glance — fog, resource deposits, and every unit/building you can currently see — and doubles as a camera shortcut: click anywhere on it to jump the main view there. An "Under Attack" banner (with its own alarm sound and a pulsing ping on both the main view and the minimap) fires when the AI hits something of yours, so a raid on an unwatched flank doesn't go unnoticed. Combat itself is legible at a glance too: a tracer flashes from attacker to target on every hit (colored by weapon type), and a brief ring marks a kill.
-
-Placing a building shows a live green/red footprint preview under the cursor before you click — invalid spots (off the map, overlapping another building, too close to a resource node) are rejected with no cost and no need to reselect. The selection panel shows what's queued at a selected Command Center or Barracks (with live progress on the in-progress job) and lets you cancel any queued unit for a full refund; selecting a group of units collapses the panel to one row per type ("12× Skiff — 84% hp") instead of one per unit.
+A browser-based real-time strategy game set in the same universe as
+[Stellar Frontier](https://github.com/alma92350/SpaceExploration) (the turn-based space
+trading/exploration game) — a separate, standalone game, not a mode bolted onto the original.
+Vanilla JavaScript, ES modules, **no build step, no dependencies**. Play a 1v1 skirmish against a
+scripted AI, or an open-ended **Odyssey** that strings worlds together into a galaxy you settle,
+trade across, and conquer.
 
 ## Running it
 
-No build step, but the game loads as ES modules, which browsers block over `file://`. Serve the directory locally, e.g. `npx serve .` or `python3 -m http.server`, and open the printed URL.
+The game has no build step, but it loads as ES modules, which browsers refuse to import over
+`file://` — so it needs to be served over HTTP. A zero-dependency dev server ships with the repo:
+
+```
+npm start          # serves at http://localhost:8080
+```
+
+Nothing to install first — no `npm install`. (Any static server works too: `npx serve .` or
+`python3 -m http.server`.) Then open the printed URL. Requires Node ≥ 20.
 
 ## Tests
 
-`npm test` runs `engine/`'s unit and integration tests (`node --test`), including a full simulated skirmish that plays out to a winner.
+```
+npm test
+```
+
+Runs the full suite (`node --test`): the engine's unit and integration tests — including a full
+simulated skirmish played out to a winner and a galaxy played across multiple worlds — plus the
+determinism, purity, and static-integrity guards. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+invariants those guard.
+
+## The skirmish
+
+A 1v1 real-time match against a scripted AI on one of nine charted worlds, picked at the start.
+Gather ore/crystals/radioactives with Workers, build a Barracks, produce a mixed army, expand and
+fortify, fight under fog of war, and win by destroying the enemy's last Command Center (or lose
+yours). A defensive stall can't run forever: if neither side is finished off, a match time limit
+settles it on score (banked resources plus the built value of everything you own), so there's
+always a terminal state.
+
+The splash screen configures the skirmish before you pick a world. **AI speed** is a 1–150
+actions-per-minute cap on the opponent — every command it takes (produce, build, expand, research,
+scout) spends one action, so a low setting is a sluggish, forgiving foe and a high one relentless
+(its attack commit is exempt, so it always resolves the game). **Map size** scales the field from
+Small (1600×1000) up to Gigantic (4×) with more caches in the bigger space, and **Resources**
+(Rare / Normal / Abundant) scales every deposit's yield. Whatever the world, every map guarantees a
+near-base surface source of ore, crystals, and radioactives so all builds are possible — the
+planet's own deposit table just shapes how much of each there is.
+
+**Units.** Four combat units. Three form a genuine rock-paper-scissors triangle, not just a single
+hard counter: Skiff (fast, cheap) beats Lancer, Bastion (slow, short-ranged, tanky) beats Skiff,
+and Lancer (long-ranged, armor-piercing) beats Bastion — each unit's bonus damage targets exactly
+the matchup that would otherwise be its worst, and nothing beats all three at once. The fourth, the
+Breacher, sits deliberately *outside* the triangle: a slow siege platform that outranges static
+defenses and tears through buildings, but has the worst anti-unit damage in the game and folds to
+massed Skiffs for a fraction of its cost — a turtle-breaker that's helpless without an escort.
+Scouting what the enemy is building, and countering it, matters.
+
+**Tech: doctrines and structures.** A Refinery (built by a Worker, like the Barracks) researches
+army-wide upgrades — applied live to your whole army, not just future production — but they're two
+**mutually-exclusive doctrines**, so this is a real commitment, not a buy-both. **Assault**
+(Overcharged Weapons → Overcharged Core) stacks more damage dealt; **Bulwark** (Reinforced Plating
+→ Reinforced Bulwark) stacks less damage taken. Researching either one locks the other out, and
+each has a Tier-2 that deepens your chosen path. Assault costs radioactives and Bulwark crystals,
+so a world's deposit specialty (Korrath has no crystals, Vesper no radioactives) tilts which
+doctrine comes easier. Beyond the Refinery, a Foundry and a Datacenter open further research —
+crystals and radioactives fund all of it, so those deposits never dead-end.
+
+**Expanding and fortifying.** The Command Center is buildable (steep — 400 ore, slow to raise), so
+taking a second base is a real mid-game decision: nodes deplete, and a fresh field plus a fresh
+drop-off point is how you outlast a drained home economy. The Sentinel Turret is static defense
+(crystal-funded) that makes raids cost something and base layout matter; the Breacher is the answer
+to a wall of them.
+
+**Supply.** Army size is capped by supply, not just ore: every unit costs some, Command Centers
+grant a baseline, and a cheap Habitat raises the ceiling. It's a genuine macro choice (army now vs.
+infrastructure now), a raidable weak point (burn a Habitat and push someone over their cap), and it
+keeps late-game battles bounded. Losing a Habitat can leave you legally over cap — nothing dies,
+but production blocks until you rebuild.
+
+**The AI.** Each world gives the AI a different temperament — Rusher (small economy, commits
+early), Economist (out-scales before attacking, expands and turtles behind turrets), or Balanced —
+and it plays the whole toolkit: it attacks in repeated waves, not just once; it scouts and builds
+the direct counter to whatever combat type you field most; and it expands when its home ore runs
+thin, fortifies the approach lane with turrets, runs multiple Barracks, and raises Habitats to stay
+under supply. It plays under its own fog too — not omniscient — reacting only to what it has
+actually seen.
+
+**Worlds.** Six of the nine worlds carry a single rule modifier that applies to both sides —
+Glacius's ice slows everyone, Nimbus's storms shorten sight, Pyralis's open dunes lengthen it, Helix
+packs an extra crystal field, Oort's deposits run rich, and Forge's industry speeds construction.
+Six also carry **terrain**: rough ground you cross slower (never impassable — it slows and shapes,
+it doesn't wall) and high ground that sees farther and hits harder — real objectives to seize.
+Terrain is mirrored, so both sides face the same ground, and you can't build on rough ground, so
+base layout has to work around it. Two worlds are **asymmetric matchups** where the modifier hits
+the sides *differently* (Oort: you out-mine, they out-build; Nimbus: you out-scout, they
+out-tempo), so which corner you start in defines your plan. The three original worlds (Ferros,
+Korrath, Vesper) stay clean open plains.
+
+**Fog & caches.** Fog of war hides enemy units and buildings outside your vision. The charted
+surface deposits near each base are always shown — map knowledge, not battlefield intel — but the
+map also hides resource **caches** in the contested middle and along the edges: extra deposits the
+survey missed, invisible until one of your units scouts their location, then marked permanently.
+They often hold the crystals or radioactives a world's surface lacks, so scouting can unlock a
+resource — and the tech that needs it — you'd otherwise have no access to.
+
+### Controls
+
+Left-drag to select (Ctrl+drag adds to the selection), right-click to move or
+gather/assist-build/attack/set-rally depending on what's selected and under the cursor,
+Ctrl+right-click to queue that order as a waypoint (chain several to lay down a path — combat units
+attack-move along it), mouse wheel to zoom, WASD/arrow keys or the screen edge to pan. Control
+groups bind with Shift+1–9 and recall with 1–9; double-click a unit to grab every on-screen unit of
+that type; **Q** selects your whole army, **X** halts the selection, **`** cycles idle workers, and
+**P** pauses. Right-click the minimap to order the selection somewhere off-screen. Click a Worker or
+a completed building for build/produce/research options in the side panel (unaffordable options are
+greyed out); a full controls reference sits in the panel whenever nothing is selected, and **F1**
+or **?** opens the help overlay.
+
+## The Odyssey
+
+The Odyssey is the open-world meta-layer: instead of a single match, you play a whole galaxy. You
+start on one world, and every world is a full skirmish map — but they never resolve by conquest or
+clock. Instead you hold **universal credits** that travel with you, build a **Spaceport**, and
+**jump** to another world (jumps cost fuel, scaled by distance, funded by trading commodities at
+the market). Settle a new world by carrying a **colony ship** on the jump and deploying it into a
+Command Center; the world you leave becomes a **background colony** that keeps working and pays you
+passive income while you're away.
+
+Each world's neighbour has its own **diplomacy** — a grace period, grievances if you strip-mine or
+attack, and paid tribute truces to buy time — so how you treat a world shapes whether it turns
+hostile and sends waves after you. There's no hard win: the Odyssey is a **play-forever sandbox**,
+and progress is marked by milestone fireworks — colonies founded, an **Antimatter Gate** coming
+online, and **conquest domination** as you pacify neighbour after neighbour — that you keep playing
+past. The world roster is the nine skirmish worlds plus two Odyssey-only extras (a research capital
+and an agri world).
+
+## Saves
+
+Because the sim is deterministic and seed-driven, a save is just the serialized dynamic state — the
+map regenerates from the seed on load, so saves stay small. Two channels:
+
+- **Autosave** keeps the current game in browser `localStorage` on a timer (and on tab-hide /
+  unload), so the map-select **Continue** buttons resume exactly where you left off — no manual
+  save. Skirmish and Odyssey each have their own slot.
+- **Save / Load** buttons move a save to and from a `.json` **file** — an explicit backup or
+  transfer you keep on disk. A file import auto-detects whether it's a skirmish or a whole galaxy by
+  its shape.
+
+Saves are untrusted input: every load is sanitized and coerced (bad types dropped, numbers clamped)
+before it touches the running game, and a save from an incompatible format version is rejected
+rather than loaded into a broken state.
+
+## Versioning
+
+`version.js` holds `APP_VERSION` (the running build's semver) and is kept in sync with
+`version.json`; an in-app update check compares the deployed `version.json` against the baked-in
+value and tells you when a newer build is live — and whether it keeps your saves. Save-format
+versions (`SAVE_VERSION` for skirmish, `GALAXY_SAVE_VERSION` for Odyssey) live in
+`engine/persist.js` and are bumped independently whenever a save's shape changes; loaders stay
+backward-tolerant of older saves. See [CHANGELOG.md](CHANGELOG.md) for release history.
+
+## Project layout
+
+- `engine/` — the simulation: pure, deterministic, DOM-free logic. Fixed-timestep loop, movement +
+  local avoidance, gather, combat, production, supply, placement validation, fog of war, AI, the
+  market, diplomacy, colony/jump mechanics, and save serialization. Runs headless under
+  `node --test`.
+- `render.js` / `minimap.js` / `input.js` / `camera.js` / `hud.js` / `overlays.js` / `setup.js` —
+  the canvas view, minimap, mouse/keyboard controls, camera, and UI chrome.
+- `boot.js` / `session.js` / `saveload.js` — wiring the sim to the page, session state, and
+  save/load.
+- `data.js` — pure content (factions, the commodity catalog, production recipes, the charted
+  worlds).
+- `tools/serve.js` — the zero-dependency dev server behind `npm start`.
+
+## Background: why a separate repo
+
+The original game has no build step and no module system: ~30 script-tag files all read and mutate
+one global state singleton, built entirely around discrete player-action "cycles." A real-time game
+needs a wall-clock delta-time loop and a different state/update model, so retrofitting it would mean
+a large, risky rewrite of a game that already works. This repo starts clean instead — same universe,
+new engine.
+
+What carried over: `data.js` (copied verbatim — genuinely pure data with zero dependency on the
+original's turn/state engine) and the `style.css` `:root` colour palette (so the two games read as
+the same universe). `catalogs.js` and `galaxygen.js` were **not** copied — they look like reusable
+content tables but are logic-coupled to the original's global state and turn/political systems, so
+copying them would just import dead or broken references. Anything worth reusing from them is design
+inspiration to rebuild deliberately for a real-time model, not code to drag over.
+
+## License
+
+[MIT](LICENSE).

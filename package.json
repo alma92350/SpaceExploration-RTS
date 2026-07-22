@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Real-time strategy game in the Stellar Frontier universe. No dependencies, no build step.",
   "scripts": {
+    "start": "node tools/serve.js",
     "test": "node --test"
   },
   "engines": {
