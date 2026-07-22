@@ -134,6 +134,11 @@ function updateUnit(state, unit, dt) {
       else if (!b.constructing) unit.order = null;
       break;
     }
+    // Any order type this non-combat/non-support unit can't act on (e.g. an
+    // "attack-move" that reached a freighter) is dropped rather than left to stick
+    // forever and wedge the unit's whole order queue. No valid caller hits this today.
+    default:
+      unit.order = null;
   }
 }
 

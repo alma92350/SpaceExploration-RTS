@@ -32,8 +32,14 @@ export function renderStarmap() {
   const hint = canLaunch
     ? `Click a world to jump — free to a colony you hold, ◈${JUMP_COST} fuel to settle a new one`
     : "No Spaceport here — click a colony you already hold to fall back to it (build a Spaceport to reach new worlds)";
-  head.innerHTML = `<h2>Galaxy</h2>`
-    + `<p>Visited ${status.visited}/${status.total} · Conquered ${status.pacified}/${status.dominationTarget} · ◈ ${Math.floor(g.credits)} · ${hint}</p>`;
+  // textContent, not innerHTML: `status` counts and credits derive from a (possibly
+  // hand-edited) save, and building them as text can't inject markup even if a value
+  // is hostile. The one static heading is a plain element.
+  const h2 = document.createElement("h2");
+  h2.textContent = "Galaxy";
+  const p = document.createElement("p");
+  p.textContent = `Visited ${status.visited}/${status.total} · Conquered ${status.pacified}/${status.dominationTarget} · ◈ ${Math.floor(g.credits)} · ${hint}`;
+  head.append(h2, p);
   starmapEl.appendChild(head);
 
   const field = document.createElement("div");
@@ -50,13 +56,20 @@ export function renderStarmap() {
       : w.status === "colony" ? `your colony · +${w.income} ◈/min`
       : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
       : archetypeFor(w.id).name;
-    // Industry drives factory speed + finished-good prices; Tech drives research
-    // speed — so the badge is what makes "where to settle" an informed decision.
-    const stats = `<span class="sm-stats">⚙ ${w.industry} · 🔬 ${w.tech}</span>`;
     // The world's controlling-faction emblem (data.js FACTIONS) — the same icon the turn-based
     // meta uses — so a world reads by its faction at a glance on the map.
     const ico = (w.faction && FACTIONS[w.faction]?.ico) || "🪐";
-    node.innerHTML = `<span class="sm-ico">${ico}</span><span class="sm-name">${worldName(w.id)}</span><span class="sm-sub">${sub}</span>${stats}`;
+    // Build each span with textContent, not one innerHTML string: worldName(w.id) falls
+    // back to the raw id for an unknown world (data.js), and a hostile save could park
+    // markup there — as text it can only ever render as text. Industry/Tech drive the
+    // "where to settle" decision, so the stats badge stays.
+    const mk = (cls, text) => { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; };
+    node.append(
+      mk("sm-ico", ico),
+      mk("sm-name", worldName(w.id)),
+      mk("sm-sub", sub),
+      mk("sm-stats", `⚙ ${w.industry} · 🔬 ${w.tech}`),
+    );
     node.addEventListener("click", () => onWorldClick(w));
     field.appendChild(node);
   });

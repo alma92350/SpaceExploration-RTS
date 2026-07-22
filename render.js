@@ -169,10 +169,14 @@ function drawFireworks(ctx, vw, vh) {
   ctx.restore();
 }
 
-// Unexplored cells go solid black; explored-but-not-currently-visible
-// cells get a dimming overlay so the player can see where they've
-// scouted before without it looking fully lit. Currently-visible cells
-// get nothing — the world underneath already reads at full brightness.
+// Explored-but-not-currently-visible cells get a faint cyan "charted space" wash so the
+// player can see where they've already scouted — the same language the minimap uses. The
+// old code painted this fill (and the unexplored one) in rgba(5,7,15,*), which IS the
+// backdrop colour #05070f, so BOTH states were invisible: explored and unexplored ground
+// rendered identically to empty space, and the promised scouted-territory cue never
+// existed on the main map. Unexplored cells now draw nothing (bare backdrop reads as
+// "unknown"); currently-visible cells draw nothing (the world underneath is at full
+// brightness); only explored-not-visible cells get the wash.
 function drawFogBase(ctx, state, view) {
   const fog = state.fog;
   if (!fog) return;
@@ -182,11 +186,11 @@ function drawFogBase(ctx, state, view) {
   const gx1 = view ? Math.min(fog.cols - 1, Math.floor(view.maxX / FOG_CELL_SIZE)) : fog.cols - 1;
   const gy0 = view ? Math.max(0, Math.floor(view.minY / FOG_CELL_SIZE)) : 0;
   const gy1 = view ? Math.min(fog.rows - 1, Math.floor(view.maxY / FOG_CELL_SIZE)) : fog.rows - 1;
+  ctx.fillStyle = "rgba(79, 209, 255, 0.05)";   // charted-but-not-live wash (matches the minimap)
   for (let gy = gy0; gy <= gy1; gy++) {
     for (let gx = gx0; gx <= gx1; gx++) {
       const idx = gy * fog.cols + gx;
-      if (fog.visible[idx]) continue;
-      ctx.fillStyle = fog.explored[idx] ? "rgba(5, 7, 15, 0.55)" : "#05070f";
+      if (fog.visible[idx] || !fog.explored[idx]) continue;   // live cells and never-seen cells draw nothing
       ctx.fillRect(gx * FOG_CELL_SIZE, gy * FOG_CELL_SIZE, FOG_CELL_SIZE, FOG_CELL_SIZE);
     }
   }

@@ -624,7 +624,9 @@ html, body {
 
 .gameover-seed { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-top: 10px; }
 
-#field.aim-cursor { cursor: crosshair; }
+/* Attack-move armed: the crosshair cursor alone is easy to miss, so the battlefield
+   also gets a warm inset outline that unmistakably says "the next click is an attack". */
+#field.aim-cursor { cursor: crosshair; box-shadow: inset 0 0 0 2px var(--warn); }
 
 .idle-workers {
   font-size: 0.72rem;

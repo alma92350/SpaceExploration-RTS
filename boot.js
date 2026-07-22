@@ -164,10 +164,19 @@ function focusActivePlanet() {
 
 // Re-open the map-select screen (the game-over "choose another battlefield"
 // button, passed into overlays' showGameOver so that module needn't import setup;
-// also the topbar Home button via saveload.js). Stops the running loop so the game
-// freezes behind the menu (idempotent — game-over has already stopped it).
+// also the topbar Home button via saveload.js). Stops the running loop AND tears the
+// session down: without clearing game.input/state/galaxy the old game stayed live behind
+// the menu — its window-level hotkeys kept firing, the M key reopened the now-dead
+// Odyssey starmap, and the timer/beforeunload autosave kept writing (so "Exit without
+// Saving" saved anyway). destroy() aborts the input listeners; nulling the session makes
+// snapshot() a no-op and the M-key/hotkey gates false. Every other game.state reader
+// (minimap handlers, under-attack click, save/repair buttons) already null-guards. Callers
+// that need to persist first (Save & Exit) run autoSave BEFORE this. Idempotent.
 export function restartToMapSelect() {
   if (loop) loop.stop();
+  if (game.input) { game.input.destroy(); game.input = null; }
+  game.state = null;
+  game.galaxy = null;
   renderMapSelect();
   mapSelectEl.classList.remove("hidden");
 }

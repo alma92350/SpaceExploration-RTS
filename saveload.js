@@ -52,14 +52,17 @@ function snapshot() {
     : { key: SAVE_KEY, mode: "skirmish", data: serializeGame(game.state) };
 }
 
-// Checkpoint the current game to localStorage. Cheap, silent, and safe to call
-// often — a quota/serialize error is swallowed (the next tick, or the file save,
-// is the fallback). Runs on a timer, when the tab is hidden, on unload, and on a
-// deliberate "Save & Exit".
+// Checkpoint the current game to localStorage. Cheap and safe to call often. Returns
+// true on a successful write, false when there's nothing to save OR the write throws
+// (quota exceeded, or Safari/Firefox private mode where setItem always throws). The
+// periodic/hidden/unload callers ignore the result — the next tick is their fallback —
+// but "Save & Exit" checks it, because silently swallowing a failure there would tell
+// the player their game was checkpointed and then strand them with nothing to Continue.
 export function autoSave() {
   const snap = snapshot();
-  if (!snap) return;
-  try { localStorage.setItem(snap.key, JSON.stringify(snap.data)); } catch (e) { /* quota — ignore */ }
+  if (!snap) return false;
+  try { localStorage.setItem(snap.key, JSON.stringify(snap.data)); return true; }
+  catch (e) { return false; }
 }
 
 // Resume the autosaved Odyssey galaxy from localStorage (topbar-less; used by the
@@ -182,7 +185,13 @@ function goHome() {
     actions.appendChild(b);
   };
 
-  if (!scenario) act("Save & Exit", () => { autoSave(); restartToMapSelect(); }, "primary");
+  // Save & Exit only leaves once the checkpoint actually lands. If localStorage is
+  // unavailable (quota / private mode) we DON'T pretend it saved and exit into a lost
+  // game — we fall back to a file download and keep the player in-game so nothing is lost.
+  if (!scenario) act("Save & Exit", () => {
+    if (autoSave()) restartToMapSelect();
+    else saveToFile();
+  }, "primary");
   act(scenario ? "Leave" : "Exit without Saving", () => restartToMapSelect(), scenario ? "primary" : "");
   act("Cancel", () => {}, "ghost");
 

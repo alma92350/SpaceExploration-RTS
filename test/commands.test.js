@@ -4,8 +4,12 @@ import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issue
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 
+// Selectable units carry a real `type` — issueAttack now validates it (a weaponless
+// type is filtered out so it can't NaN-poison a target), so a faithful stand-in needs
+// one. "skiff" is an armed combat unit; the cargo field keeps the gather/assist tests
+// (which filter on cargo, not type) working unchanged.
 function dummyUnits(n) {
-  return Array.from({ length: n }, (_, i) => ({ id: `u${i}`, order: null, cargo: { com: null, qty: 0 } }));
+  return Array.from({ length: n }, (_, i) => ({ id: `u${i}`, type: "skiff", order: null, cargo: { com: null, qty: 0 } }));
 }
 
 function playerWorker(state) {
@@ -41,6 +45,18 @@ test("issueAttack sends every unit at the same explicit target id (focus fire, n
   const units = dummyUnits(3);
   issueAttack(units, "target-1");
   units.forEach(u => assert.deepEqual(u.order, { type: "attack", targetId: "target-1" }));
+});
+
+test("issueAttack ignores weaponless units so they can't NaN-poison a target", () => {
+  const colonyship = { id: "u1", type: "colonyship", order: null };   // no attack stat
+  const freighter = { id: "u2", type: "hauler", order: null };        // no attack stat
+  const skiff = { id: "u3", type: "skiff", order: null };             // armed
+  const mender = { id: "u4", type: "mender", order: null };           // support: order reinterpreted as advance-and-mend
+  issueAttack([colonyship, freighter, skiff, mender], "enemy-1");
+  assert.equal(colonyship.order, null, "a colony ship gets no attack order (attackDamage would compute NaN)");
+  assert.equal(freighter.order, null, "a freighter gets no attack order either");
+  assert.deepEqual(skiff.order, { type: "attack", targetId: "enemy-1" }, "an armed unit attacks");
+  assert.deepEqual(mender.order, { type: "attack", targetId: "enemy-1" }, "a support drone still accepts it");
 });
 
 test("issueGather only assigns cargo-capable units", () => {
@@ -121,6 +137,19 @@ test("issueBuild refuses an invalid placement without charging for it", () => {
   assert.equal(state.players.player.resources.ore, before, "a rejected placement must not cost anything");
   assert.equal(state.buildings.size, buildingsBefore);
   assert.equal(worker.order, null);
+});
+
+test("issueBuild refuses an Odyssey-only building on the skirmish path (byte-identity guard)", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });   // a skirmish: state.endless is falsy
+  const worker = playerWorker(state);
+  state.players.player.resources.ore = 999;   // funds in hand, so ONLY the odysseyOnly gate can reject it
+  const before = state.buildings.size;
+
+  const id = issueBuild(state, worker.id, "reactor", 800, 500);   // reactor is odysseyOnly with no prereqs
+
+  assert.equal(id, null, "an Odyssey-only building can never be founded in a skirmish");
+  assert.equal(state.buildings.size, before, "…and founds nothing");
+  assert.equal(state.players.player.resources.ore, 999, "…and charges nothing");
 });
 
 test("a Command Center expansion is issuable like any building: charged in full, founded constructing", () => {

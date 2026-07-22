@@ -54,8 +54,18 @@ export function issueGather(units, nodeId, queue = false) {
   units.forEach(u => { if (u.cargo) dispatch(u, { type: "gather", nodeId }, queue); });
 }
 
+// Only ARMED units (or a support drone, whose 'attack' order updateSupport reinterprets
+// as "advance on that foe" and mend nearby, dealing no damage) accept an attack order.
+// A weaponless rider — a colony ship, a freighter — has no `attack` stat, so routing an
+// order to it would make attackDamage compute `undefined + …` = NaN and permanently
+// NaN-poison the target's hp (never ≤ 0, so it never dies: an un-killable ghost). Today
+// only the UI filters this; the engine boundary now self-defends, so tests/AI/future
+// callers can't trip it. A no-op for every valid caller, so determinism is unchanged.
 export function issueAttack(units, targetId, queue = false) {
-  units.forEach(u => dispatch(u, { type: "attack", targetId }, queue));
+  units.forEach(u => {
+    const def = UNITS[u.type];
+    if (def && (def.attack || def.role === "support")) dispatch(u, { type: "attack", targetId }, queue);
+  });
 }
 
 export function issueAttackMove(units, x, y, queue = false) {
@@ -83,7 +93,12 @@ export function issueBuild(state, workerId, buildingType, x, y) {
   if (!worker) return null;
   const player = state.players[worker.owner];
   const def = BUILDINGS[buildingType];
-  if (!def || !canAfford(player.resources, def.cost)) return null;
+  if (!def) return null;
+  // Odyssey-only buildings (e.g. the Spaceport) can never be founded on the skirmish
+  // path — the same hard guarantee queueProduction makes for units (production.js), so
+  // the skirmish sim/AI stays byte-identical and can't be handed Odyssey content.
+  if (def.odysseyOnly && !state.endless) return null;
+  if (!canAfford(player.resources, def.cost)) return null;
   if (!prereqsMet(state, worker.owner, def)) return null;   // e.g. no founding a Foundry without a completed Barracks
   if (!canPlaceBuilding(state, buildingType, x, y)) return null;
   payCost(player.resources, def.cost);

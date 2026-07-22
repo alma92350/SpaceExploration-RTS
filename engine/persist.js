@@ -20,6 +20,8 @@ import { archetypeFor } from "./aiArchetypes.js";
 import { peekEntityId, restoreEntityId } from "./state.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
+import { UNITS, BUILDINGS } from "./entities.js";
+import { ODYSSEY_WORLDS } from "./galaxy.js";
 
 export const SAVE_VERSION = 1;
 export const GALAXY_SAVE_VERSION = 1;
@@ -61,6 +63,44 @@ export function sanitizeSave(input) {
   return input;
 }
 
+// --- load-time value validation --------------------------------------------
+// sanitizeSave() guarantees the payload is plain, bounded JSON — but NOT that its
+// values make sim sense. A version-valid save (hand-edited, or merely corrupted in
+// storage) can still carry a string where a number belongs, a NaN coordinate, or an
+// entity `type` that isn't a real unit/building. Those don't throw at load — they slip
+// in and detonate on the FIRST tick, inside the rAF loop, AFTER load's try/catch has
+// already returned success: the game boots, then silently freezes (updateUnit reads
+// UNITS[type].role on an undefined def) or drifts (state.time += "100" concatenates).
+// So we coerce/clamp the known numeric fields and drop entities of unknown type here,
+// on the way in. Deterministic and DOM-free: a VALID save's fields are already finite
+// numbers of real types, so every coercion below is the identity on them and the
+// byte-identical replay guarantee (test/determinism.test.js) is untouched.
+function num(v, fallback = 0) { const n = Number(v); return Number.isFinite(n) ? n : fallback; }
+
+// Coerce one entity's numeric fields to finite values, defaulting hp/maxHp from its
+// def and clamping coordinates into the map so a bad value can never poison the spatial
+// hash (NaN,NaN buckets) or the hp accounting (an un-killable NaN-hp ghost).
+function cleanEntity(e, def, map) {
+  const maxHp = num(e.maxHp, def.hp);
+  e.maxHp = maxHp > 0 ? maxHp : def.hp;
+  e.hp = Math.max(0, Math.min(num(e.hp, e.maxHp), e.maxHp));
+  e.x = Math.max(0, Math.min(num(e.x, 0), map.width));
+  e.y = Math.max(0, Math.min(num(e.y, 0), map.height));
+  return e;
+}
+
+// Largest numeric suffix among the state's OWN-minted ids ("u12"/"b7" — the ids newId
+// mints from the global counter; "g"-scheme galaxy ids come from a separate counter and
+// are ignored here). Used to guarantee the restored counter can never mint an id that
+// collides with a loaded entity, even if the save's nextEntityId is missing/low/garbage.
+function maxOwnEntityId(state) {
+  let m = 0;
+  const scan = id => { const s = /^[ub](\d+)$/.exec(String(id)); if (s) { const n = +s[1]; if (n > m) m = n; } };
+  for (const id of state.units.keys()) scan(id);
+  for (const id of state.buildings.keys()) scan(id);
+  return m;
+}
+
 function serPlayer(p) {
   return { id: p.id, faction: p.faction, isAI: p.isAI, color: p.color,
     resources: { ...p.resources }, upgrades: { ...p.upgrades } };
@@ -87,6 +127,12 @@ function serPlanet(state) {
       aiActionBudget: state.aiActionBudget ?? 0,
       aiAttackForce: state.aiAttackForce ?? 0, aiAttackDesperate: !!state.aiAttackDesperate,
       aiNextAttackAt: state.aiNextAttackAt ?? null, aiUnitsBuilt: state.aiUnitsBuilt ?? 0,
+      // Committed-wave counter (engine/ai.js): drives the economy-raid cadence
+      // (aiWaveCount % RAID_EVERY). Omitting it reset the counter to 0 on every reload,
+      // shifting all subsequent raid-vs-base decisions — the same continue-identically
+      // break the aiNextWaveAt note below warns about. Additive + `|| 0`-defaulted in
+      // ai.js, so old saves without it load fine.
+      aiWaveCount: state.aiWaveCount ?? 0,
       // Odyssey offense cadence (engine/ai.js) — a scheduled future time. Must be
       // persisted or a reloaded hostile world fires its next probe a full cadence
       // early (undefined ?? 0 ⇒ immediately wave-ready), breaking continue-identically.
@@ -111,14 +157,22 @@ function rehydratePlanet(P) {
   const fog = createFog(map); fog.explored = Uint8Array.from(P.fog);
   const fogAI = createFog(map); fogAI.explored = Uint8Array.from(P.fogAI);
 
+  // Keep only entities of a REAL type, coercing their numeric fields — an unknown
+  // `type` makes UNITS[type]/BUILDINGS[type] undefined and throws on the first tick;
+  // a NaN coord/hp silently corrupts the sim. Drop the former, clean the latter.
+  const units = new Map();
+  for (const u of P.units) { const def = UNITS[u.type]; if (def) units.set(u.id, cleanEntity(u, def, map)); }
+  const buildings = new Map();
+  for (const b of P.buildings) { const def = BUILDINGS[b.type]; if (def) buildings.set(b.id, cleanEntity(b, def, map)); }
+
   const state = {
-    time: P.time, tick: P.tick, over: P.over, winner: P.winner,
+    time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
     seed: P.seed, planetId: P.planetId, sizeMult: P.sizeMult, resourceMult: P.resourceMult,
     endless: !!P.endless,
     map,
     players: { player: P.players.player, ai: P.players.ai },
-    units: new Map(P.units.map(u => [u.id, u])),
-    buildings: new Map(P.buildings.map(b => [b.id, b])),
+    units,
+    buildings,
     selection: [],
     fog, fogAI,
     aiScoutId: P.ai.aiScoutId, aiThink: P.ai.aiThink,
@@ -126,6 +180,7 @@ function rehydratePlanet(P) {
     aiActionBudget: P.ai.aiActionBudget,
     aiAttackForce: P.ai.aiAttackForce, aiAttackDesperate: P.ai.aiAttackDesperate,
     aiNextAttackAt: P.ai.aiNextAttackAt, aiUnitsBuilt: P.ai.aiUnitsBuilt,
+    aiWaveCount: P.ai.aiWaveCount ?? 0,
     aiNextWaveAt: P.ai.aiNextWaveAt ?? undefined,
     aiColonyTarget: P.ai.aiColonyTarget ?? null,
     aiArchetype: archetypeFor(P.planetId),
@@ -150,7 +205,11 @@ export function deserializeGame(input) {
   const save = JSON.parse(JSON.stringify(input));   // detach + normalise
   if (save.v !== SAVE_VERSION) throw new Error(`unsupported save version ${save.v}`);
   const state = rehydratePlanet(save);
-  restoreEntityId(save.nextEntityId);
+  // Never trust the saved counter as ground truth: mint from beyond BOTH the saved value
+  // AND every loaded id, so a missing/low/garbage nextEntityId can't produce an id that
+  // overwrites a live entity. For a valid save this is exactly save.nextEntityId (peeked
+  // after all mints, so already > every suffix) — identity, determinism preserved.
+  restoreEntityId(Math.max(num(save.nextEntityId, 0), maxOwnEntityId(state) + 1));
   return state;
 }
 
@@ -162,6 +221,8 @@ export function serializeGalaxy(galaxy) {
     seed: galaxy.seed, credits: galaxy.credits, activeId: galaxy.activeId, worlds: galaxy.worlds,
     settings: galaxy.settings,
     entitySeq: galaxy.entitySeq ?? 0, galaxyTick: galaxy.tick ?? 0,
+    galaxyTime: galaxy.time ?? 0,                    // galaxy-wide clock — keys the relief cooldown (engine/galaxy.js)
+    lastReliefTime: galaxy.lastReliefTime ?? null,   // when the last relief ship dropped, on that same clock
     pacified: [...(galaxy.pacified || [])], wonBy: galaxy.wonBy ?? null,   // conquest progress (additive; old saves default to none)
     reached: [...(galaxy.reached || [])],                                  // progress milestones already celebrated — so a reload doesn't replay their fireworks
     nextEntityId: peekEntityId(),                 // the ONE global entity counter, saved once
@@ -178,16 +239,34 @@ export function deserializeGalaxy(input) {
   sanitizeSave(input);                              // reject unsafe/oversized payloads before anything else
   const save = JSON.parse(JSON.stringify(input));
   if (save.v !== GALAXY_SAVE_VERSION) throw new Error(`unsupported galaxy save version ${save.v}`);
+  // Reject structural nonsense HERE, while the running session is still intact and the
+  // caller's try/catch can keep the current game. Without these, a save whose activeId
+  // has no matching planet (or that carries no planets at all) parses "successfully",
+  // the caller tears down the live game, and boot crashes reading a non-existent active
+  // world — losing the running game to a bad file.
+  if (!Array.isArray(save.worlds) || !save.worlds.length) throw new Error("galaxy save has no worlds");
+  if (!Array.isArray(save.planets) || !save.planets.length) throw new Error("galaxy save has no planets");
+
+  // The world roster and active id are save-derived strings that flow into the starmap
+  // UI (planetName → node text). Constrain them to REAL world ids so a hand-crafted save
+  // can never smuggle an arbitrary string through the roster (defence-in-depth behind the
+  // starmap's own escaping); an unknown activeId then fails the has-planet check below.
+  const known = new Set(ODYSSEY_WORLDS);
+  const worlds = save.worlds.filter(id => known.has(id));
+  if (!worlds.length) throw new Error("galaxy save has no recognised worlds");
 
   const galaxy = {
-    seed: save.seed, credits: save.credits, activeId: save.activeId, worlds: save.worlds,
+    seed: save.seed, credits: num(save.credits, 0), activeId: save.activeId, worlds,
     planets: new Map(), settings: save.settings,
-    tick: save.galaxyTick ?? 0, entitySeq: save.entitySeq ?? 0,
+    tick: num(save.galaxyTick, 0), time: num(save.galaxyTime, 0), entitySeq: num(save.entitySeq, 0),
+    lastReliefTime: Number.isFinite(save.lastReliefTime) ? save.lastReliefTime : undefined,
     colonyNotes: new Map(),   // transient UI bookkeeping — re-derived, never persisted
     pacified: new Set(save.pacified || []), pacifyNotes: [], wonBy: save.wonBy ?? null,
     reached: new Set(save.reached || []), milestones: [],   // celebrated milestones persist; the firework queue is transient
   };
+  let maxId = 0;
   for (const P of save.planets) {
+    if (!known.has(P.planetId)) continue;                    // skip a planet payload with an unrecognised id
     const state = rehydratePlanet(P);
     state.market = createMarket(state);                    // base recomputed from the (regenerated) nodes...
     Object.assign(state.market.pressure, P.market.pressure); // ...then overlay the saved running pressure
@@ -195,9 +274,13 @@ export function deserializeGalaxy(input) {
     state.background = !!P.background;
     state.inGalaxy = true;                                    // galaxy member → galaxy-wide defeat (engine/galaxy.js)
     galaxy.planets.set(P.planetId, state);
+    maxId = Math.max(maxId, maxOwnEntityId(state));
   }
+  if (!galaxy.planets.has(galaxy.activeId)) throw new Error("galaxy save has no active planet");
   const active = galaxy.planets.get(galaxy.activeId);
-  if (active) active.background = false;                    // the seat is never a background world
-  restoreEntityId(save.nextEntityId);                       // last: after all rehydration, so future mints continue past every id
+  active.background = false;                                // the seat is never a background world
+  // Mint beyond both the saved counter and every loaded id across ALL worlds (see the
+  // skirmish note) — identity for a valid save, collision-proof for a corrupt one.
+  restoreEntityId(Math.max(num(save.nextEntityId, 0), maxId + 1));
   return galaxy;
 }

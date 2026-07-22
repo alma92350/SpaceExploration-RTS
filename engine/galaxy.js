@@ -63,6 +63,7 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     planets: new Map(),         // planetId -> engine game state
     settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro },
     tick: 0,                    // integer galaxy-tick counter (drives the background-world schedule)
+    time: 0,                    // galaxy-wide sim clock (seconds) — monotonic across jumps; keys the relief cooldown
     entitySeq: 0,               // fresh-id counter for entities relocated across worlds by a jump
     colonyNotes: new Map(),     // per-planet UI notification bookkeeping (galaxy-side, not sim state)
     pacified: new Set(),        // worlds where you've razed the neighbour's Command Center (a conquest milestone)
@@ -194,6 +195,7 @@ export const BG_STEP = 4;
 // time is conserved regardless of cadence.
 export function stepGalaxy(galaxy, dt) {
   const t = (galaxy.tick = (galaxy.tick | 0) + 1);
+  galaxy.time = (galaxy.time || 0) + dt;             // galaxy-wide clock (deterministic: dt is the fixed step)
   tick(activeState(galaxy), dt);                     // active world: full rate
   const dtBg = dt * BG_STEP;
   for (const [id, state] of galaxy.planets) {
@@ -209,10 +211,15 @@ export function stepGalaxy(galaxy, dt) {
 // (surrenderGalaxy is the only terminal state). So there's no galaxy-wide loss; instead, if you
 // ever hold NO foothold anywhere (every Command Center razed and no colony ship left), a RELIEF
 // colony ship is dispatched to your active world's landing zone so you can re-found and fight on.
-// A short cooldown (in sim time, so it stays deterministic) bounds the churn if relief keeps
-// getting farmed, and its arrival is flagged for a UI toast. Once you hold the ship you have a
-// foothold again, so it won't re-send. The per-world checkEndlessLoss is suppressed for galaxy
-// states (state.inGalaxy, engine/victory.js), so this is the sole authority. Pure + deterministic.
+// A short cooldown bounds the churn if relief keeps getting farmed, and its arrival is flagged for
+// a UI toast. Once you hold the ship you have a foothold again, so it won't re-send. The per-world
+// checkEndlessLoss is suppressed for galaxy states (state.inGalaxy, engine/victory.js), so this is
+// the sole authority. The cooldown is keyed on the GALAXY-WIDE clock (galaxy.time), not any one
+// world's local time — a jump swaps the active world, and each world's clock advances on its own,
+// so comparing lastReliefTime (set on world A) to world B's time could read as "cooldown elapsed"
+// (B younger than A ⇒ negative delta) or "never elapses", either of which breaks the anti-farm
+// bound and could dead-end the no-defeat guarantee. galaxy.time is monotonic across the whole run.
+// Pure + deterministic (galaxy.time accumulates the fixed dt in stepGalaxy).
 export const RELIEF_COOLDOWN = 20;   // sim seconds between relief drops (anti-farm)
 export function checkGalaxyRescue(galaxy) {
   const active = activeState(galaxy);
@@ -222,8 +229,9 @@ export function checkGalaxyRescue(galaxy) {
       if (b.owner === "player" && b.type === "command") return;   // a base somewhere → still going
     if (hasColonyShip(state, "player")) return;                   // …or a colony ship to re-found from
   }
-  if (active.time - (galaxy.lastReliefTime ?? -Infinity) < RELIEF_COOLDOWN) return;   // still on cooldown
-  galaxy.lastReliefTime = active.time;
+  const now = galaxy.time || 0;
+  if (now - (galaxy.lastReliefTime ?? -Infinity) < RELIEF_COOLDOWN) return;   // still on cooldown
+  galaxy.lastReliefTime = now;
   const lz = active.map.bases.player;
   const ship = makeUnit("colonyship", "player", lz.x, lz.y);
   ship.id = "g" + (galaxy.entitySeq = (galaxy.entitySeq || 0) + 1);   // galaxy id scheme (as in jumpCapital)

@@ -198,7 +198,7 @@ function attackDamage(state, unit, def, target) {
   // via bonusVsBuildings — kept separate from bonusVs (which is a hard
   // counter to one unit type) so new buildings need no per-type entries.
   const structureBonus = target.kind === "building" ? (def.bonusVsBuildings || 0) : 0;
-  let dmg = def.attack + bonus + structureBonus;
+  let dmg = (def.attack || 0) + bonus + structureBonus;   // belt-and-braces: a weaponless def can't NaN-poison hp
 
   // Every researched Assault upgrade (attacker side) stacks its damage-dealt
   // multiplier; every Bulwark upgrade (defender side) its damage-taken multiplier.

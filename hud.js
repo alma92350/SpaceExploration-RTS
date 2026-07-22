@@ -272,6 +272,9 @@ function renderSelectionPanel() {
     + "|" + (input.building ? input.building.buildingType : "")
     + "|" + Object.keys(state.players.player.upgrades).sort().join(",")
     + "|" + aggregated
+    // Rebuild when attack-move arms/disarms so the Attack-Move button's ARMED label +
+    // .armed class actually appear — without this the state changed with no panel cue.
+    + "|" + input.attackArmed
     + "|" + queueSignature(sel)
     // Rebuild when any button's enabled state would flip: an option crossing the
     // affordability line, or a completed building unlocking a tech option (e.g.

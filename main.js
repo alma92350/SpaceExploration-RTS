@@ -79,7 +79,10 @@ window.addEventListener("resize", resizeMinimap);
 minimapCanvas.addEventListener("click", e => {
   if (!game.state || !game.input) return;
   const rect = minimapCanvas.getBoundingClientRect();
-  const world = minimapToWorld(game.state.map, MINIMAP_W, MINIMAP_H, e.clientX - rect.left, e.clientY - rect.top);
+  // Convert against the minimap's ACTUAL rendered size, not the fixed logical MINIMAP_W/H:
+  // the CSS shrinks the element on small/portrait viewports (style.css), so using the
+  // constant sent a phone tap on the right edge to ~56% of the map instead of the edge.
+  const world = minimapToWorld(game.state.map, rect.width, rect.height, e.clientX - rect.left, e.clientY - rect.top);
   const camera = game.input.getCamera();
   camera.x = world.x;
   camera.y = world.y;
@@ -93,7 +96,7 @@ minimapCanvas.addEventListener("contextmenu", e => {
   e.preventDefault();
   if (!game.state || !game.input) return;
   const rect = minimapCanvas.getBoundingClientRect();
-  const world = minimapToWorld(game.state.map, MINIMAP_W, MINIMAP_H, e.clientX - rect.left, e.clientY - rect.top);
+  const world = minimapToWorld(game.state.map, rect.width, rect.height, e.clientX - rect.left, e.clientY - rect.top);   // actual size, not MINIMAP_W/H (see the click handler)
   const selected = game.state.selection.map(id => game.state.units.get(id)).filter(Boolean);
   if (!selected.length) return;
   const combatants = selected.filter(u => UNITS[u.type].role === "combat");

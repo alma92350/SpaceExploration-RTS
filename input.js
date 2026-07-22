@@ -87,10 +87,15 @@ export function attachInput(canvas, state, onChange) {
     if (others.length) issueMove(others, x, y, queue);
   }
 
-  // The A key arms attack-move; the crosshair cursor shows it's armed.
+  // The A key arms attack-move; the crosshair cursor + field tint show it's armed, and the
+  // HUD's Attack-Move button flips to its ARMED state. onChange() is what makes that button
+  // rebuild — without it, arming via the A key (or a right-click cancel) changed nothing the
+  // player could see on the panel until some unrelated HUD tick happened to rebuild it.
   function setArmed(v) {
+    if (attackMoveArmed === v) return;
     attackMoveArmed = v;
     canvas.classList.toggle("aim-cursor", v);
+    onChange();
   }
 
   // First real touch flips the app into touch mode: CSS (style.css) grows the

@@ -390,7 +390,7 @@ test("holding a foothold on ANY world means no relief is sent (and never a defea
 test("a total wipeout is NOT a defeat — a relief colony ship is dispatched so life goes on", () => {
   const g = createGalaxy({ seed: 35 });
   const home = settle(activeState(g));
-  home.time = 1000;                                             // past the relief cooldown
+  g.time = 1000;                                               // galaxy-wide clock (relief keys on this, not a per-world time)
   for (const b of commandCenters(home, "player")) home.buildings.delete(b.id);   // raze the only base — no foothold anywhere
   assert.ok(!hasColonyShip(home, "player"), "and the start ship was consumed founding it — truly nothing left");
   checkGalaxyRescue(g);
@@ -402,9 +402,29 @@ test("a total wipeout is NOT a defeat — a relief colony ship is dispatched so 
   for (const [id, u] of [...activeState(g).units]) if (u.type === "colonyship") activeState(g).units.delete(id);
   checkGalaxyRescue(g);
   assert.ok(!hasColonyShip(activeState(g), "player"), "no second relief within the cooldown window");
-  activeState(g).time += RELIEF_COOLDOWN + 1;                   // wait out the cooldown
+  g.time += RELIEF_COOLDOWN + 1;                               // wait out the cooldown on the galaxy clock
   checkGalaxyRescue(g);
   assert.ok(hasColonyShip(activeState(g), "player"), "after the cooldown, relief comes again — life goes on");
+});
+
+test("relief cooldown keys on the galaxy clock, not the active world's local time (survives a jump)", () => {
+  const g = createGalaxy({ seed: 42 });
+  const home = settle(activeState(g));
+  for (const b of commandCenters(home, "player")) home.buildings.delete(b.id);   // no foothold anywhere
+  // The bug this guards: lastReliefTime was compared against the ACTIVE world's local
+  // clock, but a jump swaps which world is active and each world's clock runs on its own.
+  // Simulate a relief that dropped 5s ago on the galaxy clock, then a jump to a world whose
+  // LOCAL clock reads ancient — keying on the local time would falsely read the cooldown as
+  // long elapsed and farm relief; keying on the galaxy clock (the fix) does not.
+  g.time = 10;
+  g.lastReliefTime = 5;              // 5s ago on the galaxy clock — inside the 20s cooldown
+  activeState(g).time = 100000;      // the active world's local clock is a red herring
+  checkGalaxyRescue(g);
+  assert.ok(!hasColonyShip(activeState(g), "player"), "still on cooldown by the galaxy clock — no premature relief");
+
+  g.time = 30;                       // 25s since the last drop on the galaxy clock (> cooldown)
+  checkGalaxyRescue(g);
+  assert.ok(hasColonyShip(activeState(g), "player"), "past the cooldown on the galaxy clock — relief arrives");
 });
 
 test("a lone undeployed colony ship anywhere is a foothold — no relief needed, no defeat", () => {
