@@ -19,10 +19,17 @@
 import { UNITS } from "./entities.js";
 import { queryNeighbors } from "./grid.js";
 import { sampleTerrain, sideMod } from "./map.js";
+import { hashStr } from "./rng.js";
 
 const AVOID_RANGE = 30;     // how far out a unit senses neighbors to steer around, beyond their combined radii
 const AVOID_WEIGHT = 1.6;   // how strongly a sensed neighbor bends the seek direction
-const MAX_UNIT_RADIUS = 10; // largest unit radius (Breacher) — the widest a neighbor's own body reaches
+// Derived from the roster, not hardcoded: the old literal (10, "Breacher") went stale the moment
+// a wider hull was added (the Bulk Freighter is 15), which silently under-sized the avoidance
+// query — it only kept working because the grid pads each query by a full cell. Computing it
+// once at module load from static UNITS data keeps it correct as the roster grows, with no
+// purity issue (no randomness/clock). A larger query returns a superset of candidates that the
+// exact-distance check still filters identically, so replays stay byte-identical.
+export const MAX_UNIT_RADIUS = Math.max(...Object.values(UNITS).map(u => u.radius || 0));
 
 function radiusOf(entity) {
   return UNITS[entity.type] ? UNITS[entity.type].radius : 9;
@@ -45,6 +52,18 @@ export function escortSlot(state, unit) {
   const minR = (n * ESCORT_GAP) / (2 * Math.PI);                   // ring big enough to seat the whole group
   const R = Math.max(radiusOf(target) + ESCORT_STANDOFF, minR);
   return { x: target.x + Math.cos(angle) * R, y: target.y + Math.sin(angle) * R };
+}
+
+// Advance an escorting unit one tick toward its formation slot. Returns false — and drops the
+// order — when the guarded target is gone; true while it's still escorting. All three escort
+// branches (combat ship, worker, support drone) did exactly this by hand, so the shared
+// escortSlot→drop-or-step logic lives here once. Pure follow: never cleared on arrival, so the
+// escort trails the target wherever it goes.
+export function keepEscortStation(state, unit, speed, dt) {
+  const slot = escortSlot(state, unit);
+  if (!slot) { unit.order = null; return false; }
+  stepToward(state, unit, slot.x, slot.y, speed, dt);
+  return true;
 }
 
 // Moves `unit` at most `speed * dt` toward (tx, ty). Returns true once it
@@ -117,7 +136,5 @@ function senseLateralAvoidance(state, unit, seekX, seekY) {
 // Stable per-pair left/right pick for a neighbor sitting exactly on the
 // travel line, so the dodge direction doesn't flicker tick to tick.
 function tieBreak(idA, idB) {
-  let h = 7;
-  for (const c of idA + idB) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h % 2 === 0 ? 1 : -1;
+  return hashStr(idA + idB) % 2 === 0 ? 1 : -1;
 }

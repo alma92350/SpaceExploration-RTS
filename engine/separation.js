@@ -15,9 +15,11 @@
 
 import { UNITS } from "./entities.js";
 import { queryNeighbors } from "./grid.js";
+import { hashStr } from "./rng.js";
+import { MAX_UNIT_RADIUS } from "./movement.js";
 
 const PUSH_SPEED = 60;   // units/sec of separation at full overlap
-const SEP_RADIUS = 20;   // 2 * the largest unit radius (Breacher 10) — covers every possible minDist
+const SEP_RADIUS = 2 * MAX_UNIT_RADIUS;   // two largest hulls touching — the widest possible minDist; derived, never stale
 
 export function applySeparation(state, dt) {
   const grid = state.unitGrid;
@@ -64,7 +66,5 @@ function separatePair(a, b, dt) {
 // Deterministic per-pair direction for the (rare) exactly-coincident case,
 // so two units spawned on the same point don't jitter frame to frame.
 function hashAngle(idA, idB) {
-  let h = 7;
-  for (const c of idA + idB) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return (h % 360) * (Math.PI / 180);
+  return (hashStr(idA + idB) % 360) * (Math.PI / 180);
 }

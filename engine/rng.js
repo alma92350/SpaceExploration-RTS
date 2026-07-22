@@ -8,6 +8,17 @@
 
 "use strict";
 
+// A tiny deterministic string hash (the classic h=7, h*31+c), used across the sim for stable
+// per-id / per-pair tie-breaks — a worker's orbit angle, an avoidance dodge direction, a
+// spread-fire target pick. It lived, byte-identical, in four separate modules; centralised here
+// (the natural home for deterministic number sources) so a change can't drift between copies.
+// All ids are ASCII, so this is exact; >>> 0 keeps it an unsigned 32-bit int.
+export function hashStr(s) {
+  let h = 7;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
 // mulberry32: 32-bit state, good distribution, identical output across JS
 // engines for the same seed. Returns a function producing floats in [0, 1).
 export function mulberry32(seed) {

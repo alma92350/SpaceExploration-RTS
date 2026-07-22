@@ -116,7 +116,10 @@ function serPlanet(state) {
     sizeMult: state.sizeMult, resourceMult: state.resourceMult, endless: !!state.endless,
     time: state.time, tick: state.tick, over: state.over, winner: state.winner,
     players: { player: serPlayer(state.players.player), ai: serPlayer(state.players.ai) },
-    units: [...state.units.values()],
+    // `_gi` is the grid broad-phase index — a transient stamped fresh onto every unit each tick
+    // by buildUnitGrid, meaningless once saved. Strip it so it doesn't bloat the payload with a
+    // per-unit integer that the next tick overwrites anyway. Shallow copy, only at save time.
+    units: [...state.units.values()].map(({ _gi, ...u }) => u),
     buildings: [...state.buildings.values()],
     nodes: state.map.nodes.map(n => ({ id: n.id, amount: n.amount })),
     fog: [...state.fog.explored],

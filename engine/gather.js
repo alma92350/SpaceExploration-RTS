@@ -11,6 +11,7 @@
 import { stepToward } from "./movement.js";
 import { UNITS, isDropOff, upgradeMult } from "./entities.js";
 import { sideMod } from "./map.js";
+import { hashStr } from "./rng.js";
 
 const ORBIT_RADIUS = 16;   // workers ring the node instead of stacking on its exact center
 const ARRIVE_REACH = 4;
@@ -32,14 +33,12 @@ function miningEfficiency(node, def) {
 // Stable per-worker angle around the node, so a group sent to the same
 // node spreads out around it instead of converging on one point.
 function orbitSpot(node, unitId) {
-  let hash = 7;
-  for (const c of unitId) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
-  const angle = (hash % 360) * (Math.PI / 180);
+  const angle = (hashStr(unitId) % 360) * (Math.PI / 180);
   return { x: node.x + Math.cos(angle) * ORBIT_RADIUS, y: node.y + Math.sin(angle) * ORBIT_RADIUS };
 }
 
 export function updateGather(state, unit, dt) {
-  const def = UNITS.worker;
+  const def = UNITS[unit.type];
   const order = unit.order;
   const node = state.map.nodesById
     ? state.map.nodesById.get(order.nodeId)

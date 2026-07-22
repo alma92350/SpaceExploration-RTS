@@ -15,11 +15,12 @@
 
 "use strict";
 
-import { stepToward, escortSlot } from "./movement.js";
+import { stepToward, keepEscortStation } from "./movement.js";
 import { UNITS, BUILDINGS, upgradeMult } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
 import { sampleTerrain, sideMod } from "./map.js";
+import { hashStr } from "./rng.js";
 
 export function updateCombat(state, unit, dt) {
   const def = UNITS[unit.type];
@@ -84,9 +85,7 @@ export function updateCombat(state, unit, dt) {
   // the protective ring around the guarded ship — a persistent follow, never cleared on arrival,
   // so the escort trails the target wherever it's ordered until given a new order.
   if (unit.order && unit.order.type === "escort") {
-    const slot = escortSlot(state, unit);
-    if (!slot) { unit.order = null; return; }
-    stepToward(state, unit, slot.x, slot.y, def.speed, dt);
+    keepEscortStation(state, unit, def.speed, dt);
   }
 }
 
@@ -258,12 +257,6 @@ function stillEngageable(state, unit, def, id) {
   return Math.hypot(e.x - unit.x, e.y - unit.y) <= aggro;
 }
 
-function hashId(id) {
-  let h = 7;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h;
-}
-
 function nearestEnemy(entities, unit, maxRange) {
   let best = null, bestD = Infinity;
   for (const e of entities) {
@@ -298,7 +291,7 @@ function spreadEnemy(entities, unit, def, aggro) {
   if (!nearest) return null;
   if (local.length <= 1) return { id: nearest.id, d: nearestD };   // approaching, or a lone foe — just take nearest
   local.sort((a, b) => a.d - b.d || (a.e.id < b.e.id ? -1 : 1));   // stable, deterministic order
-  const pick = local[hashId(unit.id) % Math.min(local.length, SPREAD_TARGETS)];
+  const pick = local[hashStr(unit.id) % Math.min(local.length, SPREAD_TARGETS)];
   return { id: pick.e.id, d: pick.d };
 }
 

@@ -438,14 +438,18 @@ export function upgradeSpaceport(state, building) {
 
 const unitSupply = u => UNITS[u.type]?.supplyCost || 0;
 
+// What counts as a launch-ready pad: the player's own, finished Spaceport. Defined once so
+// jumpVessel/canJump/jumpCapital can't drift on the predicate (owner + type + built).
+const isPlayerSpaceport = b => b.owner === "player" && b.type === "spaceport" && !b.constructing;
+const playerSpaceport = state => [...state.buildings.values()].find(isPlayerSpaceport) || null;
+
 // The colony ship that would carry an interplanetary jump: a player colony ship staged
 // within JUMP_LOAD_RADIUS of a completed Spaceport. A jump relocates the SHIP (and the
 // rest of the staged expedition) — NOT a deployed base. Deployed Command Centers are
 // permanent: the world you leave keeps them and becomes a background colony. Deploy the
 // ship at the destination to found your new base there. Null when no ship is on the pad.
 export function jumpVessel(state) {
-  const spaceport = [...state.buildings.values()]
-    .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
+  const spaceport = playerSpaceport(state);
   if (!spaceport) return null;
   for (const u of state.units.values())
     if (u.owner === "player" && u.type === "colonyship"
@@ -458,8 +462,7 @@ export function jumpVessel(state) {
 // a colony), or nothing (to hop back and control a world you already hold). jumpVessel
 // stays as an informational helper (is a ship loaded?) for the HUD, not a gate.
 export function canJump(state) {
-  return [...state.buildings.values()]
-    .some(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
+  return !!playerSpaceport(state);
 }
 
 // A world where the player still has a foothold — a Command Center or an undeployed colony ship
@@ -584,8 +587,7 @@ function loadCargo(from, dest, capacity) {
 export function jumpCapital(galaxy, destId) {
   const from = activeState(galaxy);
   if (destId === galaxy.activeId) return null;
-  const spaceport = [...from.buildings.values()]
-    .find(b => b.owner === "player" && b.type === "spaceport" && !b.constructing);
+  const spaceport = playerSpaceport(from);
   const canFallBack = playerFoothold(galaxy.planets.get(destId));   // a world you hold a base on
   if (!spaceport && !canFallBack) return null;                      // no port here and nowhere to fall back → can't jump
   const cost = jumpCost(galaxy, destId);
