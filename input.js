@@ -8,6 +8,7 @@
 
 "use strict";
 
+import { game } from "./session.js";
 import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort } from "./engine/commands.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
@@ -15,6 +16,7 @@ import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, dragCamera
 import * as sound from "./sound.js";
 
 const CLICK_THRESHOLD = 4;
+const DOUBLE_GROUP_MS = 400;   // a second press of the same control-group digit within this window recenters
 const UNIT_PICK_RADIUS = 10;
 const NODE_PICK_RADIUS = 14;
 const ZOOM_STEP = 1.12;
@@ -38,7 +40,11 @@ export function attachInput(canvas, state, onChange) {
   let buildMode = null;
   let attackMoveArmed = false;   // set by the A key; the next left-click issues an attack-move
   let lastWorldPos = { x: state.map.width / 2, y: state.map.height / 2 };
-  const groups = new Map();          // control groups: digit -> [unit ids]
+  // Control groups live on the shared session, keyed per planet id, so they survive an
+  // Odyssey jump (which destroys + rebuilds this input controller) and can be shown/tapped in
+  // the HUD. `{ digit: [ids] }` per world.
+  const groups = () => (game.groups[state.planetId] ||= {});
+  let lastGroupDigit = null, lastGroupAt = -Infinity;   // a second press of the same digit re-centers
   let idleCycle = 0;                 // round-robins through idle workers on repeated presses
   let edgePan = [0, 0];              // camera nudge from the cursor sitting at a screen edge
 
@@ -395,9 +401,22 @@ export function attachInput(canvas, state, onChange) {
     camera.x = x; camera.y = y;
     clampCamera(camera, state.map, vw, vh);
   }
+  function assignGroup(digit) {
+    groups()[digit] = [...state.selection];
+  }
+  // Recall a bound group; a SECOND press of the same digit within DOUBLE_GROUP_MS also
+  // recenters the camera on the group's centroid (the standard "tap to select, tap again to
+  // jump to them"). Selecting a live-only subset (dead ids filtered) as before.
   function recallGroup(digit) {
-    const ids = alivePlayerUnitIds(groups.get(digit) || []);
-    if (ids.length) state.selection = ids;
+    const ids = alivePlayerUnitIds(groups()[digit] || []);
+    if (!ids.length) return;
+    state.selection = ids;
+    const now = performance.now();
+    if (digit === lastGroupDigit && now - lastGroupAt < DOUBLE_GROUP_MS) {
+      const us = ids.map(id => state.units.get(id)).filter(Boolean);
+      if (us.length) centerCamera(us.reduce((s, u) => s + u.x, 0) / us.length, us.reduce((s, u) => s + u.y, 0) / us.length);
+    }
+    lastGroupDigit = digit; lastGroupAt = now;
   }
   function stopSelected() {
     issueStop(selectedUnits());
@@ -429,6 +448,13 @@ export function attachInput(canvas, state, onChange) {
     centerCamera(w.x, w.y);
     onChange();
   }
+  // Snap the camera to your primary base — a completed Command Center, else the landing zone.
+  // The macro "get me home" key (Space), so a raid on your economy is one press away.
+  function centerOnBase() {
+    const cc = [...state.buildings.values()].find(b => b.owner === "player" && b.type === "command" && !b.constructing);
+    const at = cc || (state.map.bases && state.map.bases.player);
+    if (at) { centerCamera(at.x, at.y); onChange(); }
+  }
 
   window.addEventListener("keydown", e => {
     const k = e.key.toLowerCase();
@@ -441,7 +467,7 @@ export function attachInput(canvas, state, onChange) {
       // Shift+digit binds the current selection to a control group; a plain
       // digit recalls it. (Ctrl+digit is the browser's own tab-switch shortcut
       // and can't be reliably suppressed, so Shift is the bind modifier here.)
-      if (e.shiftKey) groups.set(digit[1], [...state.selection]);
+      if (e.shiftKey) assignGroup(digit[1]);
       else recallGroup(digit[1]);
       onChange();
       return;
@@ -453,6 +479,13 @@ export function attachInput(canvas, state, onChange) {
     if (k === "h") { holdSelected(); onChange(); return; }   // hold position
     if (k === "escape") { setArmed(false); buildMode = null; onChange(); return; }   // bail out of a pending action
     if (k === "`") { focusIdleWorker(); return; }   // it calls onChange itself
+    if (k === " ") { e.preventDefault(); centerOnBase(); return; }   // Space — jump the camera to your base
+    // Positional production/build hotkeys (Z/C/V/B/N): fire the Nth produce/build button the
+    // HUD is currently showing (game.hotkeyActions, set by hud.js). click() replays the real
+    // button handler, so orders flow through the same queueProduction/startBuild path — the
+    // skirmish sim/AI is byte-identical, this is a pure UI shortcut.
+    const action = game.hotkeyActions && game.hotkeyActions.find(a => a.key === k);
+    if (action) { action.click(); return; }
   }, { signal });
   window.addEventListener("keyup", e => heldKeys.delete(e.key.toLowerCase()), { signal });
 
@@ -466,6 +499,7 @@ export function attachInput(canvas, state, onChange) {
     const worker = state.selection.map(id => state.units.get(id)).find(u => u && u.cargo);
     const built = worker && issueBuild(state, worker.id, buildingType, p.x, p.y);
     if (built) buildMode = null;
+    else sound.playProductionBlocked();   // rejected (invalid spot, or no eligible worker) — audibly denied, not silent
     onChange();
   }
 
@@ -487,6 +521,17 @@ export function attachInput(canvas, state, onChange) {
     stopSelected: () => { stopSelected(); onChange(); },
     scoutSelected: () => { scoutSelected(); onChange(); },
     holdSelected: () => { holdSelected(); onChange(); },
+    // Recall a group from the HUD chip (touch has no number row); same double-press-recenter
+    // as the keyboard path.
+    recallGroup: digit => { recallGroup(digit); onChange(); },
+    // Live per-group counts for the HUD chip row: [{ digit, count }] over bound groups with
+    // at least one surviving unit, in digit order.
+    groupCounts() {
+      const g = groups();
+      return Object.keys(g).sort()
+        .map(d => ({ digit: d, count: alivePlayerUnitIds(g[d]).length }))
+        .filter(e => e.count > 0);
+    },
     // Attack-move as a HUD button (touch has no A key): toggle it, cancel it, and
     // read the armed state so the button can show as active.
     toggleAttackMove: () => { setArmed(!attackMoveArmed); onChange(); },

@@ -11,6 +11,7 @@
 
 import { seedChipEl, factionChipEl, objectivesEl, helpOverlayEl, helpBtn, gameOverEl, galaxyToastEl } from "./dom.js";
 import { FACTIONS } from "./engine/factions.js";
+import { pauseLoop, resumeLoop, togglePause } from "./boot.js";   // runtime-only calls; the boot↔overlays cycle resolves via live bindings
 import * as sound from "./sound.js";
 
 /* ---------- seed chip ---------- */
@@ -63,22 +64,38 @@ export function hideObjectives() {
 
 /* ---------- galaxy toast (Odyssey background-colony alerts) ---------- */
 
-// A brief top-center notice for things happening on a world you're not on — a
-// colony under attack or lost (boot.js drives it from galaxy.sweepColonies).
-// An optional onClick makes the toast actionable (e.g. jump to the attacked
-// colony to defend it): it turns on pointer events, and clicking runs the
-// handler and dismisses the toast. A clickable alert lingers a little longer so
-// there's time to act on it. `.onclick` (not addEventListener) is assigned fresh
-// each call, so a plain toast clears any handler the previous one left behind.
-let galaxyToastTimer;
+// A brief top-center notice for things happening on a world you're not on — a colony under
+// attack or lost, a milestone, a relief ship (boot.js drives these). #galaxyToast is a STACK:
+// up to MAX_TOASTS live at once, each with its own timer + onclick, so a routine alert can no
+// longer silently overwrite a one-shot clickable one (the old single-slot behaviour lost the
+// "colony has fallen — click to retake" click target for good). An optional onClick makes a
+// toast actionable (jump to the world); clicking runs it and dismisses that toast, and a
+// clickable alert lingers a little longer. Eviction rule at cap: drop the oldest NON-clickable
+// toast; a plain toast never pushes out a clickable one (if it would have to, the plain one is
+// dropped instead — it's non-critical). Same signature, so every caller is unchanged.
+const MAX_TOASTS = 3;
 export function showGalaxyToast(msg, kind = "warn", onClick = null) {
-  galaxyToastEl.textContent = msg;
-  galaxyToastEl.className = "galaxy-toast " + kind + (onClick ? " clickable" : "");   // drops "hidden", sets the kind
-  galaxyToastEl.onclick = onClick
-    ? () => { galaxyToastEl.classList.add("hidden"); onClick(); }
-    : null;
-  clearTimeout(galaxyToastTimer);
-  galaxyToastTimer = setTimeout(() => galaxyToastEl.classList.add("hidden"), onClick ? 8000 : 5000);
+  const stack = galaxyToastEl;
+  stack.className = "galaxy-toast-stack";   // #galaxyToast is the container; toasts are its children
+  stack.classList.remove("hidden");
+  const clickable = !!onClick;
+
+  if (stack.children.length >= MAX_TOASTS) {
+    const evict = [...stack.children].find(c => !c._clickable);
+    if (evict) { clearTimeout(evict._timer); evict.remove(); }
+    else if (!clickable) return null;                     // full of clickable alerts; don't sacrifice one for a plain toast
+    else { const oldest = stack.firstElementChild; clearTimeout(oldest._timer); oldest.remove(); }
+  }
+
+  const el = document.createElement("div");
+  el.className = "galaxy-toast " + kind + (clickable ? " clickable" : "");
+  el.textContent = msg;
+  el._clickable = clickable;
+  const remove = () => { clearTimeout(el._timer); el.remove(); if (!stack.children.length) stack.classList.add("hidden"); };
+  if (clickable) el.onclick = () => { remove(); onClick(); };
+  el._timer = setTimeout(remove, clickable ? 8000 : 5000);
+  stack.appendChild(el);
+  return el;
 }
 
 /* ---------- help overlay ---------- */
@@ -94,7 +111,10 @@ const HELP_ROWS = [
   ["Double-click", "Select every unit of that type on screen"],
   ["Q · E · X", "Select army · Ranger scout mode · stop"],
   ["H", "Hold position — fire in range, don't chase"],
+  ["Z C V B N", "Produce / build the selected panel's Nth option"],
   ["`", "Jump to the next idle worker"],
+  ["Space", "Jump the camera to your base"],
+  ["P", "Pause / resume"],
   ["M", "Odyssey — open the galaxy map"],
   ["Right-click a node", "(building selected) rally new workers to mine it"],
   ["Minimap", "Left-click to jump · right-click to order"],
@@ -126,12 +146,14 @@ export function buildHelpOverlay() {
 function toggleHelp(force) {
   const show = force ?? helpOverlayEl.classList.contains("hidden");
   helpOverlayEl.classList.toggle("hidden", !show);
+  if (show) pauseLoop("help"); else resumeLoop("help");   // the sim holds while the reference is open
 }
 helpBtn.addEventListener("click", () => toggleHelp());
 helpOverlayEl.addEventListener("click", () => toggleHelp(false));
 window.addEventListener("keydown", e => {
   if (e.key === "F1" || e.key === "?") { e.preventDefault(); toggleHelp(); }
   else if (e.key === "Escape" && !helpOverlayEl.classList.contains("hidden")) toggleHelp(false);
+  else if ((e.key === "p" || e.key === "P") && !e.ctrlKey && !e.metaKey) { e.preventDefault(); togglePause(); }
 });
 
 /* ---------- game-over overlay ---------- */

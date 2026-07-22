@@ -19,7 +19,7 @@
 import { game } from "./session.js";
 import { saveBtn, loadBtn, homeBtn } from "./dom.js";
 import { serializeGame, deserializeGame, serializeGalaxy, deserializeGalaxy } from "./engine/persist.js";
-import { bootState, bootGalaxy, restartToMapSelect } from "./boot.js";
+import { bootState, bootGalaxy, restartToMapSelect, pauseLoop, resumeLoop } from "./boot.js";
 import * as sound from "./sound.js";
 
 const SAVE_KEY = "stellarfrontier.save.v1";
@@ -175,7 +175,8 @@ function goHome() {
   card.append(h, p, actions);
   overlay.appendChild(card);
 
-  const close = () => { overlay.remove(); window.removeEventListener("keydown", onKey); };
+  pauseLoop("home");   // hold the sim while the leave-confirm modal is up
+  const close = () => { resumeLoop("home"); overlay.remove(); window.removeEventListener("keydown", onKey); };
   const onKey = e => { if (e.key === "Escape") { e.preventDefault(); close(); } };
   const act = (label, fn, cls) => {
     const b = document.createElement("button");

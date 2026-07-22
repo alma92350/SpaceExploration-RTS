@@ -12,7 +12,7 @@ import { game } from "./session.js";
 import {
   resourcesEl, clockEl, panelEl, idleWorkersEl, isTouchMode,
   scenarioBarEl, scenarioBannerEl, scenarioStatusEl, repairBtn, departBtn,
-  starmapBtn, saveBtn, loadBtn,
+  starmapBtn, saveBtn, loadBtn, groupChipsEl,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
@@ -28,6 +28,7 @@ import { deployColonyShip } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { performJump } from "./boot.js";
+import { showGalaxyToast } from "./overlays.js";
 import { spriteIcon } from "./render.js";
 import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
@@ -133,7 +134,31 @@ export function renderHUD() {
   }
 
   renderScenarioBar(state);
+  renderGroupChips();
   renderSelectionPanel();
+}
+
+// A small always-visible row of the player's bound control groups ("1:8  2:3") near the
+// minimap — so groups are discoverable, and on touch (no number row) each chip recalls its
+// group on tap (a second tap recenters, via input.recallGroup's double-press). Rebuilt each
+// HUD tick from live counts; hidden when nothing is bound.
+let lastGroupChipSig = "";
+function renderGroupChips() {
+  const input = game.input;
+  const list = input && input.groupCounts ? input.groupCounts() : [];
+  const sig = list.map(e => `${e.digit}:${e.count}`).join(" ");
+  if (sig === lastGroupChipSig) return;   // only touch the DOM when the counts actually change
+  lastGroupChipSig = sig;
+  groupChipsEl.innerHTML = "";
+  groupChipsEl.classList.toggle("hidden", list.length === 0);
+  for (const { digit, count } of list) {
+    const chip = document.createElement("button");
+    chip.className = "group-chip";
+    chip.textContent = `${digit}:${count}`;
+    chip.title = `Control group ${digit} (${count} unit${count === 1 ? "" : "s"}) — tap to select, tap again to jump`;
+    chip.addEventListener("click", () => input.recallGroup(digit));
+    groupChipsEl.appendChild(chip);
+  }
 }
 
 // The scenario status strip: the phase banner, a leg/freighters/clock/budget
@@ -503,9 +528,27 @@ function renderCapital(state, cc) {
       tip: `Fortify this Command Center into your anchored Capital: ×${CAPITAL_HP_MULT} HP. The Capital never jumps — only a smaller CC relocates.` }));
 }
 
+// Positional production/build hotkeys: the Nth produce/build button of the current panel is
+// bound to the Nth of these keys (annotated on the label, like "Stop ( X )"). Chosen to avoid
+// every existing key (digits, X/Q/E/A/H, P, `, M, WASD/arrows). game.hotkeyActions is the live
+// list input.js invokes; each entry mimics a real click (so a locked option just buzzes).
+const PANEL_HOTKEYS = ["z", "c", "v", "b", "n"];
+let panelActions = [];
+// A produce/build button that also claims the next positional hotkey. Wraps makeButton, shows
+// the key in the label, and registers a click-mimicking action. Non-primary buttons (upgrades,
+// market, tribute) keep plain makeButton and take no hotkey.
+function prodButton(label, run, opts) {
+  const key = PANEL_HOTKEYS[panelActions.length];
+  const btn = makeButton(key ? `${label}  ( ${key.toUpperCase()} )` : label, run, opts);
+  panelActions.push({ key, click: () => btn.click() });   // click() replays the real handler (incl. the disabled buzz)
+  return btn;
+}
+
 function rebuildSelectionPanel(sel) {
   const { state, input } = game;
   panelEl.innerHTML = "";
+  panelActions = [];
+  game.hotkeyActions = panelActions;   // input.js reads this live array for the Z/C/V/B/N production keys
 
   if (!sel.length) {
     const hint = document.createElement("p");
@@ -562,7 +605,7 @@ function rebuildSelectionPanel(sel) {
     for (const t of ccUnits) {
       const def = UNITS[t];
       const locked = !prereqsMet(state, "player", def);
-      panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
+      panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
         () => queueProduction(state, cc.id, t),
         { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
     }
@@ -585,7 +628,7 @@ function rebuildSelectionPanel(sel) {
       if (!buildable(t)) continue;
       const def = UNITS[t];
       const locked = !prereqsMet(state, "player", def);
-      panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
+      panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
         () => queueProduction(state, barracks.id, t),
         { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
     }
@@ -654,7 +697,7 @@ function rebuildSelectionPanel(sel) {
   if (stardock) {
     const def = UNITS.leviathan;
     const locked = !prereqsMet(state, "player", def);
-    panelEl.appendChild(makeButton(`Produce ${def.name} (${costText(def.cost)})`,
+    panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
       () => queueProduction(state, stardock.id, "leviathan"),
       { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: "leviathan" } }));
     if (stardock.queue.length) renderQueueRows(stardock);
@@ -812,7 +855,7 @@ function rebuildSelectionPanel(sel) {
     const buildBtn = t => {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);
-      return makeButton(`Build ${def.name} (${costText(def.cost)})`,
+      return prodButton(`Build ${def.name} (${costText(def.cost)})`,
         () => input.startBuild(t),
         { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "building", type: t } });
     };
@@ -964,11 +1007,18 @@ function makeButton(label, onClick, { cost = null, tip = null, locked = false, l
   } else {
     btn.textContent = label;
   }
-  btn.title = locked && lockTip ? lockTip : (tip || "");
+  const tipText = locked && lockTip ? lockTip : (tip || "");
+  btn.title = tipText;
   const affordable = !cost || canAfford(state.players.player.resources, cost);
   if (locked || !affordable) {
     btn.classList.add("disabled");   // a tech-locked or unaffordable option greys and just buzzes on click
-    btn.addEventListener("click", () => sound.playProductionBlocked());
+    // On TOUCH there's no hover, so the title tip (why it's locked / what it costs) is
+    // otherwise unreachable — surface it as a toast on the tap that would just buzz.
+    const reason = tipText || (!affordable ? "Not enough resources" : "");
+    btn.addEventListener("click", () => {
+      sound.playProductionBlocked();
+      if (isTouchMode() && reason) showGalaxyToast(reason, "warn");
+    });
   } else {
     btn.addEventListener("click", () => { onClick(); renderHUD(); });
   }

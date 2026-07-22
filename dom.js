@@ -33,6 +33,7 @@ export const starmapBtn = document.getElementById("starmapBtn");
 export const starmapEl = document.getElementById("starmap");
 export const volumeEl = document.getElementById("volume");
 export const galaxyToastEl = document.getElementById("galaxyToast");
+export const groupChipsEl = document.getElementById("groupChips");
 export const scenarioBarEl = document.getElementById("scenarioBar");
 export const scenarioBannerEl = document.getElementById("scenarioBanner");
 export const scenarioStatusEl = document.getElementById("scenarioStatus");

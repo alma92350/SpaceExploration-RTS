@@ -23,4 +23,9 @@ export const game = {
   // production attempt: written by boot.js's frame-event pump, read by hud.js's
   // renderHUD. Kept here because it crosses that module boundary.
   supplyBlockedUntil: 0,
+  // Control groups, keyed per planet id → { digit: [unitIds] }. Lives on the session (not
+  // in the per-game input controller) so a group survives an Odyssey jump — which tears down
+  // and rebuilds attachInput — and can be shown in the HUD and persisted UI-side. Never part
+  // of the deterministic sim; kept out of engine/persist.js's sanitized save payload.
+  groups: {},
 };

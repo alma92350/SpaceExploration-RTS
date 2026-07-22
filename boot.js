@@ -59,6 +59,25 @@ underAttackEl.addEventListener("click", () => {
   clampCamera(cam, game.state.map, canvas.clientWidth, canvas.clientHeight);
 });
 
+// --- pause -------------------------------------------------------------------
+// The sim pauses while a blocking overlay is up (Help, the Home-confirm modal) and on a
+// manual P toggle. Reasons are refcounted so closing Help doesn't resume a game the player
+// ALSO paused with P. Pausing just gates the update() callback — render keeps drawing the
+// frozen frame (and the camera still pans, so you can look around) with overlays on top.
+// The loop's own backlog-drop (engine/loop.js: `if (acc > dtFixed) acc = 0`) bounds the
+// accumulator while update() is skipped, so no sim time is lost or spiralled on resume and
+// the fixed-dt tick sequence — hence replay determinism — is untouched. The PAUSED banner
+// (style.css body.paused) shows only for the MANUAL pause; Help/Home carry their own UI.
+const pauseReasons = new Set();
+function syncPause() { document.body.classList.toggle("paused", pauseReasons.has("manual")); }
+function clearPause() { pauseReasons.clear(); syncPause(); }
+export function pauseLoop(reason = "manual") { pauseReasons.add(reason); syncPause(); }
+export function resumeLoop(reason = "manual") { pauseReasons.delete(reason); syncPause(); }
+export function togglePause() {
+  if (!game.state) return;   // nothing to pause on the menu
+  if (pauseReasons.has("manual")) resumeLoop("manual"); else pauseLoop("manual");
+}
+
 export function startGame(planetId) {
   // Seed the sim so the match is reproducible: a player can note the seed and
   // re-enter it to replay the exact same map. The seed itself is drawn from the
@@ -193,6 +212,7 @@ export function restartToMapSelect() {
   if (game.input) { game.input.destroy(); game.input = null; }
   game.state = null;
   game.galaxy = null;
+  clearPause();   // leaving a game clears any pause + the PAUSED banner
   renderMapSelect();
   mapSelectEl.classList.remove("hidden");
 }
@@ -210,8 +230,12 @@ export function bootState(newState, { intro }) {
   hideObjectives();
 
   game.galaxy = null;   // cleared by default; startOdyssey re-sets it right after this returns
+  game.groups = {};     // fresh game → fresh control groups (entity ids reset per game, so stale groups would mis-select)
   game.state = newState;
   const state = newState;   // alias for the synchronous setup below (identical to the original)
+  // A scenario shows the scenario bar at the top-center; the body class drops the
+  // under-attack banner below it (style.css) so a raid alert isn't hidden behind the bar.
+  document.body.classList.toggle("scenario", !!state.scenario);
   showSeedChip(state.seed);
   showFactionChip(state);
   if (intro) showObjectives(state.endless);
@@ -231,6 +255,7 @@ export function bootState(newState, { intro }) {
   lastHud = 0;
   resetPanelSignature();
   resetWorldUiBookkeeping();
+  clearPause();   // a fresh game is never born paused (and clears a stale PAUSED banner)
   let lastFrame = performance.now();
 
   loop = createLoop({
@@ -238,6 +263,7 @@ export function bootState(newState, { intro }) {
     // is rendered), so the colonies you left keep evolving; otherwise just the
     // one match state ticks.
     update: dt => {
+      if (pauseReasons.size) return;   // paused: skip the sim; render still draws the frozen frame + overlays
       if (game.galaxy) {
         stepGalaxy(game.galaxy, dt);   // active world full-rate, colonies on a coarser schedule
         for (const n of sweepColonies(game.galaxy, dt)) notifyColony(n);

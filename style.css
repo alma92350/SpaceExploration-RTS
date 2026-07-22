@@ -80,24 +80,39 @@ html, body {
 .resources .relation.neutral  { color: var(--warn); }
 .resources .relation.hostile  { color: var(--bad); }
 
-/* Galaxy toast — a brief top-center alert about a world you're not on. */
-.galaxy-toast {
+/* Galaxy toasts — brief top-center alerts about worlds you're not on. #galaxyToast is a
+   STACK (flex column) holding up to 3 toasts, so a routine "Researched…" no longer evicts a
+   one-shot clickable "colony has fallen — click to retake" (overlays.js showGalaxyToast). */
+.galaxy-toast-stack {
   position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  z-index: 20; pointer-events: none;
+}
+.galaxy-toast-stack.hidden { display: none; }
+.galaxy-toast {
   padding: 8px 16px; border-radius: 8px; font-size: 0.9rem; font-weight: 600;
   background: #12203a; border: 1px solid #2b3a5e; color: var(--text);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 20; pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5); pointer-events: none;
   transition: opacity 0.3s;
 }
 .galaxy-toast.warn { border-color: var(--warn); color: var(--warn); }
 .galaxy-toast.bad  { border-color: var(--bad); color: var(--bad); }
 .galaxy-toast.good { border-color: var(--good, #4ade80); color: var(--good, #4ade80); }
-/* No generic `.hidden` exists — each component hides itself. Without this the empty
-   toast renders as a stray pill at top-center (on the setup screen and in-game). */
-.galaxy-toast.hidden { display: none; }
 /* An actionable alert (e.g. "colony under attack — click to defend"): the base
    toast is pointer-events:none, so re-enable clicks and cue it as interactive. */
 .galaxy-toast.clickable { pointer-events: auto; cursor: pointer; }
 .galaxy-toast.clickable:hover { background: #1a2c4d; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
+
+/* Control-group chips ("1:8  2:3") — top-left over the field, so bound groups are visible
+   and (on touch, which has no number row) tappable to recall. Rebuilt by hud.js each tick. */
+.group-chips { position: absolute; top: 10px; left: 10px; display: flex; gap: 6px; z-index: 15; pointer-events: none; }
+.group-chips.hidden { display: none; }
+.group-chip {
+  pointer-events: auto; font-family: inherit; cursor: pointer;
+  padding: 3px 9px; border-radius: 6px; font-size: 0.8rem; font-weight: 700;
+  background: #12203a; border: 1px solid #2b3a5e; color: var(--text);
+}
+.group-chip:hover { background: #1a2c4d; border-color: var(--accent, #4fd1ff); }
 
 /* Starmap overlay (starmap.js): a full-screen galaxy map with world nodes on a
    ring, coloured by your relationship to each. */
@@ -242,6 +257,32 @@ html, body {
 }
 .under-attack:hover { background: rgba(248, 113, 113, 0.28); }
 .under-attack.hidden { display: none; }
+/* In a scenario, the scenario bar (top:12px, z-index:5) paints over the banner's
+   default top:16px slot — and pirates/escorts are ai-owned, so the banner fires there
+   constantly. Drop it below the bar (scoped so it never collides with the Odyssey
+   galaxy-toast at top:64px, which scenarios never show) and lift it above the bar. */
+body.scenario .under-attack { top: 64px; z-index: 6; }
+
+/* Manual pause (P key): a centered banner over the frozen frame. Help and the Home-confirm
+   modal carry their own overlays, so ONLY the manual pause shows this. pointer-events:none
+   so it never intercepts a click (the camera still pans while paused). */
+body.paused::after {
+  content: "⏸  PAUSED — press P to resume";
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 40;
+  padding: 12px 28px;
+  background: rgba(5, 7, 15, 0.9);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  color: var(--warn);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
 
 @keyframes alert-pulse {
   0%, 100% { opacity: 1; }

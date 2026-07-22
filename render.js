@@ -1406,14 +1406,28 @@ function drawBuildGhost(ctx, state, ghost) {
   if (!def) return;
   const valid = canPlaceBuilding(state, ghost.buildingType, ghost.x, ghost.y);
   const color = valid ? "#4ade80" : "#f87171";
+  const r = def.radius;
 
   ctx.globalAlpha = 0.45;
   ctx.fillStyle = color;
-  ctx.fillRect(ghost.x - def.radius, ghost.y - def.radius, def.radius * 2, def.radius * 2);
+  ctx.fillRect(ghost.x - r, ghost.y - r, r * 2, r * 2);
   ctx.globalAlpha = 1;
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
-  ctx.strokeRect(ghost.x - def.radius, ghost.y - def.radius, def.radius * 2, def.radius * 2);
+  // An INVALID spot carries a non-colour cue too — a dashed outline plus an ✕ across the
+  // footprint — so it reads without relying on the red-vs-green hue alone (the same
+  // colourblind-safe principle the health bars use). A valid spot stays a clean solid box.
+  if (valid) {
+    ctx.strokeRect(ghost.x - r, ghost.y - r, r * 2, r * 2);
+  } else {
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(ghost.x - r, ghost.y - r, r * 2, r * 2);
+    ctx.beginPath();
+    ctx.moveTo(ghost.x - r, ghost.y - r); ctx.lineTo(ghost.x + r, ghost.y + r);
+    ctx.moveTo(ghost.x + r, ghost.y - r); ctx.lineTo(ghost.x - r, ghost.y + r);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 }
 
 // `force` keeps the bar visible at full health for a selected entity, so you
