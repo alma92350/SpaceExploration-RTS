@@ -55,6 +55,23 @@ function resizeCanvas() {
 }
 window.addEventListener("resize", resizeCanvas);
 
+// The canvas fills a flex region, so its box can change from a LAYOUT shift that fires NO window
+// `resize` event — most visibly the topbar wrapping to a second line on a narrow window (its
+// `flex-wrap` grows it, shrinking the view below), but also the Home button appearing or the
+// portrait sheet collapsing. Without a refit, resizeCanvas never ran: the backing store kept its
+// old, taller size, so the never-redrawn strip showed as a thick band at the bottom AND — because
+// the render viewport and the click→world transform then disagreed on the canvas height — every
+// selection landed offset. A ResizeObserver refits the backing store the instant the box changes,
+// in one place (superseding the ad-hoc triggers above), and re-clamps the camera into the map.
+if (window.ResizeObserver) {
+  new ResizeObserver(() => {
+    resizeCanvas();
+    if (game.state && game.input) {
+      clampCamera(game.input.getCamera(), game.state.map, canvas.clientWidth, canvas.clientHeight);
+    }
+  }).observe(canvas);
+}
+
 // A monitor move (or an OS scaling change) can change devicePixelRatio WITHOUT firing a resize
 // event — the CSS layout size is unchanged — leaving the backing store at the old DPR (blurry on
 // the sharper screen, oversampled on the other). matchMedia on the current dppx fires once when
