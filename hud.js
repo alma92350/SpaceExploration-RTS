@@ -43,7 +43,8 @@ departBtn.addEventListener("click", () => { if (game.state) { departNow(game.sta
 // Module-local (only renderSelectionPanel reads/writes it); boot.js clears it via
 // resetPanelSignature() when a new game boots so the first frame rebuilds fresh.
 let lastPanelSignature = null;
-export function resetPanelSignature() { lastPanelSignature = null; }
+let lastTopbarSignature = null;   // same idiom for the resource/supply/credits/power/stance topbar
+export function resetPanelSignature() { lastPanelSignature = null; lastTopbarSignature = null; }
 
 export function renderHUD() {
   const { state } = game;
@@ -64,59 +65,69 @@ export function renderHUD() {
     clockEl.textContent = "";
   } else {
     const res = state.players.player.resources;
-    resourcesEl.innerHTML = "";
-    Object.entries(res).forEach(([com, qty]) => {
-      const n = Math.floor(qty);
-      // Suppress empty stockpiles (a fresh Odyssey shows "ai: 0", "antimatter: 0",
-      // … for a dozen goods you haven't made yet) — but always keep ore, the
-      // bread-and-butter you're never without. An iconed readout ("🪨 120")
-      // reads far faster than a wall of "com: n" labels.
-      if (n <= 0 && com !== "ore") return;
-      const meta = COM[com];
-      const span = document.createElement("span");
-      span.textContent = meta?.ico ? `${meta.ico} ${n}` : `${com}: ${n}`;
-      span.title = meta?.name || com;
-      resourcesEl.appendChild(span);
-    });
-
     const used = supplyUsed(state, "player"), cap = supplyCap(state, "player");
-    const supplySpan = document.createElement("span");
-    supplySpan.className = "supply"
-      + (used >= cap ? " at-cap" : "")
-      + (performance.now() < game.supplyBlockedUntil ? " blocked" : "");
-    supplySpan.textContent = `supply: ${used}/${cap}`;
-    resourcesEl.appendChild(supplySpan);
+    const blocked = performance.now() < game.supplyBlockedUntil;
+    const pCap = game.galaxy ? powerCap(state, "player") : 0, pDraw = game.galaxy ? powerDraw(state, "player") : 0;
+    const stance = game.galaxy && state.diplomacy ? state.diplomacy.stance : null;
+    // Signature-guard the topbar exactly like the selection panel: this whole readout was torn
+    // down and rebuilt (~8 createElement/appendChild) every 150 ms even when nothing changed.
+    // Skip the rebuild unless a displayed value actually moved. (The clock + idle count below
+    // are single-text writes, cheap enough to patch every tick.)
+    const sig = Object.entries(res).map(([c, q]) => `${c}${Math.floor(q)}`).join("|")
+      + `|s${used}/${cap}${used >= cap ? "C" : ""}${blocked ? "B" : ""}`
+      + (game.galaxy ? `|◈${Math.floor(game.galaxy.credits)}|p${Math.round(pDraw)}/${pCap}` : "")
+      + (stance !== null ? `|r${stance.toFixed(2)}` : "");
+    if (sig !== lastTopbarSignature) {
+      lastTopbarSignature = sig;
+      resourcesEl.innerHTML = "";
+      Object.entries(res).forEach(([com, qty]) => {
+        const n = Math.floor(qty);
+        // Suppress empty stockpiles (a fresh Odyssey shows "ai: 0", "antimatter: 0",
+        // … for a dozen goods you haven't made yet) — but always keep ore, the
+        // bread-and-butter you're never without. An iconed readout ("🪨 120")
+        // reads far faster than a wall of "com: n" labels.
+        if (n <= 0 && com !== "ore") return;
+        const meta = COM[com];
+        const span = document.createElement("span");
+        span.textContent = meta?.ico ? `${meta.ico} ${n}` : `${com}: ${n}`;
+        span.title = meta?.name || com;
+        resourcesEl.appendChild(span);
+      });
 
-    // Odyssey: your universal credit balance lives on the galaxy, not the planet
-    // — shown alongside the local economy (spent on jumps and the market later).
-    if (game.galaxy) {
-      const creditsSpan = document.createElement("span");
-      creditsSpan.className = "credits";
-      creditsSpan.textContent = `◈ ${Math.floor(game.galaxy.credits)}`;
-      creditsSpan.title = "Universal credits — galaxy-wide, carried between planets";
-      resourcesEl.appendChild(creditsSpan);
+      const supplySpan = document.createElement("span");
+      supplySpan.className = "supply" + (used >= cap ? " at-cap" : "") + (blocked ? " blocked" : "");
+      supplySpan.textContent = `supply: ${used}/${cap}`;
+      resourcesEl.appendChild(supplySpan);
 
-      // Industrial Power — shown only once you've started industrializing (a
-      // Reactor or a factory exists), so it never clutters the pre-industry HUD.
-      // Reads like the supply gauge: draw/cap, flagged when factories out-draw
-      // the Reactors and production throttles.
-      const pCap = powerCap(state, "player"), pDraw = powerDraw(state, "player");
-      if (pCap > 0 || pDraw > 0) {
-        const pw = document.createElement("span");
-        pw.className = "power" + (pDraw > pCap ? " at-cap" : "");
-        pw.textContent = `⚡ ${Math.round(pDraw)}/${pCap}`;
-        pw.title = "Industrial Power — Reactors grant it, factories draw it; short power throttles all production";
-        resourcesEl.appendChild(pw);
-      }
+      // Odyssey: your universal credit balance lives on the galaxy, not the planet
+      // — shown alongside the local economy (spent on jumps and the market later).
+      if (game.galaxy) {
+        const creditsSpan = document.createElement("span");
+        creditsSpan.className = "credits";
+        creditsSpan.textContent = `◈ ${Math.floor(game.galaxy.credits)}`;
+        creditsSpan.title = "Universal credits — galaxy-wide, carried between planets";
+        resourcesEl.appendChild(creditsSpan);
 
-      // The neighbour's stance — it drifts hostile as this world's deposits run scarce.
-      if (state.diplomacy) {
-        const st = state.diplomacy.stance;
-        const relSpan = document.createElement("span");
-        relSpan.className = "relation " + (st <= PEACE_THRESHOLD ? "hostile" : st < 0.25 ? "neutral" : "friendly");
-        relSpan.textContent = `neighbour: ${stanceLabel(st)}`;
-        relSpan.title = "Your neighbour's stance — it turns hostile as this world's deposits run scarce";
-        resourcesEl.appendChild(relSpan);
+        // Industrial Power — shown only once you've started industrializing (a
+        // Reactor or a factory exists), so it never clutters the pre-industry HUD.
+        // Reads like the supply gauge: draw/cap, flagged when factories out-draw
+        // the Reactors and production throttles.
+        if (pCap > 0 || pDraw > 0) {
+          const pw = document.createElement("span");
+          pw.className = "power" + (pDraw > pCap ? " at-cap" : "");
+          pw.textContent = `⚡ ${Math.round(pDraw)}/${pCap}`;
+          pw.title = "Industrial Power — Reactors grant it, factories draw it; short power throttles all production";
+          resourcesEl.appendChild(pw);
+        }
+
+        // The neighbour's stance — it drifts hostile as this world's deposits run scarce.
+        if (stance !== null) {
+          const relSpan = document.createElement("span");
+          relSpan.className = "relation " + (stance <= PEACE_THRESHOLD ? "hostile" : stance < 0.25 ? "neutral" : "friendly");
+          relSpan.textContent = `neighbour: ${stanceLabel(stance)}`;
+          relSpan.title = "Your neighbour's stance — it turns hostile as this world's deposits run scarce";
+          resourcesEl.appendChild(relSpan);
+        }
       }
     }
 

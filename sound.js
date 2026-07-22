@@ -62,17 +62,23 @@ function throttled(key, minGapMs, fn) {
 // `pan` (-1 left .. +1 right) positions the sound in the stereo field, so you
 // can hear which flank a fight is on. `jitter` detunes the base frequency a
 // little each play, so repeated hits/spawns don't sound mechanically identical.
-function tone({ freq, duration, type = "sine", gain = 0.15, sweep = 0, pan = 0, jitter = 0.05 }) {
+// `pan` (-1 left .. +1 right) positions the sound; `jitter` detunes a little each play. `when`
+// is an offset (seconds) from now on the SAMPLE-ACCURATE audio clock — a multi-note cue passes
+// when: 0, 0.11, 0.22 … to schedule its notes precisely, instead of setTimeout callbacks that
+// the browser throttles under main-thread load (exactly when a big battle is on screen), which
+// smears the rhythm.
+function tone({ freq, duration, type = "sine", gain = 0.15, sweep = 0, pan = 0, jitter = 0.05, when = 0 }) {
   if (muted) return;
   const audio = ensureContext();
+  const t0 = audio.currentTime + when;
   const osc = audio.createOscillator();
   const g = audio.createGain();
   const f = freq * (1 + (Math.random() - 0.5) * 2 * jitter);
   osc.type = type;
-  osc.frequency.setValueAtTime(f, audio.currentTime);
-  if (sweep) osc.frequency.exponentialRampToValueAtTime(Math.max(20, f + sweep), audio.currentTime + duration);
-  g.gain.setValueAtTime(gain, audio.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + duration);
+  osc.frequency.setValueAtTime(f, t0);
+  if (sweep) osc.frequency.exponentialRampToValueAtTime(Math.max(20, f + sweep), t0 + duration);
+  g.gain.setValueAtTime(gain, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
   osc.connect(g);
   if (pan && audio.createStereoPanner) {
     const p = audio.createStereoPanner();
@@ -82,8 +88,8 @@ function tone({ freq, duration, type = "sine", gain = 0.15, sweep = 0, pan = 0, 
   } else {
     g.connect(master);
   }
-  osc.start();
-  osc.stop(audio.currentTime + duration);
+  osc.start(t0);
+  osc.stop(t0 + duration);
 }
 
 export function playUnitSpawned(pan = 0) {
@@ -126,7 +132,7 @@ export function playSelect() {
 export function playUnderAttack() {
   throttled("underattack", 4000, () => {
     tone({ freq: 220, duration: 0.18, type: "square", gain: 0.16, sweep: -40 });
-    setTimeout(() => { if (!muted) tone({ freq: 220, duration: 0.18, type: "square", gain: 0.16, sweep: -40 }); }, 220);
+    tone({ freq: 220, duration: 0.18, type: "square", gain: 0.16, sweep: -40, when: 0.22 });   // second blip, on the audio clock
   });
 }
 
@@ -138,10 +144,10 @@ export function playProductionBlocked() {
 
 export function playVictory() {
   if (muted) return;
-  [523, 659, 784].forEach((freq, i) => setTimeout(() => tone({ freq, duration: 0.22, type: "triangle", gain: 0.15 }), i * 110));
+  [523, 659, 784].forEach((freq, i) => tone({ freq, duration: 0.22, type: "triangle", gain: 0.15, when: i * 0.11 }));
 }
 
 export function playDefeat() {
   if (muted) return;
-  [400, 320, 240].forEach((freq, i) => setTimeout(() => tone({ freq, duration: 0.3, type: "sawtooth", gain: 0.12 }), i * 140));
+  [400, 320, 240].forEach((freq, i) => tone({ freq, duration: 0.3, type: "sawtooth", gain: 0.12, when: i * 0.14 }));
 }

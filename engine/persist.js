@@ -193,12 +193,15 @@ function rehydratePlanet(P) {
 
 /* ---------- single skirmish ---------- */
 
-// A plain, JSON-safe, DETACHED snapshot (deep-copied via stringify/parse, so
-// ticking the live game on after a save doesn't mutate it out from under the
-// caller). Callers JSON.stringify it to localStorage or a file.
-export function serializeGame(state) {
-  return JSON.parse(JSON.stringify({ v: SAVE_VERSION, nextEntityId: peekEntityId(), ...serPlanet(state) }));
-}
+// The plain, JSON-safe save payload (serPlanet already returns detached plain data). The two
+// public paths differ only in the last step: serializeGame() returns a DETACHED OBJECT (a
+// stringify/parse copy, so ticking the live game on after a save can't mutate it under a caller
+// that keeps it — tests, importSave's shape sniff); serializeGameString() returns the JSON
+// STRING directly. autoSave (the 12 s hot path) uses the string, so it stringifies ONCE instead
+// of stringify→parse→stringify — the fog arrays are large, and the two extra passes were waste.
+function gamePayload(state) { return { v: SAVE_VERSION, nextEntityId: peekEntityId(), ...serPlanet(state) }; }
+export function serializeGame(state) { return JSON.parse(JSON.stringify(gamePayload(state))); }
+export function serializeGameString(state) { return JSON.stringify(gamePayload(state)); }
 
 export function deserializeGame(input) {
   sanitizeSave(input);                              // reject unsafe/oversized payloads before anything else
@@ -215,8 +218,8 @@ export function deserializeGame(input) {
 
 /* ---------- whole Odyssey galaxy ---------- */
 
-export function serializeGalaxy(galaxy) {
-  return JSON.parse(JSON.stringify({
+function galaxyPayload(galaxy) {
+  return {
     v: GALAXY_SAVE_VERSION,
     seed: galaxy.seed, credits: galaxy.credits, activeId: galaxy.activeId, worlds: galaxy.worlds,
     settings: galaxy.settings,
@@ -232,8 +235,12 @@ export function serializeGalaxy(galaxy) {
       market: { pressure: { ...state.market.pressure }, glut: { ...(state.market.glut || {}) } },
       diplomacy: { ...state.diplomacy },          // stance, depletion, lastAiUnits
     })),
-  }));
+  };
 }
+// Detached object (serializeGalaxy) vs the JSON string (serializeGalaxyString) — see the
+// serializeGame note; autoSave uses the string to stringify the fog-heavy galaxy just once.
+export function serializeGalaxy(galaxy) { return JSON.parse(JSON.stringify(galaxyPayload(galaxy))); }
+export function serializeGalaxyString(galaxy) { return JSON.stringify(galaxyPayload(galaxy)); }
 
 export function deserializeGalaxy(input) {
   sanitizeSave(input);                              // reject unsafe/oversized payloads before anything else

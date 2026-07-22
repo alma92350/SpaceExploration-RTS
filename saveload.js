@@ -18,7 +18,7 @@
 
 import { game } from "./session.js";
 import { saveBtn, loadBtn, homeBtn } from "./dom.js";
-import { serializeGame, deserializeGame, serializeGalaxy, deserializeGalaxy } from "./engine/persist.js";
+import { serializeGame, serializeGameString, deserializeGame, serializeGalaxy, serializeGalaxyString, deserializeGalaxy } from "./engine/persist.js";
 import { bootState, bootGalaxy, restartToMapSelect, pauseLoop, resumeLoop } from "./boot.js";
 import * as sound from "./sound.js";
 
@@ -47,9 +47,11 @@ export function storedSaveVersions() {
 // be saved). One place both channels agree on what "the current game" is.
 function snapshot() {
   if (!game.state || game.state.over || game.state.scenario) return null;
+  // The JSON STRING directly (serialize*String) — autoSave writes it straight to localStorage,
+  // so the fog-heavy payload is stringified once, not stringify→parse→stringify.
   return game.galaxy
-    ? { key: ODYSSEY_KEY, mode: "odyssey", data: serializeGalaxy(game.galaxy) }
-    : { key: SAVE_KEY, mode: "skirmish", data: serializeGame(game.state) };
+    ? { key: ODYSSEY_KEY, str: serializeGalaxyString(game.galaxy) }
+    : { key: SAVE_KEY, str: serializeGameString(game.state) };
 }
 
 // Checkpoint the current game to localStorage. Cheap and safe to call often. Returns
@@ -61,7 +63,7 @@ function snapshot() {
 export function autoSave() {
   const snap = snapshot();
   if (!snap) return false;
-  try { localStorage.setItem(snap.key, JSON.stringify(snap.data)); return true; }
+  try { localStorage.setItem(snap.key, snap.str); return true; }   // already a JSON string — one stringify pass
   catch (e) { return false; }
 }
 
