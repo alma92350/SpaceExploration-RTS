@@ -514,6 +514,36 @@ function aiIndustry(state, ctx) {
       if (researchTech(state, datacenter.id, techId)) { spend(state); break; }
     }
   }
+
+  // CAPITAL PATH: once the whole Strategic tree stands (a Star Dock proves the AI Foundry + Torpedo
+  // Works are up), the AI can field LEVIATHANS — a real capital ship (role "combat", so aiMilitary
+  // folds it into the waves), the payoff for the deep climb and the sink for its strategic goods.
+  // One Star Dock, reserve-aware.
+  const hasStardock = buildings.some(b => b.type === "stardock");
+  if (!hasStardock && prereqsMet(state, "ai", BUILDINGS.stardock)
+      && canAffordKeeping(ai.resources, BUILDINGS.stardock.cost, ctx.oreReserve) && canAct(state)) {
+    const spot = findPlacement(state, "stardock", cc.x + 120, cc.y - 90);
+    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "stardock", spot.x, spot.y)) spend(state);
+  }
+  // Train a Leviathan at a completed, idle Star Dock when the manufactured strategic goods (AI Cores
+  // + Plasma Torpedoes) are on hand and there's supply for the 8-supply capital ship. queueProduction
+  // re-checks cost/supply/prereqs, so this only ever fires when it truly can.
+  const stardock = buildings.find(b => b.type === "stardock" && !b.constructing);
+  if (stardock && stardock.queue.length === 0 && canAct(state)
+      && supplyUsed(state, "ai") + (UNITS.leviathan.supplyCost || 0) <= supplyCap(state, "ai")
+      && canAfford(ai.resources, UNITS.leviathan.cost)) {
+    if (queueProduction(state, stardock.id, "leviathan")) spend(state);
+  }
+
+  // PLASMA RIG: an unlimited ore source for the late game, once the AI has the AI Foundry (its pilot)
+  // and a Reactor (its plasma grid). Expensive and high-tech — ore + manufactured machinery/
+  // electronics/AI Cores — so it's a genuine late investment; one only, from surplus.
+  const hasRig = buildings.some(b => b.type === "plasmarig");
+  if (!hasRig && prereqsMet(state, "ai", BUILDINGS.plasmarig)
+      && canAffordKeeping(ai.resources, BUILDINGS.plasmarig.cost, ctx.oreReserve) && canAct(state)) {
+    const spot = findPlacement(state, "plasmarig", cc.x - 120, cc.y - 90);
+    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "plasmarig", spot.x, spot.y)) spend(state);
+  }
 }
 
 // DEFENSE first: if enemy combat is seen pressing a building, recall the army (bar the scout) to meet it. Otherwise OFFENSE: retreat a ground-down wave, then muster and commit the next one (skirmish armyAttackSize, or an Odyssey hostility-paced probe).

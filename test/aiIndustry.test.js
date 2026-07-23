@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
+import { runAI } from "../engine/ai.js";
 import { updateProduction } from "../engine/industry.js";
 import { updatePlasmaRig } from "../engine/rig.js";
 
@@ -108,4 +109,30 @@ test("a Rusher AI electrifies but skips the deep factory chain (temperament pres
   for (let i = 0; i < 1000; i++) tick(s, 0.2);
   const built = new Set([...s.buildings.values()].filter(b => b.owner === "ai" && !b.constructing).map(b => b.type));
   assert.ok(!built.has("smelter") && !built.has("datacenter"), "a Rusher builds no factory chain");
+});
+
+// Phase 4 — the capital path. Tested at the DECISION level (runAI issues the build/queue immediately,
+// via issueBuild/queueProduction) rather than simulating the ~10-minute climb, so it stays fast.
+test("with the Strategic tree standing, the AI founds a Star Dock and a Plasma Rig", () => {
+  const s = aiBase("ferros");
+  for (const [t, x, y] of [["reactor", 764, 452], ["aifoundry", 764, 556], ["torpedoworks", 852, 452]]) {
+    const b = makeBuilding(t, "ai", x, y); s.buildings.set(b.id, b);
+  }
+  Object.assign(s.players.ai.resources, { ore: 6000, machinery: 40, electronics: 40, ai: 40 });
+  for (let i = 0; i < 8; i++) runAI(s, 1.5);   // a few think cycles — enough to issue the builds
+  const types = new Set([...s.buildings.values()].filter(b => b.owner === "ai").map(b => b.type));
+  assert.ok(types.has("stardock"), "the AI founded a Star Dock (AI Foundry + Torpedo Works met)");
+  assert.ok(types.has("plasmarig"), "…and a Plasma Rig (AI Foundry + Reactor met, goods in hand)");
+});
+
+test("the AI trains a Leviathan at a completed Star Dock (strategic goods on hand)", () => {
+  const s = aiBase("ferros");
+  for (const [t, x, y] of [["reactor", 764, 452], ["stardock", 764, 556], ["habitat", 700, 436], ["habitat", 700, 566]]) {
+    const b = makeBuilding(t, "ai", x, y); s.buildings.set(b.id, b);
+  }
+  Object.assign(s.players.ai.resources, { ore: 4000, ai: 40, plasmatorp: 40 });
+  const leviQueued = () => [...s.buildings.values()].some(b => b.type === "stardock" && b.queue.some(j => j.unitType === "leviathan"));
+  let queued = false;
+  for (let i = 0; i < 8 && !queued; i++) { runAI(s, 1.5); queued = leviQueued(); }
+  assert.ok(queued, "the AI queued a Leviathan at its Star Dock");
 });
