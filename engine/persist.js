@@ -168,10 +168,10 @@ function serPlanet(state) {
     // by buildUnitGrid, meaningless once saved. Strip it so it doesn't bloat the payload with a
     // per-unit integer that the next tick overwrites anyway. Shallow copy, only at save time.
     units: [...state.units.values()].map(({ _gi, repairTargetId, ...u }) => u),   // both transient (grid index; live repair pick)
-    // `haulers`/`servers` are the transient per-tick logistics tallies (engine/haul.js), and
-    // `powered`/`fuel` are the Generator's per-tick fuel state (engine/industry.js) — all stamped
-    // fresh each tick like a unit's `_gi` grid index, so strip them (they never bloat or drift a save).
-    buildings: [...state.buildings.values()].map(({ haulers, servers, powered, fuel, ...b }) => b),
+    // `haulers`/`servers` (logistics tallies, engine/haul.js), `powered`/`fuel` (Generator fuel
+    // state, engine/industry.js) and `menderClaims` (auto-repair Mender tally, engine/sim.js) are all
+    // transient — stamped fresh each tick like a unit's `_gi` grid index — so strip them from saves.
+    buildings: [...state.buildings.values()].map(({ haulers, servers, powered, fuel, menderClaims, ...b }) => b),
     nodes: state.map.nodes.map(n => ({ id: n.id, amount: n.amount })),
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],

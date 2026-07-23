@@ -124,6 +124,7 @@
  * @property {number} [servers]       transient per-tick count of workers servicing this factory (engine/haul.js)
  * @property {boolean} [powered]      transient: a Combustion Generator is fed & granting Power this tick (engine/industry.js)
  * @property {string} [fuel]          transient: which fuel the Generator burned this tick (HUD)
+ * @property {number} [menderClaims]  transient: auto-repair Menders committed to this building this tick (engine/sim.js)
  */
 
 /**

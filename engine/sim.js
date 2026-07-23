@@ -50,6 +50,9 @@ export function tick(state, dt) {
   // Settle the fuel-burning Generators' Power BEFORE any consumer reads powerCap this tick,
   // so the grid a factory/rig sees is stable. A no-op without a Combustion Generator.
   updateCombustors(state, dt);
+  // Per-building count of auto-repair Menders already committed to it, frozen before any Mender
+  // re-targets below — so they SPREAD OUT (one per building) instead of all piling on the worst one.
+  countMenderTargets(state);
   // Aura projectors (Aegis) for this tick, read by combat.js attackDamage. Collected
   // once here (a tiny list — the units are Tier-3 and rare) so a landed hit costs O(anvils)
   // not O(units); positions are frozen at tick start like the grid above (deterministic).
@@ -228,11 +231,25 @@ function updateSupport(state, unit, def, dt) {
   if (arrived && !follow) unit.order = null;
 }
 
+// How many auto-repair Menders are already committed to each BUILDING this tick — frozen before any
+// re-targets, so the "one Mender per building" cap reads the same regardless of Map order. Only
+// buildings are capped (the pile-up the player hit); a wounded unit can still draw several menders.
+// Transient (stripped on serialize). A no-op when no Mender is in auto-repair mode.
+function countMenderTargets(state) {
+  for (const b of state.buildings.values()) b.menderClaims = 0;
+  for (const u of state.units.values()) {
+    if (!u.autoRepair || !u.repairTargetId) continue;
+    const t = state.buildings.get(u.repairTargetId);
+    if (t) t.menderClaims = (t.menderClaims || 0) + 1;
+  }
+}
+
 // An auto-repair Mender roams to the friendly that needs it MOST. Hysteresis kills the ping-pong:
 // it only gets ATTRACTED to something worn past NEEDS_REPAIR, and once it commits it STAYS on that
 // target until it's topped past HEALED — so a full building nicked by a hair of wear can't yank the
-// drone back and forth. Priority is most-worn-first (lowest HP fraction), distance breaks ties.
-// Deterministic; no-op (drone parks) when nothing's meaningfully worn.
+// drone back and forth. Priority is most-worn-first (lowest HP fraction), distance breaks ties. And
+// a BUILDING already claimed by another auto-repair Mender is skipped, so the drones spread out one
+// per building instead of dogpiling the worst one. Deterministic; drone parks when nothing qualifies.
 const NEEDS_REPAIR = 0.85;   // only chase a friendly once it's dropped below this share of max HP
 const HEALED = 0.985;        // …and keep servicing it until it's back above this — the release point
 function autoRepairRoam(state, mender, def, dt) {
@@ -246,10 +263,11 @@ function autoRepairRoam(state, mender, def, dt) {
     : null;
   if (!(ownFriendly(target) && target !== mender && target.hp < target.maxHp * HEALED)) target = null;
 
-  if (!target) {   // pick the MOST worn friendly below the attract threshold
+  if (!target) {   // pick the MOST worn eligible friendly below the attract threshold
     let bestFrac = NEEDS_REPAIR, bestD = Infinity;
     const consider = e => {
       if (!ownFriendly(e) || e === mender) return;
+      if (e.kind === "building" && (e.menderClaims || 0) >= 1) return;   // one Mender per building
       const frac = e.hp / e.maxHp;
       if (frac >= NEEDS_REPAIR) return;
       const d = Math.hypot(e.x - mender.x, e.y - mender.y);
@@ -257,6 +275,7 @@ function autoRepairRoam(state, mender, def, dt) {
     };
     for (const b of state.buildings.values()) consider(b);
     for (const u of state.units.values()) consider(u);
+    if (target && target.kind === "building") target.menderClaims = (target.menderClaims || 0) + 1;   // claim it for the rest of this tick
   }
 
   mender.repairTargetId = target ? target.id : null;

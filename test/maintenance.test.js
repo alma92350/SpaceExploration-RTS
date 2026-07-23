@@ -70,6 +70,34 @@ test("priority: an auto-repair Mender goes to the MORE worn building first", () 
   assert.equal(m.repairTargetId, heavy.id, "it commits to the worst-off building, not the nearest");
 });
 
+test("auto-repair Menders spread out — one per building, not all on the worst", () => {
+  const s = createGameState({ planetId: "ferros", endless: true });
+  const walls = [];
+  for (let i = 0; i < 3; i++) {
+    const w = makeBuilding("turret", "player", 500 + i * 120, 300);
+    w.hp = w.maxHp * (0.4 + i * 0.05);   // all worn (0.40, 0.45, 0.50) — the same nearest-ish cluster
+    s.buildings.set(w.id, w); walls.push(w);
+  }
+  const menders = [];
+  for (let i = 0; i < 3; i++) { const m = makeUnit("mender", "player", 500 + i * 120, 360); m.autoRepair = true; s.units.set(m.id, m); menders.push(m); }
+
+  for (let i = 0; i < 3; i++) tick(s, 0.1);   // let them pick targets
+  const targets = menders.map(m => m.repairTargetId);
+  assert.equal(new Set(targets).size, 3, `each Mender committed to a different building (${targets.join(",")})`);
+  assert.ok(targets.every(Boolean), "…and none is left idle while a building needs work");
+});
+
+test("with fewer worn buildings than Menders, the extra one doesn't pile on (one-per-building cap)", () => {
+  const s = createGameState({ planetId: "ferros", endless: true });
+  const only = makeBuilding("turret", "player", 600, 300); only.hp = only.maxHp * 0.4;
+  s.buildings.set(only.id, only);
+  const m1 = makeUnit("mender", "player", 600, 360); m1.autoRepair = true; s.units.set(m1.id, m1);
+  const m2 = makeUnit("mender", "player", 620, 360); m2.autoRepair = true; s.units.set(m2.id, m2);
+  for (let i = 0; i < 3; i++) tick(s, 0.1);
+  const on = [m1, m2].filter(m => m.repairTargetId === only.id).length;
+  assert.equal(on, 1, "exactly one Mender claims the lone worn building; the other doesn't dogpile it");
+});
+
 test("an auto-repair Mender roams to a damaged building; a passive one stays put", () => {
   const mk = (auto) => {
     const s = createGameState({ planetId: "ferros", endless: true });
