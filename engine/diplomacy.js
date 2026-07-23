@@ -19,9 +19,36 @@
 "use strict";
 
 import { chargingPlayerWonder } from "./wonder.js";
+import { BUILDINGS } from "./entities.js";
+import { TECHS } from "./techtree.js";
 
 // Above this stance the neighbour holds its fire (peace); at or below it, war.
 export const PEACE_THRESHOLD = -0.15;
+
+// DEVELOPMENT keeps the peace (Odyssey): a neighbour investing in its OWN industry — Reactors,
+// factories, a Plasma Rig, a Datacenter, and the research it completes (engine/ai.js aiIndustry) —
+// makes its own goods instead of fighting you for the last surface seam, so it's less pressured as
+// the world mines out. Each such asset lifts its war target, bounded — so development can DELAY and
+// soften war, or hold it off on a world you don't strip-mine, but never force unconditional permanent
+// peace: past the cap, scarcity and the late-game creep still bite, and the Gate finale still overrides.
+const DEV_SOFT_PER = 0.05;   // stance-target lifted per industrial building / researched tech node
+const DEV_SOFT_CAP = 0.4;    // ...capped, so a fully-mined world still tips to war even at full development
+
+// How developed the neighbour is: its completed industrial buildings (power, factories, the Plasma
+// Rig, the Datacenter) plus the tech nodes it has researched. Deterministic — reads only entity and
+// upgrade state. Zero for a bare early neighbour (and for the whole skirmish path, which never calls
+// this), so the stance maths is unchanged until the AI actually starts to develop.
+function aiDevelopment(state) {
+  let n = 0;
+  for (const b of state.buildings.values()) {
+    if (b.owner !== "ai" || b.constructing) continue;
+    const def = BUILDINGS[b.type];
+    if (def && (def.energyGrants || def.recipe || def.rig || b.type === "datacenter")) n++;
+  }
+  const ups = state.players.ai && state.players.ai.upgrades;
+  if (ups) for (const k in TECHS) if (ups[k]) n++;
+  return n;
+}
 
 const START_STANCE = 0.35;        // a new neighbour starts Cordial
 const DRIFT_RATE = 0.05;          // how fast stance chases its scarcity target (per second)
@@ -127,6 +154,11 @@ export function updateDiplomacy(state, dt) {
   // depletion — a gentle mid-to-late-game slide, not a minute-4 cliff. Floored to
   // cordial during the opening grace window regardless of how fast you strip-mine.
   let target = 0.6 - dip.depletion * 1.6;
+
+  // DEVELOPMENT keeps the peace: lift the war target by how developed the neighbour is (bounded), so a
+  // self-sufficient industrial neighbour coexists markedly longer than a bare strip-miner at the same
+  // depletion. Applied to the SCARCITY target before creep/grace/finale, so those still layer on top.
+  target += Math.min(DEV_SOFT_CAP, aiDevelopment(state) * DEV_SOFT_PER);
 
   // LATE-GAME CREEP: past grace, resentment grows linearly and without bound, so the
   // hostility curve never plateaus. Zero at grace-end (onset stays scarcity-driven),
