@@ -215,28 +215,44 @@ export function updateProduction(state, building, dt) {
   if (building.paused) return;   // player-paused to conserve its inputs — banks nothing, draws nothing (see hud.js)
   const throttle = powerThrottle(state, building.owner);
   if (throttle <= 0) return;
-  const ups = state.players[building.owner].upgrades;
-  const input = building.input || (building.input = {});
+  const player = state.players[building.owner];
+  const ups = player.upgrades;
+
+  // ABSTRACTED AI LOGISTICS (Odyssey): the player runs a factory by hand — workers haul inputs
+  // into its finite `input` larder and outputs out of its finite `store` buffer (engine/haul.js) —
+  // but the AI's worker logistics are abstracted (the haul auto-assign in sim.js is player-only),
+  // so an AI factory instead draws its inputs straight from the treasury and banks its output
+  // straight back, with no haulage and no buffer stall. The power throttle still applies, so
+  // Reactors stay a real constraint. Gated on owner==="ai": the player's buffer path is byte-for-
+  // byte unchanged, and a skirmish never instantiates a factory so its replay is untouched.
+  const abstract = building.owner === "ai";
+  const larder = abstract ? player.resources : (building.input || (building.input = {}));
 
   // How much of a batch we can run this tick: the power-throttled target — sped up
   // by the Factory Automation tech (techtree.js `automation`) and by the world's
-  // industry rating — then capped by the scarcest input BUFFERED locally and by the
-  // room left in the output buffer.
+  // industry rating — then capped by the scarcest input available (the local larder,
+  // or the treasury for the AI) and by the room left in the output buffer (player only).
   let frac = (BUILDINGS[building.type].prodRate || 1) * techMult(ups, "rateMult")
     * planetIndustryScale(state) * throttle * dt;
   for (const com in recipe.in) {
     if (com === "energy") continue;
-    frac = Math.min(frac, (input[com] || 0) / recipe.in[com]);   // only what's in the larder
+    frac = Math.min(frac, (larder[com] || 0) / recipe.in[com]);   // only what's on hand
   }
   // Heavy Alloys (techtree.js `heavyalloys`) lifts output per batch — same inputs, more out.
   const outPerBatch = recipe.qty * techMult(ups, "yieldMult");
-  if (outPerBatch > 0) frac = Math.min(frac, storeRoom(building) / outPerBatch);   // don't overfill the output buffer
+  // The player's factory stalls when its finite output buffer fills; the AI banks straight to the
+  // treasury, so there's no buffer to overfill.
+  if (!abstract && outPerBatch > 0) frac = Math.min(frac, storeRoom(building) / outPerBatch);
   if (!(frac > 0)) return;
 
   for (const com in recipe.in) {
     if (com === "energy") continue;
-    input[com] = (input[com] || 0) - frac * recipe.in[com];
+    larder[com] = (larder[com] || 0) - frac * recipe.in[com];
   }
-  building.store = building.store || {};
-  building.store[recipe.out] = (building.store[recipe.out] || 0) + frac * outPerBatch;
+  if (abstract) {
+    player.resources[recipe.out] = (player.resources[recipe.out] || 0) + frac * outPerBatch;
+  } else {
+    building.store = building.store || {};
+    building.store[recipe.out] = (building.store[recipe.out] || 0) + frac * outPerBatch;
+  }
 }

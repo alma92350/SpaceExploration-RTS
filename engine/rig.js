@@ -151,18 +151,27 @@ export function updatePlasmaRig(state, building, dt) {
 
   const vein = rigVein(state, building);
   const richness = locationRichness(state, building.x, building.y);
+  // ABSTRACTED AI LOGISTICS (Odyssey): the player's rig piles its dig into a FINITE output buffer
+  // that workers must haul off (it stalls at the brink when full); the AI's logistics are abstracted
+  // (haul auto-assign is player-only, sim.js), so its rig banks straight into the treasury with no
+  // buffer to fill and stall on. Gated on owner==="ai" — the player rig and the skirmish are untouched.
+  const abstract = building.owner === "ai";
   let cycles = 0;
   while (building.digProgress >= 1 && cycles < MAX_CYCLES_PER_TICK) {
     if ((res.radioactives || 0) < rig.nuclear) { building.digProgress = 1; break; }   // out of nuclear → stall at the brink
-    const room = storeRoom(building);
+    const room = abstract ? Infinity : storeRoom(building);
     if (room <= 1e-9) { building.digProgress = 1; break; }   // output buffer full → stall until hauled
     const tier = rollTier(building, richness);
     const amount = Math.min(rig.base * tier.mult, room);   // top off to exactly full on the last dig (overflow spills)
     res.radioactives -= rig.nuclear;
     building.digProgress -= 1;
     building.digCount = (building.digCount || 0) + 1;
-    building.store = building.store || {};
-    building.store[vein] = (building.store[vein] || 0) + amount;   // banks into the finite buffer, not the treasury
+    if (abstract) {
+      res[vein] = (res[vein] || 0) + amount;   // AI: straight into the treasury
+    } else {
+      building.store = building.store || {};
+      building.store[vein] = (building.store[vein] || 0) + amount;   // player: into the finite buffer, hauled later
+    }
     building.lastTier = tier.name;   // transient display state, for the HUD
     building.lastYield = amount;
     state.events.push({ type: "rigDig", com: vein, amount, tier: tier.name, x: building.x, y: building.y, owner: building.owner });
