@@ -23,9 +23,18 @@ import { BUILDINGS, storeTotal, storeRoom, storeCapOf } from "./entities.js";
 import { hashStr } from "./rng.js";
 import { powerThrottle, planetIndustryScale } from "./industry.js";
 
-// The raw commodities a rig can strike. Which one a given rig mines — its VEIN — is fixed by WHERE
-// it's built (a deterministic hash of its tile), so placement chooses the resource.
+// The raw commodities a rig can strike. Which one a given rig mines — its VEIN — is chosen by WHERE
+// it's built: the SURFACE deposits nearby bias what lies below (a rig among ore fields usually
+// strikes ore), so late-game placement is an educated guess off the visible map rather than a blind
+// gamble. A barren spot falls back to a position hash, so it always strikes SOMETHING.
 export const PLASMA_VEINS = ["ore", "crystals", "radioactives", "ice", "gas", "biomass"];
+const VEIN_SET = new Set(PLASMA_VEINS);
+
+// How far out a rig "reads" the surface. Deposits within this radius hint at the seam below; the
+// hint fades linearly with distance. Nudged with placement, not the sim, so it's a UX-scale number.
+export const SURVEY_RADIUS = 280;
+const BASE_VEIN_WEIGHT = 0.05;    // every vein's hashed floor — keeps a barren spot a gamble and leaves room for a surprise
+const RICH_DENSITY_SCALE = 600;   // node.max is ~hundreds; this soft-caps surface density into [0,1)
 
 // Yield tiers: each dig strikes one, its multiplier over the rig's base yield, and the cumulative
 // probability boundary a richness-biased roll must fall under. Richer ground reaches the fat tiers.
@@ -41,20 +50,77 @@ const MAX_CYCLES_PER_TICK = 4;   // a real tick advances <1 cycle; a cap guards 
 
 const frac01 = s => (hashStr(s) % 100000) / 100000;   // a stable pseudo-random [0,1) from a string
 
-/** Which raw a rig at its tile mines — deterministic from position, so placement is the choice. */
-export function rigVein(building) {
-  return PLASMA_VEINS[hashStr(`${Math.round(building.x)},${Math.round(building.y)}`) % PLASMA_VEINS.length];
+// Read the surface at (x, y): a proximity-weighted tally of nearby PLASMA-vein deposits. `weights`
+// is per-commodity (which raws are nearby, and how close), `density` folds in each deposit's SIZE
+// (node.max — the ORIGINAL amount, which never depletes, so the reading is STABLE as nodes are mined
+// out). Pure over the given node list, so the sim can survey ALL nodes (deterministic) while the UI
+// surveys only the ones the player can see (an honest guess — a hidden cache stays a surprise).
+function surfaceSurvey(nodes, x, y) {
+  const weights = {};
+  let density = 0;
+  for (const n of nodes) {
+    if (!VEIN_SET.has(n.com)) continue;
+    const d = Math.hypot(n.x - x, n.y - y);
+    if (d >= SURVEY_RADIUS) continue;
+    const prox = 1 - d / SURVEY_RADIUS;              // 1 right on top of it, 0 at the survey edge
+    weights[n.com] = (weights[n.com] || 0) + prox;
+    density += prox * (n.max || 0);
+  }
+  return { weights, density };
+}
+
+// Seam richness in [0,1) from surface density blended with the old per-TILE / per-PLANET hash — so a
+// resource-dense spot digs richer, but two dense spots still differ (luck) and some worlds run richer
+// all over (the core). Shared by the sim and the placement survey.
+function richnessFrom(density, planetId, x, y) {
+  const surface = density / (density + RICH_DENSITY_SCALE);   // soft-cap to [0,1)
+  const tile = frac01(`${planetId}:${Math.floor(x / RICH_CELL)}:${Math.floor(y / RICH_CELL)}`);
+  const core = frac01(`core:${planetId}`);
+  return Math.min(1, 0.6 * surface + 0.4 * (0.55 * tile + 0.45 * core));
+}
+
+function richLabelFor(r) {
+  return r < 0.35 ? "poor" : r < 0.6 ? "fair" : r < 0.82 ? "rich" : "mother lode";
 }
 
 /**
- * The richness of a rig's spot in [0,1): part per-TILE luck (some ground hides a rich seam), part
- * per-PLANET core (some worlds run richer all over). Pure hashes of the world id + tile — no clock,
- * no unseeded RNG — so a replay strikes the same seams.
+ * Which raw a rig strikes — a deterministic weighted-random pick BIASED by the surface: nearby
+ * deposits weight their own commodity, so a rig among ore fields usually strikes ore, but a hashed
+ * floor on every vein leaves room for a surprise (and makes a barren spot a genuine gamble). Stable
+ * for a given rig: the weights come from node positions/sizes, which never move or deplete.
  */
-export function locationRichness(planetId, x, y) {
-  const tile = frac01(`${planetId}:${Math.floor(x / RICH_CELL)}:${Math.floor(y / RICH_CELL)}`);
-  const core = frac01(`core:${planetId}`);
-  return Math.min(1, 0.55 * tile + 0.45 * core);
+export function rigVein(state, building) {
+  const { weights } = surfaceSurvey(state.map?.nodes || [], building.x, building.y);
+  const key = `${Math.round(building.x)},${Math.round(building.y)}`;
+  let total = 0;
+  const scored = PLASMA_VEINS.map(com => {
+    const w = (weights[com] || 0) + BASE_VEIN_WEIGHT * (0.5 + frac01(`${key}:${com}`));
+    total += w;
+    return { com, w };
+  });
+  let roll = frac01(key) * total;
+  for (const e of scored) { roll -= e.w; if (roll <= 0) return e.com; }
+  return scored[scored.length - 1].com;
+}
+
+/** The richness of a rig's spot in [0,1), surface-biased. Pure — no clock, no unseeded RNG. */
+export function locationRichness(state, x, y) {
+  const { density } = surfaceSurvey(state.map?.nodes || [], x, y);
+  return richnessFrom(density, state.planetId, x, y);
+}
+
+/**
+ * A placement-time READING of the surface for the player: from a given node list (pass the VISIBLE
+ * ones), the most-likely vein below, how confident that read is, and the seam richness. `likelyVein`
+ * is null when no deposits are in range — a blind spot. Distinct from rigVein: this is the best guess
+ * off the visible map; the actual strike is the weighted roll over ALL nodes, so it can still surprise.
+ */
+export function rigSurvey(nodes, planetId, x, y) {
+  const { weights, density } = surfaceSurvey(nodes, x, y);
+  let likelyVein = null, best = 0, sum = 0;
+  for (const com of PLASMA_VEINS) { const w = weights[com] || 0; sum += w; if (w > best) { best = w; likelyVein = com; } }
+  const richness = richnessFrom(density, planetId, x, y);
+  return { likelyVein, confidence: sum > 0 ? best / sum : 0, richness, richLabel: richLabelFor(richness) };
 }
 
 /** The tier a given dig strikes — a per-dig roll (stable from the rig id + dig counter) biased up by richness. */
@@ -83,8 +149,8 @@ export function updatePlasmaRig(state, building, dt) {
 
   building.digProgress = (building.digProgress || 0) + (dt / rig.digTime) * planetIndustryScale(state) * throttle;
 
-  const vein = rigVein(building);
-  const richness = locationRichness(state.planetId, building.x, building.y);
+  const vein = rigVein(state, building);
+  const richness = locationRichness(state, building.x, building.y);
   let cycles = 0;
   while (building.digProgress >= 1 && cycles < MAX_CYCLES_PER_TICK) {
     if ((res.radioactives || 0) < rig.nuclear) { building.digProgress = 1; break; }   // out of nuclear → stall at the brink
@@ -108,13 +174,13 @@ export function updatePlasmaRig(state, building, dt) {
 export function rigInfo(state, building) {
   const def = BUILDINGS[building.type];
   if (!def || !def.rig) return null;
-  const richness = locationRichness(state.planetId, building.x, building.y);
-  const richLabel = richness < 0.35 ? "poor" : richness < 0.6 ? "fair" : richness < 0.82 ? "rich" : "mother lode";
+  const richness = locationRichness(state, building.x, building.y);
+  const richLabel = richLabelFor(richness);
   const res = state.players[building.owner].resources;
   const cap = storeCapOf(building.type);
   const stored = storeTotal(building);
   return {
-    vein: rigVein(building),
+    vein: rigVein(state, building),
     richness, richLabel,
     progress: Math.min(1, building.digProgress || 0),
     lastTier: building.lastTier || null,

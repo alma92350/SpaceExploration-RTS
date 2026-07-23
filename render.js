@@ -19,6 +19,7 @@ import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
 import { POWER_TIERS, powerEfficiency } from "./engine/industry.js";
 import { storeCapOf, storeTotal } from "./engine/entities.js";
+import { rigSurvey, SURVEY_RADIUS } from "./engine/rig.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects, activeFireworks } from "./effects.js";
 
@@ -1615,6 +1616,54 @@ function drawGhostPowerCue(ctx, state, ghost, def) {
   ctx.restore();
 }
 
+// The Plasma Rig placement survey: a dashed violet ring at the survey radius, a highlight on
+// each VISIBLE deposit the rig would read inside it, and a label predicting the vein + seam
+// richness below (engine/rig.js rigSurvey). Only the player's charted surface counts, so a spot
+// with no visible deposits reads "blind — a gamble", and an unscouted cache stays a surprise.
+function drawRigSurveyCue(ctx, state, ghost, def) {
+  const VIOLET = "180, 140, 255";
+  ctx.save();
+  ctx.setLineDash([4, 8]);
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = `rgba(${VIOLET}, 0.5)`;
+  ctx.beginPath();
+  ctx.arc(ghost.x, ghost.y, SURVEY_RADIUS, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  const visible = state.map.nodes.filter(n => n.amount > 0 && isNodeDiscovered(state.fog, n)
+    && Math.hypot(n.x - ghost.x, n.y - ghost.y) < SURVEY_RADIUS);
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = `rgba(${VIOLET}, 0.85)`;
+  ctx.lineWidth = 1.5;
+  for (const n of visible) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 7 + 9 * (n.amount / n.max) + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const survey = rigSurvey(visible, state.planetId, ghost.x, ghost.y);
+  const meta = survey.likelyVein ? COM[survey.likelyVein] : null;
+  const confWord = !survey.likelyVein ? "" : survey.confidence >= 0.6 ? "likely " : survey.confidence >= 0.35 ? "maybe " : "toss-up: ";
+  const label = survey.likelyVein
+    ? `⛏ ${confWord}${meta?.name || survey.likelyVein} · ${survey.richLabel} seam`
+    : "⛏ blind spot — no surface to read (a gamble)";
+
+  ctx.save();
+  ctx.font = "bold 13px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  const ly = ghost.y - def.radius - 34;   // sits above the grid-efficiency label (at radius+12)
+  const w = ctx.measureText(label).width;
+  ctx.fillStyle = "rgba(5, 7, 15, 0.8)";
+  ctx.fillRect(ghost.x - w / 2 - 5, ly - 15, w + 10, 17);
+  ctx.fillStyle = survey.likelyVein ? "#c4b5fd" : "#f0a0a0";
+  ctx.fillText(label, ghost.x, ly);
+  ctx.restore();
+}
+
 // Translucent footprint under the cursor while placing a building, green
 // when the spot is buildable and red when it isn't (out of bounds,
 // overlapping another building, or too close to a resource node — see
@@ -1628,6 +1677,10 @@ function drawBuildGhost(ctx, state, ghost) {
   // grid-efficiency zones of every nearby Reactor and tag the ghost with the tier it
   // would land in, so the "closer is cheaper to power" call is visible BEFORE the click.
   if (def.recipe || def.rig || def.wonder) drawGhostPowerCue(ctx, state, ghost, def);
+
+  // Placing a Plasma Rig? Read the visible surface deposits and predict the vein + seam
+  // richness below, so late-game placement is an educated guess off the map, not a blind pick.
+  if (def.rig) drawRigSurveyCue(ctx, state, ghost, def);
 
   const valid = canPlaceBuilding(state, ghost.buildingType, ghost.x, ghost.y);
   const color = valid ? "#4ade80" : "#f87171";
