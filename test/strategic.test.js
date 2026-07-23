@@ -18,23 +18,23 @@ function odysseyState(planetId = "kybernet") {
   return s;
 }
 
-test("the AI Foundry manufactures AI Cores from electronics + crystals", () => {
+test("the AI Foundry manufactures AI Cores from electronics + crystals in its larder", () => {
   const s = odysseyState();
   const f = makeBuilding("aifoundry", "player", 660, 520);
+  f.input = { electronics: 100, crystals: 100 };   // inputs are carried into the local larder now
   s.buildings.set(f.id, f);
-  Object.assign(s.players.player.resources, { electronics: 100, crystals: 100 });
   for (let i = 0; i < 50; i++) updateProduction(s, f, 0.1);
-  assert.ok((s.players.player.resources.ai || 0) > 0, "AI Cores got manufactured");
-  assert.ok(s.players.player.resources.electronics < 100, "…consuming electronics");
+  assert.ok((f.store?.ai || 0) > 0, "AI Cores got manufactured into its output buffer");
+  assert.ok(f.input.electronics < 100, "…consuming electronics from its larder");
 });
 
 test("the Torpedo Works manufactures Plasma Torpedoes from antimatter + alloys + radioactives", () => {
   const s = odysseyState();
   const t = makeBuilding("torpedoworks", "player", 660, 520);
+  t.input = { antimatter: 100, alloys: 100, radioactives: 100 };
   s.buildings.set(t.id, t);
-  Object.assign(s.players.player.resources, { antimatter: 100, alloys: 100, radioactives: 100 });
   for (let i = 0; i < 50; i++) updateProduction(s, t, 0.1);
-  assert.ok((s.players.player.resources.plasmatorp || 0) > 0, "Plasma Torpedoes got manufactured");
+  assert.ok((t.store?.plasmatorp || 0) > 0, "Plasma Torpedoes got manufactured into its output buffer");
 });
 
 test("the Leviathan is built at a Star Dock, costed in strategic goods you must make", () => {

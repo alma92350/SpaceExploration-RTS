@@ -243,30 +243,57 @@ export function isDropOff(type) {
   return !!(def && (def.isCommandCenter || def.dropOff));
 }
 
-// ---- Finite output storage (Odyssey logistics) --------------------------------
-// A producing building (the Plasma Rig; factories in a later phase) banks its output
-// into a FINITE local buffer, `building.store` (commodity → qty), capped at its def's
-// `storeCap`. When the buffer fills, production stalls until a worker hauls it to a
-// Command Center (engine/haul.js) — so output storage is a real, mindful constraint,
-// not an infinite sink. A def with no `storeCap` has no buffer (storeCapOf → 0), so
-// these are no-ops for every non-producer and the whole skirmish roster.
+// ---- Finite storage (Odyssey logistics) ---------------------------------------
+// A producing building banks its OUTPUT into a finite `building.store` buffer, and a
+// factory draws its INPUTS from a finite `building.input` buffer — both commodity→qty
+// maps, capped by the def. Goods aren't spendable (or consumable) until a worker moves
+// them (engine/haul.js): output is hauled to a Command Center, inputs are carried in
+// from the treasury. So storage is a real, mindful constraint, not an infinite sink.
+//
+// Caps: a def can pin `storeCap` / `inputCap` explicitly (the Plasma Rig pins a big
+// storeCap and has no input buffer — it burns treasury radioactives directly); any
+// building with a `recipe` (the factories) otherwise gets the shared default. Everything
+// else has no buffer (cap 0), so these helpers are no-ops for the whole skirmish roster.
+const DEFAULT_FACTORY_STORE = 80;   // a factory's output backlog before it stalls, ~tens of batches
+const DEFAULT_FACTORY_INPUT = 80;   // a factory's input larder before it starves
 
 /** The output-buffer capacity of a building type, or 0 if it has no buffer. */
 export function storeCapOf(type) {
-  return BUILDINGS[type]?.storeCap || 0;
+  const def = BUILDINGS[type];
+  if (!def) return 0;
+  if (def.storeCap != null) return def.storeCap;
+  return def.recipe ? DEFAULT_FACTORY_STORE : 0;
+}
+
+/** The input-buffer capacity of a building type (factories only), or 0 if it has none. */
+export function inputCapOf(type) {
+  const def = BUILDINGS[type];
+  if (!def) return 0;
+  if (def.inputCap != null) return def.inputCap;
+  return def.recipe ? DEFAULT_FACTORY_INPUT : 0;
+}
+
+/** Sum a commodity→qty buffer (order-independent → deterministic); 0 for a missing buffer. */
+function bufTotal(buf) {
+  let t = 0;
+  if (buf) for (const c in buf) t += buf[c] || 0;
+  return t;
 }
 
 /** How much is currently sitting in a building's output buffer (0 if none). */
-export function storeTotal(building) {
-  let t = 0;
-  const s = building.store;
-  if (s) for (const c in s) t += s[c] || 0;   // order-independent sum → deterministic
-  return t;
-}
+export function storeTotal(building) { return bufTotal(building.store); }
 
 /** The free room left in a building's output buffer (clamped ≥ 0). */
 export function storeRoom(building) {
   return Math.max(0, storeCapOf(building.type) - storeTotal(building));
+}
+
+/** How much is currently sitting in a factory's input buffer (0 if none). */
+export function inputTotal(building) { return bufTotal(building.input); }
+
+/** The free room left in a factory's input buffer (clamped ≥ 0). */
+export function inputRoom(building) {
+  return Math.max(0, inputCapOf(building.type) - inputTotal(building));
 }
 
 // One-time, player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE

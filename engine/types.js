@@ -43,6 +43,7 @@
  * @property {string} [targetId]
  * @property {string} [nodeId]
  * @property {string} [buildingId]
+ * @property {string} [com]
  * @property {number} [slot]
  * @property {number} [slots]
  * @property {string} [phase]
@@ -115,7 +116,9 @@
  * @property {string} [lastTier]      Plasma Rig last strike tier (HUD)
  * @property {number} [lastYield]     Plasma Rig last strike amount (HUD)
  * @property {Object.<string, number>} [store]  a producer's finite output buffer, commodity → qty (engine/haul.js)
+ * @property {Object.<string, number>} [input]  a factory's finite input larder, commodity → qty (engine/haul.js)
  * @property {number} [haulers]       transient per-tick count of workers hauling from this producer (engine/haul.js)
+ * @property {number} [suppliers]     transient per-tick count of workers supplying this factory (engine/haul.js)
  */
 
 /**

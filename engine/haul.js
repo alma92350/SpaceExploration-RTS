@@ -19,29 +19,37 @@
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS, storeTotal, storeCapOf } from "./entities.js";
+import { UNITS, storeTotal, storeCapOf, inputRoom, inputCapOf } from "./entities.js";
 import { nearestDropoff } from "./gather.js";
+import { recipeOf } from "./industry.js";
 
 const SOURCE_REACH = 30;          // how close a hauler must get to a producer to load
 const DROP_REACH = 30;            // …and to a drop-off to bank (matches gather.js)
-const MAX_HAULERS = 2;            // workers auto-assigned to one producer, so labour spreads
-const ASSIGN_FRACTION = 0.34;     // …once its buffer is this full — wait for a worthwhile backlog
+const MAX_HAULERS = 2;            // workers auto-assigned to haul from one producer
+const MAX_SUPPLIERS = 2;          // …and to supply one factory, so labour spreads
+const ASSIGN_FRACTION = 0.34;     // haul once a producer's buffer is this full — wait for a worthwhile backlog
+const SUPPLY_BATCHES = 12;        // keep a factory topped up to ~this many batches of each input
 
 /**
- * Tally, per producer, how many workers are currently hauling from it — the cap
- * ASSIGN reads. Frozen at tick start (before any assignment) so every idle worker
- * this tick sees the same counts regardless of Map order. Only producer buildings
- * are touched; the field is transient (stripped on serialize, like a unit's grid index).
+ * Tally, per producing/consuming building, how many workers are currently hauling from it
+ * (`haulers`) or supplying it (`suppliers`) — the caps ASSIGN reads. Frozen at tick start
+ * (before any assignment) so every idle worker this tick sees the same counts regardless of
+ * Map order. Only buildings with a buffer are touched; the fields are transient (stripped on
+ * serialize, like a unit's grid index).
  * @param {State} state
  */
-export function countHaulers(state) {
-  for (const b of state.buildings.values()) if (storeCapOf(b.type) > 0) b.haulers = 0;
+export function countLogistics(state) {
+  for (const b of state.buildings.values()) {
+    if (storeCapOf(b.type) > 0) b.haulers = 0;
+    if (inputCapOf(b.type) > 0) b.suppliers = 0;
+  }
   for (const u of state.units.values()) {
     const o = u.order;
-    if (o && o.type === "haul" && o.buildingId) {
-      const b = state.buildings.get(o.buildingId);
-      if (b) b.haulers = (b.haulers || 0) + 1;
-    }
+    if (!o || !o.buildingId) continue;
+    const b = state.buildings.get(o.buildingId);
+    if (!b) continue;
+    if (o.type === "haul") b.haulers = (b.haulers || 0) + 1;
+    else if (o.type === "supply") b.suppliers = (b.suppliers || 0) + 1;
   }
 }
 
@@ -132,6 +140,105 @@ export function updateHaul(state, unit, dt) {
       if (!order.phase) unit.order = null;
     } else {
       stepToward(state, unit, drop.x, drop.y, def.speed, dt);
+    }
+  }
+}
+
+// The input commodity a factory most needs and the treasury can supply: the one with the
+// fewest batches buffered (below the top-up target) that the owner actually has in stock.
+// Null when the factory is well-stocked on everything the treasury could bring. Deterministic
+// (recipe key order is stable; ties resolve to the first such key).
+function neededInput(building, recipe, res) {
+  let want = null, fewest = Infinity;
+  for (const com in recipe.in) {
+    if (com === "energy") continue;
+    if ((res[com] || 0) <= 0) continue;                       // treasury can't supply it
+    const batches = (building.input?.[com] || 0) / recipe.in[com];
+    if (batches >= SUPPLY_BATCHES) continue;                  // already well-stocked
+    if (batches < fewest) { fewest = batches; want = com; }
+  }
+  return want;
+}
+
+/**
+ * Give an idle worker a supply job if a factory needs feeding: the nearest own factory with
+ * input-buffer room, fewer than MAX_SUPPLIERS already on it, and a needed input the treasury
+ * can provide. Claims a supplier slot immediately so two idle workers don't both pile on. No-op
+ * when nothing qualifies. Deterministic: nearest by distance, ties broken by id.
+ * @param {State} state @param {Unit} unit
+ */
+export function assignSupply(state, unit) {
+  const res = state.players[unit.owner].resources;
+  let best = null, bestD = Infinity, bestCom = null;
+  for (const b of state.buildings.values()) {
+    if (b.owner !== unit.owner || b.constructing) continue;
+    const recipe = recipeOf(b);
+    if (!recipe) continue;
+    if (inputRoom(b) <= 0) continue;                          // larder full
+    if ((b.suppliers || 0) >= MAX_SUPPLIERS) continue;        // already covered
+    const com = neededInput(b, recipe, res);
+    if (!com) continue;
+    const d = Math.hypot(b.x - unit.x, b.y - unit.y);
+    if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; bestCom = com; }
+  }
+  if (!best) return;
+  best.suppliers = (best.suppliers || 0) + 1;   // claim the slot for this tick
+  unit.order = { type: "supply", buildingId: best.id, com: bestCom, phase: "toSource" };
+}
+
+/**
+ * Advance one worker's supply job by dt: walk to the nearest drop-off (the treasury/warehouse) →
+ * load the needed input → walk to the factory → top up its input buffer. Clamps the pickup to what
+ * will fit, so it rarely over-carries; drops the job cleanly if the factory is razed or the treasury
+ * runs dry mid-run.
+ * @param {State} state @param {Unit} unit @param {number} dt
+ */
+export function updateSupply(state, unit, dt) {
+  const def = UNITS[unit.type];
+  const order = unit.order;
+  if (!order.phase) order.phase = "toSource";
+  const factory = order.buildingId ? state.buildings.get(order.buildingId) : null;
+  if (!factory || factory.constructing) {                    // target gone → drop the job (any in-transit load is lost with it)
+    if (unit.cargo) { unit.cargo.qty = 0; unit.cargo.com = null; }
+    unit.order = null;
+    return;
+  }
+
+  if (order.phase === "toSource") {
+    const res = state.players[unit.owner].resources;
+    const carrying = unit.cargo && unit.cargo.qty > 0;
+    if (!carrying && (res[order.com] || 0) <= 0) { unit.order = null; return; }   // treasury dry, nothing loaded
+    const drop = nearestDropoff(state, unit.owner, unit.x, unit.y);
+    if (!drop) { unit.order = null; return; }
+    const dist = Math.hypot(drop.x - unit.x, drop.y - unit.y);
+    if (dist <= DROP_REACH) {
+      const want = Math.min(def.cargoCap - (unit.cargo.qty || 0), res[order.com] || 0, inputRoom(factory));
+      if (want > 0) {
+        res[order.com] -= want;
+        unit.cargo.com = order.com;
+        unit.cargo.qty = (unit.cargo.qty || 0) + want;
+      }
+      order.phase = "toFactory";
+      if (!unit.cargo || unit.cargo.qty <= 0) unit.order = null;   // couldn't load a thing → idle
+    } else {
+      stepToward(state, unit, drop.x, drop.y, def.speed, dt);
+    }
+    return;
+  }
+
+  if (order.phase === "toFactory") {
+    const dist = Math.hypot(factory.x - unit.x, factory.y - unit.y);
+    if (dist <= SOURCE_REACH) {
+      const give = Math.min(unit.cargo.qty, inputRoom(factory));
+      if (give > 0) {
+        factory.input = factory.input || {};
+        factory.input[unit.cargo.com] = (factory.input[unit.cargo.com] || 0) + give;
+        unit.cargo.qty -= give;
+      }
+      if (unit.cargo.qty <= 1e-9) { unit.cargo.qty = 0; unit.cargo.com = null; }   // any leftover (buffer filled meanwhile) rides on; auto-assign re-tasks it
+      unit.order = null;
+    } else {
+      stepToward(state, unit, factory.x, factory.y, def.speed, dt);
     }
   }
 }

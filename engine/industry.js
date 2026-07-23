@@ -23,7 +23,7 @@
 
 "use strict";
 
-import { BUILDINGS } from "./entities.js";
+import { BUILDINGS, storeRoom } from "./entities.js";
 import { RECIPES, PLANETS } from "../data.js";
 import { techMult } from "./techtree.js";
 
@@ -132,12 +132,16 @@ export function powerThrottle(state, owner) {
   return Math.min(1, cap / draw);
 }
 
-// Advance one factory's recipe by dt: draw its inputs from the owner's global
-// stockpile (energy is the Power flow, handled by the throttle — NOT a consumed
-// good) and bank its output. Continuous & fractional (resources hold floats),
-// throttled by available power, and clamped to whatever inputs are actually in
-// stock so the stockpile can never go negative. A no-op for any building without
-// a recipe → the skirmish tick mutates nothing new.
+// Advance one factory's recipe by dt: draw its inputs from the factory's LOCAL input
+// buffer (building.input, filled by worker supply runs — engine/haul.js) and bank its
+// output into its LOCAL output buffer (building.store, drained by worker haul runs).
+// Energy is the Power flow, handled by the throttle — NOT a consumed good. Continuous &
+// fractional (buffers hold floats), throttled by power, clamped so it never runs on
+// inputs it lacks (buffers never go negative) and never overfills the output buffer —
+// when that buffer is full the factory STALLS until it's hauled off. So a factory only
+// runs while it's been supplied AND has room: logistics feeds it and clears it, exactly
+// like the Plasma Rig. A no-op for any building without a recipe → the skirmish tick
+// mutates nothing new.
 export function updateProduction(state, building, dt) {
   if (building.constructing) return;
   const recipe = recipeOf(building);
@@ -145,26 +149,28 @@ export function updateProduction(state, building, dt) {
   if (building.paused) return;   // player-paused to conserve its inputs — banks nothing, draws nothing (see hud.js)
   const throttle = powerThrottle(state, building.owner);
   if (throttle <= 0) return;
-  const player = state.players[building.owner];
-  const res = player.resources;
-  const ups = player.upgrades;
+  const ups = state.players[building.owner].upgrades;
+  const input = building.input || (building.input = {});
 
   // How much of a batch we can run this tick: the power-throttled target — sped up
   // by the Factory Automation tech (techtree.js `automation`) and by the world's
-  // industry rating — capped by the scarcest input in stock.
+  // industry rating — then capped by the scarcest input BUFFERED locally and by the
+  // room left in the output buffer.
   let frac = (BUILDINGS[building.type].prodRate || 1) * techMult(ups, "rateMult")
     * planetIndustryScale(state) * throttle * dt;
   for (const com in recipe.in) {
     if (com === "energy") continue;
-    frac = Math.min(frac, (res[com] || 0) / recipe.in[com]);
+    frac = Math.min(frac, (input[com] || 0) / recipe.in[com]);   // only what's in the larder
   }
+  // Heavy Alloys (techtree.js `heavyalloys`) lifts output per batch — same inputs, more out.
+  const outPerBatch = recipe.qty * techMult(ups, "yieldMult");
+  if (outPerBatch > 0) frac = Math.min(frac, storeRoom(building) / outPerBatch);   // don't overfill the output buffer
   if (!(frac > 0)) return;
 
   for (const com in recipe.in) {
     if (com === "energy") continue;
-    res[com] = (res[com] || 0) - frac * recipe.in[com];
+    input[com] = (input[com] || 0) - frac * recipe.in[com];
   }
-  // Heavy Alloys (techtree.js `heavyalloys`) lifts output per batch — same inputs,
-  // more goods out.
-  res[recipe.out] = (res[recipe.out] || 0) + frac * recipe.qty * techMult(ups, "yieldMult");
+  building.store = building.store || {};
+  building.store[recipe.out] = (building.store[recipe.out] || 0) + frac * outPerBatch;
 }

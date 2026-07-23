@@ -17,6 +17,7 @@ import {
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency } from "./engine/industry.js";
+import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
@@ -294,9 +295,12 @@ function availabilitySignature() {
 function factorySignature(sel) {
   const { state } = game;
   const f = sel.find(e => e.kind === "building" && recipeOf(e) && !e.constructing);
-  // Include the grid-efficiency tier so the "Grid: …" line rebuilds when a Reactor is
-  // built/razed near the factory (which can shift its tier without changing its status band).
-  return f ? factoryStatus(state, f, recipeOf(f)).cls + ":" + powerEfficiency(state, f.owner, f.x, f.y).name : "";
+  if (!f) return "";
+  // Include the grid-efficiency tier (rebuilds the "Grid: …" line when a Reactor is built/razed
+  // nearby) and the input/output buffer levels (so the larder + output lines stay live as workers
+  // carry goods in and out), quantised so it doesn't rebuild every frame.
+  return factoryStatus(state, f, recipeOf(f)).cls + ":" + powerEfficiency(state, f.owner, f.x, f.y).name
+    + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4);
 }
 
 function renderSelectionPanel() {
@@ -594,14 +598,17 @@ function factoryStatus(state, b, recipe) {
   const throttle = powerThrottle(state, b.owner);
   if (throttle <= 0) return { cls: "bad", text: "Stalled — no Power" };
 
-  const res = state.players[b.owner].resources;
+  // Inputs now come from the factory's LOCAL larder (engine/haul.js), filled by worker supply
+  // runs — so "starved" means a worker needs to bring it, not that the whole economy is dry.
+  const input = b.input || {};
   let scarce = null, scarceRatio = Infinity;
   for (const com in recipe.in) {
     if (com === "energy") continue;
-    const ratio = (res[com] || 0) / recipe.in[com];
+    const ratio = (input[com] || 0) / recipe.in[com];
     if (ratio < scarceRatio) { scarceRatio = ratio; scarce = com; }
   }
-  if (scarceRatio < 1) return { cls: "bad", text: `Starved — needs ${COM[scarce]?.name || scarce}` };
+  if (scarceRatio < 1) return { cls: "bad", text: `Starved — needs ${COM[scarce]?.name || scarce} carried in` };
+  if (storeRoom(b) <= 1e-6) return { cls: "bad", text: "Stalled — output buffer full (needs a hauler)" };
   if (throttle < 0.995) return { cls: "warn", text: `Throttled ${Math.round(throttle * 100)}% — low Power` };
 
   const def = BUILDINGS[b.type], ups = state.players[b.owner].upgrades;
@@ -878,6 +885,22 @@ function rebuildSelectionPanel(sel) {
     stRow.className = "sel-note " + st.cls;
     stRow.textContent = st.text;
     panelEl.appendChild(stRow);
+
+    // Local logistics buffers (engine/haul.js): the input larder workers fill and the output
+    // buffer workers drain. Makes visible why a factory is fed/starved and clear/backed-up.
+    const input = factory.input || {};
+    const inList = Object.keys(recipe.in).filter(c => c !== "energy")
+      .map(c => `${Math.floor(input[c] || 0)}${COM[c]?.ico || ""}`).join(" ");
+    const larder = document.createElement("div");
+    larder.className = "sel-note";
+    larder.textContent = `Larder ${Math.round(inputTotal(factory))}/${inputCapOf(factory.type)}${inList ? " · " + inList : ""} — carried in by workers`;
+    panelEl.appendChild(larder);
+
+    const outBuf = document.createElement("div");
+    const outPct = storeCapOf(factory.type) ? Math.round((storeTotal(factory) / storeCapOf(factory.type)) * 100) : 0;
+    outBuf.className = "sel-note " + (storeRoom(factory) <= 1e-6 ? "bad" : outPct >= 66 ? "warn" : "");
+    outBuf.textContent = `Output ${Math.round(storeTotal(factory))}/${storeCapOf(factory.type)} ${COM[recipe.out]?.name || recipe.out} — hauled to a Command Center`;
+    panelEl.appendChild(outBuf);
 
     panelEl.appendChild(gridEfficiencyRow(state, factory));
 

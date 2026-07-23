@@ -123,19 +123,29 @@ storage cascades to AI worker logic — the riskier half.
   whole haulage subsystem (store, task, auto-assign, render, persist, determinism) on
   the safest surface before it touches the coupled factory chain.
 
-**Phase B — Factory output + INPUT buffers = a real supply network (player-only).**
-- Give factories a `storeCap` output buffer (reusing Phase A) AND a local `input`
-  buffer (`inputCap`). `updateProduction` draws inputs from the **local** buffer, banks
-  output to the **local** store — so a factory only runs while it's been *supplied* and
-  has *room*.
-- Extend haulage with a `supply` leg: an idle worker pulls a needed input from the
-  treasury (or straight from an upstream producer's output buffer — a smelter→assembler
-  line) into a factory's `input` buffer.
-- This is where the chain becomes a network: smelter output → hauled → assembler input.
-  Must be done together (output-only would strand the two-hop chain, since inputs come
-  from the treasury). Rewrite the `industry.js` chain tests to the buffered model.
-- Balance: generous default `inputCap` so a factory pre-stocks a few batches and isn't
-  worker-bound every tick.
+**Phase B — Factory output + INPUT buffers = a real supply network. ✅ DONE.**
+- Factories now get a default output buffer AND a local `input` larder (both cap 80,
+  via `storeCapOf`/`inputCapOf` — any building with a `recipe`). `updateProduction`
+  draws inputs from the **local larder**, banks output to the **local store**, and stalls
+  when either the larder is empty or the output buffer is full — so a factory only runs
+  while it's been *supplied* and has *room*.
+- Haulage gained a `supply` leg (`engine/haul.js`): an idle player worker picks the
+  nearest own factory that's low on an input the treasury can provide, carries a cargo
+  from the treasury (the CC/warehouse) into the factory's larder. Output is drained by
+  the Phase A haul path, which now covers factories automatically. Idle workers try haul
+  first (clear backlogs / refill the treasury) then supply (feed the starving).
+- The chain is now a real network routed through the treasury: raws → CC → supply →
+  smelter → metals → haul → CC → supply → assembler → alloys → haul → CC. Verified
+  end-to-end in the live sim + browser (alloys reach the treasury purely via worker
+  logistics).
+- `persist.js` coerces the `input` buffer and strips the transient `suppliers` tally;
+  `hud.js` factory panel shows the larder + output buffer and a "needs it carried in"
+  starve reason; the map store bar (Phase A) now covers factories too.
+- Rewrote the `industry.js` + `strategic.js` chain tests to the buffered model; added
+  supply tests to `test/haul.test.js`. Player-only & AI-safe as in Phase A.
+
+**Balance note (both phases):** default caps are generous (80 / rig 120). Tune later —
+smaller = more logistics pressure, larger = less micro.
 
 **Phase C — Finite COLLECTION storage (affects the AI).**
 - Give drop-offs (Refinery/Foundry/Arsenal) a finite intake buffer that must be

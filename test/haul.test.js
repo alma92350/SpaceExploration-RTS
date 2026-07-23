@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { updateHaul, assignHaul, countHaulers } from "../engine/haul.js";
-import { storeTotal, storeCapOf } from "../engine/entities.js";
+import { updateHaul, assignHaul, updateSupply, assignSupply, countLogistics } from "../engine/haul.js";
+import { storeTotal, storeCapOf, inputTotal } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
@@ -62,7 +62,7 @@ test("no more than the hauler cap is assigned to one producer", () => {
     const w = makeUnit("worker", "player", rig.x, rig.y);
     s.units.set(w.id, w);
   }
-  countHaulers(s);
+  countLogistics(s);
   for (const w of [...s.units.values()].filter(u => u.owner === "player" && u.type === "worker")) {
     if (!w.order) assignHaul(s, w);
   }
@@ -79,7 +79,7 @@ test("assignHaul is owner-scoped: a worker won't haul from another side's produc
   const w = workers[0];
   w.x = rig.x; w.y = rig.y;
   w.order = null;
-  countHaulers(s);
+  countLogistics(s);
   assignHaul(s, w);
   assert.equal(w.order, null, "a player worker is not assigned to an AI-owned producer");
 });
@@ -99,4 +99,51 @@ test("haulage is deterministic: two same-seed runs bank identical treasuries", (
     return { ore: s.players.player.resources.ore || 0, crystals: s.players.player.resources.crystals || 0 };
   };
   assert.deepEqual(run(), run());
+});
+
+// ---- supply leg: workers carry inputs from the treasury into a factory's larder --------
+
+// A player factory planted next to the CC, with a Reactor for Power.
+function plantFactory(s, cc, type = "smelter") {
+  const reactor = makeBuilding("reactor", "player", cc.x + 30, cc.y - 30);
+  const f = makeBuilding(type, "player", cc.x + 55, cc.y);
+  s.buildings.set(reactor.id, reactor);
+  s.buildings.set(f.id, f);
+  return f;
+}
+
+test("a supply worker carries a factory's input from the treasury into its larder", () => {
+  const { s, cc, workers } = base(1);
+  const sm = plantFactory(s, cc);
+  s.players.player.resources.ore = 100;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "supply", buildingId: sm.id, com: "ore" };
+
+  for (let i = 0; i < 4000 && inputTotal(sm) <= 0; i++) updateSupply(s, w, 0.05);
+
+  assert.ok(inputTotal(sm) > 0, "the smelter's larder was filled");
+  assert.ok((s.players.player.resources.ore || 0) < 100, "…drawn from the treasury");
+});
+
+test("an idle worker auto-supplies a starving factory, and its metals come back to the treasury", () => {
+  const { s, cc } = base(2);
+  const sm = plantFactory(s, cc);
+  s.players.player.resources.ore = 200;
+
+  for (let i = 0; i < 800; i++) tick(s, 0.1);
+
+  assert.ok((s.players.player.resources.ore || 0) < 200, "ore was carried out of the treasury into the smelter");
+  assert.ok((s.players.player.resources.metals || 0) > 0, "…refined into metals and hauled back — the full supply→make→haul loop ran");
+});
+
+test("assignSupply is owner-scoped and skips a well-stocked factory", () => {
+  const { s, cc, workers } = base(3);
+  const sm = plantFactory(s, cc);
+  sm.input = { ore: 999 };              // already brimming → no supply needed
+  s.players.player.resources.ore = 500;
+  const w = workers[0]; w.order = null;
+  countLogistics(s);
+  assignSupply(s, w);
+  assert.equal(w.order, null, "a factory with a full larder pulls no supplier");
 });

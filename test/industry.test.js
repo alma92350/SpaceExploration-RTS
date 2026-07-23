@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeBuilding } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
+import { storeTotal } from "../engine/entities.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
@@ -48,43 +49,52 @@ test("powerThrottle: full with power, zero without, fractional when factories ou
   assert.ok(near(powerThrottle(many, "player"), 20 / 24), "over-draw throttles every factory by the same fraction");
 });
 
-test("a powered Smelter refines ore into metals, fractionally", () => {
-  const s = stub([reactor(), smelter()], { ore: 1000 });
+test("a powered Smelter refines ore from its input larder into metals in its output buffer", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } })], {});
   const sm = [...s.buildings.values()].find(b => b.type === "smelter");
   updateProduction(s, sm, 0.1);
   // frac = prodRate 2 × throttle 1 × dt 0.1 = 0.2 batches; smelt is 2 ore → 2 metals
-  assert.ok(near(s.players.player.resources.ore, 999.6), "0.2 batches × 2 ore = 0.4 ore consumed");
-  assert.ok(near(s.players.player.resources.metals, 0.4), "0.2 batches × 2 = 0.4 metals produced");
+  assert.ok(near(sm.input.ore, 999.6), "0.2 batches × 2 ore = 0.4 ore drawn from the larder");
+  assert.ok(near(sm.store.metals, 0.4), "0.2 batches × 2 = 0.4 metals banked to the output buffer");
+  assert.equal(s.players.player.resources.ore || 0, 0, "the global treasury is untouched — inputs are local now");
 });
 
-test("production is clamped to inputs in stock — the stockpile never goes negative", () => {
-  const s = stub([reactor(), smelter()], { ore: 0.1 });
+test("production is clamped to the input larder — the buffer never goes negative", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 0.1 } })], {});
   const sm = [...s.buildings.values()].find(b => b.type === "smelter");
-  updateProduction(s, sm, 1.0);   // wants 2 batches (4 ore) but only 0.1 ore exists
-  assert.ok(near(s.players.player.resources.ore, 0), "all available ore consumed, never below zero");
-  assert.ok(s.players.player.resources.ore >= 0);
-  assert.ok(near(s.players.player.resources.metals, 0.1), "0.05 batches × 2 = 0.1 metals from the scrap of ore");
+  updateProduction(s, sm, 1.0);   // wants 2 batches (4 ore) but only 0.1 ore in the larder
+  assert.ok(near(sm.input.ore, 0), "all available ore consumed, never below zero");
+  assert.ok(sm.input.ore >= 0);
+  assert.ok(near(sm.store.metals, 0.1), "0.05 batches × 2 = 0.1 metals from the scrap of ore");
+});
+
+test("a factory whose output buffer is full stalls until it's hauled off", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 }, store: { metals: 80 } })], {});  // 80 = default cap
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(s, sm, 0.5);
+  assert.equal(sm.input.ore, 1000, "full output → no inputs drawn");
+  assert.ok(near(storeTotal(sm), 80), "…and no more banked; it's stalled at capacity");
 });
 
 test("an unpowered factory produces nothing", () => {
-  const s = stub([smelter()], { ore: 1000 });   // no Reactor
+  const s = stub([smelter({ input: { ore: 1000 } })], {});   // no Reactor
   const sm = [...s.buildings.values()].find(b => b.type === "smelter");
   updateProduction(s, sm, 0.1);
-  assert.equal(s.players.player.resources.metals || 0, 0, "no power → no production");
-  assert.equal(s.players.player.resources.ore, 1000, "…and no inputs consumed");
+  assert.equal((sm.store && sm.store.metals) || 0, 0, "no power → no production");
+  assert.equal(sm.input.ore, 1000, "…and no inputs consumed");
 });
 
 test("a paused factory consumes no inputs, banks no output, and frees its Power", () => {
-  const s = stub([reactor(), smelter({ paused: true })], { ore: 1000 });
+  const s = stub([reactor(), smelter({ paused: true, input: { ore: 1000 } })], {});
   const sm = [...s.buildings.values()].find(b => b.type === "smelter");
   assert.equal(powerDraw(s, "player"), 0, "a paused factory reserves no Power (frees the grid for others)");
   updateProduction(s, sm, 0.1);
-  assert.equal(s.players.player.resources.ore, 1000, "paused → no ore consumed");
-  assert.equal(s.players.player.resources.metals || 0, 0, "paused → no metals banked");
+  assert.equal(sm.input.ore, 1000, "paused → no ore consumed");
+  assert.equal((sm.store && sm.store.metals) || 0, 0, "paused → no metals banked");
   sm.paused = false;                       // resume
   assert.equal(powerDraw(s, "player"), 4, "resumed → it reserves its draw again");
   updateProduction(s, sm, 0.1);
-  assert.ok(s.players.player.resources.metals > 0, "resumed → it refines again");
+  assert.ok(sm.store.metals > 0, "resumed → it refines again");
 });
 
 test("updateProduction is a no-op for a building with no recipe (e.g. a Command Center)", () => {
@@ -95,58 +105,57 @@ test("updateProduction is a no-op for a building with no recipe (e.g. a Command 
   assert.deepEqual(s.players.player.resources, { ore: 500 }, "a non-factory touches nothing");
 });
 
-test("the chain runs two hops: the Smelter's metals feed the Assembly Plant, which banks alloys", () => {
-  const s = stub([reactor(), smelter(), assembler()], { ore: 1000 });
+test("each hop runs on its own larder: the Smelter banks metals, the Assembly Plant banks alloys", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } }), assembler({ input: { metals: 40 } })], {});
   const sm = [...s.buildings.values()].find(b => b.type === "smelter");
   const as = [...s.buildings.values()].find(b => b.type === "assembler");
   for (let i = 0; i < 100; i++) { updateProduction(s, sm, 0.1); updateProduction(s, as, 0.1); }
-  const res = s.players.player.resources;
-  assert.ok(res.alloys > 0, "alloys manufactured from ore, two hops down the chain");
-  assert.ok(res.ore < 1000, "raw ore consumed to make them");
-  assert.ok(res.metals >= 0, "metals is a real intermediate, never negative");
+  assert.ok(sm.store.metals > 0, "the Smelter banked metals from its ore larder");
+  assert.ok(as.store.alloys > 0, "the Assembly Plant banked alloys from its metals larder");
+  assert.ok(as.input.metals < 40, "…consuming the metals workers carried into its larder");
 });
 
-test("production is deterministic — identical setups produce identical stockpiles", () => {
+test("production is deterministic — identical setups fill identical buffers", () => {
   const run = () => {
-    const s = stub([reactor(), smelter(), assembler()], { ore: 500 });
+    const s = stub([reactor(), smelter({ input: { ore: 500 } }), assembler({ input: { metals: 200 } })], {});
     const bs = [...s.buildings.values()];
     for (let i = 0; i < 200; i++) for (const b of bs) updateProduction(s, b, 0.1);
-    return s.players.player.resources;
+    return bs.map(b => ({ store: { ...b.store }, input: { ...b.input } }));
   };
   assert.deepEqual(run(), run());
 });
 
-test("end-to-end: a built chain refines through the real Odyssey tick, and the alloys sell for credits", () => {
+test("end-to-end: workers supply a built chain and haul its goods, and the alloys sell for credits", () => {
   const g = createGalaxy({ seed: 3 });
   const s = activeState(g);
   for (const u of [...s.units.values()]) if (u.type === "colonyship") deployColonyShip(s, u.id);   // deploy start ships → CCs
   const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
-  // Plant the whole chain, completed, next to the capital (added last, so the
-  // Smelter ticks before the Assembly Plant → metals are there to alloy same tick).
+  // Plant the whole chain, completed, next to the capital.
   for (const [type, dx] of [["reactor", 40], ["smelter", 74], ["assembler", 108]]) {
     const b = makeBuilding(type, "player", cc.x + dx, cc.y + 40);
     s.buildings.set(b.id, b);
   }
-  s.players.player.resources.ore = 5000;                 // plenty of feedstock
-  for (let i = 0; i < 80; i++) stepGalaxy(g, 0.1);        // ~8s of the REAL sim (updateProduction is wired in sim.js)
+  s.players.player.resources.ore = 5000;                 // plenty of feedstock in the treasury for workers to supply
+  for (let i = 0; i < 8; i++) { const w = makeUnit("worker", "player", cc.x + 20, cc.y + 20); s.units.set(w.id, w); }  // hands to run the logistics
+  // The chain now needs WORKERS: supply ore→smelter, haul metals→CC, supply metals→assembler, haul alloys→CC.
+  for (let i = 0; i < 5000 && (s.players.player.resources.alloys || 0) <= 0; i++) stepGalaxy(g, 0.1);
 
-  assert.ok((s.players.player.resources.alloys || 0) > 0, "the Assembly Plant manufactured alloys through the live tick");
+  assert.ok((s.players.player.resources.alloys || 0) > 0, "workers fed the chain and hauled the alloys back to the treasury");
   const creditsBefore = g.credits;
-  const proceeds = sell(g, s, "alloys", 1000);           // offload everything the chain made
+  const proceeds = sell(g, s, "alloys", 1);              // offload some of what the chain made
   assert.ok(proceeds > 0, "refined alloys sell for real credits — the payoff");
   assert.equal(g.credits, creditsBefore + proceeds, "credits banked the sale");
 });
 
 test("a researched passive tech lifts production — Heavy Alloys yields ~40% more from the same ore", () => {
-  const plain = stub([reactor(), smelter()], { ore: 1000 });
-  const teched = stub([reactor(), smelter()], { ore: 1000 });
+  const plain = stub([reactor(), smelter({ input: { ore: 1000 } })], {});
+  const teched = stub([reactor(), smelter({ input: { ore: 1000 } })], {});
   teched.players.player.upgrades = { heavyalloys: true };
   const sm1 = [...plain.buildings.values()].find(b => b.type === "smelter");
   const sm2 = [...teched.buildings.values()].find(b => b.type === "smelter");
   updateProduction(plain, sm1, 0.1);
   updateProduction(teched, sm2, 0.1);
-  const m1 = plain.players.player.resources.metals, m2 = teched.players.player.resources.metals;
-  assert.ok(near(m2, m1 * 1.4), "Heavy Alloys yields 40% more metals per batch");
+  assert.ok(near(sm2.store.metals, sm1.store.metals * 1.4), "Heavy Alloys yields 40% more metals per batch");
 });
 
 test("planetIndustryScale scales factory speed by a world's industry rating, clamped [0.5, 2]", () => {
@@ -162,10 +171,10 @@ test("a high-industry world out-produces a low-industry one over identical ticks
     const s = createGameState({ planetId, endless: true });
     const reactor = makeBuilding("reactor", "player", 600, 480);
     const smelter = makeBuilding("smelter", "player", 660, 520);
+    smelter.input = { ore: 100000 };
     s.buildings.set(reactor.id, reactor); s.buildings.set(smelter.id, smelter);
-    s.players.player.resources.ore = 100000;
     for (let i = 0; i < 50; i++) updateProduction(s, smelter, 0.1);
-    return s.players.player.resources.metals;
+    return storeTotal(smelter);
   };
   assert.ok(near(mk("forge"), mk("vesper") * 2), "Forge's factories (industry 10) run twice as fast as Vesper's (industry 5)");
 });
