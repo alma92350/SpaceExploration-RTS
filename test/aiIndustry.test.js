@@ -84,3 +84,28 @@ test("a skirmish AI builds no Reactor and electrifies nothing (byte-identical sh
   const industry = [...s.buildings.values()].filter(b => b.owner === "ai" && (b.type === "reactor" || b.electrified));
   assert.equal(industry.length, 0, "no reactors, no electrification in a skirmish");
 });
+
+// Phase 3 — a patient developer AI climbs the factory chain and researches the tech tree.
+test("a developer AI builds the factory chain and researches (Smelter → Datacenter → Assembler)", () => {
+  const s = aiBase("ferros");   // Economist archetype → wantsRefinery, so it develops industry
+  s.players.ai.resources.crystals = 3000;      // fund the research (crystals) and the deeper recipes
+  s.players.ai.resources.radioactives = 3000;
+  for (let i = 0; i < 1200; i++) tick(s, 0.2);   // ~240s: reach the Assembler via Metallurgy
+  const built = new Set([...s.buildings.values()].filter(b => b.owner === "ai" && !b.constructing).map(b => b.type));
+  assert.ok(built.has("smelter"), "the AI raised a Smelter (ore → metals)");
+  assert.ok(built.has("datacenter"), "…and a Datacenter to research");
+  assert.ok(s.players.ai.upgrades.metallurgy, "…researched Metallurgy");
+  assert.ok(built.has("assembler"), "…and climbed to the Assembler once Metallurgy unlocked it");
+  assert.ok((s.players.ai.resources.metals || 0) > 0, "the chain is producing — metals in the treasury");
+  const reactors = [...s.buildings.values()].filter(b => b.owner === "ai" && b.type === "reactor").length;
+  assert.ok(reactors >= 1 && reactors <= 5, `power scales sanely, no over-build (${reactors} reactors)`);
+});
+
+// A Rusher stays lean: it electrifies (Phase 2, universal) but never sinks ore into the deep chain.
+test("a Rusher AI electrifies but skips the deep factory chain (temperament preserved)", () => {
+  const s = aiBase("korrath");   // Rusher archetype → no wantsRefinery
+  s.players.ai.resources.crystals = 3000; s.players.ai.resources.radioactives = 3000;
+  for (let i = 0; i < 1000; i++) tick(s, 0.2);
+  const built = new Set([...s.buildings.values()].filter(b => b.owner === "ai" && !b.constructing).map(b => b.type));
+  assert.ok(!built.has("smelter") && !built.has("datacenter"), "a Rusher builds no factory chain");
+});
