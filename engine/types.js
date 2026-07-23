@@ -85,6 +85,7 @@
  * @property {number} [_gi]           transient broad-phase index, re-stamped each tick (grid.js)
  * @property {string|null} [focusId]  AI focus-fire target (ai.js / combat.js)
  * @property {boolean} [hold]         hold-stance flag (combat.js)
+ * @property {boolean} [autoRepair]   a Mender set to roam and mend damaged friendlies on its own (engine/sim.js)
  * @property {string|null} [targetId] aim target (combat.js / render.js)
  * @property {Object.<string, number>} [freight]  a freighter's player-managed cargo hold, commodity → qty (engine/galaxy.js)
  */

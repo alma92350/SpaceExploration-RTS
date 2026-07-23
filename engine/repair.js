@@ -19,12 +19,23 @@
 
 import { UNITS } from "./entities.js";
 import { queryNeighbors } from "./grid.js";
+import { onPowerGrid } from "./industry.js";
+
+const OFFGRID_HEAL = 0.3;   // an Odyssey Mender off the powered grid limps on reserves at this fraction
+
+// A Mender recharges from power stations: on an Odyssey world it heals at full rate only while it's
+// on the powered grid (near an active Reactor/Generator — engine/industry.js), and drops to reserves
+// off-grid. A skirmish has no power economy, so its Menders always heal at full rate (unchanged).
+function menderHealScale(state, mender) {
+  if (!state.endless) return 1;
+  return onPowerGrid(state, mender.owner, mender.x, mender.y) ? 1 : OFFGRID_HEAL;
+}
 
 export function updateRepair(state, dt) {
   for (const mender of state.units.values()) {
     const def = UNITS[mender.type];
     if (!def || def.role !== "support") continue;
-    const heal = def.repairRate * dt;
+    const heal = def.repairRate * dt * menderHealScale(state, mender);
     const range = def.repairRange;
 
     // Friendly damaged UNITS in range. Units go through the broad-phase grid

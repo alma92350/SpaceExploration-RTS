@@ -16,7 +16,7 @@ import {
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency } from "./engine/industry.js";
+import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
@@ -390,6 +390,11 @@ function renderSelectionPanel() {
     + "|" + (() => {
         const gen = sel.find(e => e.kind === "building" && e.type === "combustor" && !e.constructing);
         return gen ? `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}` : "";
+      })()
+    // Rebuild the Mender panel when its auto-repair toggle or on-grid power state flips.
+    + "|" + (() => {
+        const m = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "support");
+        return m ? `${!!m.autoRepair}:${game.galaxy ? onPowerGrid(state, m.owner, m.x, m.y) : ""}` : "";
       })();
 
   if (signature !== lastPanelSignature) {
@@ -1115,6 +1120,25 @@ function rebuildSelectionPanel(sel) {
   // Freighter (Odyssey cargo ship): a load/unload cargo panel for the first one selected.
   const freighter = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
   if (freighter) renderFreight(state, freighter);
+
+  // Mender: an auto-repair toggle (roam and mend on its own) + its Odyssey power state (it heals at
+  // full rate only on the powered grid, near a Reactor/Generator).
+  const mender = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "support");
+  if (mender) {
+    const on = !!mender.autoRepair;
+    panelEl.appendChild(makeButton(on ? "🔧 Auto-repair: ON" : "🔧 Auto-repair: OFF",
+      () => { const v = !mender.autoRepair; for (const e of sel) if (e.kind === "unit" && UNITS[e.type].role === "support") e.autoRepair = v; },
+      { tip: on ? "Stop roaming; it only mends whatever it's parked beside"
+                : "Roam to the nearest damaged building/unit and mend it automatically" }));
+    if (game.galaxy) {
+      const powered = onPowerGrid(state, mender.owner, mender.x, mender.y);
+      const row = document.createElement("div");
+      row.className = "sel-note " + (powered ? "good" : "warn");
+      row.textContent = powered ? "On the power grid — repairing at full rate"
+                                 : "Off-grid — mending slowly on reserves (move near a Reactor/Generator)";
+      panelEl.appendChild(row);
+    }
+  }
 
   const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
   if (worker && !input.building) {

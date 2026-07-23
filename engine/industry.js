@@ -88,6 +88,15 @@ export function powerEfficiency(state, owner, x, y) {
   return POWER_TIERS[POWER_TIERS.length - 1];
 }
 
+// Is (x,y) within reach of one of `owner`'s ACTIVE power sources — i.e. on the powered grid? True
+// out to the outermost finite efficiency band (range-scaled per source). Used to power a Mender's
+// repairs off the nearest station (engine/repair.js): on-grid it works at full rate, off-grid it
+// limps on reserves. False when the owner has no active source at all.
+export function onPowerGrid(state, owner, x, y) {
+  const d = bestGridDist(state, owner, x, y);
+  return Number.isFinite(d) && d <= POWER_TIERS[POWER_TIERS.length - 2].max;
+}
+
 // Burn one tick of fuel for every Combustion Generator: it draws combust.rate/sec of gas OR biomass
 // (whichever the treasury has more of) and is `powered` only while fed — paused or dry, it grants no
 // Power. Runs at tick start, before anything reads powerCap, so the grid it provides is settled for

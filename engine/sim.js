@@ -66,6 +66,7 @@ export function tick(state, dt) {
     updatePlasmaRig(state, building, dt);    // Odyssey Plasma Rig digs raw materials from the core (no-op without a rig def)
     updateResearch(state, building, dt);     // Odyssey Datacenter develops the tech tree (no-op for any other building)
     updateWonder(state, building, dt);       // Odyssey Antimatter Gate charges toward the galaxy win (no-op off a wonder)
+    if (state.endless && !state.background) updateDecay(building, dt);   // Odyssey structures wear out if not mended
     updateBuildingCombat(state, building, dt);
   }
 
@@ -183,6 +184,19 @@ function updateUnit(state, unit, dt) {
   }
 }
 
+// Odyssey structures WEAR OUT: a completed building sheds a small fraction of its max HP per second,
+// down to a floor (neglect weakens it but never razes it — combat still can). A Mender's passive
+// repair (repair.js) out-heals this easily, so keeping a mender on the base is real upkeep. Gentle
+// and deterministic; only in Odyssey (a skirmish is short and its byte-identical replay is untouched).
+const DECAY_FRAC = 0.002;   // HP shed per second as a share of maxHp
+const DECAY_FLOOR = 0.35;   // …never below this share from wear alone
+function updateDecay(building, dt) {
+  if (building.constructing) return;
+  const floor = building.maxHp * DECAY_FLOOR;
+  if (building.hp <= floor) return;
+  building.hp = Math.max(floor, building.hp - building.maxHp * DECAY_FRAC * dt);
+}
+
 // Support-role units (the Mender) carry no weapon — the actual healing is the
 // global updateRepair pass in repair.js. All this does is MOVE them, so the
 // player can position the drone: a plain move/attack-move goes to the point;
@@ -191,7 +205,9 @@ function updateUnit(state, unit, dt) {
 // pushed toward a fight to mend the units in it, and it never deals damage.
 function updateSupport(state, unit, def, dt) {
   const o = unit.order;
-  if (!o) return;
+  // Idle + AUTO-REPAIR on: roam to the nearest damaged friendly so the drone actively maintains
+  // the base/army instead of sitting still (the passive repair pass heals it once in reach).
+  if (!o) { if (unit.autoRepair) autoRepairRoam(state, unit, def, dt); return; }
   // A support escort (Mender) trails the guarded ship in formation, mending whatever's near it
   // via the global repair pass — a medic keeping station on the fleet it's protecting.
   if (o.type === "escort") {
@@ -210,4 +226,23 @@ function updateSupport(state, unit, def, dt) {
   }
   const arrived = stepToward(state, unit, tx, ty, def.speed, dt);
   if (arrived && !follow) unit.order = null;
+}
+
+// An auto-repair Mender with nothing to do walks to its nearest damaged friendly (building or unit)
+// so it's in reach when the repair pass runs. Stops just short of the target rather than stacking on
+// it. Deterministic (nearest by distance, Map order breaks ties). No-op when nothing's damaged.
+function autoRepairRoam(state, mender, def, dt) {
+  const range = def.repairRange || 100;
+  let best = null, bestD = Infinity;
+  for (const b of state.buildings.values()) {
+    if (b.owner !== mender.owner || b.constructing || b.hp >= b.maxHp) continue;
+    const d = Math.hypot(b.x - mender.x, b.y - mender.y);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  for (const u of state.units.values()) {
+    if (u === mender || u.owner !== mender.owner || u.hp <= 0 || u.hp >= u.maxHp) continue;
+    const d = Math.hypot(u.x - mender.x, u.y - mender.y);
+    if (d < bestD) { bestD = d; best = u; }
+  }
+  if (best && bestD > range * 0.7) stepToward(state, mender, best.x, best.y, def.speed, dt);
 }
