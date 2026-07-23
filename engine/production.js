@@ -94,12 +94,17 @@ export function updateProductionQueue(state, building, dt) {
   }
 }
 
-export function queueProduction(state, buildingId, unitType) {
+export function queueProduction(state, buildingId, unitType, alt = false) {
   const building = state.buildings.get(buildingId);
   if (!building || building.constructing) return false;
   const def = UNITS[unitType];
   const producable = def && BUILDINGS[building.type].produces?.includes(unitType);
   if (!producable) return false;
+  // A unit with an `altCost` (the Worker) can be trained on its alternative price — the queued job
+  // remembers which it paid so a cancel refunds the right commodity. Falls back to the base cost if
+  // this unit has no alternative.
+  const useAlt = alt && !!def.altCost;
+  const cost = useAlt ? def.altCost : def.cost;
   // An Odyssey-only unit (e.g. the Colony Ship) can never be built in a skirmish,
   // regardless of menu wiring — hard-guarantees it stays out of the byte-identical
   // skirmish path. A no-op for existing skirmish (no odysseyOnly unit is reachable).
@@ -112,7 +117,7 @@ export function queueProduction(state, buildingId, unitType) {
     return false;
   }
   const player = state.players[building.owner];
-  if (!canAfford(player.resources, def.cost)) return false;
+  if (!canAfford(player.resources, cost)) return false;
   // Supply check sits AFTER canAfford (so being broke stays the silent
   // today-UX, and the supply beep only fires when supply is the real
   // blocker) and BEFORE payCost (reject before charging — nothing to
@@ -123,8 +128,8 @@ export function queueProduction(state, buildingId, unitType) {
                         x: building.x, y: building.y, owner: building.owner });
     return false;
   }
-  payCost(player.resources, def.cost);
-  building.queue.push({ unitType, progress: 0 });
+  payCost(player.resources, cost);
+  building.queue.push({ unitType, progress: 0, ...(useAlt ? { alt: true } : {}) });
   return true;
 }
 
@@ -141,7 +146,9 @@ export function cancelProduction(state, buildingId, queueIndex) {
   if (!job) return false;
   building.queue.splice(queueIndex, 1);
   const player = state.players[building.owner];
-  payCost(player.resources, negate(UNITS[job.unitType].cost));
+  const def = UNITS[job.unitType];
+  const refund = (job.alt && def.altCost) ? def.altCost : def.cost;   // refund the commodity actually charged
+  payCost(player.resources, negate(refund));
   return true;
 }
 

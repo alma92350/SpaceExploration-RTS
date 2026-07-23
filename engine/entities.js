@@ -400,7 +400,11 @@ export function committedDoctrine(state, owner) {
 export const UNITS = {
   worker: {
     id: "worker", name: "Worker", hp: 40, radius: 6, speed: 60,
-    cost: { ore: 50 }, buildTime: 8, supplyCost: 1,
+    cost: { ore: 50 }, altCost: { biomass: 50 }, buildTime: 8, supplyCost: 1,
+    // `altCost` is an EITHER/OR price: a worker can be trained on ore (the default) or on
+    // biomass instead (engine/production.js queueProduction's `alt` flag) — so a crystal/ore-poor,
+    // biomass-rich claim can still grow its workforce. The queued job remembers which it paid, so a
+    // cancel refunds the right commodity.
     role: "worker", gatherRate: 10, cargoCap: 10,
     // Saturation: the first `minerSoftCap` workers on a deposit mine at full
     // rate; each one past that pulls only `minerFalloff` of a full share (see

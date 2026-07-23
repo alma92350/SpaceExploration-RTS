@@ -281,6 +281,7 @@ function availabilitySignature() {
   const res = state.players.player.resources;
   const costs = [
     ...Object.values(UNITS).map(u => u.cost),
+    ...Object.values(UNITS).filter(u => u.altCost).map(u => u.altCost),   // e.g. the Worker's biomass price
     ...Object.values(BUILDINGS).map(b => b.cost),
     ...Object.values(UPGRADES).map(u => u.cost),
   ];
@@ -764,6 +765,14 @@ function rebuildSelectionPanel(sel) {
       panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
         () => queueProduction(state, cc.id, t),
         { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+      // A unit with an alternative price (the Worker, buildable on biomass instead of ore) gets a
+      // second button paying that cost — so a biomass-rich, ore-poor claim can still grow its labour.
+      if (def.altCost) {
+        panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.altCost)})`,
+          () => queueProduction(state, cc.id, t, true),
+          { cost: def.altCost, tip: `${def.name} paid in ${costText(def.altCost)} instead of ore`, locked,
+            lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+      }
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital

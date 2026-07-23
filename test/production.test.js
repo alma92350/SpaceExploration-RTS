@@ -17,6 +17,24 @@ function withFoundry(state, owner = "player") {
   return f;
 }
 
+test("a Worker can be trained on biomass instead of ore, and a cancel refunds the right commodity", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const cc = commandCenterOf(state, "player");
+  const res = state.players.player.resources;
+  res.ore = 0; res.biomass = 200;                    // ore-poor, biomass-rich claim
+  assert.equal(queueProduction(state, cc.id, "worker"), false, "no ore → the ore-priced Worker is unaffordable");
+
+  const biomassBefore = res.biomass;
+  assert.equal(queueProduction(state, cc.id, "worker", true), true, "…but the biomass-priced Worker queues");
+  assert.equal(res.biomass, biomassBefore - UNITS.worker.altCost.biomass, "biomass was charged, not ore");
+  assert.equal(res.ore, 0, "ore untouched");
+  assert.equal(cc.queue[0].alt, true, "the job remembers it paid the alternative price");
+
+  cancelProduction(state, cc.id, 0);
+  assert.equal(res.biomass, biomassBefore, "cancelling refunds biomass (the commodity actually charged)");
+  assert.equal(res.ore, 0, "…and not ore");
+});
+
 test("queueProduction pays the cost and enqueues the job", () => {
   const state = createGameState({ planetId: "ferros" });
   const cc = commandCenterOf(state, "player");
