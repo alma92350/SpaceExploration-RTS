@@ -287,6 +287,7 @@ function galaxyPayload(galaxy) {
     lastReliefTime: galaxy.lastReliefTime ?? null,   // when the last relief ship dropped, on that same clock
     pacified: [...(galaxy.pacified || [])], wonBy: galaxy.wonBy ?? null,   // conquest progress (additive; old saves default to none)
     reached: [...(galaxy.reached || [])],                                  // progress milestones already celebrated — so a reload doesn't replay their fireworks
+    discovered: [...(galaxy.discovered || [])],                            // living galaxy: worlds the player has REACHED (starmap "explored" + free return-jump)
     nextEntityId: peekEntityId(),                 // the ONE global entity counter, saved once
     planets: [...galaxy.planets.values()].map(state => ({
       ...serPlanet(state),
@@ -334,6 +335,10 @@ export function deserializeGalaxy(input) {
     colonyNotes: new Map(),   // transient UI bookkeeping — re-derived, never persisted
     pacified: new Set(save.pacified || []), pacifyNotes: [], wonBy: save.wonBy ?? null,
     reached: new Set(save.reached || []), milestones: [],   // celebrated milestones persist; the firework queue is transient
+    // Worlds the player has reached. An OLD save predates the field AND the living galaxy, so it only
+    // instantiated worlds the player had actually visited — recover `discovered` as exactly that set
+    // (the planet ids present in the save), plus the active world. A NEW save carries the real set.
+    discovered: new Set(save.discovered || [save.activeId, ...save.planets.map(P => P.planetId)]),
   };
   let maxId = 0;
   for (const P of save.planets) {

@@ -34,7 +34,8 @@ function addSpaceport(state) {
 test("createGalaxy lands the player on one world with a colony ship (no CC yet)", () => {
   const g = createGalaxy({ seed: 7, difficulty: "medium" });
   assert.ok(ODYSSEY_WORLDS.includes(g.activeId), "the start world is one of the roster");
-  assert.equal(g.planets.size, 1, "Phase 1: exactly one planet");
+  assert.equal(g.discovered.size, 1, "the player has REACHED exactly one world (the start seat)");
+  assert.equal(g.planets.size, ODYSSEY_WORLDS.length, "…but the living galaxy simulates every world in the background from the start");
   assert.ok(g.credits > 0, "you start with a credit stipend to fund the first jump");
   const s = activeState(g);
   assert.equal(s.endless, true, "the active planet is an endless (Odyssey) state");
@@ -339,10 +340,10 @@ test("the galaxy jump is deterministic", () => {
 test("a jump is free to a world you already hold and costs distance-scaled fuel to reach a new one", () => {
   const g = createGalaxy({ seed: 33 });
   settle(activeState(g));
-  const newWorld = g.worlds.find(w => !g.planets.has(w));
+  const newWorld = g.worlds.find(w => !g.discovered.has(w));   // a world the player hasn't reached (though it simulates)
   assert.ok(jumpCost(g, newWorld) > 0, "reaching a never-visited world costs fuel");
-  addPlanet(g, newWorld, { unsettled: true });                 // now it's a world you've been to
-  assert.equal(jumpCost(g, newWorld), 0, "returning to a world you hold is free");
+  g.discovered.add(newWorld);                                  // now it's a world you've been to
+  assert.equal(jumpCost(g, newWorld), 0, "returning to a world you've reached is free");
   assert.equal(jumpCost(g, g.activeId), 0, "your current seat is free too");
 });
 
@@ -350,7 +351,7 @@ test("new-world jump fuel scales with frontier distance", () => {
   const g = createGalaxy({ seed: 33 });
   // Rank the unvisited worlds by |x - activeX|; the farthest must cost strictly more fuel
   // than the nearest — the distance sink, not a flat fee.
-  const costs = g.worlds.filter(w => !g.planets.has(w)).map(w => jumpCost(g, w));
+  const costs = g.worlds.filter(w => !g.discovered.has(w)).map(w => jumpCost(g, w));
   assert.ok(costs.length >= 2, "several worlds to reach");
   assert.ok(Math.max(...costs) > Math.min(...costs), "a farther world costs more fuel than a nearer one");
   assert.ok(Math.min(...costs) > 0, "every new world still costs something");
@@ -464,10 +465,10 @@ test("canJumpTo: a Spaceport here reaches anywhere; without one, only a world yo
   const g = createGalaxy({ seed: 61 });
   const home = settle(activeState(g));                       // home: a Command Center (a base we hold)
   const homeId = g.activeId;
-  // A visited world where we hold NOTHING (contested), and a never-seen world.
+  // A world we hold NOTHING on (it simulates, but no base of ours), and another the same — neither
+  // is a fallback without a Spaceport. (Every world is instantiated now, so both are just unheld ids.)
   const contestedId = g.worlds.find(w => w !== homeId);
-  addPlanet(g, contestedId, { unsettled: true });
-  const freshId = g.worlds.find(w => !g.planets.has(w));
+  const freshId = g.worlds.find(w => w !== homeId && w !== contestedId);
 
   // No Spaceport here yet: we can fall back to our base, but not to a contested world or a new one.
   assert.equal(canJumpTo(g, homeId), false, "the world we're on is never a jump target");

@@ -71,8 +71,17 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     reached: new Set(),         // progress milestones already celebrated (see checkGalaxyProgress) — persisted so a reload doesn't re-fire them
     milestones: [],             // freshly-reached milestones awaiting a UI firework (transient, drained by boot.js)
     wonBy: null,                // legacy: no Odyssey win any more (play-forever) — kept null for save/skirmish compat
+    discovered: new Set([startId]),   // LIVING GALAXY: worlds the player has actually reached (starmap "explored" + free return-jump). Every world SIMULATES from the start, but the player only SEES a world once they've been there.
   };
   addPlanet(galaxy, startId);
+  // LIVING GALAXY: every other world already exists and simulates in the background from turn one —
+  // each with its own AI faction founding a base and developing (engine/ai.js aiIndustry), its
+  // economy growing and its diplomacy drifting — so the galaxy is alive before you ever visit, and
+  // (checkExpansion) factions spread across it over time. Added `unsettled` (no player presence until
+  // you jump in). The BG scheduler (stepGalaxy) already spreads their ticks round-robin, and a probe
+  // puts the whole 11-world galaxy at well under 1 ms/frame. Deterministic: ODYSSEY_WORLDS is a fixed
+  // order and each world seeds from its own planetSeed, so two same-seed galaxies are byte-identical.
+  for (const id of ODYSSEY_WORLDS) if (id !== startId) addPlanet(galaxy, id, { unsettled: true });
   return galaxy;
 }
 
@@ -182,7 +191,10 @@ export function sweepColonies(galaxy, dt = 0) {
     if (rec.hadColony && buildings === 0 && !rec.colonyLost) {
       rec.colonyLost = true;
       out.push({ type: "lost", planetId: id });
-    } else if (!rec.colonyLost) {
+    } else if (rec.hadColony && !rec.colonyLost) {
+      // Only worlds the player actually colonised raise hostile/attacked alerts — the living galaxy
+      // now background-simulates every world (its AI can drift to war on its own), but a neighbour
+      // turning on a world you've never set foot on isn't your problem and mustn't ping you.
       // A background world's diplomacy keeps drifting (diplomacy.js CREEP_RATE), so a
       // neighbour eventually declares war — but its neighbourHostile event has no other
       // consumer here and used to be silently drained, so the FIRST warning was the colony
@@ -352,15 +364,21 @@ export function checkDomination(galaxy) {
 // seat / a colony you hold / unexplored) and, for worlds you've been to, the
 // neighbour's stance. Plus the visited count and credits.
 export function galaxyStatus(galaxy) {
+  // Every world simulates, but the player only SEES one they've REACHED (`discovered`). An
+  // undiscovered world reads "unexplored" and hides its neighbour's stance, exactly as before the
+  // living galaxy — the difference is now invisible until you visit. Old saves default to the
+  // instantiated set (which for them was precisely the visited worlds).
+  const discovered = galaxy.discovered || new Set(galaxy.planets.keys());
   return {
     credits: galaxy.credits,
     activeId: galaxy.activeId,
-    visited: galaxy.planets.size,
+    visited: discovered.size,
     total: galaxy.worlds.length,
     pacified: galaxy.pacified ? galaxy.pacified.size : 0,   // Domination progress: worlds conquered
     dominationTarget: DOMINATION_TARGET,
     worlds: galaxy.worlds.map(id => {
-      const s = galaxy.planets.get(id);
+      const seen = discovered.has(id);
+      const s = seen ? galaxy.planets.get(id) : null;
       let status = "unexplored", income = 0;
       const pacified = !!(galaxy.pacified && galaxy.pacified.has(id));
       if (id === galaxy.activeId) status = "seat";
@@ -491,7 +509,12 @@ const planetX = id => PLANETS.find(p => p.id === id)?.x ?? 0;
 // hop is close to the base fee, settling a distant world is a real, growing credit sink and a
 // strategic choice — so exploration spend isn't the old flat, quickly-capped ~4,000 lifetime.
 export function jumpCost(galaxy, destId) {
-  if (galaxy.planets.has(destId)) return 0;
+  // Free to a world you've already REACHED (a colony you're returning to, reinforcing, or
+  // re-settling). Since the living galaxy instantiates every world up front, "reached" is the
+  // player-facing `discovered` set, NOT merely "the state object exists" — else every jump would be
+  // free. Old saves (no discovered set) fall back to planets.has, which for them meant the same thing.
+  const known = galaxy.discovered ? galaxy.discovered.has(destId) : galaxy.planets.has(destId);
+  if (known || playerFoothold(galaxy.planets.get(destId))) return 0;   // reached before, or a base you still hold → free
   const dist = Math.abs(planetX(destId) - planetX(galaxy.activeId));
   return Math.round(JUMP_COST * (0.8 + dist / 18));   // ~340 next-door … ~720 across the map
 }
@@ -676,6 +699,7 @@ export function jumpCapital(galaxy, destId) {
   from.background = true;    // the world you left keeps evolving on its own
   dest.background = false;   // the destination is now your active seat
   galaxy.activeId = destId;
+  (galaxy.discovered || (galaxy.discovered = new Set())).add(destId);   // now REACHED — a free return-jump, and it shows on the starmap
   updateFog(dest, dest.fog, "player");
   updateFog(dest, dest.fogAI, "ai");
   updateFog(from, from.fog, "player");

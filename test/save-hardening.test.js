@@ -109,8 +109,11 @@ test("deserializeGalaxy throws on structural nonsense BEFORE the caller tears do
   assert.throws(() => deserializeGalaxy({ v: 1, worlds: ["ferros"], planets: [] }), /no planets/);
 
   const save = JSON.parse(JSON.stringify(serializeGalaxy(settledGalaxy(3))));
-  const orphanWorld = ODYSSEY_WORLDS.find(w => !save.planets.some(p => p.planetId === w));
-  save.activeId = orphanWorld;                          // a real world id, but no planet payload for it
+  // The living galaxy instantiates every world, so manufacture an orphan: drop one world's payload,
+  // then point activeId at it — a real world id with no planet payload.
+  const orphanWorld = save.planets[save.planets.length - 1].planetId;
+  save.planets = save.planets.filter(p => p.planetId !== orphanWorld);
+  save.activeId = orphanWorld;
   assert.throws(() => deserializeGalaxy(save), /no active planet/,
     "an activeId with no planet fails at load, not after boot has torn the session down");
 });
