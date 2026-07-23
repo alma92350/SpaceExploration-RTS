@@ -16,8 +16,8 @@ import {
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid } from "./engine/industry.js";
-import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf } from "./engine/entities.js";
+import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
+import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
@@ -395,6 +395,13 @@ function renderSelectionPanel() {
     + "|" + (() => {
         const m = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "support");
         return m ? `${!!m.autoRepair}:${game.galaxy ? onPowerGrid(state, m.owner, m.x, m.y) : ""}` : "";
+      })()
+    // Rebuild the electrify panel when a selected building's electrified flag flips or its live boost
+    // band shifts (the grid gaining/losing Power), so the toggle label + gain readout stay current.
+    + "|" + (() => {
+        const e = game.galaxy && sel.find(x => x.kind === "building" && x.owner === "player"
+          && !x.constructing && isElectrifiable(x.type));
+        return e ? `${!!e.electrified}:${Math.round(electrifyBoost(state, e.owner) * 100)}` : "";
       })();
 
   if (signature !== lastPanelSignature) {
@@ -1028,6 +1035,35 @@ function rebuildSelectionPanel(sel) {
     row.textContent = `Intake buffer ${Math.round(have)}/${cap} (${pct}%)`
       + (full ? " — FULL: gatherers reroute until it's hauled off" : " — workers haul it to a Command Center");
     panelEl.appendChild(row);
+  }
+
+  // Electrify (Odyssey): a non-power building — Command Center, Barracks, Star Dock or Habitat — can
+  // be wired into the power grid to run 30% better (produce faster; a Habitat houses 30% more), at the
+  // cost of a steady grid draw. The bonus scales with the grid throttle, so it's only worth it once you
+  // have Power to spare. Player + Odyssey only (game.galaxy), so a skirmish never surfaces the toggle.
+  const elec = game.galaxy && sel.find(e => e.kind === "building" && e.owner === "player"
+    && !e.constructing && isElectrifiable(e.type));
+  if (elec) {
+    const on = !!elec.electrified;
+    const isHab = !!BUILDINGS[elec.type].supplyGrants && !BUILDINGS[elec.type].produces;
+    const what = isHab ? "houses 30% more" : "trains 30% faster";
+    panelEl.appendChild(makeButton(on ? "⚡ Electrified: ON" : "⚡ Electrify: OFF",
+      () => {
+        const v = !elec.electrified;
+        for (const e of sel) if (e.kind === "building" && e.owner === "player" && isElectrifiable(e.type)) e.electrified = v;
+      },
+      { tip: on ? `Unwire it — stops drawing ⚡${ELECTRIFY_POWER} from the grid`
+                : `Wire it into the grid: ${what} while powered, but draws ⚡${ELECTRIFY_POWER} (competes with your factories)` }));
+    if (on) {
+      const gain = Math.round(electrifyBoost(state, elec.owner) * 100);   // live bonus after the grid throttle
+      const eff = powerEfficiency(state, elec.owner, elec.x, elec.y);
+      const row = document.createElement("div");
+      row.className = "sel-note " + (gain >= 20 ? "good" : gain > 0 ? "warn" : "bad");
+      row.textContent = gain > 0
+        ? `Wired in (${eff.label}) — currently +${gain}% (build more Reactors to reach +30%)`
+        : "Wired in but the grid has no Power to spare — build a Reactor/Generator for the bonus";
+      panelEl.appendChild(row);
+    }
   }
 
   // Spaceport (Odyssey): the interplanetary jump panel. Relocate the capital +

@@ -113,6 +113,7 @@
  * @property {number} [tier]          Spaceport upgrade tier (engine/galaxy.js)
  * @property {Array<{techId:string, progress:number}>} [researchQueue]  Datacenter (engine/techtree.js)
  * @property {boolean} [paused]       player-paused factory / rig (frees its Power)
+ * @property {boolean} [electrified]  Odyssey: a non-power building wired into the grid for +30% (engine/industry.js)
  * @property {number} [charge]        wonder charge 0..1 (engine/wonder.js)
  * @property {number} [digProgress]   Plasma Rig dig-cycle progress (engine/rig.js)
  * @property {number} [digCount]      Plasma Rig completed digs (drives the deterministic yield roll)

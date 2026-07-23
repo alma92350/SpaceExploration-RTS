@@ -4,9 +4,10 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult, isElectrifiable } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
+import { electrifyBoost } from "./industry.js";
 import { sideMod } from "./map.js";
 
 // How close a worker has to stand to actually count as building, not just
@@ -73,7 +74,12 @@ export function updateProductionQueue(state, building, dt) {
   // production-speed upgrade compounds here too.
   const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult")
     * upgradeMult(state.players?.[building.owner]?.upgrades, "produceTimeMult");
-  job.progress += dt / bt;
+  // Electrification (Odyssey): a producer wired into the power grid trains 30% faster — the boost
+  // tapers with the grid throttle (engine/industry.js). Guarded on the flag so the skirmish path,
+  // which never electrifies, advances the queue byte-identically (boost stays 0, no branch taken).
+  const boost = (building.electrified && isElectrifiable(building.type))
+    ? electrifyBoost(state, building.owner) : 0;
+  job.progress += dt * (1 + boost) / bt;
   if (job.progress >= 1) {
     building.queue.shift();
     const spawn = { x: building.x + building.radius + 10, y: building.y + building.radius + 10 };

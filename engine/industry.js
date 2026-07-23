@@ -23,9 +23,21 @@
 
 "use strict";
 
-import { BUILDINGS, storeRoom } from "./entities.js";
+import { BUILDINGS, storeRoom, isElectrifiable } from "./entities.js";
 import { RECIPES, PLANETS } from "../data.js";
 import { techMult } from "./techtree.js";
+
+// ELECTRIFICATION (Odyssey) — a non-power building (Command Center, Barracks, Star Dock, Habitat)
+// can be wired into the grid to run 30% better: a producer trains faster, a Habitat houses more.
+// The upgrade isn't free — an electrified building adds a steady ELECTRIFY_POWER draw to the grid
+// (scaled by grid efficiency like any consumer, so a far-flung one loads it more), competing with
+// the factories. And the payoff scales with how well the grid can actually feed the load: the boost
+// is ELECTRIFY_BOOST × the player-wide power throttle, so it's the full +30% only while there's Power to
+// spare and 0 with no grid at all — lighting up the whole base without building Reactors to match
+// just throttles everything. Player-only in practice (the flag is set solely by the Odyssey HUD), so
+// the skirmish path never sets `electrified` and these helpers are inert there → replay untouched.
+export const ELECTRIFY_POWER = 4;   // grid draw per electrified building (grid-efficiency scaled, like a factory)
+const ELECTRIFY_BOOST = 0.3;        // the headline "+30% with power"
 
 // A world's `industry` rating (data.js PLANETS, 1..10) scales how fast its
 // factories run — the RATE twin of techtree.js researchTimeScale (which scales
@@ -158,6 +170,9 @@ export function powerDraw(state, owner) {
     // A Plasma Rig's arc is a heavy draw too (engine/rig.js) — so it competes with the factories
     // for Power and its digs slow when the grid is short. A paused rig frees its reserved Power.
     else if (def.rig && !b.paused) draw += (def.rig.power || 0) * eff;
+    // An electrified non-power building (Odyssey) adds its own modest, grid-scaled load — the
+    // upgrade's running cost, so wiring up the whole base actually competes for Reactor Power.
+    else if (b.electrified && isElectrifiable(b.type)) draw += ELECTRIFY_POWER * eff;
   }
   return draw;
 }
@@ -170,6 +185,17 @@ export function powerThrottle(state, owner) {
   const cap = powerCap(state, owner);
   if (cap <= 0) return 0;
   return Math.min(1, cap / draw);
+}
+
+// The bonus an electrified building earns right now: the headline +30%, scaled by the same
+// player-wide power throttle the factories feel — so it's the full 0.30 only while the grid can
+// carry its load, tapers as the grid runs short, and is 0 with no active source at all (throttle 0).
+// A single owner-wide number (order-independent → deterministic). Callers multiply the thing being
+// boosted by (1 + electrifyBoost): production SPEED (engine/production.js) and a Habitat's supply
+// grant (engine/supply.js). Only ever invoked for a building whose `electrified` flag is set — which
+// the skirmish path never sets — so the byte-identical replay never reaches this.
+export function electrifyBoost(state, owner) {
+  return ELECTRIFY_BOOST * powerThrottle(state, owner);
 }
 
 // Advance one factory's recipe by dt: draw its inputs from the factory's LOCAL input

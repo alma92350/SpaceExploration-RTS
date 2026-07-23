@@ -268,6 +268,21 @@ export function isGatherDropOff(type) {
   return !!(def && (def.isCommandCenter || (def.dropOff && !def.recipe)));
 }
 
+// Whether a building type can be ELECTRIFIED (Odyssey): wired into the power grid to run 30%
+// better — a producer (Command Center / Barracks / Star Dock) trains faster, a Habitat houses
+// more (engine/industry.js electrifyBoost; production.js, supply.js apply it). Eligible = a
+// building that doesn't ALREADY live on the power economy (no recipe to run, no Power to grant,
+// no rig/wonder draw) and has something worth boosting (`produces` a unit, or `supplyGrants`).
+// So the factories (already power-hungry), Reactors/Generators (they GRANT power), turrets and
+// pure drop-offs are all excluded. Pure def predicate — deterministic, shared by the draw math,
+// the boost application, and the HUD toggle.
+export function isElectrifiable(type) {
+  const def = BUILDINGS[type];
+  if (!def) return false;
+  if (def.recipe || def.energyGrants || def.rig || def.wonder || def.combust) return false;
+  return !!(def.produces || def.supplyGrants);
+}
+
 // ---- Finite storage (Odyssey logistics) ---------------------------------------
 // A producing building banks its OUTPUT into a finite `building.store` buffer, and a
 // factory draws its INPUTS from a finite `building.input` buffer — both commodity→qty
