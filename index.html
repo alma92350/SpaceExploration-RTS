@@ -8,22 +8,29 @@
 </head>
 <body>
   <div id="app">
+    <!-- Two FIXED rows so the control buttons never jump: the info row (line 1) stays a single line
+         (the resource readout scrolls sideways rather than wrapping), and the controls row (line 2)
+         is pinned below it regardless of how long the commodity list gets. -->
     <header id="topbar">
-      <span class="title">STELLAR FRONTIER: RTS</span>
-      <span id="appVersion" class="app-version" title="App version"></span>
-      <div id="resources" class="resources"></div>
-      <div id="matchClock" class="clock">0:00</div>
-      <button id="idleWorkers" class="idle-workers hidden" title="Idle workers — click to select the next one (`)"></button>
-      <span id="factionChip" class="faction-chip hidden" title="Your faction vs the opponent's — each side's passive trait bonus."></span>
-      <span id="seedChip" class="seed-chip hidden" title="Match seed — click to copy. Enter it on the setup screen to replay this map."></span>
-      <input id="volume" class="volume" type="range" min="0" max="100" value="90" title="Sound volume" aria-label="Sound volume">
-      <button id="muteBtn" class="mute-btn" title="Mute sound" aria-pressed="false">🔊</button>
-      <button id="pauseBtn" class="chip-btn hidden" title="Pause / resume (P)">⏸ Pause</button>
-      <button id="starmapBtn" class="chip-btn hidden" title="Galaxy map (M)">🗺 Galaxy</button>
-      <button id="saveBtn" class="chip-btn" title="Save game to a file (download). Your progress also autosaves for Continue.">⭳ Save</button>
-      <button id="loadBtn" class="chip-btn" title="Load a game from a file">⭱ Load</button>
-      <button id="homeBtn" class="chip-btn" title="Return to the menu">⌂ Home</button>
-      <button id="helpBtn" class="help-btn" title="Controls &amp; help (F1)" aria-label="Help">?</button>
+      <div class="topbar-row topbar-info">
+        <span class="title">STELLAR FRONTIER: RTS</span>
+        <span id="appVersion" class="app-version" title="App version"></span>
+        <div id="resources" class="resources"></div>
+        <div id="matchClock" class="clock">0:00</div>
+        <button id="idleWorkers" class="idle-workers hidden" title="Idle workers — click to select the next one (`)"></button>
+        <span id="factionChip" class="faction-chip hidden" title="Your faction vs the opponent's — each side's passive trait bonus."></span>
+      </div>
+      <div class="topbar-row topbar-controls">
+        <span id="seedChip" class="seed-chip hidden" title="Match seed — click to copy. Enter it on the setup screen to replay this map."></span>
+        <input id="volume" class="volume" type="range" min="0" max="100" value="90" title="Sound volume" aria-label="Sound volume">
+        <button id="muteBtn" class="mute-btn" title="Mute sound" aria-pressed="false">🔊</button>
+        <button id="pauseBtn" class="chip-btn hidden" title="Pause / resume (P)">⏸ Pause</button>
+        <button id="starmapBtn" class="chip-btn hidden" title="Galaxy map (M)">🗺 Galaxy</button>
+        <button id="saveBtn" class="chip-btn" title="Save game to a file (download). Your progress also autosaves for Continue.">⭳ Save</button>
+        <button id="loadBtn" class="chip-btn" title="Load a game from a file">⭱ Load</button>
+        <button id="homeBtn" class="chip-btn" title="Return to the menu">⌂ Home</button>
+        <button id="helpBtn" class="help-btn" title="Controls &amp; help (F1)" aria-label="Help">?</button>
+      </div>
     </header>
     <main id="main">
       <div id="view">

@@ -36,19 +36,37 @@ html, body {
   height: 100%;
 }
 
+/* TWO FIXED ROWS. The topbar carries a lot (resources, clock, chips, volume, mute,
+   pause/galaxy/save/load/home/help). It used to be ONE wrapping row, so as the resource
+   readout grew or shrank the control buttons flipped between line 1 and line 2 — a jarring
+   up/down jump. Now it's a column: an INFO row (line 1) that stays a single line (the
+   resource readout scrolls sideways instead of wrapping), and a CONTROLS row (line 2) that
+   is always pinned below it, so the buttons never move. */
 #topbar {
   display: flex;
-  align-items: center;
-  /* Wrap rather than clip: the row carries a lot (resources, clock, idle/faction/
-     seed chips, volume, mute, save, load, help), so on a narrower window the
-     controls flow to a second line instead of the right-hand buttons (Save /
-     Load / Help) sliding off the edge under the app's overflow:hidden. */
-  flex-wrap: wrap;
-  gap: 8px 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   padding: 8px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
+.topbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;   /* let flex children shrink instead of forcing the row wider */
+}
+/* Line 1 never wraps — a long commodity list scrolls within the resource readout, keeping
+   the row's height constant so the controls below can't jump. Every fixed item keeps its size
+   and its text on one line; only the resource readout shrinks (and scrolls) to absorb the
+   squeeze — otherwise the title text itself would wrap to several lines and grow the row. */
+.topbar-info { flex-wrap: nowrap; }
+.topbar-info > * { flex: 0 0 auto; white-space: nowrap; }
+.topbar-info > .resources { flex: 1 1 auto; min-width: 0; }
+/* Line 2 keeps the buttons together; on a very narrow window they may wrap among themselves,
+   but they always live on their own row, never mixed in with the resources. */
+.topbar-controls { flex-wrap: wrap; }
 
 #topbar .title {
   font-weight: 700;
@@ -61,8 +79,18 @@ html, body {
   gap: 14px;
   font-size: 0.85rem;
   color: var(--muted);
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Stay on ONE line and scroll sideways when the commodity list is long, so the info row's
+     height never changes and the control row below it can't be shoved up/down. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
+.resources::-webkit-scrollbar { height: 4px; }
+.resources::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.resources > * { flex: 0 0 auto; white-space: nowrap; }   /* each readout keeps its width; the row scrolls, not wraps */
 .resources span { color: var(--text); }
 /* Supply readout warns amber at the cap, flashes red for the ~800ms after a
    supply-blocked production attempt (see main.js's supplyBlockedUntil). */
@@ -754,7 +782,8 @@ html, body { overscroll-behavior: none; }
 /* Narrow screens (phones/tablets in landscape — the natural RTS orientation):
    trim the side panel and chrome so the battlefield keeps most of the width. */
 @media (max-width: 820px) {
-  #topbar { gap: 10px; padding: 6px 10px; flex-wrap: wrap; }
+  #topbar { gap: 6px; padding: 6px 10px; }   /* still a two-row column; tighter spacing */
+  .topbar-row { gap: 8px 10px; }
   #topbar .title { font-size: 0.9rem; }
   .resources { gap: 10px; font-size: 0.78rem; }
   #view { padding: 6px; }
