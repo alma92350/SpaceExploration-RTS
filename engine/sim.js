@@ -188,7 +188,7 @@ function updateUnit(state, unit, dt) {
 // down to a floor (neglect weakens it but never razes it — combat still can). A Mender's passive
 // repair (repair.js) out-heals this easily, so keeping a mender on the base is real upkeep. Gentle
 // and deterministic; only in Odyssey (a skirmish is short and its byte-identical replay is untouched).
-const DECAY_FRAC = 0.002;   // HP shed per second as a share of maxHp
+const DECAY_FRAC = 0.0006;  // HP shed per second as a share of maxHp — a gentle, long-game wear (~18 min to the floor)
 const DECAY_FLOOR = 0.35;   // …never below this share from wear alone
 function updateDecay(building, dt) {
   if (building.constructing) return;
@@ -228,21 +228,38 @@ function updateSupport(state, unit, def, dt) {
   if (arrived && !follow) unit.order = null;
 }
 
-// An auto-repair Mender with nothing to do walks to its nearest damaged friendly (building or unit)
-// so it's in reach when the repair pass runs. Stops just short of the target rather than stacking on
-// it. Deterministic (nearest by distance, Map order breaks ties). No-op when nothing's damaged.
+// An auto-repair Mender roams to the friendly that needs it MOST. Hysteresis kills the ping-pong:
+// it only gets ATTRACTED to something worn past NEEDS_REPAIR, and once it commits it STAYS on that
+// target until it's topped past HEALED — so a full building nicked by a hair of wear can't yank the
+// drone back and forth. Priority is most-worn-first (lowest HP fraction), distance breaks ties.
+// Deterministic; no-op (drone parks) when nothing's meaningfully worn.
+const NEEDS_REPAIR = 0.85;   // only chase a friendly once it's dropped below this share of max HP
+const HEALED = 0.985;        // …and keep servicing it until it's back above this — the release point
 function autoRepairRoam(state, mender, def, dt) {
   const range = def.repairRange || 100;
-  let best = null, bestD = Infinity;
-  for (const b of state.buildings.values()) {
-    if (b.owner !== mender.owner || b.constructing || b.hp >= b.maxHp) continue;
-    const d = Math.hypot(b.x - mender.x, b.y - mender.y);
-    if (d < bestD) { bestD = d; best = b; }
+  const ownFriendly = e => e && e.owner === mender.owner && e.hp > 0 && !e.constructing;
+
+  // Keep the current target while it still needs work (hysteresis) — don't drop it for a
+  // marginally-worse one, and don't re-grab a just-topped-up one on its first hair of decay.
+  let target = mender.repairTargetId
+    ? (state.buildings.get(mender.repairTargetId) || state.units.get(mender.repairTargetId))
+    : null;
+  if (!(ownFriendly(target) && target !== mender && target.hp < target.maxHp * HEALED)) target = null;
+
+  if (!target) {   // pick the MOST worn friendly below the attract threshold
+    let bestFrac = NEEDS_REPAIR, bestD = Infinity;
+    const consider = e => {
+      if (!ownFriendly(e) || e === mender) return;
+      const frac = e.hp / e.maxHp;
+      if (frac >= NEEDS_REPAIR) return;
+      const d = Math.hypot(e.x - mender.x, e.y - mender.y);
+      if (frac < bestFrac - 1e-9 || (Math.abs(frac - bestFrac) <= 1e-9 && d < bestD)) { bestFrac = frac; bestD = d; target = e; }
+    };
+    for (const b of state.buildings.values()) consider(b);
+    for (const u of state.units.values()) consider(u);
   }
-  for (const u of state.units.values()) {
-    if (u === mender || u.owner !== mender.owner || u.hp <= 0 || u.hp >= u.maxHp) continue;
-    const d = Math.hypot(u.x - mender.x, u.y - mender.y);
-    if (d < bestD) { bestD = d; best = u; }
-  }
-  if (best && bestD > range * 0.7) stepToward(state, mender, best.x, best.y, def.speed, dt);
+
+  mender.repairTargetId = target ? target.id : null;
+  if (target && Math.hypot(target.x - mender.x, target.y - mender.y) > range * 0.7)
+    stepToward(state, mender, target.x, target.y, def.speed, dt);
 }

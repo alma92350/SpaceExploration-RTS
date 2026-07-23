@@ -167,7 +167,7 @@ function serPlanet(state) {
     // `_gi` is the grid broad-phase index — a transient stamped fresh onto every unit each tick
     // by buildUnitGrid, meaningless once saved. Strip it so it doesn't bloat the payload with a
     // per-unit integer that the next tick overwrites anyway. Shallow copy, only at save time.
-    units: [...state.units.values()].map(({ _gi, ...u }) => u),
+    units: [...state.units.values()].map(({ _gi, repairTargetId, ...u }) => u),   // both transient (grid index; live repair pick)
     // `haulers`/`servers` are the transient per-tick logistics tallies (engine/haul.js), and
     // `powered`/`fuel` are the Generator's per-tick fuel state (engine/industry.js) — all stamped
     // fresh each tick like a unit's `_gi` grid index, so strip them (they never bloat or drift a save).

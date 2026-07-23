@@ -43,6 +43,33 @@ test("a Mender heals faster on the powered grid than off it (recharges from stat
   assert.ok(offGrid > 10, "…and even off-grid it still mends slowly on reserves");
 });
 
+test("no ping-pong: once its building is topped up, the auto-repair Mender settles instead of oscillating", () => {
+  const s = createGameState({ planetId: "ferros", endless: true });
+  const r = makeBuilding("reactor", "player", 600, 500); s.buildings.set(r.id, r);   // power the grid
+  const dmg = makeBuilding("turret", "player", 624, 500); dmg.hp = dmg.maxHp * 0.5;   // one worn building
+  s.buildings.set(dmg.id, dmg);
+  const m = makeUnit("mender", "player", 624, 500); m.autoRepair = true; s.units.set(m.id, m);
+
+  for (let i = 0; i < 500; i++) tick(s, 0.1);                 // let it heal the turret up (50s at ~6 hp/s)
+  assert.ok(dmg.hp >= dmg.maxHp * 0.98, "the worn building got healed");
+
+  // Now watch the drone: with hysteresis it should PARK by its building, not roam off and back as
+  // the tiny decay re-nicks the full hull.
+  let maxDrift = 0;
+  for (let i = 0; i < 400; i++) { tick(s, 0.1); maxDrift = Math.max(maxDrift, Math.hypot(m.x - dmg.x, m.y - dmg.y)); }
+  assert.ok(maxDrift < 60, `the mender settles by its building rather than ping-ponging (drift ${maxDrift.toFixed(0)})`);
+});
+
+test("priority: an auto-repair Mender goes to the MORE worn building first", () => {
+  const s = createGameState({ planetId: "ferros", endless: true });
+  const light = makeBuilding("turret", "player", 500, 500); light.hp = light.maxHp * 0.7;   // lightly worn, nearer
+  const heavy = makeBuilding("turret", "player", 560, 500); heavy.hp = heavy.maxHp * 0.4;    // badly worn, a touch farther
+  s.buildings.set(light.id, light); s.buildings.set(heavy.id, heavy);
+  const m = makeUnit("mender", "player", 460, 500); m.autoRepair = true; s.units.set(m.id, m);
+  for (let i = 0; i < 5; i++) tick(s, 0.1);
+  assert.equal(m.repairTargetId, heavy.id, "it commits to the worst-off building, not the nearest");
+});
+
 test("an auto-repair Mender roams to a damaged building; a passive one stays put", () => {
   const mk = (auto) => {
     const s = createGameState({ planetId: "ferros", endless: true });
