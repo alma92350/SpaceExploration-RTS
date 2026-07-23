@@ -119,6 +119,8 @@
  * @property {Object.<string, number>} [input]  a factory's finite input larder, commodity → qty (engine/haul.js)
  * @property {number} [haulers]       transient per-tick count of workers hauling from this producer (engine/haul.js)
  * @property {number} [suppliers]     transient per-tick count of workers supplying this factory (engine/haul.js)
+ * @property {boolean} [powered]      transient: a Combustion Generator is fed & granting Power this tick (engine/industry.js)
+ * @property {string} [fuel]          transient: which fuel the Generator burned this tick (HUD)
  */
 
 /**

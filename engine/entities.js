@@ -98,6 +98,19 @@ export const BUILDINGS = {
     id: "reactor", name: "Reactor", hp: 400, radius: 16,
     cost: { ore: 120 }, buildTime: 16, sight: 130,
     energyGrants: 20,   // the power that runs the factories below; short power throttles them all
+    powerRange: 1,      // the reference grid reach — a consumer's efficiency tier is its distance / this (industry.js)
+    odysseyOnly: true,
+  },
+  combustor: {
+    id: "combustor", name: "Combustion Generator", hp: 300, radius: 13,
+    cost: { ore: 70 }, buildTime: 12, sight: 110,
+    // A cheap, fuel-burning alternative to the Reactor: it GRANTS less Power (energyGrants 10 vs 20)
+    // over a SMALLER grid (powerRange 0.55 shrinks its efficiency zones — industry.js), and only while
+    // it's fed. It burns gas OR biomass from the treasury (combust.rate/sec, whichever the stockpile has)
+    // — so it's cheap to raise but carries an ongoing fuel bill, the mirror of the Reactor's free-but-
+    // pricey grid. Out of fuel (or paused) it grants nothing. See engine/industry.js updateCombustors.
+    energyGrants: 10, powerRange: 0.55,
+    combust: { fuels: ["gas", "biomass"], rate: 0.6 },
     odysseyOnly: true,
   },
   smelter: {

@@ -54,29 +54,56 @@ export const POWER_TIERS = [
   { name: "isolated", max: Infinity, mult: 2.3, label: "Isolated" },
 ];
 
-// The nearest COMPLETED own Reactor's distance from (x,y), or Infinity if the owner
-// has none. Guards non-finite coordinates (the industry unit-test stubs omit x/y) so
-// they read as co-located rather than NaN-poisoning the scan.
-function nearestReactorDist(state, owner, x, y) {
+// Whether a power SOURCE is actually feeding the grid right now: a Reactor always is; a
+// fuel-burning Generator only while it's fed (engine/industry.js updateCombustors sets `powered`).
+function sourceActive(building, def) {
+  return def.combust ? !!building.powered : true;
+}
+
+// The best (smallest) grid-distance from (x,y) to any ACTIVE own power source, each source's
+// distance divided by its `powerRange` — so a short-range Generator's efficiency zones shrink and
+// a consumer must huddle much closer to it than to a Reactor. Infinity if the owner has no active
+// source in reach. Guards non-finite coordinates (the industry unit-test stubs omit x/y) so they
+// read as co-located rather than NaN-poisoning the scan.
+function bestGridDist(state, owner, x, y) {
   let best = Infinity;
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing) continue;
-    if (!(BUILDINGS[b.type]?.energyGrants > 0)) continue;
-    const d = Math.hypot(b.x - x, b.y - y);
+    const def = BUILDINGS[b.type];
+    if (!(def?.energyGrants > 0) || !sourceActive(b, def)) continue;
+    const d = Math.hypot(b.x - x, b.y - y) / (def.powerRange || 1);
     if (Number.isFinite(d) && d < best) best = d;
   }
   return best;
 }
 
-// The grid-efficiency tier of a spot for `owner`: the band its distance to the nearest
-// Reactor falls in. No Reactor (or a non-positional stub) → the neutral 'linked' tier
-// (×1): there's no grid to lose against, and powerThrottle already zeroes an unpowered
+// The grid-efficiency tier of a spot for `owner`: the band its (range-scaled) distance to the
+// nearest active power source falls in. No source (or a non-positional stub) → the neutral 'linked'
+// tier (×1): there's no grid to lose against, and powerThrottle already zeroes an unpowered
 // consumer, so an isolated penalty would be moot there anyway.
 export function powerEfficiency(state, owner, x, y) {
-  const d = nearestReactorDist(state, owner, x, y);
+  const d = bestGridDist(state, owner, x, y);
   if (!Number.isFinite(d)) return POWER_TIERS[0];
   for (const t of POWER_TIERS) if (d <= t.max) return t;
   return POWER_TIERS[POWER_TIERS.length - 1];
+}
+
+// Burn one tick of fuel for every Combustion Generator: it draws combust.rate/sec of gas OR biomass
+// (whichever the treasury has more of) and is `powered` only while fed — paused or dry, it grants no
+// Power. Runs at tick start, before anything reads powerCap, so the grid it provides is settled for
+// the tick. Deterministic (fuel-gated); a no-op for any building without a `combust` def.
+export function updateCombustors(state, dt) {
+  for (const b of state.buildings.values()) {
+    const def = BUILDINGS[b.type];
+    if (!def?.combust || b.constructing) continue;
+    const res = state.players[b.owner]?.resources;
+    if (b.paused || !res) { b.powered = false; continue; }
+    const need = def.combust.rate * dt;
+    let fuel = null, most = 0;
+    for (const f of def.combust.fuels) { const have = res[f] || 0; if (have > most) { most = have; fuel = f; } }
+    if (fuel && (res[fuel] || 0) >= need) { res[fuel] -= need; b.powered = true; b.fuel = fuel; }
+    else b.powered = false;
+  }
 }
 
 // data.js RECIPES is an array; index it by id once for O(1) lookup.
@@ -92,8 +119,12 @@ export function recipeOf(building) {
 // by the Fusion Containment tech (techtree.js `reactors` node, +50%) if researched.
 export function powerCap(state, owner) {
   let cap = 0;
-  for (const b of state.buildings.values())
-    if (b.owner === owner && !b.constructing) cap += BUILDINGS[b.type].energyGrants || 0;
+  for (const b of state.buildings.values()) {
+    if (b.owner !== owner || b.constructing) continue;
+    const def = BUILDINGS[b.type];
+    if (!(def.energyGrants > 0) || !sourceActive(b, def)) continue;   // an unfueled Generator grants nothing
+    cap += def.energyGrants;
+  }
   return cap * techMult(state.players[owner]?.upgrades, "powerMult");
 }
 

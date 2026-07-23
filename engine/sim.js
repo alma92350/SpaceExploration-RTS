@@ -14,7 +14,7 @@ import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
-import { updateProduction } from "./industry.js";
+import { updateProduction, updateCombustors } from "./industry.js";
 import { updatePlasmaRig } from "./rig.js";
 import { updateResearch } from "./techtree.js";
 import { updateWonder } from "./wonder.js";
@@ -47,6 +47,9 @@ export function tick(state, dt) {
   // assigned a logistics job below — so the "≤2 per building" caps read the same regardless
   // of Map iteration order (determinism). A no-op in skirmish: nothing there has a buffer.
   countLogistics(state);
+  // Settle the fuel-burning Generators' Power BEFORE any consumer reads powerCap this tick,
+  // so the grid a factory/rig sees is stable. A no-op without a Combustion Generator.
+  updateCombustors(state, dt);
   // Aura projectors (Aegis) for this tick, read by combat.js attackDamage. Collected
   // once here (a tiny list — the units are Tier-3 and rare) so a landed hit costs O(anvils)
   // not O(units); positions are frozen at tick start like the grid above (deterministic).

@@ -524,17 +524,17 @@ function drawJumpStaging(ctx, state, view) {
 // player WHERE to drop one. Green (on-grid, no loss) → red (isolated, worst).
 const POWER_TIER_COLOR = { linked: "#4ade80", near: "#a3e635", far: "#fbbf24", isolated: "#f87171" };
 
-// Concentric efficiency zones around one Reactor at (rx, ry): a faint tinted disc per
+// Concentric efficiency zones around one power source at (rx, ry): a faint tinted disc per
 // finite band (painted largest-first so each inner band shows its own hue) with a dashed
-// boundary ring. Everything past the outermost ring is the 'isolated' tier. Shared by the
-// selected-Reactor overlay and the placement cue, so both read the same zones.
-function drawReactorBands(ctx, rx, ry) {
+// boundary ring. `scale` is the source's powerRange — a short-range Generator's zones shrink,
+// so its rings sit tighter than a Reactor's. Shared by the selected-source overlay and the cue.
+function drawReactorBands(ctx, rx, ry, scale = 1) {
   const bands = POWER_TIERS.filter(t => Number.isFinite(t.max));
   ctx.save();
   for (let i = bands.length - 1; i >= 0; i--) {        // largest radius first, so inner hues win
     const t = bands[i], col = POWER_TIER_COLOR[t.name];
     ctx.beginPath();
-    ctx.arc(rx, ry, t.max, 0, Math.PI * 2);
+    ctx.arc(rx, ry, t.max * scale, 0, Math.PI * 2);
     ctx.fillStyle = hexA(col, 0.05);
     ctx.fill();
   }
@@ -542,23 +542,26 @@ function drawReactorBands(ctx, rx, ry) {
   ctx.lineWidth = 1.5;
   for (const t of bands) {
     ctx.beginPath();
-    ctx.arc(rx, ry, t.max, 0, Math.PI * 2);
+    ctx.arc(rx, ry, t.max * scale, 0, Math.PI * 2);
     ctx.strokeStyle = hexA(POWER_TIER_COLOR[t.name], 0.55);
     ctx.stroke();
   }
   ctx.restore();
 }
 
-// The power-grid overlay around a SELECTED player Reactor: its efficiency zones, so a
-// player can see the on-grid / near / far bands before placing a factory or rig near it.
-// Drawn only for a selected Reactor (mirrors the Spaceport's jump-staging ring), so it
-// never clutters the field otherwise.
+// The power-grid overlay around a SELECTED player power source (Reactor or Combustion Generator):
+// its efficiency zones, so a player can see the on-grid / near / far bands — scaled to the source's
+// reach — before placing a factory or rig near it. Drawn only for a selected source (mirrors the
+// Spaceport's jump-staging ring), so it never clutters the field otherwise.
 function drawPowerGrid(ctx, state, view) {
   const selSet = new Set(state.selection);
+  const outer = POWER_TIERS[POWER_TIERS.length - 2].max;
   for (const b of state.buildings.values()) {
-    if (b.type !== "reactor" || b.owner !== "player" || b.constructing || !selSet.has(b.id)) continue;
-    if (view && !inView(view, b.x, b.y, POWER_TIERS[POWER_TIERS.length - 2].max + 8)) continue;
-    drawReactorBands(ctx, b.x, b.y);
+    const def = BUILDINGS[b.type];
+    if (!(def && def.energyGrants > 0) || b.owner !== "player" || b.constructing || !selSet.has(b.id)) continue;
+    const scale = def.powerRange || 1;
+    if (view && !inView(view, b.x, b.y, outer * scale + 8)) continue;
+    drawReactorBands(ctx, b.x, b.y, scale);
   }
 }
 
@@ -777,7 +780,7 @@ const RECIPE_OUT = Object.fromEntries(RECIPES.map(r => [r.id, r.out]));
 // recipe-running factory shows the commodity it OUTPUTS; a handful of non-recipe industrial
 // buildings get an explicit emoji for what they DO — the Reactor grants Power (⚡), the Datacenter
 // runs research (🔬), the Stardock is a capital-ship yard (🛰️), the Antimatter Gate is the wonder (🌀).
-const BUILDING_GLYPH = { reactor: "⚡", datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️" };
+const BUILDING_GLYPH = { reactor: "⚡", combustor: "🔥", datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️" };
 function factoryGlyph(type) {
   const def = BUILDINGS[type];
   if (def && def.recipe && RECIPE_OUT[def.recipe]) return COM[RECIPE_OUT[def.recipe]]?.ico || null;
@@ -1570,18 +1573,22 @@ function drawEffects(ctx) {
 // and label ("On-grid · draw ×1.0" … "Isolated · draw ×2.3"). Mirrors how the Spaceport
 // shows its jump radius — it turns "where do I put this factory?" into a visible choice.
 function drawGhostPowerCue(ctx, state, ghost, def) {
-  let nearest = null, bestD = Infinity;
+  // The source that DETERMINES the ghost's tier: the nearest by RANGE-SCALED distance, so a
+  // close short-range Generator can out-rank a far Reactor exactly as the efficiency math does.
+  let nearest = null, bestD = Infinity, nearestScale = 1;
   for (const b of state.buildings.values()) {
-    if (b.owner !== "player" || b.constructing || b.type !== "reactor") continue;
-    const d = Math.hypot(b.x - ghost.x, b.y - ghost.y);
-    if (d < bestD) { bestD = d; nearest = b; }
+    const bd = BUILDINGS[b.type];
+    if (b.owner !== "player" || b.constructing || !(bd && bd.energyGrants > 0)) continue;
+    const scale = bd.powerRange || 1;
+    const d = Math.hypot(b.x - ghost.x, b.y - ghost.y) / scale;
+    if (d < bestD) { bestD = d; nearest = b; nearestScale = scale; }
   }
 
   const tier = powerEfficiency(state, "player", ghost.x, ghost.y);
   const col = POWER_TIER_COLOR[tier.name];
 
   if (nearest) {
-    drawReactorBands(ctx, nearest.x, nearest.y);
+    drawReactorBands(ctx, nearest.x, nearest.y, nearestScale);
     ctx.save();
     ctx.setLineDash([5, 5]);
     ctx.strokeStyle = hexA(col, 0.8);
