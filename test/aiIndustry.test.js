@@ -1,8 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeBuilding } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
+import { tick } from "../engine/sim.js";
 import { updateProduction } from "../engine/industry.js";
 import { updatePlasmaRig } from "../engine/rig.js";
+
+// Give an Odyssey AI a real, deployed base (Odyssey seeds only a colony ship) so the AI-brain
+// phases have something to build from: a CC, a Barracks, workers, and ore to spend.
+function aiBase(planetId = "ferros") {
+  const s = createGameState({ planetId, endless: true });
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  const bar = makeBuilding("barracks", "ai", 664, 500); s.buildings.set(bar.id, bar);
+  for (let i = 0; i < 5; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources.ore = 3000;   // plenty, so industry isn't starved behind the army
+  return s;
+}
 
 // Phase 1 — abstracted AI logistics: an AI factory/rig runs straight off the treasury (no worker
 // haulage), while the player's buffer+haulage path and the skirmish replay stay untouched.
@@ -53,4 +65,22 @@ test("an AI Plasma Rig banks its dig straight into the treasury (no buffer to st
   assert.ok((rig.lastYield || 0) > 0, "…banking a real yield");
   const store = rig.store || {};
   assert.equal(Object.values(store).reduce((a, b) => a + b, 0), 0, "…straight to the treasury, nothing left in a buffer");
+});
+
+// Phase 2 — the AI develops its base: builds a Reactor and electrifies its buildings.
+test("an Odyssey AI powers and electrifies its base (Reactor + electrified buildings)", () => {
+  const s = aiBase("ferros");
+  for (let i = 0; i < 500; i++) tick(s, 0.2);   // ~100s: time to bank, build a Reactor, and wire the base in
+  const reactors = [...s.buildings.values()].filter(b => b.owner === "ai" && b.type === "reactor" && !b.constructing);
+  assert.ok(reactors.length >= 1, "the AI built a Reactor to power its base");
+  const electrified = [...s.buildings.values()].filter(b => b.owner === "ai" && b.electrified);
+  assert.ok(electrified.length >= 1, `the AI electrified a base building (${electrified.map(b => b.type).join(",")})`);
+});
+
+// Skirmish quarantine: the AI never builds Odyssey industry off the endless layer.
+test("a skirmish AI builds no Reactor and electrifies nothing (byte-identical short game)", () => {
+  const s = createGameState({ planetId: "ferros" });   // not endless
+  for (let i = 0; i < 300; i++) tick(s, 0.2);
+  const industry = [...s.buildings.values()].filter(b => b.owner === "ai" && (b.type === "reactor" || b.electrified));
+  assert.equal(industry.length, 0, "no reactors, no electrification in a skirmish");
 });

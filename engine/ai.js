@@ -35,7 +35,8 @@
 import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueAttackMove, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
-import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, isDropOff } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, isDropOff, isElectrifiable } from "./entities.js";
+import { powerCap, powerDraw } from "./industry.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
@@ -98,6 +99,7 @@ export function runAI(state, dt) {
   aiBaseAndTech(state, ctx);       // workers, supply, Barracks, the Foundry/Arsenal tech gates, the Mender
   aiProduceAndFortify(state, ctx); // the shared unit-production cycle, Turrets, a 2nd Barracks, Refineries
   aiResearch(state, ctx);          // one doctrine upgrade per think cycle
+  aiIndustry(state, ctx);          // Odyssey: power the base + electrify it (deeper phases: the factory chain)
   aiMilitary(state, ctx);          // defend a pressed base, else muster and commit the next wave
 
   // TACTICAL micro (opt-in via aiMicro): concentrate the army's fire on one target so kills land
@@ -433,6 +435,41 @@ function aiResearch(state, ctx) {
       if (ai.upgrades[u.id]) continue;
       if (researchUpgrade(state, refinery.id, u.id)) { spend(state); break; }
     }
+  }
+}
+
+// Odyssey INDUSTRY: power the base and electrify it — the first slice of the AI using the new
+// economy (deeper phases add the factory chain, research, and the capital path). Skirmish is a
+// no-op (the endless gate), so the byte-identical short game is untouched. Everything is
+// APM-budgeted and reserve-aware, and runs after unit production so power is raised from surplus —
+// the army never freezes while the AI develops. A universal "develop your base" behaviour: even a
+// Rusher gets 30% faster unit production once it can spare a Reactor.
+/** @param {State} state @param {AiContext} ctx */
+function aiIndustry(state, ctx) {
+  if (!state.endless) return;   // Odyssey only — a skirmish never builds industry
+  const { cc, barracks, workers, ai, buildings } = ctx;
+  if (!cc || !barracks || barracks.constructing || workers.length === 0) return;
+
+  const reactors = buildings.filter(b => b.type === "reactor");
+  const hasReactor = reactors.some(b => !b.constructing);
+  const cap = powerCap(state, "ai"), draw = powerDraw(state, "ai");
+
+  // POWER: raise a Reactor when there's none yet (electrification and the factories need a grid) or
+  // the grid is running tight (draw crowding cap), so Power scales with the industry the AI adds.
+  // One at a time (constructing reactors count), reserve-aware, placed by the CC so its efficiency
+  // grid blankets the base.
+  const wantMorePower = !reactors.length || (cap > 0 && draw > cap * 0.85);
+  if (wantMorePower && canAffordKeeping(ai.resources, BUILDINGS.reactor.cost, ctx.oreReserve) && canAct(state)) {
+    const spot = findPlacement(state, "reactor", cc.x - 60, cc.y + 60);
+    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "reactor", spot.x, spot.y)) spend(state);
+  }
+
+  // ELECTRIFY: once the grid is live, wire the base's non-power buildings in — 30% faster unit
+  // production (Barracks/Command Center) and +30% supply (Habitat). One per think cycle, APM-paced.
+  // A pure win for the core army economy; if Power later runs short the boost just tapers (industry.js).
+  if (hasReactor) {
+    const target = buildings.find(b => !b.constructing && isElectrifiable(b.type) && !b.electrified);
+    if (target && canAct(state)) { target.electrified = true; spend(state); }
   }
 }
 
