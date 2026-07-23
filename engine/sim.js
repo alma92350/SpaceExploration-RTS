@@ -9,6 +9,7 @@
 import { stepToward, keepEscortStation } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
+import { updateHaul, assignHaul, countHaulers } from "./haul.js";
 import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
@@ -42,6 +43,10 @@ export function tick(state, dt) {
   // Frozen before any worker mines so every miner on a node sees the same count
   // regardless of Map iteration order (determinism).
   countMiners(state);
+  // Per-producer hauler count for this tick, frozen before any idle worker is assigned
+  // a haul job below — so the "≤2 haulers per producer" cap reads the same regardless of
+  // Map iteration order (determinism). A no-op in skirmish: nothing there has an output buffer.
+  countHaulers(state);
   // Aura projectors (Aegis) for this tick, read by combat.js attackDamage. Collected
   // once here (a tiny list — the units are Tier-3 and rare) so a landed hit costs O(anvils)
   // not O(units); positions are frozen at tick start like the grid above (deterministic).
@@ -122,6 +127,11 @@ function updateUnit(state, unit, dt) {
   if (def.role === "combat") { updateCombat(state, unit, dt); return; }
   if (def.role === "support") { updateSupport(state, unit, def, dt); return; }
 
+  // An idle Odyssey worker with nothing queued offers itself as a hauler: it clears a
+  // producer's backed-up output buffer to a Command Center (engine/haul.js). Player-only —
+  // the AI builds no producers, so its workers never haul and its replay is unchanged.
+  if (!unit.order && def.role === "worker" && unit.owner === "player") assignHaul(state, unit);
+
   if (!unit.order) return;
   switch (unit.order.type) {
     case "move": {
@@ -131,6 +141,9 @@ function updateUnit(state, unit, dt) {
     }
     case "gather":
       updateGather(state, unit, dt);
+      break;
+    case "haul":
+      updateHaul(state, unit, dt);
       break;
     case "escort":
       // A non-combat escort (worker) just keeps station on the ring around the guarded ship.

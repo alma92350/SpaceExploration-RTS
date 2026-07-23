@@ -18,6 +18,7 @@ import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
 import { POWER_TIERS, powerEfficiency } from "./engine/industry.js";
+import { storeCapOf, storeTotal } from "./engine/entities.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects, activeFireworks } from "./effects.js";
 
@@ -461,7 +462,25 @@ function drawBuildingBars(ctx, state, view) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
+    drawStoreBar(ctx, b);   // a producer's output-buffer gauge, under the hull
   }
+}
+
+// A producer's finite output buffer (engine/haul.js) as a gauge UNDER the hull: how
+// full it is, gold while there's room, red when it's brimming (production has stalled
+// until a worker hauls it off). Only drawn for own producers with something in the
+// buffer, so it reads as live logistics pressure without cluttering the field.
+function drawStoreBar(ctx, b) {
+  const cap = storeCapOf(b.type);
+  if (cap <= 0 || b.owner !== "player") return;
+  const total = storeTotal(b);
+  if (total <= 0) return;
+  const pct = Math.min(1, total / cap);
+  const w = b.radius * 2, x = b.x - b.radius, y = b.y + b.radius + 4;
+  ctx.fillStyle = "#243162";
+  ctx.fillRect(x, y, w, 3);
+  ctx.fillStyle = pct >= 0.999 ? "#f87171" : "#fbbf24";   // red = full/stalled, gold = filling
+  ctx.fillRect(x, y, w * pct, 3);
 }
 
 // The jump staging area around a SELECTED player Spaceport: a dashed ring at

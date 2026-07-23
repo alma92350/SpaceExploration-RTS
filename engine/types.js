@@ -114,6 +114,8 @@
  * @property {number} [digCount]      Plasma Rig completed digs (drives the deterministic yield roll)
  * @property {string} [lastTier]      Plasma Rig last strike tier (HUD)
  * @property {number} [lastYield]     Plasma Rig last strike amount (HUD)
+ * @property {Object.<string, number>} [store]  a producer's finite output buffer, commodity → qty (engine/haul.js)
+ * @property {number} [haulers]       transient per-tick count of workers hauling from this producer (engine/haul.js)
  */
 
 /**

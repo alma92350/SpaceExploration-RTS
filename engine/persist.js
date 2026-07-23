@@ -111,6 +111,25 @@ function cleanEntity(e, def, map) {
     e.digProgress = Math.max(0, Math.min(num(e.digProgress, 0), 2));
     e.digCount = Math.max(0, Math.floor(num(e.digCount, 0)));
   }
+  // A producer's output buffer (building.store) is untrusted save data — a hand-edited file could
+  // smuggle in a bogus commodity, a negative/NaN qty, or an over-capacity buffer. Keep only real
+  // commodities with a positive qty and clamp the total to the def's storeCap; a non-producer can't
+  // hold a buffer, so strip any a tampered save bolted on.
+  const cap = def.storeCap || 0;
+  if (cap > 0) {
+    const clean = {};
+    let used = 0;
+    if (e.store && typeof e.store === "object") {
+      for (const com of Object.keys(e.store)) {
+        if (!COM[com] || used >= cap) continue;
+        const q = num(e.store[com], 0);
+        if (q > 0) { const take = Math.min(q, cap - used); clean[com] = take; used += take; }
+      }
+    }
+    e.store = clean;
+  } else if (e.store !== undefined) {
+    delete e.store;
+  }
   return e;
 }
 
@@ -145,7 +164,9 @@ function serPlanet(state) {
     // by buildUnitGrid, meaningless once saved. Strip it so it doesn't bloat the payload with a
     // per-unit integer that the next tick overwrites anyway. Shallow copy, only at save time.
     units: [...state.units.values()].map(({ _gi, ...u }) => u),
-    buildings: [...state.buildings.values()],
+    // `haulers` is the transient per-tick hauler tally (engine/haul.js), stamped fresh each
+    // tick like a unit's `_gi` grid index — strip it so it never bloats or drifts a save.
+    buildings: [...state.buildings.values()].map(({ haulers, ...b }) => b),
     nodes: state.map.nodes.map(n => ({ id: n.id, amount: n.amount })),
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],

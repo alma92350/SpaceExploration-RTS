@@ -373,7 +373,7 @@ function renderSelectionPanel() {
         const rig = game.galaxy && sel.find(e => e.kind === "building" && BUILDINGS[e.type].rig && !e.constructing);
         if (!rig) return "";
         const info = rigInfo(state, rig);
-        return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}:${powerEfficiency(state, rig.owner, rig.x, rig.y).name}`;
+        return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}:${powerEfficiency(state, rig.owner, rig.x, rig.y).name}:${info.storeFull}:${Math.round((info.stored / (info.storeCap || 1)) * 10)}`;
       })();
 
   if (signature !== lastPanelSignature) {
@@ -906,9 +906,18 @@ function rebuildSelectionPanel(sel) {
       + (info.lastTier ? ` · last strike: ${info.lastTier} (+${Math.round(info.lastYield)} ${meta?.name || info.vein})` : " · warming up…");
     panelEl.appendChild(progRow);
 
+    // Finite output buffer (engine/haul.js): what's piled up waiting to be hauled to a
+    // Command Center, and how close it is to full — the point at which the rig stalls.
+    const bufRow = document.createElement("div");
+    const bufPct = info.storeCap ? Math.round((info.stored / info.storeCap) * 100) : 0;
+    bufRow.className = "sel-note " + (info.storeFull ? "bad" : bufPct >= 66 ? "warn" : "");
+    bufRow.textContent = `Output buffer ${Math.round(info.stored)}/${info.storeCap} (${bufPct}%) — workers haul it to a Command Center`;
+    panelEl.appendChild(bufRow);
+
     let cls = "good", text = "Digging at full power";
     if (!info.nuclearOk) { cls = "bad"; text = "Stalled — out of radioactives (no nuclear to exploit)"; }
     else if (info.throttle <= 0) { cls = "bad"; text = "Stalled — no Power for the plasma arc (build a Reactor)"; }
+    else if (info.storeFull) { cls = "bad"; text = "Stalled — output buffer full (needs a hauler to a Command Center)"; }
     else if (info.throttle < 0.995) { cls = "warn"; text = `Throttled ${Math.round(info.throttle * 100)}% — low Power`; }
     const stRow = document.createElement("div");
     stRow.className = "sel-note " + cls;

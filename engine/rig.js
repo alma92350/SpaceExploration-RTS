@@ -19,7 +19,7 @@
 
 "use strict";
 
-import { BUILDINGS } from "./entities.js";
+import { BUILDINGS, storeTotal, storeRoom, storeCapOf } from "./entities.js";
 import { hashStr } from "./rng.js";
 import { powerThrottle, planetIndustryScale } from "./industry.js";
 
@@ -68,8 +68,10 @@ export function rollTier(building, richness) {
 /**
  * Advance one Plasma Rig by dt. The plasma arc's Power draw (industry.js powerDraw) throttles the
  * dig speed; each completed cycle burns radioactives and banks a probabilistic tier of the rig's
- * vein into the owner's stockpile. UNLIMITED — no node, no depletion. Deterministic. A no-op for
- * any building without a `rig` def.
+ * vein into its FINITE output buffer (building.store, capped at storeCap). When the buffer is full
+ * the rig stalls at the brink until a worker hauls it to a Command Center (engine/haul.js) — it's
+ * an unlimited SOURCE, not an unlimited SINK. Deterministic. A no-op for any building without a
+ * `rig` def.
  */
 export function updatePlasmaRig(state, building, dt) {
   const def = BUILDINGS[building.type];
@@ -86,12 +88,15 @@ export function updatePlasmaRig(state, building, dt) {
   let cycles = 0;
   while (building.digProgress >= 1 && cycles < MAX_CYCLES_PER_TICK) {
     if ((res.radioactives || 0) < rig.nuclear) { building.digProgress = 1; break; }   // out of nuclear → stall at the brink
+    const room = storeRoom(building);
+    if (room <= 1e-9) { building.digProgress = 1; break; }   // output buffer full → stall until hauled
+    const tier = rollTier(building, richness);
+    const amount = Math.min(rig.base * tier.mult, room);   // top off to exactly full on the last dig (overflow spills)
     res.radioactives -= rig.nuclear;
     building.digProgress -= 1;
     building.digCount = (building.digCount || 0) + 1;
-    const tier = rollTier(building, richness);
-    const amount = rig.base * tier.mult;
-    res[vein] = (res[vein] || 0) + amount;
+    building.store = building.store || {};
+    building.store[vein] = (building.store[vein] || 0) + amount;   // banks into the finite buffer, not the treasury
     building.lastTier = tier.name;   // transient display state, for the HUD
     building.lastYield = amount;
     state.events.push({ type: "rigDig", com: vein, amount, tier: tier.name, x: building.x, y: building.y, owner: building.owner });
@@ -106,6 +111,8 @@ export function rigInfo(state, building) {
   const richness = locationRichness(state.planetId, building.x, building.y);
   const richLabel = richness < 0.35 ? "poor" : richness < 0.6 ? "fair" : richness < 0.82 ? "rich" : "mother lode";
   const res = state.players[building.owner].resources;
+  const cap = storeCapOf(building.type);
+  const stored = storeTotal(building);
   return {
     vein: rigVein(building),
     richness, richLabel,
@@ -114,5 +121,7 @@ export function rigInfo(state, building) {
     lastYield: building.lastYield || 0,
     nuclearOk: (res.radioactives || 0) >= def.rig.nuclear,
     throttle: powerThrottle(state, building.owner),
+    stored, storeCap: cap,
+    storeFull: cap > 0 && stored >= cap - 1e-6,   // buffer full → the rig is stalled until it's hauled off
   };
 }

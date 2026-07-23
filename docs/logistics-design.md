@@ -99,33 +99,42 @@ storage cascades to AI worker logic — the riskier half.
 
 ### 2.4 Phased plan (each phase is its own merge, suite-green + determinism-verified)
 
-**Phase A — Production OUTPUT buffers + auto-haulage (player-only, self-contained).**
-- Add `building.store` (commodity→qty) + a `storeCap` per producing def (factory + rig).
-- `updateProduction` / `updatePlasmaRig` bank output into `store`; when
-  `total(store) ≥ storeCap`, **stall** (frac limited by remaining room; rig
-  `digProgress` holds at the brink, like the out-of-nuclear stall).
-- New worker task `haul`: an idle worker near a producer with a full-ish `store`
-  picks up a load, carries it to the nearest CC, banks it into `player.resources`
-  (the treasury). Deterministic target selection.
-- `render.js`: a small storage bar under a producer (like the health bar); the hauler
-  shows carried cargo (reuse the laden-freighter cue idea).
-- `hud.js`: producer panel shows "Output NN/CAP" + stall reason.
-- `persist.js`: coerce `store`.
-- Tests: fills→stalls→hauled→resumes; determinism; save round-trip; AI untouched
-  (it builds no producers, so its replay is byte-identical).
-- **Note:** the chain still *flows* because inputs are still drawn from the global
-  treasury — Phase A only gates *output*. This is the safe first slice and already
-  delivers "production stops when storage is full until carried to a CC."
+**Phase A — Output buffer + worker-haulage foundation on the Plasma Rig. ✅ DONE.**
+- Added `building.store` (commodity→qty) + `def.storeCap`, with pure helpers
+  `storeTotal`/`storeRoom`/`storeCapOf` (`entities.js`).
+- `updatePlasmaRig` banks each dig into `store` (topping off the final dig to exactly
+  `storeCap`, overflow spills) and **stalls** the moment the buffer is full — an
+  unlimited *source*, no longer an unlimited *sink*.
+- New worker task `haul` (`engine/haul.js`): an idle **player** worker auto-assigns to
+  the nearest own producer whose buffer is ≥34% full (≤2 haulers each, tie-broken by
+  id), walks there, loads a cargo, carries it to the nearest drop-off, and banks it
+  into the treasury **1:1** (no gather multiplier — the goods were already extracted).
+  A per-tick hauler tally (`countHaulers`) is frozen before assignment for determinism.
+- `render.js`: a gold/red output-buffer gauge under a producer's hull.
+- `hud.js`: rig panel shows "Output NN/CAP (N%)" + a "buffer full → needs a hauler"
+  stall reason.
+- `persist.js`: coerce `store` (COM-valid, ≥0, clamped to cap); strip the transient
+  `haulers` tally on serialize (like a unit's `_gi`).
+- **Player-only & AI-safe:** the auto-haul call is gated to `owner === "player"`, and
+  no skirmish building has a buffer, so the AI and the byte-identical skirmish replay
+  are untouched. Tests: `test/haul.test.js` (+ rewritten `test/rig.test.js`).
+- **Why the Rig first:** it's a *leaf* producer of raw goods — its output doesn't feed
+  another factory, so gating it doesn't half-break the two-hop chain. This proves the
+  whole haulage subsystem (store, task, auto-assign, render, persist, determinism) on
+  the safest surface before it touches the coupled factory chain.
 
-**Phase B — Factory INPUT buffers + input haulage.**
-- Add `building.input` (commodity→qty) + `inputCap`. `updateProduction` draws inputs
-  from the **local** `input` buffer, not the global pool.
-- New worker task `supply`: an idle worker pulls a needed input from the treasury (or
-  a producer's output buffer directly — a smelter→assembler direct line) and carries
-  it to a factory's `input` buffer.
-- This is where the chain becomes a real *supply network*: smelter output → hauled →
-  assembler input. Bigger; do it only after Phase A is stable.
-- Balance: default `inputCap` generous; a factory pre-stocks a few batches so it isn't
+**Phase B — Factory output + INPUT buffers = a real supply network (player-only).**
+- Give factories a `storeCap` output buffer (reusing Phase A) AND a local `input`
+  buffer (`inputCap`). `updateProduction` draws inputs from the **local** buffer, banks
+  output to the **local** store — so a factory only runs while it's been *supplied* and
+  has *room*.
+- Extend haulage with a `supply` leg: an idle worker pulls a needed input from the
+  treasury (or straight from an upstream producer's output buffer — a smelter→assembler
+  line) into a factory's `input` buffer.
+- This is where the chain becomes a network: smelter output → hauled → assembler input.
+  Must be done together (output-only would strand the two-hop chain, since inputs come
+  from the treasury). Rewrite the `industry.js` chain tests to the buffered model.
+- Balance: generous default `inputCap` so a factory pre-stocks a few batches and isn't
   worker-bound every tick.
 
 **Phase C — Finite COLLECTION storage (affects the AI).**

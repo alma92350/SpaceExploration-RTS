@@ -184,6 +184,10 @@ export const BUILDINGS = {
     // like a factory, so digs slow when power is short) and burns radioactives per dig ("nuclear to
     // exploit"). See engine/rig.js.
     rig: { power: 16, nuclear: 1.4, digTime: 6, base: 6 },
+    // Its dug ore doesn't teleport into your treasury: it piles up in a FINITE output buffer
+    // (storeCap) that workers must haul to a Command Center. Full buffer → the rig stalls until
+    // it's cleared — logistics, not free money. See engine/haul.js.
+    storeCap: 120,
   },
   stardock: {
     id: "stardock", name: "Star Dock", hp: 600, radius: 22,
@@ -237,6 +241,32 @@ export function prereqsMet(state, owner, def) {
 export function isDropOff(type) {
   const def = BUILDINGS[type];
   return !!(def && (def.isCommandCenter || def.dropOff));
+}
+
+// ---- Finite output storage (Odyssey logistics) --------------------------------
+// A producing building (the Plasma Rig; factories in a later phase) banks its output
+// into a FINITE local buffer, `building.store` (commodity → qty), capped at its def's
+// `storeCap`. When the buffer fills, production stalls until a worker hauls it to a
+// Command Center (engine/haul.js) — so output storage is a real, mindful constraint,
+// not an infinite sink. A def with no `storeCap` has no buffer (storeCapOf → 0), so
+// these are no-ops for every non-producer and the whole skirmish roster.
+
+/** The output-buffer capacity of a building type, or 0 if it has no buffer. */
+export function storeCapOf(type) {
+  return BUILDINGS[type]?.storeCap || 0;
+}
+
+/** How much is currently sitting in a building's output buffer (0 if none). */
+export function storeTotal(building) {
+  let t = 0;
+  const s = building.store;
+  if (s) for (const c in s) t += s[c] || 0;   // order-independent sum → deterministic
+  return t;
+}
+
+/** The free room left in a building's output buffer (clamped ≥ 0). */
+export function storeRoom(building) {
+  return Math.max(0, storeCapOf(building.type) - storeTotal(building));
 }
 
 // One-time, player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE

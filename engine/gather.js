@@ -102,7 +102,7 @@ export function updateGather(state, unit, dt) {
 // closest is what makes a forward industrial building act as a local collection
 // point — the haul goes to it instead of all the way back to the base.
 /** @param {State} state @param {string} owner @param {number} x @param {number} y @returns {Building|null} */
-function nearestDropoff(state, owner, x, y) {
+export function nearestDropoff(state, owner, x, y) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing || !isDropOff(b.type)) continue;
