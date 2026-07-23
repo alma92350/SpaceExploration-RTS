@@ -16,7 +16,7 @@ import {
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale } from "./engine/industry.js";
+import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency } from "./engine/industry.js";
 import { rigInfo } from "./engine/rig.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
@@ -294,7 +294,9 @@ function availabilitySignature() {
 function factorySignature(sel) {
   const { state } = game;
   const f = sel.find(e => e.kind === "building" && recipeOf(e) && !e.constructing);
-  return f ? factoryStatus(state, f, recipeOf(f)).cls : "";
+  // Include the grid-efficiency tier so the "Grid: …" line rebuilds when a Reactor is
+  // built/razed near the factory (which can shift its tier without changing its status band).
+  return f ? factoryStatus(state, f, recipeOf(f)).cls + ":" + powerEfficiency(state, f.owner, f.x, f.y).name : "";
 }
 
 function renderSelectionPanel() {
@@ -371,7 +373,7 @@ function renderSelectionPanel() {
         const rig = game.galaxy && sel.find(e => e.kind === "building" && BUILDINGS[e.type].rig && !e.constructing);
         if (!rig) return "";
         const info = rigInfo(state, rig);
-        return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}`;
+        return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}:${powerEfficiency(state, rig.owner, rig.x, rig.y).name}`;
       })();
 
   if (signature !== lastPanelSignature) {
@@ -606,6 +608,21 @@ function factoryStatus(state, b, recipe) {
   const rate = (def.prodRate || 1) * techMult(ups, "rateMult") * planetIndustryScale(state)
     * throttle * recipe.qty * techMult(ups, "yieldMult");
   return { cls: "good", text: `Running · +${rate.toFixed(1)} ${COM[recipe.out]?.name || recipe.out}/s` };
+}
+
+// A "Grid: On-grid · draws ×1.0" line for a selected power consumer (factory / rig),
+// its colour keyed to the efficiency tier (engine/industry.js powerEfficiency): the
+// further it sits from a Reactor, the more grid capacity it draws — so this tells the
+// player at a glance whether it's well-sited or bleeding the grid on transmission loss.
+function gridEfficiencyRow(state, b) {
+  const eff = powerEfficiency(state, b.owner, b.x, b.y);
+  const row = document.createElement("div");
+  const cls = eff.mult <= 1.001 ? "good" : eff.mult < 1.5 ? "" : eff.mult < 2 ? "warn" : "bad";
+  row.className = "sel-note " + cls;
+  row.textContent = eff.mult <= 1.001
+    ? `Grid: ${eff.label} · full efficiency (draws ×1.0)`
+    : `Grid: ${eff.label} · draws ×${eff.mult.toFixed(1)} Power — closer to a Reactor is cheaper`;
+  return row;
 }
 
 // The Odyssey diplomacy panel, under the Command Center's market: pay universal
@@ -862,6 +879,8 @@ function rebuildSelectionPanel(sel) {
     stRow.textContent = st.text;
     panelEl.appendChild(stRow);
 
+    panelEl.appendChild(gridEfficiencyRow(state, factory));
+
     // Pause toggle: stop this factory drawing down its inputs (and Power) — the way to
     // keep a hungry Smelter from eating all your ore, or to free the grid for the Gate.
     panelEl.appendChild(makeButton(factory.paused ? "▶ Resume production" : "⏸ Pause production",
@@ -895,6 +914,8 @@ function rebuildSelectionPanel(sel) {
     stRow.className = "sel-note " + cls;
     stRow.textContent = text;
     panelEl.appendChild(stRow);
+
+    panelEl.appendChild(gridEfficiencyRow(state, rig));
 
     panelEl.appendChild(makeButton(rig.paused ? "▶ Resume digging" : "⏸ Pause digging",
       () => { rig.paused = !rig.paused; },

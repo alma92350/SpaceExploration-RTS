@@ -39,6 +39,46 @@ export function planetIndustryScale(state) {
   return s < 0.5 ? 0.5 : s > 2 ? 2 : s;
 }
 
+// GRID EFFICIENCY — the further a power consumer sits from its nearest Reactor,
+// the MORE grid capacity the same job draws (transmission loss down a long line),
+// so clustering factories/rigs around a Reactor lets the same Reactors run more of
+// them. A per-consumer DRAW multiplier (≥1), keyed on distance to the nearest own
+// Reactor. `max` is the outer edge of each band (centre-to-centre px); `mult` is the
+// draw penalty; `label` is the HUD/placement tag. Pure distance math — deterministic,
+// DOM-free — and it needs no workers (energy is a flow, not a hauled good). Shared by
+// powerDraw (below), the HUD's selected-building panel, and the placement cue (render.js).
+export const POWER_TIERS = [
+  { name: "linked",   max: 190,      mult: 1.0, label: "On-grid" },
+  { name: "near",     max: 320,      mult: 1.3, label: "Near-grid" },
+  { name: "far",      max: 470,      mult: 1.7, label: "Far" },
+  { name: "isolated", max: Infinity, mult: 2.3, label: "Isolated" },
+];
+
+// The nearest COMPLETED own Reactor's distance from (x,y), or Infinity if the owner
+// has none. Guards non-finite coordinates (the industry unit-test stubs omit x/y) so
+// they read as co-located rather than NaN-poisoning the scan.
+function nearestReactorDist(state, owner, x, y) {
+  let best = Infinity;
+  for (const b of state.buildings.values()) {
+    if (b.owner !== owner || b.constructing) continue;
+    if (!(BUILDINGS[b.type]?.energyGrants > 0)) continue;
+    const d = Math.hypot(b.x - x, b.y - y);
+    if (Number.isFinite(d) && d < best) best = d;
+  }
+  return best;
+}
+
+// The grid-efficiency tier of a spot for `owner`: the band its distance to the nearest
+// Reactor falls in. No Reactor (or a non-positional stub) → the neutral 'linked' tier
+// (×1): there's no grid to lose against, and powerThrottle already zeroes an unpowered
+// consumer, so an isolated penalty would be moot there anyway.
+export function powerEfficiency(state, owner, x, y) {
+  const d = nearestReactorDist(state, owner, x, y);
+  if (!Number.isFinite(d)) return POWER_TIERS[0];
+  for (const t of POWER_TIERS) if (d <= t.max) return t;
+  return POWER_TIERS[POWER_TIERS.length - 1];
+}
+
 // data.js RECIPES is an array; index it by id once for O(1) lookup.
 const RECIPE_BY_ID = Object.fromEntries(RECIPES.map(r => [r.id, r]));
 
@@ -60,20 +100,24 @@ export function powerCap(state, owner) {
 // Total Power a player's completed factories draw at full rate — a factory
 // reserves its draw by existing, the same way a queued unit reserves supply
 // (so the gauge is steady and predictable, not flickering with input stock).
+// Each consumer's base draw is scaled by its GRID-EFFICIENCY tier: a consumer
+// far from any Reactor draws MORE capacity for the same job (transmission loss),
+// so where you place it — not just that you power it — moves the gauge.
 export function powerDraw(state, owner) {
   let draw = 0;
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing) continue;
     const def = BUILDINGS[b.type];
     const r = def.recipe ? RECIPE_BY_ID[def.recipe] : null;
-    if (r && !b.paused) draw += (r.in.energy || 0) * (def.prodRate || 1);   // a paused factory frees its reserved Power
+    const eff = powerEfficiency(state, owner, b.x, b.y).mult;   // ≥1: distance-to-Reactor line loss
+    if (r && !b.paused) draw += (r.in.energy || 0) * (def.prodRate || 1) * eff;   // a paused factory frees its reserved Power
     // A wonder still charging loads the grid too, so the Antimatter Gate competes
     // with the factories for Reactor Power (engine/wonder.js) — making the finale a
     // real "feed the factories vs charge the Gate" call, and Fusion Containment worth it.
-    else if (def.wonder && (b.charge || 0) < 1) draw += def.powerDraw || 0;
+    else if (def.wonder && (b.charge || 0) < 1) draw += (def.powerDraw || 0) * eff;
     // A Plasma Rig's arc is a heavy draw too (engine/rig.js) — so it competes with the factories
     // for Power and its digs slow when the grid is short. A paused rig frees its reserved Power.
-    else if (def.rig && !b.paused) draw += def.rig.power || 0;
+    else if (def.rig && !b.paused) draw += (def.rig.power || 0) * eff;
   }
   return draw;
 }

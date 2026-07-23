@@ -17,6 +17,7 @@ import { COM, RECIPES } from "./data.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { isVisibleAt, isNodeDiscovered, FOG_CELL_SIZE } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
+import { POWER_TIERS, powerEfficiency } from "./engine/industry.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects, activeFireworks } from "./effects.js";
 
@@ -170,6 +171,7 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   drawUnits(ctx, state, view, alpha);  // unit hulls, then unit overlays (two passes)
   drawBuildingBars(ctx, state, view);  // building health bars last, so a passing ship can't paint them out
   drawJumpStaging(ctx, state, view);   // staging ring around a selected Spaceport (Odyssey)
+  drawPowerGrid(ctx, state, view);     // efficiency zones around a selected Reactor (Odyssey)
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
   drawWaypoints(ctx, state);
@@ -293,6 +295,13 @@ function shade(hex, percent) {
   const g = clamp(((num >> 8) & 0xff) + amt);
   const b = clamp((num & 0xff) + amt);
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+// A "#rrggbb" hex plus an alpha → an "rgba(r,g,b,a)" string, so a fixed palette
+// colour can be drawn translucent (the efficiency-zone fills/rings).
+function hexA(hex, alpha) {
+  const num = parseInt(hex.slice(1), 16);
+  return `rgba(${num >> 16}, ${(num >> 8) & 0xff}, ${num & 0xff}, ${alpha})`;
 }
 
 function polygonPoints(cx, cy, r, sides, rotation = 0) {
@@ -487,6 +496,49 @@ function drawJumpStaging(ctx, state, view) {
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
+  }
+}
+
+// The grid-efficiency tier palette (engine/industry.js POWER_TIERS): the closer a
+// factory/rig sits to a Reactor the cheaper it is to power, so these zones tell the
+// player WHERE to drop one. Green (on-grid, no loss) → red (isolated, worst).
+const POWER_TIER_COLOR = { linked: "#4ade80", near: "#a3e635", far: "#fbbf24", isolated: "#f87171" };
+
+// Concentric efficiency zones around one Reactor at (rx, ry): a faint tinted disc per
+// finite band (painted largest-first so each inner band shows its own hue) with a dashed
+// boundary ring. Everything past the outermost ring is the 'isolated' tier. Shared by the
+// selected-Reactor overlay and the placement cue, so both read the same zones.
+function drawReactorBands(ctx, rx, ry) {
+  const bands = POWER_TIERS.filter(t => Number.isFinite(t.max));
+  ctx.save();
+  for (let i = bands.length - 1; i >= 0; i--) {        // largest radius first, so inner hues win
+    const t = bands[i], col = POWER_TIER_COLOR[t.name];
+    ctx.beginPath();
+    ctx.arc(rx, ry, t.max, 0, Math.PI * 2);
+    ctx.fillStyle = hexA(col, 0.05);
+    ctx.fill();
+  }
+  ctx.setLineDash([8, 7]);
+  ctx.lineWidth = 1.5;
+  for (const t of bands) {
+    ctx.beginPath();
+    ctx.arc(rx, ry, t.max, 0, Math.PI * 2);
+    ctx.strokeStyle = hexA(POWER_TIER_COLOR[t.name], 0.55);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// The power-grid overlay around a SELECTED player Reactor: its efficiency zones, so a
+// player can see the on-grid / near / far bands before placing a factory or rig near it.
+// Drawn only for a selected Reactor (mirrors the Spaceport's jump-staging ring), so it
+// never clutters the field otherwise.
+function drawPowerGrid(ctx, state, view) {
+  const selSet = new Set(state.selection);
+  for (const b of state.buildings.values()) {
+    if (b.type !== "reactor" || b.owner !== "player" || b.constructing || !selSet.has(b.id)) continue;
+    if (view && !inView(view, b.x, b.y, POWER_TIERS[POWER_TIERS.length - 2].max + 8)) continue;
+    drawReactorBands(ctx, b.x, b.y);
   }
 }
 
@@ -1493,6 +1545,57 @@ function drawEffects(ctx) {
   ctx.globalAlpha = 1;
 }
 
+// The grid-efficiency cue drawn under a power-consumer build ghost: the nearest own
+// Reactor's zones + a connector to it, and the ghost's resulting tier as a coloured ring
+// and label ("On-grid · draw ×1.0" … "Isolated · draw ×2.3"). Mirrors how the Spaceport
+// shows its jump radius — it turns "where do I put this factory?" into a visible choice.
+function drawGhostPowerCue(ctx, state, ghost, def) {
+  let nearest = null, bestD = Infinity;
+  for (const b of state.buildings.values()) {
+    if (b.owner !== "player" || b.constructing || b.type !== "reactor") continue;
+    const d = Math.hypot(b.x - ghost.x, b.y - ghost.y);
+    if (d < bestD) { bestD = d; nearest = b; }
+  }
+
+  const tier = powerEfficiency(state, "player", ghost.x, ghost.y);
+  const col = POWER_TIER_COLOR[tier.name];
+
+  if (nearest) {
+    drawReactorBands(ctx, nearest.x, nearest.y);
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = hexA(col, 0.8);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(nearest.x, nearest.y);
+    ctx.lineTo(ghost.x, ghost.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // A ring in the tier colour around the ghost, plus a label above it.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(ghost.x, ghost.y, def.radius + 7, 0, Math.PI * 2);
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  const label = nearest
+    ? `${tier.label} · draw ×${tier.mult.toFixed(1)}`
+    : "No Reactor — power it first";
+  ctx.font = "bold 13px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  const ly = ghost.y - def.radius - 12;
+  const w = ctx.measureText(label).width;
+  ctx.fillStyle = "rgba(5, 7, 15, 0.78)";
+  ctx.fillRect(ghost.x - w / 2 - 5, ly - 15, w + 10, 17);
+  ctx.fillStyle = nearest ? col : "#f87171";
+  ctx.fillText(label, ghost.x, ly);
+  ctx.restore();
+}
+
 // Translucent footprint under the cursor while placing a building, green
 // when the spot is buildable and red when it isn't (out of bounds,
 // overlapping another building, or too close to a resource node — see
@@ -1501,6 +1604,12 @@ function drawEffects(ctx) {
 function drawBuildGhost(ctx, state, ghost) {
   const def = BUILDINGS[ghost.buildingType];
   if (!def) return;
+
+  // Placing a power consumer (a factory, the Plasma Rig, or the Gate)? Surface the
+  // grid-efficiency zones of every nearby Reactor and tag the ghost with the tier it
+  // would land in, so the "closer is cheaper to power" call is visible BEFORE the click.
+  if (def.recipe || def.rig || def.wonder) drawGhostPowerCue(ctx, state, ghost, def);
+
   const valid = canPlaceBuilding(state, ghost.buildingType, ghost.x, ghost.y);
   const color = valid ? "#4ade80" : "#f87171";
   const r = def.radius;

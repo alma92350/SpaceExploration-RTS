@@ -4,7 +4,7 @@ import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
-import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale } from "../engine/industry.js";
+import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 import { deployColonyShip } from "../engine/colony.js";
 
@@ -168,6 +168,43 @@ test("a high-industry world out-produces a low-industry one over identical ticks
     return s.players.player.resources.metals;
   };
   assert.ok(near(mk("forge"), mk("vesper") * 2), "Forge's factories (industry 10) run twice as fast as Vesper's (industry 5)");
+});
+
+test("powerEfficiency: the further a spot sits from a Reactor, the worse its grid tier", () => {
+  const at = (x, y, reactorAt = { x: 0, y: 0 }) =>
+    powerEfficiency(stub([reactor(reactorAt)]), "player", x, y);
+  assert.equal(at(0, 100).name, "linked", "100px out → on-grid");
+  assert.equal(at(250, 0).name, "near", "250px out → near-grid");
+  assert.equal(at(400, 0).name, "far", "400px out → far");
+  assert.equal(at(600, 0).name, "isolated", "600px out → isolated");
+  // Each tier's multiplier is monotonically ≥ the last, and the on-grid tier is exactly 1×.
+  assert.equal(POWER_TIERS[0].mult, 1, "on-grid draws no penalty");
+  for (let i = 1; i < POWER_TIERS.length; i++)
+    assert.ok(POWER_TIERS[i].mult > POWER_TIERS[i - 1].mult, "further bands cost strictly more");
+});
+
+test("powerEfficiency: no Reactor (or a non-positional stub) is the neutral on-grid tier", () => {
+  assert.equal(powerEfficiency(stub([]), "player", 999, 999).name, "linked", "no grid to lose against → ×1");
+  // The industry unit-test stubs omit x/y; a NaN distance must read as on-grid, not poison the scan.
+  assert.equal(powerEfficiency(stub([reactor()]), "player", undefined, undefined).name, "linked");
+});
+
+test("a factory far from its Reactor draws MORE grid capacity for the same job", () => {
+  const onGrid = stub([reactor({ x: 0, y: 0 }), smelter({ x: 0, y: 100 })]);   // linked
+  const isolated = stub([reactor({ x: 0, y: 0 }), smelter({ x: 600, y: 0 })]); // isolated
+  assert.ok(near(powerDraw(onGrid, "player"), 4), "on-grid Smelter draws its base 4");
+  assert.ok(near(powerDraw(isolated, "player"), 4 * 2.3), "an isolated Smelter draws 2.3× — transmission loss");
+
+  // On a tight grid (one Reactor's 20 cap, five Smelters) the same five factories run at
+  // full speed when clustered on-grid (5×4 = 20) but throttle when isolated (5×9.2 = 46).
+  const five = (spot) => stub([reactor({ x: 0, y: 0 }), ...Array.from({ length: 5 }, () => smelter(spot))]);
+  assert.equal(powerThrottle(five({ x: 0, y: 100 }), "player"), 1, "clustered on-grid → the grid just covers them");
+  assert.ok(powerThrottle(five({ x: 600, y: 0 }), "player") < 0.5, "isolated → their inflated draw starves the grid");
+});
+
+test("grid efficiency is deterministic — identical layouts give identical draw", () => {
+  const build = () => stub([reactor({ x: 0, y: 0 }), smelter({ x: 300, y: 120 }), smelter({ x: 500, y: 0 })]);
+  assert.equal(powerDraw(build(), "player"), powerDraw(build(), "player"));
 });
 
 test("industry is Odyssey-only: the buildings are flagged, and a skirmish makes no refined goods", () => {
