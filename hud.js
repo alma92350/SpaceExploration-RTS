@@ -378,6 +378,12 @@ function renderSelectionPanel() {
         if (!rig) return "";
         const info = rigInfo(state, rig);
         return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}:${powerEfficiency(state, rig.owner, rig.x, rig.y).name}:${info.storeFull}:${Math.round((info.stored / (info.storeCap || 1)) * 10)}`;
+      })()
+    // Rebuild a selected forward drop-off's intake line as gatherers fill it and workers clear it.
+    + "|" + (() => {
+        const d = sel.find(e => e.kind === "building" && e.owner === "player" && !e.constructing
+          && storeCapOf(e.type) > 0 && !BUILDINGS[e.type].recipe && !BUILDINGS[e.type].isCommandCenter);
+        return d ? Math.round((storeTotal(d) / (storeCapOf(d.type) || 1)) * 10) : "";
       })();
 
   if (signature !== lastPanelSignature) {
@@ -966,6 +972,22 @@ function rebuildSelectionPanel(sel) {
     note.className = "hint";
     note.textContent = "Powers your factories. If total draw outruns Power, every factory throttles — build more Reactors (or research Fusion Containment).";
     panelEl.appendChild(note);
+  }
+
+  // Forward drop-off (Refinery / Foundry / Arsenal): a finite INTAKE buffer gatherers bank
+  // raw hauls into (engine/gather.js). When it fills, gatherers reroute elsewhere until a
+  // worker clears it to the Command Center — so surface how full it is and whether it's full.
+  const drop = sel.find(e => e.kind === "building" && e.owner === "player" && !e.constructing
+    && storeCapOf(e.type) > 0 && !BUILDINGS[e.type].recipe && !BUILDINGS[e.type].isCommandCenter);
+  if (drop) {
+    const cap = storeCapOf(drop.type), have = storeTotal(drop);
+    const pct = cap ? Math.round((have / cap) * 100) : 0;
+    const full = storeRoom(drop) <= 1e-6;
+    const row = document.createElement("div");
+    row.className = "sel-note " + (full ? "bad" : pct >= 66 ? "warn" : "");
+    row.textContent = `Intake buffer ${Math.round(have)}/${cap} (${pct}%)`
+      + (full ? " — FULL: gatherers reroute until it's hauled off" : " — workers haul it to a Command Center");
+    panelEl.appendChild(row);
   }
 
   // Spaceport (Odyssey): the interplanetary jump panel. Relocate the capital +

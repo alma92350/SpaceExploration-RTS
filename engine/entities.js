@@ -30,6 +30,7 @@ export const BUILDINGS = {
     cost: { ore: 200 }, buildTime: 16,
     sight: 140,
     dropOff: true,   // doubles as a resource drop-off — see the dropOff note below
+    storeCap: 100,   // a PLAYER forward drop-off's finite intake buffer (engine/haul.js) — a full one reroutes gatherers
     // No `produces` — it researches upgrades instead of building units,
     // which is also what keeps it out of the rally-point UI (input.js
     // only offers that for buildings with a `produces` list).
@@ -56,6 +57,7 @@ export const BUILDINGS = {
     id: "foundry", name: "Foundry", hp: 450, radius: 18,
     cost: { ore: 175 }, buildTime: 22, sight: 140,
     dropOff: true,   // an industrial building doubles as a resource drop-off
+    storeCap: 100,   // a PLAYER forward drop-off's finite intake buffer (engine/haul.js)
     // The military tech gate: a pure prerequisite building (no `produces`, so
     // it stays out of the rally UI). It unlocks the Tier-2 combat units
     // (Lancer, Breacher) — the Barracks still trains them. Ore-only on purpose,
@@ -67,6 +69,7 @@ export const BUILDINGS = {
     id: "arsenal", name: "Arsenal", hp: 550, radius: 18,
     cost: { ore: 220 }, buildTime: 26, sight: 140,
     dropOff: true,   // an industrial building doubles as a resource drop-off
+    storeCap: 100,   // a PLAYER forward drop-off's finite intake buffer (engine/haul.js)
     // The Tier-3 gate, one step past the Foundry: unlocks the Dreadnought
     // capital unit. Also a pure gate (no `produces`), ore-only so the tech path
     // stays reachable on every world.
@@ -241,6 +244,15 @@ export function prereqsMet(state, owner, def) {
 export function isDropOff(type) {
   const def = BUILDINGS[type];
   return !!(def && (def.isCommandCenter || def.dropOff));
+}
+
+// Where a gatherer may DEPOSIT a raw haul: the Command Center or a pure forward drop-off
+// (Refinery/Foundry/Arsenal) — NOT a factory, which drops its raws-as-inputs elsewhere and
+// whose `store` is its refined OUTPUT buffer, not a raw-intake bin. So the gather loop and
+// the finite-intake logic (engine/gather.js) share one definition of a "collection point".
+export function isGatherDropOff(type) {
+  const def = BUILDINGS[type];
+  return !!(def && (def.isCommandCenter || (def.dropOff && !def.recipe)));
 }
 
 // ---- Finite storage (Odyssey logistics) ---------------------------------------

@@ -20,7 +20,7 @@
 
 import { stepToward } from "./movement.js";
 import { UNITS, storeTotal, storeCapOf, inputRoom, inputCapOf } from "./entities.js";
-import { nearestDropoff } from "./gather.js";
+import { nearestCommandCenter } from "./gather.js";
 import { recipeOf } from "./industry.js";
 
 const SOURCE_REACH = 30;          // how close a hauler must get to a producer to load
@@ -127,7 +127,7 @@ export function updateHaul(state, unit, dt) {
   }
 
   if (order.phase === "toDrop") {
-    const drop = nearestDropoff(state, unit.owner, unit.x, unit.y);
+    const drop = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
     if (!drop) { unit.order = null; return; }   // no Command Center to deliver to — hold the load, drop the job
     const dist = Math.hypot(drop.x - unit.x, drop.y - unit.y);
     if (dist <= DROP_REACH) {
@@ -208,7 +208,7 @@ export function updateSupply(state, unit, dt) {
     const res = state.players[unit.owner].resources;
     const carrying = unit.cargo && unit.cargo.qty > 0;
     if (!carrying && (res[order.com] || 0) <= 0) { unit.order = null; return; }   // treasury dry, nothing loaded
-    const drop = nearestDropoff(state, unit.owner, unit.x, unit.y);
+    const drop = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
     if (!drop) { unit.order = null; return; }
     const dist = Math.hypot(drop.x - unit.x, drop.y - unit.y);
     if (dist <= DROP_REACH) {

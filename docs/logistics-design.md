@@ -147,15 +147,39 @@ storage cascades to AI worker logic — the riskier half.
 **Balance note (both phases):** default caps are generous (80 / rig 120). Tune later —
 smaller = more logistics pressure, larger = less micro.
 
-**Phase C — Finite COLLECTION storage (affects the AI).**
-- Give drop-offs (Refinery/Foundry/Arsenal) a finite intake buffer that must be
-  drained to the CC; a full drop-off makes gatherers pick the next-nearest drop-off
-  (extend `nearestDropoff` to skip full ones) or idle.
-- CC gets a large, `storeTier`-scaled cap (Capital upgrade raises it).
-- **AI safety first:** either give the AI CC an effectively unbounded cap, or gate
-  the whole of Phase C behind an "advanced logistics" world/difficulty flag so the AI
-  path stays deterministic and non-deadlocking. Re-verify `determinism-roster` across
-  every archetype before merge.
+**Phase C — Finite COLLECTION storage. ✅ DONE (player-only).**
+- The forward drop-offs (Refinery/Foundry/Arsenal — the pure `dropOff` buildings, via
+  the new `isGatherDropOff`) get a finite `storeCap` intake buffer. A PLAYER gatherer
+  banks its haul into that buffer (capped); a full one is skipped by `nearestGatherDrop`
+  so the gatherer reroutes to the next collection point (the Command Center never fills).
+  Phase A haulage clears the buffer to the CC automatically. Factories are excluded from
+  gather drop-offs (their `store` is refined OUTPUT, not a raw-intake bin).
+- The **Command Center is the treasury/warehouse** — effectively unbounded ("very large
+  storage"): haulage delivers there and supply picks up there (`nearestCommandCenter`),
+  so goods flow *through* the CC, never sideways between drop-offs.
+- **AI-safe by construction:** the finite-intake path is gated to `owner === "player"`.
+  An AI drop-off banks straight to the treasury as before, and the AI builds no
+  producers so its workers never haul/supply — so the AI economy and the byte-identical
+  `determinism`/`determinism-roster` replays are untouched (verified: full suite green).
+- `render.js` store bar (Phase A) covers forward drop-offs; `hud.js` shows a selected
+  drop-off's intake buffer + "FULL: gatherers reroute" state. Tests in `test/gather.test.js`
+  (finite intake + reroute) and `test/haul.test.js` (AI drop-off stays bufferless).
+
+**Known pre-existing issue (surfaced, not caused, by Phase C):** two+ workers rapidly
+cycling a drop-off planted *very close* to a node can separation-deadlock in the `toNode`
+walk (confirmed identical on the pre-Phase-C code). It's a movement/separation bug, out
+of scope here; a real placement keeps the drop-off far enough from the node to avoid it.
+
+---
+
+## Outcome
+
+All three phases shipped. Storage is finite end-to-end — collection (forward drop-offs),
+production output (rig + factories), and factory inputs — and workers move every good
+between them (gather → drop-off → haul → CC → supply → factory → haul → CC). Logistics is
+now a standing demand on labour to the end of the game, with the Command Center as the one
+bottomless warehouse. Energy stays a placement decision (grid efficiency), no workers.
+Everything player-only and deterministic; the AI and skirmish replays are byte-identical.
 
 ### 2.5 Recommended order & risk
 

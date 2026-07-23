@@ -137,6 +137,19 @@ test("an idle worker auto-supplies a starving factory, and its metals come back 
   assert.ok((s.players.player.resources.metals || 0) > 0, "…refined into metals and hauled back — the full supply→make→haul loop ran");
 });
 
+test("an AI-owned forward drop-off banks straight to the treasury — no buffer, no haulage (determinism)", () => {
+  const { s, cc } = base(7);
+  // A Refinery for the AI: it has a storeCap def, but AI drop-offs must stay the bottomless
+  // treasury (the finite-intake logic is player-only), so its buffer must never fill.
+  const aiCC = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  const ref = makeBuilding("refinery", "ai", aiCC.x + 30, aiCC.y);
+  s.buildings.set(ref.id, ref);
+  for (let i = 0; i < 300; i++) tick(s, 0.1);
+  assert.equal(storeTotal(ref), 0, "the AI's Refinery buffer stays empty — AI banks to the treasury as before");
+  const aiHauls = [...s.units.values()].some(u => u.owner === "ai" && u.order && (u.order.type === "haul" || u.order.type === "supply"));
+  assert.equal(aiHauls, false, "and no AI worker ever hauls or supplies");
+});
+
 test("assignSupply is owner-scoped and skips a well-stocked factory", () => {
   const { s, cc, workers } = base(3);
   const sm = plantFactory(s, cc);
