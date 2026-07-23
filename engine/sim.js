@@ -9,7 +9,7 @@
 import { stepToward, keepEscortStation } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
-import { updateHaul, assignHaul, updateSupply, assignSupply, countLogistics } from "./haul.js";
+import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "./haul.js";
 import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
@@ -131,12 +131,12 @@ function updateUnit(state, unit, dt) {
   if (def.role === "support") { updateSupport(state, unit, def, dt); return; }
 
   // An idle Odyssey worker with nothing queued offers itself for logistics: first it clears a
-  // producer's backed-up output to a Command Center (haul — prevents stalls and refills the
-  // treasury), else it feeds a starving factory its inputs (supply). Player-only — the AI builds
+  // pure producer's backed-up output to a Command Center (haul — the Rig, the drop-offs), else it
+  // runs a factory a round-trip service (carry inputs in, output back). Player-only — the AI builds
   // no producers/factories, so its workers never do this and its replay is unchanged.
   if (!unit.order && def.role === "worker" && unit.owner === "player") {
     assignHaul(state, unit);
-    if (!unit.order) assignSupply(state, unit);
+    if (!unit.order) assignService(state, unit);
   }
 
   if (!unit.order) return;
@@ -152,8 +152,8 @@ function updateUnit(state, unit, dt) {
     case "haul":
       updateHaul(state, unit, dt);
       break;
-    case "supply":
-      updateSupply(state, unit, dt);
+    case "service":
+      updateService(state, unit, dt);
       break;
     case "escort":
       // A non-combat escort (worker) just keeps station on the ring around the guarded ship.

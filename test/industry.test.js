@@ -137,8 +137,9 @@ test("end-to-end: workers supply a built chain and haul its goods, and the alloy
   }
   s.players.player.resources.ore = 5000;                 // plenty of feedstock in the treasury for workers to supply
   for (let i = 0; i < 8; i++) { const w = makeUnit("worker", "player", cc.x + 20, cc.y + 20); s.units.set(w.id, w); }  // hands to run the logistics
-  // The chain now needs WORKERS: supply ore→smelter, haul metals→CC, supply metals→assembler, haul alloys→CC.
-  for (let i = 0; i < 5000 && (s.players.player.resources.alloys || 0) <= 0; i++) stepGalaxy(g, 0.1);
+  // The chain now needs WORKERS: a round-trip service carries ore→smelter and metals back, then
+  // metals→assembler and alloys back. Run until a sellable pile of alloys has flowed to the treasury.
+  for (let i = 0; i < 5000 && (s.players.player.resources.alloys || 0) < 5; i++) stepGalaxy(g, 0.1);
 
   assert.ok((s.players.player.resources.alloys || 0) > 0, "workers fed the chain and hauled the alloys back to the treasury");
   const creditsBefore = g.credits;

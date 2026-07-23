@@ -54,6 +54,15 @@ export function issueGather(units, nodeId, queue = false) {
   units.forEach(u => { if (u.cargo) dispatch(u, { type: "gather", nodeId }, queue); });
 }
 
+// Assign workers to SERVICE a building — a standing round trip that carries its inputs in and its
+// output out (engine/haul.js). `manual` keeps them on that one building until re-ordered, instead
+// of the auto-logistics that re-picks the nearest needy building each cycle.
+export function issueServiceBuilding(units, buildingId, queue = false) {
+  units.forEach(u => {
+    if (UNITS[u.type]?.role === "worker") dispatch(u, { type: "service", buildingId, phase: "plan", manual: true }, queue);
+  });
+}
+
 // Only ARMED units (or a support drone, whose 'attack' order updateSupport reinterprets
 // as "advance on that foe" and mend nearby, dealing no damage) accept an attack order.
 // A weaponless rider — a colony ship, a freighter — has no `attack` stat, so routing an

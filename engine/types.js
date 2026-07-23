@@ -47,6 +47,7 @@
  * @property {number} [slot]
  * @property {number} [slots]
  * @property {string} [phase]
+ * @property {boolean} [manual]   a player-assigned service order sticks to its building (engine/haul.js)
  */
 
 /**
@@ -118,7 +119,7 @@
  * @property {Object.<string, number>} [store]  a producer's finite output buffer, commodity → qty (engine/haul.js)
  * @property {Object.<string, number>} [input]  a factory's finite input larder, commodity → qty (engine/haul.js)
  * @property {number} [haulers]       transient per-tick count of workers hauling from this producer (engine/haul.js)
- * @property {number} [suppliers]     transient per-tick count of workers supplying this factory (engine/haul.js)
+ * @property {number} [servers]       transient per-tick count of workers servicing this factory (engine/haul.js)
  * @property {boolean} [powered]      transient: a Combustion Generator is fed & granting Power this tick (engine/industry.js)
  * @property {string} [fuel]          transient: which fuel the Generator burned this tick (HUD)
  */

@@ -9,8 +9,9 @@
 "use strict";
 
 import { game } from "./session.js";
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort } from "./engine/commands.js";
-import { UNITS, BUILDINGS } from "./engine/entities.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding } from "./engine/commands.js";
+import { UNITS, BUILDINGS, storeCapOf } from "./engine/entities.js";
+import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, dragCamera, pinchZoomPan } from "./camera.js";
 import * as sound from "./sound.js";
@@ -185,6 +186,14 @@ export function attachInput(canvas, state, onChange) {
       const workers = selected.filter(u => u.cargo);
       if (workers.length) { issueAssistBuild(workers, target.id, queue); sound.playOrder(); }
       return;
+    }
+    // A completed friendly building with logistics buffers (a factory, the Rig, a forward drop-off):
+    // selected workers are ASSIGNED to service it — a standing round trip carrying its inputs in and
+    // its output out (engine/haul.js), until re-ordered elsewhere.
+    if (target && target.owner === "player" && target.kind === "building" && !target.constructing
+        && (recipeOf(target) || storeCapOf(target.type) > 0)) {
+      const workers = selected.filter(u => UNITS[u.type].role === "worker");
+      if (workers.length) { issueServiceBuilding(workers, target.id, queue); sound.playOrder(); return; }
     }
     if (target && target.owner !== "player") {
       const attackers = selected.filter(u => UNITS[u.type].attack);

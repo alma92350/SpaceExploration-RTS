@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { updateHaul, assignHaul, updateSupply, assignSupply, countLogistics } from "../engine/haul.js";
+import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "../engine/haul.js";
 import { storeTotal, storeCapOf, inputTotal } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
@@ -101,7 +101,7 @@ test("haulage is deterministic: two same-seed runs bank identical treasuries", (
   assert.deepEqual(run(), run());
 });
 
-// ---- supply leg: workers carry inputs from the treasury into a factory's larder --------
+// ---- service round trip: workers carry inputs INTO a factory and its output BACK --------
 
 // A player factory planted next to the CC, with a Reactor for Power.
 function plantFactory(s, cc, type = "smelter") {
@@ -112,21 +112,37 @@ function plantFactory(s, cc, type = "smelter") {
   return f;
 }
 
-test("a supply worker carries a factory's input from the treasury into its larder", () => {
+test("a service worker carries a factory's input from the treasury into its larder", () => {
   const { s, cc, workers } = base(1);
   const sm = plantFactory(s, cc);
   s.players.player.resources.ore = 100;
   const w = workers[0];
   w.x = cc.x; w.y = cc.y;
-  w.order = { type: "supply", buildingId: sm.id, com: "ore" };
+  w.order = { type: "service", buildingId: sm.id, phase: "plan" };
 
-  for (let i = 0; i < 4000 && inputTotal(sm) <= 0; i++) updateSupply(s, w, 0.05);
+  for (let i = 0; i < 4000 && inputTotal(sm) <= 0; i++) updateService(s, w, 0.05);
 
   assert.ok(inputTotal(sm) > 0, "the smelter's larder was filled");
   assert.ok((s.players.player.resources.ore || 0) < 100, "…drawn from the treasury");
 });
 
-test("an idle worker auto-supplies a starving factory, and its metals come back to the treasury", () => {
+test("a service worker also carries the finished OUTPUT back on the return trip (round trip)", () => {
+  const { s, cc, workers } = base(1);
+  const sm = plantFactory(s, cc);
+  sm.input = { ore: 999 };               // fully stocked, so there's no input to fetch this trip
+  sm.store = { metals: 40 };             // …but a backlog of output to carry home
+  s.players.player.resources.metals = 0;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: sm.id, phase: "plan" };
+
+  for (let i = 0; i < 4000 && (s.players.player.resources.metals || 0) <= 0; i++) updateService(s, w, 0.05);
+
+  assert.ok((s.players.player.resources.metals || 0) > 0, "the worker hauled the factory's output back to the treasury");
+  assert.ok(storeTotal(sm) < 40, "…drawing down its output buffer");
+});
+
+test("an idle worker auto-services a starving factory, and its metals come back to the treasury", () => {
   const { s, cc } = base(2);
   const sm = plantFactory(s, cc);
   s.players.player.resources.ore = 200;
@@ -134,29 +150,40 @@ test("an idle worker auto-supplies a starving factory, and its metals come back 
   for (let i = 0; i < 800; i++) tick(s, 0.1);
 
   assert.ok((s.players.player.resources.ore || 0) < 200, "ore was carried out of the treasury into the smelter");
-  assert.ok((s.players.player.resources.metals || 0) > 0, "…refined into metals and hauled back — the full supply→make→haul loop ran");
+  assert.ok((s.players.player.resources.metals || 0) > 0, "…refined into metals and hauled back — the full round trip ran");
 });
 
-test("an AI-owned forward drop-off banks straight to the treasury — no buffer, no haulage (determinism)", () => {
+test("a manually-assigned worker keeps servicing its one building", () => {
+  const { s, cc, workers } = base(6);
+  const sm = plantFactory(s, cc);
+  s.players.player.resources.ore = 300;
+  const w = workers[0];
+  w.order = { type: "service", buildingId: sm.id, phase: "plan", manual: true };
+  for (let i = 0; i < 1200; i++) { tick(s, 0.1); if (!w.order) break; }
+  assert.ok(w.order && w.order.type === "service" && w.order.buildingId === sm.id,
+    "it stays bound to its assigned building rather than going idle");
+  assert.ok((s.players.player.resources.metals || 0) > 0, "…and keeps the metals flowing back");
+});
+
+test("an AI-owned forward drop-off banks straight to the treasury — no buffer, no logistics (determinism)", () => {
   const { s, cc } = base(7);
-  // A Refinery for the AI: it has a storeCap def, but AI drop-offs must stay the bottomless
-  // treasury (the finite-intake logic is player-only), so its buffer must never fill.
   const aiCC = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
   const ref = makeBuilding("refinery", "ai", aiCC.x + 30, aiCC.y);
   s.buildings.set(ref.id, ref);
   for (let i = 0; i < 300; i++) tick(s, 0.1);
   assert.equal(storeTotal(ref), 0, "the AI's Refinery buffer stays empty — AI banks to the treasury as before");
-  const aiHauls = [...s.units.values()].some(u => u.owner === "ai" && u.order && (u.order.type === "haul" || u.order.type === "supply"));
-  assert.equal(aiHauls, false, "and no AI worker ever hauls or supplies");
+  const aiLogi = [...s.units.values()].some(u => u.owner === "ai" && u.order && (u.order.type === "haul" || u.order.type === "service"));
+  assert.equal(aiLogi, false, "and no AI worker ever hauls or services");
 });
 
-test("assignSupply is owner-scoped and skips a well-stocked factory", () => {
+test("assignService is owner-scoped and skips a well-stocked, cleared factory", () => {
   const { s, cc, workers } = base(3);
   const sm = plantFactory(s, cc);
-  sm.input = { ore: 999 };              // already brimming → no supply needed
+  sm.input = { ore: 999 };              // brimming larder → no input needed
+  sm.store = {};                        // …and no output backlog → nothing to clear
   s.players.player.resources.ore = 500;
   const w = workers[0]; w.order = null;
   countLogistics(s);
-  assignSupply(s, w);
-  assert.equal(w.order, null, "a factory with a full larder pulls no supplier");
+  assignService(s, w);
+  assert.equal(w.order, null, "a fed, cleared factory pulls no worker");
 });
