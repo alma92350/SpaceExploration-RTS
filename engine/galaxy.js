@@ -25,7 +25,7 @@ import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
 import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
-import { createDiplomacy } from "./diplomacy.js";
+import { createDiplomacy, aiDevelopment } from "./diplomacy.js";
 import { UNITS, BUILDINGS } from "./entities.js";
 import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
@@ -72,6 +72,8 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     milestones: [],             // freshly-reached milestones awaiting a UI firework (transient, drained by boot.js)
     wonBy: null,                // legacy: no Odyssey win any more (play-forever) — kept null for save/skirmish compat
     discovered: new Set([startId]),   // LIVING GALAXY: worlds the player has actually reached (starmap "explored" + free return-jump). Every world SIMULATES from the start, but the player only SEES a world once they've been there.
+    claims: new Map(),          // faction spread: worldId → controlling faction (checkExpansion), shown on the starmap
+    expansionNotes: [],         // freshly-claimed/expanded worlds awaiting a UI toast (transient, drained by boot.js)
   };
   addPlanet(galaxy, startId);
   // LIVING GALAXY: every other world already exists and simulates in the background from turn one —
@@ -244,6 +246,7 @@ export function stepGalaxy(galaxy, dt) {
   // checked immediately. Pure integer arithmetic on galaxy.tick — no wall-clock, deterministic.
   if (t === 1 || t % PROGRESS_CHECK_EVERY === 0) {
     checkDomination(galaxy);      // conquest progress: pacified worlds (per-world toast) + a milestone at the target
+    checkExpansion(galaxy);       // faction spread: developed AI worlds claim + colonise across the starmap
     checkGalaxyProgress(galaxy);  // milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
     checkGalaxyRescue(galaxy);    // NEVER auto-defeat: a total wipeout sends a relief colony ship so life goes on
   }
@@ -360,6 +363,56 @@ export function checkDomination(galaxy) {
   if (galaxy.pacified.size >= galaxy.worlds.length) reachMilestone(galaxy, "domination:all");
 }
 
+// FACTION SPREAD across the galaxy. The living galaxy fills up with developing AI factions
+// (engine/ai.js aiIndustry); this is how their influence spreads between planets over a long game:
+//  • SELF-CLAIM — a world whose AI has developed past CLAIM_DEV flies its own faction's flag.
+//  • EXPAND — the single most-developed claimed world (past EXPAND_DEV) colonises the NEAREST still-
+//    unclaimed world, claiming it and flipping that world's AI to its colours — so a thriving faction
+//    absorbs the fringe and its territory grows across the starmap.
+// One cross-planet claim per scan keeps the spread gradual; it's paced by how fast worlds develop
+// (minutes), and converges once every world is claimed. Deterministic: development is an entity count,
+// distance is fixed planet-x, order is the fixed roster, ties break by world id — no clock, no RNG.
+// Reads/writes only galaxy.claims (persisted) + the AI's faction (persisted), so it's save/load-safe.
+export const CLAIM_DEV = 3;    // industrial development at which a world's AI faction claims its homeworld
+export const EXPAND_DEV = 6;   // ...and at which a thriving world reaches out to colonise a neighbour
+
+export function checkExpansion(galaxy) {
+  const claims = galaxy.claims || (galaxy.claims = new Map());
+  const notes = galaxy.expansionNotes || (galaxy.expansionNotes = []);
+  // SELF-CLAIM: every developed homeworld with a standing base flies its faction's flag (roster order).
+  for (const id of galaxy.worlds) {
+    if (claims.has(id)) continue;
+    const s = galaxy.planets.get(id);
+    if (!s || !hasAiCommand(s) || aiDevelopment(s) < CLAIM_DEV) continue;
+    const faction = s.players.ai ? s.players.ai.faction : "neutral";
+    claims.set(id, faction);
+    notes.push({ type: "claim", planetId: id, faction });
+  }
+  // EXPAND: the single most-developed claimed world past EXPAND_DEV (tie by id) colonises the nearest
+  // still-unclaimed world (tie by id). One per scan → gradual spread.
+  let exp = null, expDev = EXPAND_DEV - 1e-9;
+  for (const id of galaxy.worlds) {
+    if (!claims.has(id)) continue;
+    const s = galaxy.planets.get(id);
+    if (!s) continue;
+    const dev = aiDevelopment(s);
+    if (dev > expDev || (dev === expDev && exp !== null && id < exp)) { expDev = dev; exp = id; }
+  }
+  if (exp === null) return;
+  let best = null, bestD = Infinity;
+  for (const other of galaxy.worlds) {
+    if (claims.has(other)) continue;
+    const d = Math.abs(planetX(other) - planetX(exp));
+    if (d < bestD || (d === bestD && best !== null && other < best)) { bestD = d; best = other; }
+  }
+  if (best === null) return;
+  const faction = claims.get(exp);
+  claims.set(best, faction);
+  const bs = galaxy.planets.get(best);
+  if (bs && bs.players.ai) bs.players.ai.faction = faction;   // the colonised world flies the expander's colours
+  notes.push({ type: "expand", from: exp, planetId: best, faction });
+}
+
 // A pure snapshot of the galaxy for the starmap: per-world status (your active
 // seat / a colony you hold / unexplored) and, for worlds you've been to, the
 // neighbour's stance. Plus the visited count and credits.
@@ -394,8 +447,12 @@ export function galaxyStatus(galaxy) {
       // Industry/Tech ratings (data.js) drive factory speed + research speed and
       // finished-good prices — surfaced so "where to settle/jump" is an informed call.
       const p = PLANETS.find(pl => pl.id === id);
-      return { id, status, income, pacified, stance: s && s.diplomacy ? s.diplomacy.stance : null,
-        industry: p ? p.industry : 5, tech: p ? p.tech : 5, faction: p ? p.faction : null };
+      // `faction` is the world's fixed cultural origin (data.js PLANETS); `controlledBy` is the DYNAMIC
+      // faction that has claimed it via expansion (checkExpansion) — the spreading galactic politics
+      // shown on the starmap. Visible galaxy-wide (it's sphere-of-influence news, not tactical intel).
+      return { id, status, income, pacified, stance: seen && s && s.diplomacy ? s.diplomacy.stance : null,
+        industry: p ? p.industry : 5, tech: p ? p.tech : 5, faction: p ? p.faction : null,
+        controlledBy: (galaxy.claims && galaxy.claims.get(id)) || null };
     }),
   };
 }

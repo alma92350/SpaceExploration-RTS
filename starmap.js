@@ -55,10 +55,14 @@ export function renderStarmap() {
       : w.status === "pacified" ? "⚔ conquered"
       : w.status === "colony" ? `your colony · +${w.income} ◈/min`
       : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
+      // An unexplored world that a faction has claimed (checkExpansion) reads as that faction's
+      // sphere — so you watch factions spread across the frontier before you ever set foot there.
+      : w.controlledBy ? `${FACTIONS[w.controlledBy]?.name || archetypeFor(w.id).name} space`
       : archetypeFor(w.id).name;
-    // The world's controlling-faction emblem (data.js FACTIONS) — the same icon the turn-based
-    // meta uses — so a world reads by its faction at a glance on the map.
-    const ico = (w.faction && FACTIONS[w.faction]?.ico) || "🪐";
+    // The world's faction emblem: the DYNAMIC controlling faction (checkExpansion spread) when one has
+    // claimed it, else its native faction (data.js FACTIONS) — so the map's emblems shift as factions
+    // colonise across it, a world reading by whoever holds it at a glance.
+    const ico = (FACTIONS[w.controlledBy || w.faction]?.ico) || "🪐";
     // Build each span with textContent, not one innerHTML string: worldName(w.id) falls
     // back to the raw id for an unknown world (data.js), and a hostile save could park
     // markup there — as text it can only ever render as text. Industry/Tech drive the

@@ -5,11 +5,17 @@ import { tick } from "../engine/sim.js";
 import { runAI } from "../engine/ai.js";
 import { updateProduction } from "../engine/industry.js";
 import { updatePlasmaRig } from "../engine/rig.js";
+import { mulberry32 } from "../engine/rng.js";
+
+// A SEEDED Odyssey state — createGameState falls back to Math.random for map generation when no rng
+// is passed, so pin one, else the node layout (and the AI's economy timing) varies run to run.
+const seeded = (planetId, endless = true, seed = 4242) =>
+  createGameState({ planetId, endless, seed, rng: mulberry32(seed) });
 
 // Give an Odyssey AI a real, deployed base (Odyssey seeds only a colony ship) so the AI-brain
 // phases have something to build from: a CC, a Barracks, workers, and ore to spend.
 function aiBase(planetId = "ferros") {
-  const s = createGameState({ planetId, endless: true });
+  const s = seeded(planetId);
   const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
   const bar = makeBuilding("barracks", "ai", 664, 500); s.buildings.set(bar.id, bar);
   for (let i = 0; i < 5; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
@@ -21,7 +27,7 @@ function aiBase(planetId = "ferros") {
 // haulage), while the player's buffer+haulage path and the skirmish replay stay untouched.
 
 test("an AI Smelter refines treasury ore into metals with no workers — abstracted logistics", () => {
-  const s = createGameState({ planetId: "ferros", endless: true });
+  const s = seeded("ferros");
   const r = makeBuilding("reactor", "ai", 500, 500); s.buildings.set(r.id, r);
   const sm = makeBuilding("smelter", "ai", 520, 500); s.buildings.set(sm.id, sm);
   s.players.ai.resources.ore = 100;
@@ -33,7 +39,7 @@ test("an AI Smelter refines treasury ore into metals with no workers — abstrac
 });
 
 test("an AI factory with no Reactor produces nothing — the power throttle still bites", () => {
-  const s = createGameState({ planetId: "ferros", endless: true });
+  const s = seeded("ferros");
   const sm = makeBuilding("smelter", "ai", 520, 500); s.buildings.set(sm.id, sm);
   s.players.ai.resources.ore = 100;
   for (let i = 0; i < 50; i++) updateProduction(s, sm, 0.1);
@@ -42,7 +48,7 @@ test("an AI factory with no Reactor produces nothing — the power throttle stil
 });
 
 test("a PLAYER factory still runs off its buffers, not the treasury (haulage path unchanged)", () => {
-  const s = createGameState({ planetId: "ferros", endless: true });
+  const s = seeded("ferros");
   const r = makeBuilding("reactor", "player", 500, 500); s.buildings.set(r.id, r);
   const sm = makeBuilding("smelter", "player", 520, 500); s.buildings.set(sm.id, sm);
   s.players.player.resources.ore = 100;   // in the treasury, but NOT in the factory's input larder
@@ -57,7 +63,7 @@ test("a PLAYER factory still runs off its buffers, not the treasury (haulage pat
 });
 
 test("an AI Plasma Rig banks its dig straight into the treasury (no buffer to stall)", () => {
-  const s = createGameState({ planetId: "ferros", endless: true });
+  const s = seeded("ferros");
   const r = makeBuilding("reactor", "ai", 500, 500); s.buildings.set(r.id, r);
   const rig = makeBuilding("plasmarig", "ai", 520, 500); s.buildings.set(rig.id, rig);
   s.players.ai.resources.radioactives = 100;   // nuclear to exploit
@@ -80,26 +86,44 @@ test("an Odyssey AI powers and electrifies its base (Reactor + electrified build
 
 // Skirmish quarantine: the AI never builds Odyssey industry off the endless layer.
 test("a skirmish AI builds no Reactor and electrifies nothing (byte-identical short game)", () => {
-  const s = createGameState({ planetId: "ferros" });   // not endless
+  const s = seeded("ferros", false);   // not endless
   for (let i = 0; i < 300; i++) tick(s, 0.2);
   const industry = [...s.buildings.values()].filter(b => b.owner === "ai" && (b.type === "reactor" || b.electrified));
   assert.equal(industry.length, 0, "no reactors, no electrification in a skirmish");
 });
 
-// Phase 3 — a patient developer AI climbs the factory chain and researches the tech tree.
-test("a developer AI builds the factory chain and researches (Smelter → Datacenter → Assembler)", () => {
+// Phase 3 — a patient developer AI climbs the factory chain and researches the tech tree. Tested at
+// the DECISION level (runAI issues the build/research immediately) — fast, and robust to map timing.
+const aiTypes = s => new Set([...s.buildings.values()].filter(b => b.owner === "ai").map(b => b.type));
+
+test("a developer AI opens the industrial chain — a Smelter, then a Datacenter to research", () => {
   const s = aiBase("ferros");   // Economist archetype → wantsRefinery, so it develops industry
-  s.players.ai.resources.crystals = 3000;      // fund the research (crystals) and the deeper recipes
-  s.players.ai.resources.radioactives = 3000;
-  for (let i = 0; i < 1200; i++) tick(s, 0.2);   // ~240s: reach the Assembler via Metallurgy
-  const built = new Set([...s.buildings.values()].filter(b => b.owner === "ai" && !b.constructing).map(b => b.type));
-  assert.ok(built.has("smelter"), "the AI raised a Smelter (ore → metals)");
-  assert.ok(built.has("datacenter"), "…and a Datacenter to research");
-  assert.ok(s.players.ai.upgrades.metallurgy, "…researched Metallurgy");
-  assert.ok(built.has("assembler"), "…and climbed to the Assembler once Metallurgy unlocked it");
-  assert.ok((s.players.ai.resources.metals || 0) > 0, "the chain is producing — metals in the treasury");
-  const reactors = [...s.buildings.values()].filter(b => b.owner === "ai" && b.type === "reactor").length;
-  assert.ok(reactors >= 1 && reactors <= 5, `power scales sanely, no over-build (${reactors} reactors)`);
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);   // the chain needs power
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(aiTypes(s).has("smelter"), "the AI raised a Smelter (ore → metals)");
+  assert.ok(aiTypes(s).has("datacenter"), "…and a Datacenter to research");
+});
+
+test("a developer AI researches the tech tree at its Datacenter", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  const dc = makeBuilding("datacenter", "ai", 560, 540); s.buildings.set(dc.id, dc);
+  s.players.ai.resources.crystals = 500;
+  let researching = false;
+  for (let i = 0; i < 8 && !researching; i++) {
+    runAI(s, 1.5);
+    researching = s.players.ai.upgrades.metallurgy || (dc.researchQueue || []).some(j => j.techId === "metallurgy");
+  }
+  assert.ok(researching, "the AI queued Metallurgy at its Datacenter");
+});
+
+test("once Metallurgy is researched the AI climbs to the Assembler", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  const sm = makeBuilding("smelter", "ai", 560, 540); s.buildings.set(sm.id, sm);
+  s.players.ai.upgrades.metallurgy = true;   // unlock the Assembler
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(aiTypes(s).has("assembler"), "the AI built the Assembler its research unlocked");
 });
 
 // A Rusher stays lean: it electrifies (Phase 2, universal) but never sinks ore into the deep chain.

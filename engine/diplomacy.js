@@ -37,8 +37,9 @@ const DEV_SOFT_CAP = 0.4;    // ...capped, so a fully-mined world still tips to 
 // How developed the neighbour is: its completed industrial buildings (power, factories, the Plasma
 // Rig, the Datacenter) plus the tech nodes it has researched. Deterministic — reads only entity and
 // upgrade state. Zero for a bare early neighbour (and for the whole skirmish path, which never calls
-// this), so the stance maths is unchanged until the AI actually starts to develop.
-function aiDevelopment(state) {
+// this), so the stance maths is unchanged until the AI actually starts to develop. Exported so the
+// galaxy layer's faction-expansion (engine/galaxy.js checkExpansion) can key off the same measure.
+export function aiDevelopment(state) {
   let n = 0;
   for (const b of state.buildings.values()) {
     if (b.owner !== "ai" || b.constructing) continue;

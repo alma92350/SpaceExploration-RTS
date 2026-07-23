@@ -288,6 +288,7 @@ function galaxyPayload(galaxy) {
     pacified: [...(galaxy.pacified || [])], wonBy: galaxy.wonBy ?? null,   // conquest progress (additive; old saves default to none)
     reached: [...(galaxy.reached || [])],                                  // progress milestones already celebrated — so a reload doesn't replay their fireworks
     discovered: [...(galaxy.discovered || [])],                            // living galaxy: worlds the player has REACHED (starmap "explored" + free return-jump)
+    claims: [...(galaxy.claims || [])],                                     // faction spread: [worldId, faction] pairs (checkExpansion) — the galactic politics on the starmap
     nextEntityId: peekEntityId(),                 // the ONE global entity counter, saved once
     planets: [...galaxy.planets.values()].map(state => ({
       ...serPlanet(state),
@@ -339,6 +340,11 @@ export function deserializeGalaxy(input) {
     // instantiated worlds the player had actually visited — recover `discovered` as exactly that set
     // (the planet ids present in the save), plus the active world. A NEW save carries the real set.
     discovered: new Set(save.discovered || [save.activeId, ...save.planets.map(P => P.planetId)]),
+    // Faction spread (checkExpansion). Restored as a Map of [worldId, faction]; keep only real world
+    // ids (defence-in-depth behind the roster filter). Old saves predate it → empty (no claims yet).
+    claims: new Map((Array.isArray(save.claims) ? save.claims : [])
+      .filter(e => Array.isArray(e) && ODYSSEY_WORLDS.includes(e[0]) && typeof e[1] === "string")),
+    expansionNotes: [],   // transient UI queue — re-derived, never persisted
   };
   let maxId = 0;
   for (const P of save.planets) {
