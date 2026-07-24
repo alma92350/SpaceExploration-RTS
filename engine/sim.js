@@ -13,7 +13,7 @@ import { updateHaul, assignHaul, updateService, assignService, countLogistics } 
 import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
-import { checkBombProximity } from "./bomb.js";
+import { checkBombProximity, updateCraters } from "./bomb.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { updateProduction, updateCombustors } from "./industry.js";
 import { updatePlasmaRig } from "./rig.js";
@@ -89,6 +89,9 @@ export function tick(state, dt) {
   if (state.diplomacy) updateDiplomacy(state, dt);  // Odyssey: drift the neighbour's stance with scarcity
   state.time += dt;
   state.tick++;
+  // A Helium Bomb crater (engine/bomb.js) matures on its own schedule, independent of any
+  // unit/building — checked once per tick against the just-advanced state.time.
+  updateCraters(state);
 }
 
 // Collect this tick's aura projectors (units with a guardAura, i.e. the Aegis) into a

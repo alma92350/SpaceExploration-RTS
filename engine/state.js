@@ -166,6 +166,7 @@ export function createGameState(opts = {}) {
     },
     events: [],              // sim events this tick (unitSpawned/attackHit/entityKilled/buildingComplete) — pushed by
                               // production.js/combat.js, drained and turned into sound by main.js each render frame
+    craters: [],              // pending Helium Bomb craters awaiting maturity into a real node (engine/bomb.js)
   };
 
   // Seed each side's opening (a colony ship in Odyssey, a Command Center + workers in

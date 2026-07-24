@@ -5,7 +5,8 @@ import { updateCombat } from "../engine/combat.js";
 import { tick } from "../engine/sim.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { POWER_TIERS } from "../engine/industry.js";
-import { detonateBomb, detonateIfAttacked, checkBombProximity, BOMB_BLAST_RADIUS, BOMB_DETECT_RANGE } from "../engine/bomb.js";
+import { detonateBomb, detonateIfAttacked, checkBombProximity, updateCraters,
+         BOMB_BLAST_RADIUS, BOMB_DETECT_RANGE, CRATER_SPAWN_DELAY, CRATER_NODE_AMOUNT, CRATER_COMMODITIES } from "../engine/bomb.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { queueProduction } from "../engine/production.js";
 import { COM } from "../data.js";
@@ -222,6 +223,201 @@ test("erased entities grant no salvage — a total loss, not a normal kill", () 
   detonateBomb(state, bomb);
 
   assert.deepEqual(state.players.ai.resources, resourcesBefore, "no salvage was granted for the erased skiff");
+});
+
+/* ---------- terraforming: the crater matures into a mineable deposit ---------- */
+
+test("detonation schedules a crater at the blast site, maturing CRATER_SPAWN_DELAY later", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+
+  detonateBomb(state, bomb);
+
+  assert.equal(state.craters.length, 1);
+  const crater = state.craters[0];
+  assert.equal(crater.x, 800);
+  assert.equal(crater.y, 800);
+  assert.equal(crater.owner, "player");
+  assert.equal(crater.spawnAt, state.time + CRATER_SPAWN_DELAY);
+});
+
+test("no deposit exists before the crater's timer comes due", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  const craterId = state.craters[0].id;
+
+  state.time += CRATER_SPAWN_DELAY - 1;
+  updateCraters(state);
+
+  assert.equal(state.craters.length, 1, "still pending — not due yet");
+  assert.ok(!state.map.nodesById.has(craterId));
+});
+
+test("the crater matures into a real, mineable Raw-tier deposit once its timer comes due", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  const craterId = state.craters[0].id;
+
+  state.time += CRATER_SPAWN_DELAY;
+  updateCraters(state);
+
+  assert.equal(state.craters.length, 0, "the pending entry is consumed");
+  const node = state.map.nodesById.get(craterId);
+  assert.ok(node, "a real node now exists at the crater's id");
+  assert.equal(node.x, 800);
+  assert.equal(node.y, 800);
+  assert.equal(node.amount, CRATER_NODE_AMOUNT);
+  assert.equal(node.max, CRATER_NODE_AMOUNT);
+  assert.ok(node.crater, "tagged so persist.js knows to fully serialize it");
+  assert.ok(CRATER_COMMODITIES.includes(node.com), "the commodity is one of the Raw-tier pool");
+  assert.equal(COM[node.com].tier, "Raw");
+  assert.ok(state.map.nodes.includes(node), "also present in the plain nodes array gather.js/rendering iterate");
+});
+
+test("the commodity choice is deterministic — same crater id, same roll, every time", () => {
+  const runOnce = () => {
+    const state = createGameState({ planetId: "ferros", endless: true, seed: 99 });
+    const bomb = makeUnit("heliumbomb", "player", 700, 700);
+    // Force a specific, reproducible id so both runs schedule an identically-id'd crater
+    // (a fresh game normally mints a different unit id each run via the module-global counter).
+    bomb.id = "u-fixed-for-test";
+    state.units.set(bomb.id, bomb);
+    detonateBomb(state, bomb);
+    state.time += CRATER_SPAWN_DELAY;
+    updateCraters(state);
+    return state.map.nodesById.get("crater-u-fixed-for-test").com;
+  };
+  assert.equal(runOnce(), runOnce(), "the same crater id always rolls the same commodity");
+});
+
+test("a full tick() loop matures a crater on schedule — the real integration path", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  const craterId = state.craters[0].id;
+
+  // 20 Hz fixed step (see engine/loop.js) — enough ticks to cross CRATER_SPAWN_DELAY.
+  const dt = 0.05;
+  for (let i = 0; i < Math.ceil(CRATER_SPAWN_DELAY / dt) + 1; i++) tick(state, dt);
+
+  assert.ok(state.map.nodesById.has(craterId), "matured for real, through the actual per-tick path");
+  assert.equal(state.craters.length, 0);
+});
+
+test("a worker can actually mine the crater's deposit once it matures", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  state.time += CRATER_SPAWN_DELAY;
+  updateCraters(state);
+  const node = [...state.map.nodesById.values()].find(n => n.crater);
+
+  const worker = makeUnit("worker", "player", node.x + 5, node.y);
+  state.units.set(worker.id, worker);
+  worker.order = { type: "gather", nodeId: node.id };
+  const startAmount = node.amount;
+
+  for (let i = 0; i < 50; i++) tick(state, 0.05);
+
+  assert.ok(node.amount < startAmount || worker.cargo.qty > 0, "the worker actually extracted from the crater deposit");
+});
+
+/* ---------- crater persistence ---------- */
+
+test("a PENDING crater (not yet matured) survives save/load and still matures on schedule after loading", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  const craterId = state.craters[0].id;
+  const spawnAt = state.craters[0].spawnAt;
+
+  const loaded = deserializeGame(serializeGame(state));
+  assert.equal(loaded.craters.length, 1);
+  assert.deepEqual(
+    { id: loaded.craters[0].id, x: loaded.craters[0].x, y: loaded.craters[0].y, owner: loaded.craters[0].owner, spawnAt: loaded.craters[0].spawnAt },
+    { id: craterId, x: 800, y: 800, owner: "player", spawnAt }
+  );
+
+  loaded.time = spawnAt;
+  updateCraters(loaded);
+  assert.ok(loaded.map.nodesById.has(craterId), "still matures correctly after a load");
+});
+
+test("a MATURED crater node survives save/load — it isn't part of the seed-regenerated map", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  state.time += CRATER_SPAWN_DELAY;
+  updateCraters(state);
+  const original = [...state.map.nodesById.values()].find(n => n.crater);
+
+  const loaded = deserializeGame(serializeGame(state));
+  const restored = loaded.map.nodesById.get(original.id);
+  assert.ok(restored, "the crater node was NOT silently dropped by the seed regeneration");
+  assert.equal(restored.com, original.com);
+  assert.equal(restored.amount, original.amount);
+  assert.equal(restored.max, original.max);
+  assert.equal(restored.x, original.x);
+  assert.equal(restored.y, original.y);
+  assert.ok(loaded.map.nodes.includes(restored), "present in the plain nodes array too, not just nodesById");
+});
+
+test("a partially-mined crater node's REMAINING amount survives save/load, not its original max", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  state.time += CRATER_SPAWN_DELAY;
+  updateCraters(state);
+  const node = [...state.map.nodesById.values()].find(n => n.crater);
+  node.amount = 123.5;   // simulate partial mining
+
+  const loaded = deserializeGame(serializeGame(state));
+  assert.equal(loaded.map.nodesById.get(node.id).amount, 123.5);
+});
+
+test("a tampered/malformed craters save is dropped gracefully rather than crashing the load", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  const save = serializeGame(state);
+
+  save.craters.push({ id: "crater-evil", x: 100, y: 100, owner: "nobody", spawnAt: 10 });   // bogus owner
+  save.craters.push("not even an object");
+  save.craters.push({ id: "crater-huge", x: 1e12, y: -1e12, owner: "player", spawnAt: "soon" });   // garbage coords/time
+
+  const loaded = deserializeGame(save);
+  assert.ok(!loaded.craters.some(c => c.owner === "nobody"), "bogus-owner entry dropped");
+  const huge = loaded.craters.find(c => c.id === "crater-huge");
+  assert.ok(huge, "the garbage-coordinate entry survives, sanitized rather than dropped outright");
+  assert.ok(Number.isFinite(huge.x) && huge.x >= 0 && huge.x <= loaded.map.width, "x clamped onto the map");
+  assert.ok(Number.isFinite(huge.y) && huge.y >= 0 && huge.y <= loaded.map.height, "y clamped onto the map");
+  assert.ok(Number.isFinite(huge.spawnAt), "non-numeric spawnAt coerced to a finite number");
+});
+
+test("a tampered crater NODE (not the pending list) is sanitized on load — bogus commodity dropped", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 800, 800);
+  state.units.set(bomb.id, bomb);
+  detonateBomb(state, bomb);
+  state.time += CRATER_SPAWN_DELAY;
+  updateCraters(state);
+  const save = serializeGame(state);
+  const savedNode = save.nodes.find(n => n.crater);
+  savedNode.com = "not-a-real-commodity";
+
+  const loaded = deserializeGame(save);
+  assert.ok(!loaded.map.nodesById.has(savedNode.id), "a crater node with a bogus commodity is not restored at all");
 });
 
 /* ---------- production + save/load ---------- */

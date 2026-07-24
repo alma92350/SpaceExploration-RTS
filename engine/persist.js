@@ -17,6 +17,7 @@ import { generateMap } from "./map.js";
 import { mulberry32 } from "./rng.js";
 import { createFog, updateFog } from "./fog.js";
 import { archetypeFor } from "./aiArchetypes.js";
+import { CRATER_NODE_AMOUNT } from "./bomb.js";
 // peekEntityId/restoreEntityId (called at ~4 sites below: gamePayload, deserializeGame,
 // galaxyPayload, deserializeGalaxy) read and overwrite `nextEntityId` in engine/state.js — a
 // SINGLE module-global counter, not per-state. Reading it (peek, on save) is safe any time, but
@@ -283,7 +284,16 @@ function serPlanet(state) {
     // the next dig) are all transient — stamped fresh each tick like a unit's `_gi` grid index — so
     // strip them from saves. (digProgress/digCount are the rig's REAL persisted dig state, kept.)
     buildings: [...state.buildings.values()].map(({ haulers, servers, powered, fuel, menderClaims, lastYield, lastTier, ...b }) => b),
-    nodes: state.map.nodes.map(n => ({ id: n.id, amount: n.amount })),
+    // A map-generated node is regenerated fresh from the seed on load (generateMap), so only
+    // its `amount` (the one thing that changes) needs saving. A crater node (engine/bomb.js)
+    // does NOT exist in that regeneration at all — it needs its whole shape saved, and
+    // rehydratePlanet below re-adds it after the seed regenerates everything else.
+    nodes: state.map.nodes.map(n => n.crater
+      ? { id: n.id, com: n.com, amount: n.amount, max: n.max, x: n.x, y: n.y, crater: true }
+      : { id: n.id, amount: n.amount }),
+    // Pending Helium Bomb craters not yet matured — lost without this (a save/load right
+    // after a detonation would silently cancel the future deposit).
+    craters: (state.craters || []).map(c => ({ id: c.id, x: c.x, y: c.y, owner: c.owner, spawnAt: c.spawnAt })),
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],
     ai: {
@@ -329,6 +339,24 @@ function rehydratePlanet(P) {
     { sizeMult, resourceMult });
   const amounts = new Map(P.nodes.map(n => [n.id, n.amount]));
   for (const n of map.nodes) if (amounts.has(n.id)) n.amount = amounts.get(n.id);
+  // A crater node (engine/bomb.js) never comes back from the seed regeneration above — it
+  // isn't part of the deterministic map at all — so re-add it here from its own saved shape,
+  // sanitized the same way a tampered entity field would be: a real commodity, finite
+  // amount/max clamped sane, position clamped onto the map. Only entries actually marked
+  // `crater: true` are considered, so this can't be used to smuggle an arbitrary extra node
+  // onto a map-generated id.
+  for (const n of P.nodes) {
+    if (!n || !n.crater || map.nodesById.has(n.id) || !COM[n.com]) continue;
+    const max = Math.max(1, num(n.max, CRATER_NODE_AMOUNT));
+    const node = {
+      id: String(n.id), com: n.com, crater: true,
+      max, amount: Math.max(0, Math.min(num(n.amount, max), max)),
+      x: Math.max(0, Math.min(num(n.x, 0), map.width)),
+      y: Math.max(0, Math.min(num(n.y, 0), map.height)),
+    };
+    map.nodes.push(node);
+    map.nodesById.set(node.id, node);
+  }
 
   const fog = createFog(map); fog.explored = Uint8Array.from(P.fog);
   const fogAI = createFog(map); fogAI.explored = Uint8Array.from(P.fogAI);
@@ -349,6 +377,18 @@ function rehydratePlanet(P) {
   const players = { player: cleanPlayer(P.players.player), ai: cleanPlayer(P.players.ai) };
   const owners = Object.keys(players);
   const fogs = { player: fog, ai: fogAI };
+
+  // Pending Helium Bomb craters (engine/bomb.js) not yet matured — additive, so an older
+  // save without the field just has none. A bogus/missing owner (not a real side) or a
+  // malformed entry is dropped rather than coerced to a guess: a crater with the wrong
+  // owner is a lost gameplay attribution, not a value worth defaulting.
+  const craters = Array.isArray(P.craters) ? P.craters
+    .filter(c => c && typeof c.id === "string" && owners.includes(c.owner))
+    .map(c => ({
+      id: c.id, owner: c.owner, spawnAt: num(c.spawnAt, 0),
+      x: Math.max(0, Math.min(num(c.x, 0), map.width)),
+      y: Math.max(0, Math.min(num(c.y, 0), map.height)),
+    })) : [];
 
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
@@ -376,6 +416,7 @@ function rehydratePlanet(P) {
       archetype: archetypeFor(P.planetId),
     },
     events: [],
+    craters,
   };
   for (const id of owners) updateFog(state, state.fogs[id], id);
   return state;
