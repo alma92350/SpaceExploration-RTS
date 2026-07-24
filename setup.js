@@ -37,12 +37,16 @@ const RESOURCE_OPTIONS = [
   { label: "Abundant", mult: 1.5, note: "rich deposits" },
 ];
 // Difficulty bundles the two dials — how FAST the opponent acts (aiApm) and
-// whether it MICROS its army (aiMicro) — into one Easy/Medium/Hard pick. The
-// aiApm/aiMicro values themselves live with startGame (boot.js).
-const DIFFICULTY_OPTIONS = [
-  { label: "Easy", mult: "easy", note: "slow · no micro" },
-  { label: "Medium", mult: "medium", note: "a fair fight" },
-  { label: "Hard", mult: "hard", note: "fast · focus-fire · kite" },
+// whether it MICROS its army (aiMicro) — into one Easy/Medium/Hard pick, plus
+// the picker's own label/note. This is the ONE list of valid difficulty keys:
+// it drives the Easy/Medium/Hard buttons here AND (via boot.js's difficultyDials,
+// which looks a key up in this same array) the AI dials a match actually runs
+// with — so a key can never exist in one place and not the other, which used to
+// let a mismatched difficulty silently downgrade to Medium instead of erroring.
+export const DIFFICULTY_OPTIONS = [
+  { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false },
+  { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false },
+  { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true },
 ];
 // Playable factions for the setup picker — a passive-trait identity for your side
 // (engine/factions.js). Each option's `mult` is the faction id, its note the short

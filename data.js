@@ -18,8 +18,14 @@ export const META = {
   influence: { name: "Influence", ico: "🏛️" },
 };
 
-/* ---------- Factions ---------- */
-export const FACTIONS = {
+/* ---------- Factions ----------
+   Lore/UI flavor only (name/icon/color/blurb for the starmap's faction-space
+   emblems) — NOT the playable-faction gameplay data. That's engine/factions.js's
+   FACTIONS (id/name/short/blurb/traits), a separate, unrelated export. Named
+   LORE_FACTIONS specifically so the two can never be confused for one another
+   at an import site.
+*/
+export const LORE_FACTIONS = {
   core:      { name: "Core Authority",     ico: "⚖️", color: "#3b82f6",
                desc: "Lawful government of the inner worlds. Hates smugglers." },
   miners:    { name: "Mining Guild",       ico: "⛏️", color: "#b45309",
