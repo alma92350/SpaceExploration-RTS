@@ -29,7 +29,7 @@ import { rigInfo } from "./engine/rig.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
-import { JUMP_COST, jumpCost, jumpManifest, jumpCapacity, spaceportTier, upgradeSpaceport,
+import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, spaceportTier, upgradeSpaceport,
          SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, cargoManifest, freightCapacity,
          loadFreighter, unloadFreighter, freightUsed, freightRoom,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
@@ -174,11 +174,14 @@ export function renderSelectionPanel() {
       })()
     // Rebuild the Spaceport panel when its tier changes (upgrade) or the staged fleet crosses
     // the pad capacity (units enter/leave the pad radius) — so the manifest preview stays live.
+    // Also fold in the ALL-pads combined manifest: with more than one Spaceport, the panel's
+    // "combined" note depends on every pad's staged fleet, not just this one.
     + "|" + (() => {
         const sp = game.galaxy && sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
         if (!sp) return "";
         const m = jumpManifest(state, sp);
-        return `${spaceportTier(sp)}:${m.used}:${m.leftBehind}:${m.staged}`;
+        const all = jumpManifestAll(state);
+        return `${spaceportTier(sp)}:${m.used}:${m.leftBehind}:${m.staged}:${all.used}:${all.leftBehind}`;
       })()
     // Rebuild the freighter cargo panel when its hold or the loadable stockpile changes, so the
     // Load/Unload buttons and the used/cap readout stay live as goods move in and out of the hold.
@@ -895,9 +898,14 @@ function rebuildSelectionPanel(sel) {
   // a colony.
   const spaceport = sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
   if (spaceport && game.galaxy) {
-    const m = jumpManifest(state, spaceport);   // capacity-capped preview: what lifts, what waits
+    const m = jumpManifest(state, spaceport);   // capacity-capped preview: what THIS pad alone lifts, what waits
     const tier = spaceportTier(spaceport);
-    const vessel = jumpVessel(state);            // is a colony ship on the pad? (settles a NEW world) — a hint, not a gate
+    const vessel = jumpVessel(state);            // is a colony ship on any pad? (settles a NEW world) — a hint, not a gate
+    // A jump actually combines every completed Spaceport's staged units (jumpManifestAll), not
+    // just this one — comparing totals against this pad's own is a cheap way to tell whether a
+    // second pad is in play, without adding another exported "how many spaceports" helper.
+    const all = jumpManifestAll(state);
+    const otherPads = all.capacity > m.capacity;
 
     const tierLine = document.createElement("div");
     tierLine.className = "sel-note good";
@@ -918,6 +926,15 @@ function rebuildSelectionPanel(sel) {
         ? `Fleet staged: ${m.stagedSupply} supply, ${m.staged} units. This jump lifts ${m.used}/${m.capacity} — ${m.leftBehind} unit${m.leftBehind === 1 ? "" : "s"} wait for the next trip (or upgrade the pad).`
         : `Fleet staged: ${m.stagedSupply}/${m.capacity} supply (${m.staged} units) — all fit in one jump.`;
     panelEl.appendChild(fleet);
+
+    // You hold more than one completed Spaceport: a jump combines every pad's staged fleet, so
+    // this panel's numbers (this pad alone) understate what actually launches — spell that out.
+    if (otherPads) {
+      const combined = document.createElement("p");
+      combined.className = "hint";
+      combined.textContent = `You hold more than one Spaceport — a jump lifts staged units from ALL of them together: ${all.used}/${all.capacity} supply combined this trip${all.leftBehind > 0 ? `, ${all.leftBehind} waiting` : ""}.`;
+      panelEl.appendChild(combined);
+    }
 
     const shipHint = document.createElement("p");
     shipHint.className = "hint";

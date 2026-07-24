@@ -538,19 +538,25 @@ const unitSupply = u => UNITS[u.type]?.supplyCost || 0;
 // What counts as a launch-ready pad: the player's own, finished Spaceport. Defined once so
 // jumpVessel/canJump/jumpCapital can't drift on the predicate (owner + type + built).
 const isPlayerSpaceport = b => b.owner === "player" && b.type === "spaceport" && !b.constructing;
-const playerSpaceport = state => [...state.buildings.values()].find(isPlayerSpaceport) || null;
+// EVERY launch-ready pad the player holds on this world, not just one — a world can carry
+// more than one completed Spaceport (a second pad built for extra jump throughput, or while
+// upgrading the first). Sorted by id for a stable, deterministic iteration order (matches the
+// codebase's usual entity tie-break), so which pad "goes first" below can never depend on Map
+// insertion order.
+const playerSpaceports = state => [...state.buildings.values()].filter(isPlayerSpaceport).sort((a, b) => (a.id < b.id ? -1 : 1));
 
-// The colony ship that would carry an interplanetary jump: a player colony ship staged
-// within JUMP_LOAD_RADIUS of a completed Spaceport. A jump relocates the SHIP (and the
-// rest of the staged expedition) — NOT a deployed base. Deployed Command Centers are
-// permanent: the world you leave keeps them and becomes a background colony. Deploy the
-// ship at the destination to found your new base there. Null when no ship is on the pad.
+// The colony ship that would carry an interplanetary jump: a player colony ship staged within
+// JUMP_LOAD_RADIUS of ANY completed Spaceport (not just one — see playerSpaceports). A jump
+// relocates the SHIP (and the rest of the staged expedition) — NOT a deployed base. Deployed
+// Command Centers are permanent: the world you leave keeps them and becomes a background
+// colony. Deploy the ship at the destination to found your new base there. Null when no ship
+// is on any pad.
 export function jumpVessel(state) {
-  const spaceport = playerSpaceport(state);
-  if (!spaceport) return null;
+  const spaceports = playerSpaceports(state);
+  if (!spaceports.length) return null;
   for (const u of state.units.values())
     if (u.owner === "player" && u.type === "colonyship"
-        && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS) return u;
+        && spaceports.some(sp => Math.hypot(u.x - sp.x, u.y - sp.y) <= JUMP_LOAD_RADIUS)) return u;
   return null;
 }
 
@@ -559,7 +565,7 @@ export function jumpVessel(state) {
 // a colony), or nothing (to hop back and control a world you already hold). jumpVessel
 // stays as an informational helper (is a ship loaded?) for the HUD, not a gate.
 export function canJump(state) {
-  return !!playerSpaceport(state);
+  return playerSpaceports(state).length > 0;
 }
 
 // A world where the player still has a foothold — a Command Center or an undeployed colony ship
@@ -628,6 +634,53 @@ export function jumpManifest(state, spaceport) {
   }
   const stagedSupply = staged.reduce((t, { u }) => t + unitSupply(u), 0);
   return { riders, capacity, used, stagedSupply, staged: staged.length, leftBehind: staged.length - riders.length };
+}
+
+// EVERY player Spaceport's staged riders, combined into one launch. With a single completed
+// pad this is byte-identical to jumpManifest(state, thatPad) — every candidate unit's nearest
+// pad is trivially the one pad, so the same closest-first fill runs unchanged. With more than
+// one pad, each staged unit boards through its NEAREST pad (ties broken by pad id, matching
+// the unit tie-break below), and each pad fills its own capacity independently — a unit that
+// doesn't fit at its nearest pad is left behind rather than spilling over to another pad's
+// spare capacity (a simple, deterministic policy, not a globally-optimal pack across pads).
+// jumpCapital is the only caller: this is what actually determines who jumps, so it has to
+// count every completed pad, not just one — a second Spaceport's staged units used to be
+// silently ignored on every jump, because only the first Spaceport found (Map iteration
+// order) was ever consulted.
+export function jumpManifestAll(state) {
+  const spaceports = playerSpaceports(state);
+  if (!spaceports.length) return { riders: [], capacity: 0, used: 0, stagedSupply: 0, staged: 0, leftBehind: 0 };
+
+  // Every player unit within range of at least one pad, tagged with its NEAREST pad so it can
+  // never be double-counted across two overlapping catchment radii.
+  const byNearestPad = new Map(spaceports.map(sp => [sp.id, []]));
+  for (const u of state.units.values()) {
+    if (u.owner !== "player") continue;
+    let nearest = null, nearestD = Infinity;
+    for (const sp of spaceports) {
+      const d = Math.hypot(u.x - sp.x, u.y - sp.y);
+      if (d > JUMP_LOAD_RADIUS) continue;
+      if (d < nearestD || (d === nearestD && sp.id < nearest.id)) { nearest = sp; nearestD = d; }
+    }
+    if (nearest) byNearestPad.get(nearest.id).push({ u, d: nearestD });
+  }
+
+  const riders = [];
+  let capacity = 0, used = 0, stagedSupply = 0, staged = 0;
+  for (const sp of spaceports) {
+    const cap = jumpCapacity(sp);
+    capacity += cap;
+    const candidates = byNearestPad.get(sp.id).sort((a, b) => a.d - b.d || (a.u.id < b.u.id ? -1 : 1));
+    let padUsed = 0;
+    for (const { u } of candidates) {
+      const s = unitSupply(u);
+      if (padUsed + s <= cap) { riders.push(u); padUsed += s; }
+    }
+    used += padUsed;
+    staged += candidates.length;
+    stagedSupply += candidates.reduce((t, { u }) => t + unitSupply(u), 0);
+  }
+  return { riders, capacity, used, stagedSupply, staged, leftBehind: staged - riders.length };
 }
 
 // A jump carries a CARGO HOLD of manufactured goods to the destination, so a run of production on
@@ -748,16 +801,17 @@ function loadCargo(from, dest, riders) {
 export function jumpCapital(galaxy, destId) {
   const from = activeState(galaxy);
   if (destId === galaxy.activeId) return null;
-  const spaceport = playerSpaceport(from);
+  const hasSpaceport = playerSpaceports(from).length > 0;
   const canFallBack = playerFoothold(galaxy.planets.get(destId));   // a world you hold a base on
-  if (!spaceport && !canFallBack) return null;                      // no port here and nowhere to fall back → can't jump
+  if (!hasSpaceport && !canFallBack) return null;                   // no port here and nowhere to fall back → can't jump
   const cost = jumpCost(galaxy, destId);
   if (galaxy.credits < cost) return null;
 
-  // Spaceport → the capacity-capped staged expedition. No Spaceport (a fallback) → nothing rides:
-  // a control switch that leaves every unit on this world where it is.
+  // A Spaceport (or several — every completed pad's staged units ride, not just one) → the
+  // combined capacity-capped expedition. No Spaceport (a fallback) → nothing rides: a control
+  // switch that leaves every unit on this world where it is.
   let riders = [], leftBehind = 0;
-  if (spaceport) ({ riders, leftBehind } = jumpManifest(from, spaceport));
+  if (hasSpaceport) ({ riders, leftBehind } = jumpManifestAll(from));
   galaxy.credits -= cost;   // fuel — free to a world you already hold
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });

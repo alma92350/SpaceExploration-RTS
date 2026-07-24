@@ -621,6 +621,53 @@ test("a bigger pad lifts a bigger fleet in one jump", () => {
   assert.equal(m.used, cap);
 });
 
+// Regression: jumpCapital used to resolve "the" launch pad via playerSpaceport, which picked
+// only the FIRST completed Spaceport found in Map iteration order — a second (or third) pad's
+// staged units were silently never considered at all, on every single jump, forever. Two pads
+// placed far enough apart that their JUMP_LOAD_RADIUS catchments never overlap, each with its
+// own staged fleet, so this can only pass if BOTH pads' units are actually gathered.
+test("a jump lifts staged units from EVERY completed Spaceport, not just the first one found", () => {
+  const g = createGalaxy({ seed: 43 });
+  const from = settle(activeState(g));
+  const base = from.map.bases.player;
+  const spA = makeBuilding("spaceport", "player", base.x + 600, base.y + 600);
+  const spB = makeBuilding("spaceport", "player", base.x - 600, base.y - 600);
+  from.buildings.set(spA.id, spA);
+  from.buildings.set(spB.id, spB);   // inserted SECOND — exactly the pad the old .find() bug would ignore
+
+  const staged = [];
+  for (let i = 0; i < 3; i++) {
+    const uA = makeUnit("skiff", "player", spA.x + i, spA.y); from.units.set(uA.id, uA); staged.push(uA);
+    const uB = makeUnit("skiff", "player", spB.x + i, spB.y); from.units.set(uB.id, uB); staged.push(uB);
+  }
+
+  const destId = g.worlds.find(w => w !== g.activeId);
+  g.credits = 2000;
+  const res = jumpCapital(g, destId);
+  assert.equal(res.riders, 6, "all 6 staged skiffs — 3 at EACH pad — cross in one jump");
+  assert.equal(res.leftBehind, 0);
+  const dest = activeState(g);
+  assert.equal([...dest.units.values()].filter(u => u.owner === "player" && u.type === "skiff").length, 6,
+    "the destination received units staged at both Spaceports, not just spA");
+  assert.equal([...from.units.values()].filter(u => u.owner === "player" && u.type === "skiff").length, 0,
+    "nothing from either pad was left behind at the origin");
+});
+
+test("jumpVessel finds a colony ship staged at a SECOND Spaceport, not just the first one built", () => {
+  const g = createGalaxy({ seed: 44 });
+  const from = settle(activeState(g));
+  const base = from.map.bases.player;
+  const spA = makeBuilding("spaceport", "player", base.x + 600, base.y + 600);
+  const spB = makeBuilding("spaceport", "player", base.x - 600, base.y - 600);
+  from.buildings.set(spA.id, spA);   // built first — nothing staged here
+  from.buildings.set(spB.id, spB);   // built second — the ship is staged HERE
+
+  assert.equal(jumpVessel(from), null, "no ship staged at either pad yet");
+  const ship = makeUnit("colonyship", "player", spB.x, spB.y);
+  from.units.set(ship.id, ship);
+  assert.equal(jumpVessel(from)?.id, ship.id, "a ship staged at the second pad is still found");
+});
+
 /* ---------- progress milestones (fireworks, not wins) ---------- */
 
 test("founding your first base fires the world:1 milestone (and never ends the game)", () => {
