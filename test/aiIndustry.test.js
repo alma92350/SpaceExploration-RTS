@@ -5,6 +5,7 @@ import { tick } from "../engine/sim.js";
 import { runAI } from "../engine/ai.js";
 import { updateProduction } from "../engine/industry.js";
 import { updatePlasmaRig } from "../engine/rig.js";
+import { storeCapOf } from "../engine/entities.js";
 import { mulberry32 } from "../engine/rng.js";
 
 // A SEEDED Odyssey state — createGameState falls back to Math.random for map generation when no rng
@@ -23,19 +24,28 @@ function aiBase(planetId = "ferros") {
   return s;
 }
 
-// Phase 1 — abstracted AI logistics: an AI factory/rig runs straight off the treasury (no worker
-// haulage), while the player's buffer+haulage path and the skirmish replay stay untouched.
+// TRUE SYMMETRY — the AI runs the SAME finite-buffer + worker-haulage model the player does. A factory
+// only produces once workers have supplied its input larder; a rig fills a finite buffer that stalls
+// until hauled. There is no owner special-case; skirmish (no factories) is untouched.
 
-test("an AI Smelter refines treasury ore into metals with no workers — abstracted logistics", () => {
+test("an AI Smelter with no workers to supply it produces nothing — real logistics, no free treasury", () => {
   const s = seeded("ferros");
   const r = makeBuilding("reactor", "ai", 500, 500); s.buildings.set(r.id, r);
   const sm = makeBuilding("smelter", "ai", 520, 500); s.buildings.set(sm.id, sm);
-  s.players.ai.resources.ore = 100;
+  s.players.ai.resources.ore = 100;   // ore in the treasury, but no worker to carry it into the larder
   for (let i = 0; i < 50; i++) updateProduction(s, sm, 0.1);
-  assert.ok((s.players.ai.resources.metals || 0) > 0, "the AI smelter banked metals into the treasury");
-  assert.ok(s.players.ai.resources.ore < 100, "…drawing ore straight from the treasury");
-  const store = sm.store || {};
-  assert.equal(Object.values(store).reduce((a, b) => a + b, 0), 0, "…with nothing piled in a finite output buffer");
+  assert.equal(s.players.ai.resources.metals || 0, 0, "no metals — the larder was never supplied (the abstract cheat is gone)");
+  assert.equal(s.players.ai.resources.ore, 100, "…and the treasury ore is untouched — no straight-from-treasury draw");
+});
+
+test("an AI factory runs off its finite buffers exactly like the player's (filled larder → store, not treasury)", () => {
+  const s = seeded("ferros");
+  const r = makeBuilding("reactor", "ai", 500, 500); s.buildings.set(r.id, r);
+  const sm = makeBuilding("smelter", "ai", 520, 500); s.buildings.set(sm.id, sm);
+  sm.input = { ore: 40 };   // as if a worker had delivered ore to the larder
+  for (let i = 0; i < 50; i++) updateProduction(s, sm, 0.1);
+  assert.ok((sm.store?.metals || 0) > 0, "it banked metals into its output buffer");
+  assert.equal(s.players.ai.resources.metals || 0, 0, "…never straight to the treasury (a worker must haul it out)");
 });
 
 test("an AI factory with no Reactor produces nothing — the power throttle still bites", () => {
@@ -62,16 +72,55 @@ test("a PLAYER factory still runs off its buffers, not the treasury (haulage pat
   assert.equal(s.players.player.resources.metals || 0, 0, "…still never the treasury");
 });
 
-test("an AI Plasma Rig banks its dig straight into the treasury (no buffer to stall)", () => {
+test("an AI Plasma Rig fills a finite buffer that stalls until hauled — no free treasury", () => {
   const s = seeded("ferros");
   const r = makeBuilding("reactor", "ai", 500, 500); s.buildings.set(r.id, r);
   const rig = makeBuilding("plasmarig", "ai", 520, 500); s.buildings.set(rig.id, rig);
   s.players.ai.resources.radioactives = 100;   // nuclear to exploit
-  for (let i = 0; i < 200; i++) updatePlasmaRig(s, rig, 0.1);
+  const treasuryBefore = { ...s.players.ai.resources };
+  for (let i = 0; i < 400; i++) updatePlasmaRig(s, rig, 0.1);   // no workers → the buffer fills and stalls
   assert.ok((rig.digCount || 0) > 0, "the rig completed dig cycles");
-  assert.ok((rig.lastYield || 0) > 0, "…banking a real yield");
-  const store = rig.store || {};
-  assert.equal(Object.values(store).reduce((a, b) => a + b, 0), 0, "…straight to the treasury, nothing left in a buffer");
+  const stored = Object.values(rig.store || {}).reduce((a, b) => a + b, 0);
+  assert.ok(stored > 0, "the dig piled into the rig's finite output buffer");
+  assert.ok(stored <= storeCapOf("plasmarig") + 1e-6, "…which stalled at its cap, not an unbounded treasury sink");
+  const vein = Object.keys(rig.store)[0];
+  assert.ok((s.players.ai.resources[vein] || 0) <= (treasuryBefore[vein] || 0) + 1e-9, "…and nothing went straight to the treasury");
+});
+
+// The AI actually runs the machinery: it dedicates workers to feed/clear its factory, and the goods
+// complete the loop back to the treasury via haulage — the same labour the player pays.
+test("the AI feeds and clears its factory with real worker haulage (metals reach the treasury)", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 560, 540); s.buildings.set(r.id, r);
+  const sm = makeBuilding("smelter", "ai", 620, 540); s.buildings.set(sm.id, sm);
+  s.players.ai.resources.ore = 500;   // raws for its workers to carry to the larder
+  for (let i = 0; i < 900; i++) tick(s, 0.2);
+  assert.ok((s.players.ai.resources.metals || 0) > 0, "the AI's workers fed the smelter and hauled the metals back to the treasury");
+});
+
+test("the AI dedicates a worker to service its factory (real logistics allocation)", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 560, 540); s.buildings.set(r.id, r);
+  const sm = makeBuilding("smelter", "ai", 620, 540); s.buildings.set(sm.id, sm);
+  s.players.ai.resources.ore = 500;   // so the factory needs input and the treasury can supply it
+  let serviced = false;
+  for (let i = 0; i < 6 && !serviced; i++) {
+    runAI(s, 1.5);
+    serviced = [...s.units.values()].some(u => u.owner === "ai" && u.order && u.order.type === "service" && u.order.buildingId === sm.id);
+  }
+  assert.ok(serviced, "the AI assigned a worker to service the smelter");
+});
+
+test("AI logistics is bounded — gathering never starves (at most half the workers haul)", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 560, 540); s.buildings.set(r.id, r);
+  for (let i = 0; i < 3; i++) { const b = makeBuilding("smelter", "ai", 600 + i * 30, 560); s.buildings.set(b.id, b); }   // more factories than half the pool can serve
+  s.players.ai.resources.ore = 500;
+  for (let i = 0; i < 3; i++) runAI(s, 1.5);
+  const ws = [...s.units.values()].filter(u => u.owner === "ai" && u.type === "worker");
+  const logi = ws.filter(w => w.order && (w.order.type === "service" || w.order.type === "haul")).length;
+  assert.ok(logi >= 1, "some workers service the factories");
+  assert.ok(logi <= Math.ceil(ws.length / 2), `…but at most half haul, so miners remain (${logi}/${ws.length})`);
 });
 
 // Phase 2 — the AI develops its base: builds a Reactor and electrifies its buildings.

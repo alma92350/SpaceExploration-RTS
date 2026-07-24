@@ -36,8 +36,9 @@ import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueAttackMove, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, isDropOff, isElectrifiable } from "./entities.js";
-import { powerCap, powerDraw } from "./industry.js";
+import { powerCap, powerDraw, recipeOf } from "./industry.js";
 import { researchTech } from "./techtree.js";
+import { assignService, assignHaul, countLogistics } from "./haul.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint } from "./fog.js";
 import { playerBuildings, playerUnits } from "./state.js";
@@ -242,7 +243,14 @@ function aiExpand(state, ctx) {
 /** @param {State} state @param {AiContext} ctx */
 function aiBaseAndTech(state, ctx) {
   const { cc, workers, ai, buildings, barracks, refinery, allBarracks, archetype, arch } = ctx;
-  if (cc && workers.length < arch("workerTarget") && cc.queue.length === 0 && canAct(state)) {
+  // The worker target GROWS with the AI's industry: every factory and Plasma Rig it runs needs workers
+  // to supply and clear it (engine/haul.js assignAiLogistics), on top of the base gather crew — so the
+  // AI builds the LABOUR its economy needs, the same investment the player makes. Odyssey only (the
+  // industry that drives it is odysseyOnly); a skirmish keeps the archetype's flat workerTarget.
+  const industryCount = state.endless
+    ? buildings.filter(b => !b.constructing && (recipeOf(b) || BUILDINGS[b.type].rig)).length : 0;
+  const workerTarget = arch("workerTarget") + industryCount * 2;   // ~MAX_SERVERS worth of haulers per factory/rig
+  if (cc && workers.length < workerTarget && cc.queue.length === 0 && canAct(state)) {
     if (queueProduction(state, cc.id, "worker")) spend(state);
   }
 
@@ -908,7 +916,33 @@ function updateScout(state, army, rangers, defending = false) {
   issueMove([scout], home.x, home.y, true);   // and head home to fold back into the army
 }
 
+// Give a BOUNDED share of the AI's idle workers real logistics jobs — servicing factories (carry
+// inputs in, outputs out) and hauling pure producers (the Plasma Rig) to a Command Center — reusing
+// the exact owner-generic machinery the player's workers use (engine/haul.js). Capped at HALF the
+// worker pool so gathering never starves: a factory with no raws mined is no better off than one with
+// no servers, so the AI must keep miners on the field too. Deterministic — countLogistics freezes the
+// committed slots first, then assignService/assignHaul claim the nearest free slot (ties by id).
+// Odyssey-only (industry is odysseyOnly); the player's own auto-haul path (engine/sim.js) is untouched.
+function assignAiLogistics(state, workers) {
+  if (!workers.length) return;
+  countLogistics(state);   // fresh committed haul/service tallies before we claim any new slots this cycle
+  let budget = Math.floor(workers.length / 2)
+    - workers.filter(w => w.order && (w.order.type === "service" || w.order.type === "haul")).length;
+  if (budget <= 0) return;
+  for (const w of workers) {
+    if (budget <= 0) break;
+    if (w.order) continue;
+    assignService(state, w);            // sets w.order to a factory service round-trip if one needs it
+    if (!w.order) assignHaul(state, w); // …else haul a backed-up pure producer (the rig)
+    if (w.order) budget--;
+  }
+}
+
 function assignIdleWorkers(state, workers) {
+  // ODYSSEY: the AI runs REAL logistics like the player — dedicate a bounded share of workers to
+  // feeding/clearing its factories and rig (finite buffers, stalls and all) before the gather pass, so
+  // its industry pays the same labour cost the player's does. Skirmish has no factories → no-op there.
+  if (state.endless) assignAiLogistics(state, workers);
   // Only nodes the AI actually knows about: charted surface deposits (always)
   // plus any hidden cache it has scouted. It can't send workers to a cache it
   // hasn't discovered any more than the player can.
@@ -1097,16 +1131,17 @@ function aiDoctrine(state, archetype) {
   return cry >= rad * 0.6 ? "bulwark" : "assault";
 }
 
-// Nearest free worker to (x, y) to found a building, skipping any already
-// mid-build so an in-progress site keeps its founder. Falls back to
-// workers[0] — buildings self-construct at rate 1 even with nobody on-site,
-// so a slightly-worse builder pick is never a stall.
+// Nearest free worker to (x, y) to found a building, skipping any already mid-build (so an in-progress
+// site keeps its founder) AND any on a logistics run (service/haul) — pulling a worker off feeding a
+// factory to lay a foundation would thrash the industry it's trying to grow. Prefers a gatherer/idle
+// worker; falls back to workers[0] only if every worker is busy building or hauling — buildings
+// self-construct at rate 1 even with nobody on-site, so a slightly-worse pick is never a stall.
 function pickBuilder(workers, x, y) {
-  let best = workers[0], bestD = Infinity;
+  let best = null, bestD = Infinity;
   for (const w of workers) {
-    if (w.order && w.order.type === "build") continue;   // don't churn an assigned builder
+    if (w.order && (w.order.type === "build" || w.order.type === "service" || w.order.type === "haul")) continue;
     const d = Math.hypot(w.x - x, w.y - y);
     if (d < bestD) { bestD = d; best = w; }
   }
-  return best;
+  return best || workers[0];
 }

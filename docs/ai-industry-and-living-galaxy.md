@@ -23,17 +23,25 @@ outputs carried off — its `input`/`store` buffers stay empty and it produces n
 Same for a rig (its `store` buffer never drains). Reactors are pointless without a
 consumer.
 
-**Enabling move — abstracted AI logistics.** The player does logistics by hand (a
-skill differentiator); the AI's logistics are *abstracted*. For an `owner === "ai"`
-building in Odyssey, `updateProduction` (and the rig's dig) draw inputs directly from
-`players.ai.resources` and bank outputs directly back to it — **bypassing** the
-`input`/`store` buffers and the worker haulage entirely. The **power throttle still
-applies** (short power → slower factories), so Reactors stay meaningful and the grid
-is still a real constraint. Gated on `owner === "ai"`, so the **player** path (buffers +
-haulage) is byte-for-byte unchanged, and a **skirmish** never instantiates a factory so
-its replay is untouched.
+**Enabling move — real AI logistics (true symmetry).** *(Originally shipped as an
+`owner === "ai"` abstraction — factories/rigs drew inputs from and banked outputs to
+`players.ai.resources`, bypassing the buffers — so the AI paid no logistics labour. An
+architecture review flagged that as an uncompensated asymmetry: the finite-storage/
+haulage system, the headline Odyssey reshape, was a tax only the human paid. It was
+then replaced by true symmetry, below, and the abstract branch deleted.)*
 
-This is the one core change; everything else is the AI *choosing* to build the chain.
+The AI now runs the **exact same** finite-buffer + worker-haulage model as the player.
+`engine/ai.js` `assignAiLogistics` dedicates a **bounded share** of the AI's idle
+workers (≤ half the pool, so gathering never starves) to `assignService`/`assignHaul` —
+the same owner-generic machinery (`engine/haul.js`) the player's workers use — so an AI
+factory only runs once workers have supplied its `input` larder and kept its `store`
+buffer clear, stalling otherwise, and a rig's buffer must be hauled off. The AI's worker
+target grows with its factory/rig count (it builds the labour its industry needs), and
+`pickBuilder` leaves logistics workers alone. So the AI pays the same labour cost the
+player does; there is **no owner special-case** in `updateProduction`/`updatePlasmaRig`,
+and a **skirmish** never instantiates a factory so its replay is untouched. Perf-safe:
+servicing is the same cheap movement the AI's gatherers already do (measured < 0.5 ms/
+frame for the whole 11-world living galaxy).
 
 ---
 
