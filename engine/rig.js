@@ -21,7 +21,7 @@
 
 import { BUILDINGS, storeTotal, storeRoom, storeCapOf } from "./entities.js";
 import { hashStr } from "./rng.js";
-import { powerThrottle, planetIndustryScale } from "./industry.js";
+import { powerThrottle, cachedPowerThrottle, planetIndustryScale } from "./industry.js";
 
 // The raw commodities a rig can strike. Which one a given rig mines — its VEIN — is chosen by WHERE
 // it's built: the SURFACE deposits nearby bias what lies below (a rig among ore fields usually
@@ -83,15 +83,11 @@ function richLabelFor(r) {
   return r < 0.35 ? "poor" : r < 0.6 ? "fair" : r < 0.82 ? "rich" : "mother lode";
 }
 
-/**
- * Which raw a rig strikes — a deterministic weighted-random pick BIASED by the surface: nearby
- * deposits weight their own commodity, so a rig among ore fields usually strikes ore, but a hashed
- * floor on every vein leaves room for a surprise (and makes a barren spot a genuine gamble). Stable
- * for a given rig: the weights come from node positions/sizes, which never move or deplete.
- */
-export function rigVein(state, building) {
-  const { weights } = surfaceSurvey(state.map?.nodes || [], building.x, building.y);
-  const key = `${Math.round(building.x)},${Math.round(building.y)}`;
+// The weighted-random vein pick given an already-surveyed `weights` tally — factored out of rigVein
+// so a caller that needs BOTH the vein and the richness of the same spot (see surveySpot below) can
+// share a single surfaceSurvey scan instead of each public helper re-surveying identical ground.
+function veinFromWeights(weights, x, y) {
+  const key = `${Math.round(x)},${Math.round(y)}`;
   let total = 0;
   const scored = PLASMA_VEINS.map(com => {
     const w = (weights[com] || 0) + BASE_VEIN_WEIGHT * (0.5 + frac01(`${key}:${com}`));
@@ -103,10 +99,31 @@ export function rigVein(state, building) {
   return scored[scored.length - 1].com;
 }
 
+/**
+ * Which raw a rig strikes — a deterministic weighted-random pick BIASED by the surface: nearby
+ * deposits weight their own commodity, so a rig among ore fields usually strikes ore, but a hashed
+ * floor on every vein leaves room for a surprise (and makes a barren spot a genuine gamble). Stable
+ * for a given rig: the weights come from node positions/sizes, which never move or deplete.
+ */
+export function rigVein(state, building) {
+  const { weights } = surfaceSurvey(state.map?.nodes || [], building.x, building.y);
+  return veinFromWeights(weights, building.x, building.y);
+}
+
 /** The richness of a rig's spot in [0,1), surface-biased. Pure — no clock, no unseeded RNG. */
 export function locationRichness(state, x, y) {
   const { density } = surfaceSurvey(state.map?.nodes || [], x, y);
   return richnessFrom(density, state.planetId, x, y);
+}
+
+// The vein AND richness of the SAME spot, sharing one surfaceSurvey scan — surfaceSurvey walks every
+// map node, so a rig tick that needs both (updatePlasmaRig, rigInfo) surveyed the identical ground
+// twice calling rigVein then locationRichness separately. Byte-identical to that pair: same
+// surfaceSurvey inputs, same veinFromWeights/richnessFrom math, just computed from one scan instead
+// of two. Public rigVein/locationRichness are untouched — still the right call when only one is needed.
+function surveySpot(state, x, y) {
+  const { weights, density } = surfaceSurvey(state.map?.nodes || [], x, y);
+  return { vein: veinFromWeights(weights, x, y), richness: richnessFrom(density, state.planetId, x, y) };
 }
 
 /**
@@ -143,14 +160,13 @@ export function updatePlasmaRig(state, building, dt) {
   const def = BUILDINGS[building.type];
   if (building.constructing || !def || !def.rig || building.paused) return;
   const rig = def.rig;
-  const throttle = powerThrottle(state, building.owner);   // short power → slower digs
+  const throttle = cachedPowerThrottle(state, building.owner);   // short power → slower digs; owner-wide, cached for this tick (industry.js)
   if (throttle <= 0) return;
   const res = state.players[building.owner].resources;
 
   building.digProgress = (building.digProgress || 0) + (dt / rig.digTime) * planetIndustryScale(state) * throttle;
 
-  const vein = rigVein(state, building);
-  const richness = locationRichness(state, building.x, building.y);
+  const { vein, richness } = surveySpot(state, building.x, building.y);   // one surface scan shared by both
   // BOTH sides pile the dig into a FINITE output buffer (building.store) that workers must haul off to
   // a Command Center — it stalls at the brink when full. The AI's workers haul its rig exactly like
   // the player's (engine/ai.js assignAiLogistics / engine/haul.js), so it's an unlimited SOURCE, not
@@ -178,13 +194,13 @@ export function updatePlasmaRig(state, building, dt) {
 export function rigInfo(state, building) {
   const def = BUILDINGS[building.type];
   if (!def || !def.rig) return null;
-  const richness = locationRichness(state, building.x, building.y);
+  const { vein, richness } = surveySpot(state, building.x, building.y);   // one surface scan shared by both
   const richLabel = richLabelFor(richness);
   const res = state.players[building.owner].resources;
   const cap = storeCapOf(building.type);
   const stored = storeTotal(building);
   return {
-    vein: rigVein(state, building),
+    vein,
     richness, richLabel,
     progress: Math.min(1, building.digProgress || 0),
     lastTier: building.lastTier || null,
