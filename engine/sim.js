@@ -131,6 +131,12 @@ function updateUnit(state, unit, dt) {
   }
 
   const def = UNITS[unit.type];
+  // Belt-and-suspenders: persist.js's cleanEntity already strips any unit with an
+  // unknown type before it reaches state.units on load (test/save-hardening.test.js),
+  // so def is always populated today. This just guards a future entity source that
+  // might bypass that path, matching the same "if (!def) skip" style repair.js uses
+  // for mender defs above.
+  if (!def) return;
   if (def.role === "combat") { updateCombat(state, unit, dt); return; }
   if (def.role === "support") { updateSupport(state, unit, def, dt); return; }
 
