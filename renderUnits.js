@@ -35,6 +35,7 @@ export function drawUnitShape(ctx, u, def, color) {
   else if (u.type === "colossus") drawColossus(ctx, u, def, color);
   else if (u.type === "freighter" || u.type === "hauler" || u.type === "heavyhauler" || u.type === "bulkfreighter") drawFreighter(ctx, u, def, color);
   else if (u.type === "colonyship") drawColonyShip(ctx, u, def, color);
+  else if (u.type === "heliumbomb") drawHeliumBomb(ctx, u, def, color);
   else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 }
 
@@ -542,4 +543,51 @@ function drawFreighter(ctx, u, def, color) {
   ctx.fillStyle = DETAIL;                                   // bridge light at the nose
   const [bx, by] = toWorld(cx, cy, angle, L * 0.82, 0);
   ctx.beginPath(); ctx.arc(bx, by, r * 0.18, 0, Math.PI * 2); ctx.fill();
+}
+
+// Helium Bomb — a spiked mine-like orb (engine/entities.js UNITS.heliumbomb, engine/bomb.js
+// for the arm/detonate logic). Unoriented, like the Mender: it doesn't face anywhere, it just
+// sits there being dangerous. UNARMED reads as inert — short spikes, a dark dead core — safe
+// to park anywhere. ARMED has to be unmistakable at a glance, since walking anything (even a
+// friendly) into it is the whole hazard: longer, more numerous spikes AND a hot glowing core,
+// so the cue survives colourblindness on shape alone, not just the colour swap.
+function drawHeliumBomb(ctx, u, def, color) {
+  const r = def.radius, cx = u.x, cy = u.y;
+  const armed = !!u.armed;
+
+  const spikes = armed ? 10 : 6;
+  const spikeLen = armed ? r * 0.65 : r * 0.35;
+  ctx.strokeStyle = armed ? "#ff5e3d" : DETAIL;
+  ctx.lineWidth = 2;
+  for (let i = 0; i < spikes; i++) {
+    const a = (i / spikes) * Math.PI * 2;
+    const [ix, iy] = toWorld(cx, cy, a, r * 0.9, 0);
+    const [ox, oy] = toWorld(cx, cy, a, r * 0.9 + spikeLen, 0);
+    ctx.beginPath();
+    ctx.moveTo(ix, iy);
+    ctx.lineTo(ox, oy);
+    ctx.stroke();
+  }
+
+  // The body: the owner's colour, so it still reads as a friendly/enemy unit at a glance,
+  // armed or not.
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.75, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = DETAIL;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // The core: dark and inert unarmed, a bright hot glow armed — the primary "is this thing
+  // live right now" signal, independent of the spike-count cue above.
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2);
+  ctx.fillStyle = armed ? "#ff8a3d" : "#1a2233";
+  ctx.fill();
+  if (armed) {
+    ctx.strokeStyle = "#fff3c4";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 }

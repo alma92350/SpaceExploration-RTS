@@ -21,6 +21,7 @@ import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
 import { sampleTerrain, sideMod } from "./map.js";
 import { hashStr } from "./rng.js";
+import { detonateIfAttacked } from "./bomb.js";
 
 export function updateCombat(state, unit, dt) {
   const def = UNITS[unit.type];
@@ -131,6 +132,10 @@ function nearestEnemyUnitWithin(state, unit, radius) {
 // render.js can draw a tracer from shooter to target (a turret reads as
 // its own "turret" type), and `heavy` so a siege hit thumps deeper.
 function performAttack(state, attacker, def, target) {
+  // An ARMED Helium Bomb doesn't take damage from a hit — it detonates instead,
+  // erasing everything (attacker included) within its blast radius. Checked
+  // before the normal damage/death path, which never runs for it.
+  if (detonateIfAttacked(state, target)) return true;
   target.hp -= attackDamage(state, attacker, def, target);
   state.events.push({
     type: "attackHit", x: target.x, y: target.y,

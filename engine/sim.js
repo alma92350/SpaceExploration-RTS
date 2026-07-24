@@ -13,6 +13,7 @@ import { updateHaul, assignHaul, updateService, assignService, countLogistics } 
 import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
+import { checkBombProximity } from "./bomb.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { updateProduction, updateCombustors } from "./industry.js";
 import { updatePlasmaRig } from "./rig.js";
@@ -139,6 +140,10 @@ function updateUnit(state, unit, dt) {
   if (!def) return;
   if (def.role === "combat") { updateCombat(state, unit, dt); return; }
   if (def.role === "support") { updateSupport(state, unit, def, dt); return; }
+  // An ARMED Helium Bomb detonates the instant a live enemy comes within range —
+  // checked before anything else this tick. If it goes off, there's nothing left
+  // to update (it's no longer in state.units).
+  if (def.role === "bomb" && checkBombProximity(state, unit)) return;
 
   // An idle Odyssey worker with nothing queued offers itself for logistics: first it clears a
   // pure producer's backed-up output to a Command Center (haul — the Rig, the drop-offs), else it

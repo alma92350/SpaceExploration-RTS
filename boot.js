@@ -21,7 +21,7 @@ import { drawFrame, resetFacing, snapshotPositions } from "./render.js";
 import { drawMinimap } from "./minimap.js";
 import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
-import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, resetEffects } from "./effects.js";
+import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, resetEffects } from "./effects.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
@@ -415,6 +415,13 @@ function processFrameEvents() {
       case "entityKilled":
         sound.playEntityKilled(pan);
         addDeathFlash(ev.x, ev.y);
+        break;
+      // The Helium Bomb's detonation (engine/bomb.js) — one event for the blast itself,
+      // alongside the individual entityKilled events for everything it erased.
+      case "bombDetonated":
+        sound.playExplosion(pan);
+        addExplosion(ev.x, ev.y, ev.radius);
+        if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
       case "buildingComplete":
         sound.playBuildingComplete(pan);

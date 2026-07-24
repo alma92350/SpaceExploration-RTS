@@ -208,7 +208,7 @@ export const BUILDINGS = {
   stardock: {
     id: "stardock", name: "Star Dock", hp: 600, radius: 22,
     cost: { ore: 350 }, buildTime: 40, sight: 160,
-    produces: ["leviathan"],                 // the strategic-good capital ship (no recipe — it trains a unit)
+    produces: ["leviathan", "heliumbomb"],   // the strategic-good capital ship, and the doomsday device beside it
     requires: ["aifoundry", "torpedoworks"], // building it proves you've teched the whole Strategic tree
     odysseyOnly: true,
   },
@@ -628,6 +628,21 @@ export const UNITS = {
     bonusVsBuildings: 40,
     requires: ["stardock"],
     odysseyOnly: true,   // the endgame capital ship deliberately exceeds the skirmish specialists (see entities.test)
+  },
+  heliumbomb: {
+    id: "heliumbomb", name: "Helium Bomb", hp: 80, radius: 10, speed: 60,
+    cost: { gas: 150, antimatter: 3, plasmatorp: 3 }, buildTime: 45, supplyCost: 3,
+    // A doomsday device, not a combatant: no `attack`, and role "bomb" (not
+    // "combat") means it never auto-fights and the AI's army/threat scans
+    // (which filter role === "combat") skip right past it, the same way they
+    // skip the Colony Ship. It's still a perfectly legal target for an ENEMY's
+    // own auto-acquire — combat.js's targeting picks the nearest live enemy of
+    // any role, not just role:"combat" — so shooting an armed one is the worst
+    // possible move (see engine/bomb.js: any hit on an armed bomb detonates it
+    // instead of just damaging it).
+    role: "bomb", sight: 150,
+    requires: ["stardock"],
+    odysseyOnly: true,
   },
 };
 
