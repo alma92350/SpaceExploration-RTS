@@ -40,6 +40,21 @@ test("a thriving world colonises the nearest unclaimed world (it adopts the expa
   assert.equal(g.planets.get(grabbed[0]).players.ai.faction, faction, "the colonised world's AI flies the expander's colours");
 });
 
+test("expansion never colonises the world the player is on — no mid-fight faction flip (B1)", () => {
+  const g = createGalaxy({ seed: 20 });
+  const active = g.activeId;
+  const activeFaction = g.planets.get(active).players.ai.faction;
+  // Develop a different world past EXPAND_DEV; pre-claim every OTHER world, so the only unclaimed
+  // target expansion could reach is the active seat.
+  const home = ODYSSEY_WORLDS.find(w => w !== active);
+  developWorld(g, home, EXPAND_DEV);
+  for (const id of ODYSSEY_WORLDS) if (id !== home && id !== active) g.claims.set(id, "syndicate");
+  checkExpansion(g);
+  assert.ok(!g.claims.has(active), "the active world was not colonised");
+  assert.equal(g.planets.get(active).players.ai.faction, activeFaction,
+    "…and its AI faction was not flipped (its live combat/economy multipliers are untouched)");
+});
+
 test("faction claims survive a save/load", () => {
   const g = createGalaxy({ seed: 7 });
   const id = ODYSSEY_WORLDS.find(w => w !== g.activeId);

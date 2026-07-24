@@ -402,6 +402,12 @@ export function checkExpansion(galaxy) {
   let best = null, bestD = Infinity;
   for (const other of galaxy.worlds) {
     if (claims.has(other)) continue;
+    // Never colonise the world the player is on, or one they hold a base on. Expansion flips the
+    // target world's AI faction (below), and faction feeds LIVE combat/economy multipliers
+    // (factions.js → sideMod, read on every hit and haul) — so flipping a world the player is
+    // actively fighting on would silently change the enemy's damage/sight/speed/gather mid-battle,
+    // with only a starmap toast to show for it. Spread only reaches the unclaimed, unheld fringe.
+    if (other === galaxy.activeId || playerFoothold(galaxy.planets.get(other))) continue;
     const d = Math.abs(planetX(other) - planetX(exp));
     if (d < bestD || (d === bestD && best !== null && other < best)) { bestD = d; best = other; }
   }

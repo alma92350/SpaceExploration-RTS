@@ -11,8 +11,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit, peekEntityId } from "../engine/state.js";
+import { UNITS } from "../engine/entities.js";
 import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
+import { updateProductionQueue } from "../engine/production.js";
 import { serializeGame, deserializeGame, serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGalaxy, activeState, ODYSSEY_WORLDS } from "../engine/galaxy.js";
 import { deployColonyShip } from "../engine/colony.js";
@@ -43,6 +45,34 @@ test("an unknown entity type is dropped on load instead of crashing the first ti
   assert.ok(!st.buildings.has("b999999"), "unknown building type is not loaded");
   assert.ok(st.units.has(goodUnitId), "a real entity beside it still loads");
   assert.doesNotThrow(() => { for (let i = 0; i < 5; i++) tick(st, 0.1); }, "the sim ticks cleanly — no undefined-def throw");
+});
+
+test("a corrupt production queue is sanitised on load and never bricks the game (B2)", () => {
+  const save = freshSkirmishSave(13);
+  const cc = save.buildings.find(b => b.type === "command" && b.owner === "player");
+  // A real job, a bogus-unitType job (would deref undefined.buildTime and throw on EVERY tick →
+  // bricked autosave), and an out-of-range progress.
+  cc.queue = [{ unitType: "worker", progress: 0.5 }, { unitType: "☠notaunit", progress: 999 }];
+  // A producer building whose queue isn't even an array must load as an empty queue, not blow up.
+  save.buildings.push({ id: "b888888", type: "barracks", owner: "player", x: 240, y: 240,
+    hp: 500, maxHp: 500, constructing: false, buildProgress: 1, queue: "haxx",
+    attackTimer: 0, targetId: null, rally: { x: 240, y: 240 } });
+
+  const st = deserializeGame(save);
+  const cc2 = [...st.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  assert.ok(cc2.queue.every(j => UNITS[j.unitType]), "no bogus unitType survived the load");
+  assert.ok(cc2.queue.every(j => j.progress >= 0 && j.progress <= 1), "progress clamped to [0,1]");
+  assert.ok(cc2.queue.some(j => j.unitType === "worker"), "the real job was kept");
+  assert.deepEqual(st.buildings.get("b888888").queue, [], "a non-array queue became an empty array");
+  assert.doesNotThrow(() => { for (let i = 0; i < 30; i++) tick(st, 0.1); }, "the loaded game ticks cleanly — no undefined-def brick");
+});
+
+test("updateProductionQueue drops an unknown-unitType job instead of crashing (B2 runtime guard)", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, rng: mulberry32(3) });
+  const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  cc.queue = [{ unitType: "notaunit", progress: 0 }, { unitType: "worker", progress: 0 }];
+  assert.doesNotThrow(() => updateProductionQueue(s, cc, 0.1));
+  assert.equal(cc.queue[0]?.unitType, "worker", "the bogus job was shifted off; the real one advances");
 });
 
 test("string / non-finite / out-of-range numeric fields are coerced, not propagated", () => {

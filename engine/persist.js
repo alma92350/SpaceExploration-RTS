@@ -120,6 +120,21 @@ function cleanEntity(e, def, map) {
   e.input = coerceBuffer(e.input, inputCapOf(e.type));
   if (storeCapOf(e.type) <= 0) delete e.store;
   if (inputCapOf(e.type) <= 0) delete e.input;
+  // A building's production queue is untrusted: a bogus/unknown unitType would deref undefined and
+  // brick the game on the first tick (see engine/production.js). For buildings only (units carry no
+  // queue), rebuild it from known-good jobs — real UNIT types, progress clamped to [0,1], the
+  // paid-with-alt flag preserved, everything else dropped — and empty it for a building that can't
+  // produce or whose queue isn't even an array. For a valid save this is the identity, so the
+  // byte-identical round-trip is untouched.
+  if (BUILDINGS[e.type]) {
+    e.queue = (BUILDINGS[e.type].produces && Array.isArray(e.queue))
+      ? e.queue.filter(j => j && UNITS[j.unitType]).map(j => ({
+          unitType: j.unitType,
+          progress: Math.max(0, Math.min(num(j.progress, 0), 1)),
+          ...(j.alt ? { alt: true } : {}),
+        }))
+      : [];
+  }
   return e;
 }
 

@@ -69,6 +69,11 @@ export function updateProductionQueue(state, building, dt) {
   if (building.constructing || building.queue.length === 0) return;
   const job = building.queue[0];
   const def = UNITS[job.unitType];
+  // A job with an unknown unitType (localStorage bit-rot or a hand-edited save that slipped past load
+  // coercion) would otherwise deref `undefined.buildTime` and throw on the FIRST tick — inside the rAF
+  // loop, past load's try/catch — bricking the autosaved game on every reload. Drop it and move on,
+  // matching updateResearch's guard for its own queue (engine/techtree.js).
+  if (!def) { building.queue.shift(); return; }
   // Same build-time modifier applies to unit production (a factory world trains
   // faster too), per-side on an asymmetric world — and the same Logistics
   // production-speed upgrade compounds here too.
