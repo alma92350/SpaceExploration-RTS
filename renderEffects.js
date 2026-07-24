@@ -109,7 +109,7 @@ function tracerColor(unitType) {
 // in render.js that reads wall-clock-timed state instead of the sim's
 // own state object.
 export function drawEffects(ctx) {
-  const { tracers, deaths, pings } = activeEffects();
+  const { tracers, deaths, pings, explosions } = activeEffects();
 
   for (const t of tracers) {
     const color = tracerColor(t.unitType);
@@ -161,6 +161,27 @@ export function drawEffects(ctx) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(p.x, p.y, 14 + pulse * 40, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // The Helium Bomb's detonation (engine/bomb.js): a bright flash that collapses fast, under
+  // an expanding shockwave ring that reaches `e.radius` — the ACTUAL blast radius that just
+  // erased everything inside it — a third of the way through its life, then fades out. The
+  // ring's real size (not a fixed cosmetic one) is what tells the player how far it reached.
+  for (const e of explosions) {
+    const flashR = e.radius * 0.3 * Math.max(0, 1 - e.age * 3);
+    ctx.globalAlpha = Math.max(0, 1 - e.age * 4);
+    ctx.fillStyle = "#fff3c4";
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, flashR, 0, Math.PI * 2);
+    ctx.fill();
+
+    const ringR = e.radius * Math.min(1, e.age * 3);
+    ctx.globalAlpha = Math.max(0, 1 - e.age);
+    ctx.strokeStyle = "#ff8a3d";
+    ctx.lineWidth = 4 * Math.max(0, 1 - e.age);
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, ringR, 0, Math.PI * 2);
     ctx.stroke();
   }
 

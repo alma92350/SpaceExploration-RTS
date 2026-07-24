@@ -110,6 +110,15 @@ export function playEntityKilled(pan = 0) {
   throttled("kill", 150, () => tone({ freq: 140, duration: 0.28, type: "sawtooth", gain: 0.13, sweep: -100, pan }));
 }
 
+// The Helium Bomb's detonation (engine/bomb.js): a deep, long sub-bass boom —
+// lower and longer than anything else here, so it reads as an order of
+// magnitude bigger than even a heavy siege hit. Rare by nature (arming and
+// detonating a doomsday device isn't a repeated action), but throttled anyway
+// for safety against a pathological double-fire.
+export function playExplosion(pan = 0) {
+  throttled("explosion", 500, () => tone({ freq: 55, duration: 0.6, type: "sawtooth", gain: 0.2, sweep: -35, jitter: 0.02, pan }));
+}
+
 export function playBuildingComplete(pan = 0) {
   throttled("building", 200, () => tone({ freq: 400, duration: 0.18, type: "sine", gain: 0.13, sweep: 260, pan }));
 }

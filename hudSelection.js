@@ -26,6 +26,7 @@ import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
+import { detonateBomb, BOMB_BLAST_RADIUS, BOMB_DETECT_RANGE } from "./engine/bomb.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
@@ -182,6 +183,11 @@ export function renderSelectionPanel() {
         const m = jumpManifest(state, sp);
         const all = jumpManifestAll(state);
         return `${spaceportTier(sp)}:${m.used}:${m.leftBehind}:${m.staged}:${all.used}:${all.leftBehind}`;
+      })()
+    // Rebuild the Helium Bomb panel when its armed state flips.
+    + "|" + (() => {
+        const b = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "bomb");
+        return b ? !!b.armed : "";
       })()
     // Rebuild the freighter cargo panel when its hold or the loadable stockpile changes, so the
     // Load/Unload buttons and the used/cap readout stay live as goods move in and out of the hold.
@@ -704,6 +710,14 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
       () => queueProduction(state, stardock.id, "leviathan"),
       { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: "leviathan" } }));
+    // The doomsday device beside it — same strategic-goods gate, built unarmed (see
+    // engine/bomb.js; arming is a separate step once it's out on the field).
+    const bombDef = UNITS.heliumbomb;
+    const bombLocked = !prereqsMet(state, "player", bombDef);
+    panelEl.appendChild(prodButton(`Produce ${bombDef.name} (${costText(bombDef.cost)})`,
+      () => queueProduction(state, stardock.id, "heliumbomb"),
+      { cost: bombDef.cost, tip: `${unitTip(bombDef)} · ${BOMB_BLAST_RADIUS}-radius blast when armed and triggered`,
+        locked: bombLocked, lockTip: bombLocked ? lockTipFor(bombDef) : null, icon: { kind: "unit", type: "heliumbomb" } }));
     if (stardock.queue.length) renderQueueRows(stardock);
   }
 
@@ -1014,6 +1028,30 @@ function rebuildSelectionPanel(sel) {
       row.textContent = powered ? "On the power grid — repairing at full rate"
                                  : "Off-grid — mending slowly on reserves (move near a Reactor/Generator)";
       panelEl.appendChild(row);
+    }
+  }
+
+  // Helium Bomb: an Arm/Disarm toggle (same direct-mutation pattern as the Mender's
+  // auto-repair above) plus a manual trigger, once armed. UNARMED it's inert and safe to
+  // move anywhere; ARMED it detonates on the first hit it takes, the instant a live enemy
+  // comes within range, or the moment "Detonate Now" is clicked — see engine/bomb.js, the
+  // one place the blast itself happens, so all three can never disagree about the result.
+  const bomb = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "bomb");
+  if (bomb) {
+    const armed = !!bomb.armed;
+    const note = document.createElement("div");
+    note.className = "sel-note " + (armed ? "bad" : "good");
+    note.textContent = armed
+      ? `⚠ ARMED — erases every unit and building (any owner, including yours) within ${BOMB_BLAST_RADIUS} — a power station's on-grid reach. Detonates on the next hit it takes, if an enemy comes within ${BOMB_DETECT_RANGE}, or on your command.`
+      : `Unarmed — safe to move anywhere. Once armed: ${BOMB_BLAST_RADIUS}-radius blast erasing every unit and building inside it, any owner.`;
+    panelEl.appendChild(note);
+    panelEl.appendChild(makeButton(armed ? "◯ Disarm" : "☢ Arm the Bomb",
+      () => { const v = !armed; for (const e of sel) if (e.kind === "unit" && UNITS[e.type].role === "bomb") e.armed = v; },
+      { tip: armed ? "Stand down — safe again until re-armed"
+                   : "Arm it: from now on it detonates on a hit, enemy presence, or your command" }));
+    if (armed) {
+      panelEl.appendChild(makeButton("💥 Detonate Now", () => detonateBomb(state, bomb),
+        { tip: "Trigger it right now, on the spot" }));
     }
   }
 

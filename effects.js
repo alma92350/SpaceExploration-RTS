@@ -17,11 +17,13 @@ const TRACER_LIFETIME_MS = 120;
 const DEATH_LIFETIME_MS = 280;
 const PING_LIFETIME_MS = 3000;
 const FIREWORK_LIFETIME_MS = 1500;
+const EXPLOSION_LIFETIME_MS = 900;
 
 let tracers = [];
 let deaths = [];
 let pings = [];
 let fireworks = [];
+let explosions = [];
 
 export function addTracer(fromX, fromY, toX, toY, unitType) {
   tracers.push({ fromX, fromY, toX, toY, unitType, born: performance.now() });
@@ -36,6 +38,13 @@ export function addDeathFlash(x, y) {
 // on-screen) even after the alert banner itself has faded.
 export function addUnderAttackPing(x, y) {
   pings.push({ x, y, born: performance.now() });
+}
+
+// The Helium Bomb's detonation (engine/bomb.js's bombDetonated event): a shockwave ring
+// that expands out to the blast's real radius (so the VFX itself shows the player exactly
+// how far the erasure reached), not a fixed cosmetic size like the death flash above.
+export function addExplosion(x, y, radius) {
+  explosions.push({ x, y, radius, born: performance.now() });
 }
 
 // A celebratory burst show for Odyssey progress milestones (engine/galaxy.js). Screen-space,
@@ -83,10 +92,12 @@ export function activeEffects() {
   tracers = tracers.filter(t => now - t.born < TRACER_LIFETIME_MS);
   deaths = deaths.filter(d => now - d.born < DEATH_LIFETIME_MS);
   pings = pings.filter(p => now - p.born < PING_LIFETIME_MS);
+  explosions = explosions.filter(e => now - e.born < EXPLOSION_LIFETIME_MS);
   return {
     tracers: tracers.map(t => ({ ...t, age: (now - t.born) / TRACER_LIFETIME_MS })),
     deaths: deaths.map(d => ({ ...d, age: (now - d.born) / DEATH_LIFETIME_MS })),
     pings: pings.map(p => ({ ...p, age: (now - p.born) / PING_LIFETIME_MS })),
+    explosions: explosions.map(e => ({ ...e, age: (now - e.born) / EXPLOSION_LIFETIME_MS })),
   };
 }
 
@@ -97,4 +108,5 @@ export function resetEffects() {
   deaths = [];
   pings = [];
   fireworks = [];
+  explosions = [];
 }

@@ -149,6 +149,10 @@ function cleanEntity(e, def, map) {
   // it into [0,1] on load. Only touch a wonder that actually carries the field (an uncharged Gate has
   // none yet), and a legitimately-saved charge is already in [0,1] — so this is the identity.
   if (def.wonder && e.charge !== undefined) e.charge = Math.max(0, Math.min(num(e.charge, 0), 1));
+  // A Helium Bomb's `armed` flag is untrusted too — coerce to a real boolean so a tampered
+  // save can't smuggle in a truthy non-boolean that reads oddly elsewhere. Only a role:"bomb"
+  // unit carries the field at all; harmless to any other def, but only worth writing there.
+  if (def.role === "bomb") e.armed = !!e.armed;
   // A producer's output buffer (building.store) and a factory's input buffer (building.input) are
   // untrusted save data — a hand-edited file could smuggle in a bogus commodity, a negative/NaN qty,
   // or an over-capacity buffer. Keep only real commodities with a positive qty and clamp each buffer's
