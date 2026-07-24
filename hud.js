@@ -87,7 +87,10 @@ export function renderHUD() {
 
       const supplySpan = document.createElement("span");
       supplySpan.className = "supply" + (used >= cap ? " at-cap" : "") + (blocked ? " blocked" : "");
-      supplySpan.textContent = `supply: ${used}/${cap}`;
+      // cap can be fractional (an electrified Habitat's grant is scaled by the grid throttle,
+      // engine/supply.js) — round for display only; the at-cap comparison above stays on the
+      // exact value so it can't flicker a rounding-boundary case.
+      supplySpan.textContent = `supply: ${used}/${Math.round(cap)}`;
       resourcesEl.appendChild(supplySpan);
 
       // Odyssey: your universal credit balance lives on the galaxy, not the planet
@@ -106,7 +109,9 @@ export function renderHUD() {
         if (pCap > 0 || pDraw > 0) {
           const pw = document.createElement("span");
           pw.className = "power" + (pDraw > pCap ? " at-cap" : "");
-          pw.textContent = `⚡ ${Math.round(pDraw)}/${pCap}`;
+          // pCap can be fractional too (the powerMult tech scales it, engine/industry.js) —
+          // round for display only, same as supply above; the at-cap comparison stays exact.
+          pw.textContent = `⚡ ${Math.round(pDraw)}/${Math.round(pCap)}`;
           pw.title = "Industrial Power — Reactors grant it, factories draw it; short power throttles all production";
           resourcesEl.appendChild(pw);
         }
