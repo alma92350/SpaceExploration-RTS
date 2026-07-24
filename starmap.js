@@ -14,9 +14,9 @@
 import { starmapEl, starmapBtn } from "./dom.js";
 import { game } from "./session.js";
 import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost } from "./engine/galaxy.js";
-import { performJump, surrenderOdyssey } from "./boot.js";
+import { performJump, surrenderOdyssey, pauseLoop, resumeLoop } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
-import { planetName as worldName, FACTIONS } from "./data.js";
+import { planetName as worldName, LORE_FACTIONS } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { stanceLabel } from "./engine/diplomacy.js";
 
@@ -57,12 +57,12 @@ export function renderStarmap() {
       : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
       // An unexplored world that a faction has claimed (checkExpansion) reads as that faction's
       // sphere — so you watch factions spread across the frontier before you ever set foot there.
-      : w.controlledBy ? `${FACTIONS[w.controlledBy]?.name || archetypeFor(w.id).name} space`
+      : w.controlledBy ? `${LORE_FACTIONS[w.controlledBy]?.name || archetypeFor(w.id).name} space`
       : archetypeFor(w.id).name;
     // The world's faction emblem: the DYNAMIC controlling faction (checkExpansion spread) when one has
-    // claimed it, else its native faction (data.js FACTIONS) — so the map's emblems shift as factions
+    // claimed it, else its native faction (data.js LORE_FACTIONS) — so the map's emblems shift as factions
     // colonise across it, a world reading by whoever holds it at a glance.
-    const ico = (FACTIONS[w.controlledBy || w.faction]?.ico) || "🪐";
+    const ico = (LORE_FACTIONS[w.controlledBy || w.faction]?.ico) || "🪐";
     // Build each span with textContent, not one innerHTML string: worldName(w.id) falls
     // back to the raw id for an unknown world (data.js), and a hostile save could park
     // markup there — as text it can only ever render as text. Industry/Tech drive the
@@ -112,8 +112,8 @@ function onWorldClick(w) {
   performJump(w.id);   // carries the expedition (or, if stranded, evacuates the force) to the world
 }
 
-export function openStarmap() { if (!game.galaxy) return; renderStarmap(); starmapEl.classList.remove("hidden"); }
-export function closeStarmap() { starmapEl.classList.add("hidden"); }
+export function openStarmap() { if (!game.galaxy) return; renderStarmap(); starmapEl.classList.remove("hidden"); pauseLoop("starmap"); }   // hold the sim while the starmap is up
+export function closeStarmap() { starmapEl.classList.add("hidden"); resumeLoop("starmap"); }
 function toggleStarmap() { if (starmapEl.classList.contains("hidden")) openStarmap(); else closeStarmap(); }
 
 // Self-wired, like the other overlays: the topbar button and the M key toggle it

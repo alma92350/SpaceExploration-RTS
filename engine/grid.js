@@ -47,10 +47,21 @@ export function buildUnitGrid(state) {
   return { cell: CELL, buckets };
 }
 
+// Reused across calls instead of allocating a fresh result array every query:
+// every caller (repair.js, movement.js, separation.js, combat.js) reads the
+// returned array in an immediate for-of and discards it before making its next
+// move — none stores it past that, and none makes a second queryNeighbors call
+// while a prior result is still being iterated (all call sites are synchronous,
+// single-threaded, read-then-discard) — so one shared scratch buffer is safe and
+// matches this file's stated no-per-tick-garbage goal (see header comment).
+const _scratch = [];
+
 // Candidate units in every cell overlapping the (radius, +1 ring of padding)
 // box around (x, y). A superset of the units within `radius` — callers filter
 // by exact distance. Cells are visited in a fixed numeric order and bucket
 // contents keep Map insertion order, so iteration is fully deterministic.
+// Returns a reused scratch array (see _scratch above) — read it immediately
+// and don't hold onto it past that; the next queryNeighbors call overwrites it.
 /** @param {*} grid @param {number} x @param {number} y @param {number} radius @returns {(Unit)[]} */
 export function queryNeighbors(grid, x, y, radius) {
   const cell = grid.cell;
@@ -58,12 +69,12 @@ export function queryNeighbors(grid, x, y, radius) {
   const maxcx = Math.floor((x + radius) / cell) + 1;
   const mincy = Math.floor((y - radius) / cell) - 1;
   const maxcy = Math.floor((y + radius) / cell) + 1;
-  const out = [];
+  _scratch.length = 0;
   for (let cy = mincy; cy <= maxcy; cy++) {
     for (let cx = mincx; cx <= maxcx; cx++) {
       const arr = grid.buckets.get(cellKey(cx, cy));
-      if (arr) for (const u of arr) out.push(u);
+      if (arr) for (const u of arr) _scratch.push(u);
     }
   }
-  return out;
+  return _scratch;
 }

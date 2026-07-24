@@ -423,6 +423,110 @@ test("a size-triggered attack keeps a home guard back; a timeout commit throws e
   assert.equal(attacking, 9, "and sends the surplus");
 });
 
+// An Odyssey wave that only PARTIALLY commits (the escalating probe) is
+// supposed to send the forward-most units and hold the rest back as
+// reinforcement — withoutHomeGuard sorts by distance from home for exactly
+// that reason. That sort must hold even for an all-in archetype with
+// garrison:0 (the Rusher), where the "held-back count" is zero, not just for
+// a garrison > 0 archetype. Units are seeded in the REVERSE of distance order
+// (farthest inserted first) so a naive unsorted pass — which would silently
+// hand back whichever units happen to sit at the end of army/insertion order —
+// is distinguishable from a genuine distance sort: it would send the wrong
+// (nearest) half.
+test("an Odyssey partial wave sends the forward-most Rusher units even with garrison:0 (all-in)", () => {
+  const state = createGameState({ planetId: "korrath", rng: () => 0.5 });   // korrath -> Rusher, garrison 0
+  state.diplomacy = { stance: -0.5, depletion: 0 };   // hostility ~0.41 -> a genuine partial commit, not all-or-nothing
+  assert.equal(state.ai.archetype.garrison, 0, "sanity check: the Rusher is all-in by design");
+  const cc = [...state.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  // A dedicated scout already out sweeping, so updateScout doesn't dip into the squad below.
+  const scout = makeUnit("skiff", "ai", cc.x, cc.y - 200);
+  scout.order = { type: "move", x: 100, y: 100 };
+  state.units.set(scout.id, scout);
+  state.ai.scoutId = scout.id;
+
+  // Ten idle units at increasing distance from home, inserted FARTHEST first.
+  const squad = [];
+  for (let i = 0; i < 10; i++) {
+    const dist = 1000 - i * 100;   // 1000, 900, ... 100 — decreasing as insertion proceeds
+    const u = makeUnit("skiff", "ai", cc.x + dist, cc.y);
+    state.units.set(u.id, u);
+    squad.push(u);
+  }
+  const byDist = squad.slice().sort((a, b) =>
+    Math.hypot(b.x - cc.x, b.y - cc.y) - Math.hypot(a.x - cc.x, a.y - cc.y));   // farthest first
+
+  runAI(state, THINK_INTERVAL);
+
+  const attacking = squad.filter(u => u.order?.type === "attack-move");
+  const home = squad.filter(u => !u.order);
+  assert.equal(attacking.length, 5, "roughly half the squad probes out this cycle");
+  assert.equal(home.length, 5, "...the rest stays as reinforcement");
+  const expectedForward = new Set(byDist.slice(0, 5).map(u => u.id));   // the 5 units farthest from home
+  for (const u of attacking) {
+    assert.ok(expectedForward.has(u.id),
+      "the wave draws from the forward-most units by distance, not from insertion order");
+  }
+});
+
+// Unlike the garrison test above — which sidesteps updateScout's fallback
+// entirely by preloading a dedicated already-scouting unit — these two stage
+// the actual hazard: the old scout is gone (state.ai.scoutId is stale, as it
+// is right after the unit that held it dies) while the rest of the army is
+// mid-attack, and exercise the "no Ranger, lend a fighter" fallback path.
+test("a dead scout's replacement is never pulled off a unit mid-attack", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const aiBase = state.map.bases.ai;
+  // The old scout died mid-wave: scoutId still points at it, but nothing in
+  // state.units answers to that id any more (nothing clears it on death).
+  state.ai.scoutId = "dead-scout";
+
+  // Four units already committed to an active assault on the player's base —
+  // inserted FIRST, so a naive "first non-scout army unit" fallback grabs one
+  // of these instead of a real spare.
+  const attackers = [];
+  for (let i = 0; i < 4; i++) {
+    const u = makeUnit("skiff", "ai", aiBase.x + 400 + i * 8, aiBase.y);
+    u.order = { type: "attack-move", x: state.map.bases.player.x, y: state.map.bases.player.y };
+    state.units.set(u.id, u);
+    attackers.push(u);
+  }
+  // One genuinely idle spare sitting at home, inserted LAST.
+  const spare = makeUnit("skiff", "ai", aiBase.x, aiBase.y);
+  state.units.set(spare.id, spare);
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.ok(!attackers.some(u => u.id === state.ai.scoutId),
+    "the replacement scout must never be pulled from a unit mid-attack");
+  for (const u of attackers) {
+    assert.equal(u.order?.type, "attack-move",
+      "units committed to the assault keep attacking — not kidnapped for scouting duty");
+  }
+  assert.equal(state.ai.scoutId, spare.id, "the genuinely idle spare is the one sent scouting instead");
+});
+
+test("with every AI unit mid-attack and no idle spare, a dead scout goes unreplaced rather than pulling a fighter off the assault", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const aiBase = state.map.bases.ai;
+  state.ai.scoutId = "dead-scout";   // stale — the old scout is gone
+
+  const attackers = [];
+  for (let i = 0; i < 4; i++) {
+    const u = makeUnit("skiff", "ai", aiBase.x + 400 + i * 8, aiBase.y);
+    u.order = { type: "attack-move", x: state.map.bases.player.x, y: state.map.bases.player.y };
+    state.units.set(u.id, u);
+    attackers.push(u);
+  }
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.ok(!attackers.some(u => u.id === state.ai.scoutId),
+    "no unit mid-attack is ever pulled as a replacement scout, even with no idle spare available");
+  for (const u of attackers) {
+    assert.equal(u.order?.type, "attack-move", "every attacking unit keeps attacking, untouched");
+  }
+});
+
 test("the AI marches on a SEEN enemy building rather than the fixed start coordinate", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   state.time = state.ai.archetype.attackTimeout + 50;   // force a commit

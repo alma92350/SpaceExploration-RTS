@@ -149,8 +149,9 @@ map regenerates from the seed on load, so saves stay small. Two channels:
   its shape.
 
 Saves are untrusted input: every load is sanitized and coerced (bad types dropped, numbers clamped)
-before it touches the running game, and a save from an incompatible format version is rejected
-rather than loaded into a broken state.
+before it touches the running game. Version checking is exact-match, not migration — a save whose
+`v` doesn't equal the current `SAVE_VERSION`/`GALAXY_SAVE_VERSION` is rejected outright rather than
+loaded into a broken state, with no attempt to translate it forward.
 
 ## Versioning
 
@@ -158,8 +159,11 @@ rather than loaded into a broken state.
 `version.json`; an in-app update check compares the deployed `version.json` against the baked-in
 value and tells you when a newer build is live — and whether it keeps your saves. Save-format
 versions (`SAVE_VERSION` for skirmish, `GALAXY_SAVE_VERSION` for Odyssey) live in
-`engine/persist.js` and are bumped independently whenever a save's shape changes; loaders stay
-backward-tolerant of older saves. See [CHANGELOG.md](CHANGELOG.md) for release history.
+`engine/persist.js` and are bumped independently whenever a save's shape changes in a way older
+saves can't survive. Bumping either is a hard compatibility break: the loader requires an exact
+version match and rejects anything else outright, with no migration and no partial tolerance —
+which is what that "whether it keeps your saves" note above is warning you about. See
+[CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Project layout
 

@@ -72,3 +72,70 @@ test("every relative import points at a file that exists", () => {
   }
   assert.deepEqual(missing, [], "import(s) pointing at a file that no longer exists:\n" + missing.join("\n"));
 });
+
+// Regression guard for a real bug: data.js and engine/factions.js used to BOTH export a
+// binding named `FACTIONS` (different shapes — lore/UI flavor vs. real gameplay traits), and
+// coexisted only because every importer happened to grab the right one. data.js's export was
+// renamed to LORE_FACTIONS so the two names can never again be confused for one another at an
+// import site.
+test("data.js's lore-flavor faction data has its own name — no duplicate FACTIONS export shared with engine/factions.js", () => {
+  const dataSrc = readFileSync(join(root, "data.js"), "utf8");
+  assert.match(dataSrc, /export const LORE_FACTIONS\s*=/,
+    "data.js should export LORE_FACTIONS (its lore/UI faction flavor data: name/ico/color/desc)");
+  assert.doesNotMatch(dataSrc, /export const FACTIONS\s*=/,
+    "data.js must not export a FACTIONS binding — engine/factions.js already owns that name for the real playable-faction gameplay data");
+
+  // No shipped file may import a `FACTIONS` binding FROM data.js (only LORE_FACTIONS); a bare
+  // `FACTIONS` import is only valid from engine/factions.js.
+  const offenders = [];
+  for (const f of shippedJs()) {
+    const src = readFileSync(f, "utf8");
+    for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']([^"']*\bdata\.js)["']/g)) {
+      if (/\bFACTIONS\b/.test(m[1])) offenders.push(`${f.replace(root + "/", "")} imports { FACTIONS } from ${m[2]}`);
+    }
+  }
+  assert.deepEqual(offenders, [], "stale import of data.js's old FACTIONS name (should be LORE_FACTIONS):\n" + offenders.join("\n"));
+});
+
+// Regression guard: boot.js used to keep its own hand-maintained easy/medium/hard -> {aiApm,
+// aiMicro} map, entirely separate from setup.js's DIFFICULTY_OPTIONS (which drives the
+// Easy/Medium/Hard picker). If the two ever drifted — a difficulty key added to one list but
+// not the other — `DIFFICULTY[setup.difficulty] || DIFFICULTY.medium` silently downgraded an
+// unrecognised difficulty to Medium instead of erroring. setup.js's DIFFICULTY_OPTIONS is now
+// the one list carrying the AI dials too, and boot.js derives from it.
+test("setup.js's DIFFICULTY_OPTIONS is the single source of every difficulty's AI dials; boot.js derives from it", () => {
+  const setupSrc = readFileSync(join(root, "setup.js"), "utf8");
+  const bootSrc = readFileSync(join(root, "boot.js"), "utf8");
+
+  const optionsBlock = setupSrc.match(/export const DIFFICULTY_OPTIONS\s*=\s*\[([\s\S]*?)\n\];/);
+  assert.ok(optionsBlock, "setup.js must export DIFFICULTY_OPTIONS");
+  const entries = [...optionsBlock[1].matchAll(/\{([^}]*)\}/g)].map(m => m[1]);
+  assert.ok(entries.length >= 3, "expected at least the three Easy/Medium/Hard entries");
+  for (const entry of entries) {
+    assert.match(entry, /mult:\s*"[a-z]+"/, `difficulty option missing its key: ${entry}`);
+    assert.match(entry, /aiApm:\s*\d+/, `difficulty option missing its aiApm dial (must live in the canonical list): ${entry}`);
+    assert.match(entry, /aiMicro:\s*(true|false)/, `difficulty option missing its aiMicro dial (must live in the canonical list): ${entry}`);
+  }
+
+  assert.match(bootSrc, /import\s*\{[^}]*\bDIFFICULTY_OPTIONS\b[^}]*\}\s*from\s*["']\.\/setup\.js["']/,
+    "boot.js should import DIFFICULTY_OPTIONS from setup.js rather than hardcoding its own difficulty list");
+  assert.doesNotMatch(bootSrc, /easy:\s*\{\s*aiApm/,
+    "boot.js must not keep its own separate easy/medium/hard -> {aiApm,aiMicro} map (that duplication is exactly the drift this guards against)");
+});
+
+// Regression guard: boot.js used to copy-paste the exact seed-resolution expression
+// `(setup.seed != null ? setup.seed : Math.floor(Math.random()*0x100000000)) >>> 0` at five
+// separate call sites (startGame, startScenario, startRaider, startBounty, startOdyssey) — one
+// fix to the replay-determinism logic could easily miss the other four. It's now a single
+// named helper (resolveSeed) called from all five.
+test("boot.js resolves the seed through one shared helper, not copy-pasted at every call site", () => {
+  const bootSrc = readFileSync(join(root, "boot.js"), "utf8");
+  const rawExpr = "Math.floor(Math.random() * 0x100000000)) >>> 0";
+  const rawOccurrences = bootSrc.split(rawExpr).length - 1;
+  assert.equal(rawOccurrences, 1,
+    `the seed-resolution expression should appear exactly once now (inside its helper), found ${rawOccurrences} — it must not be copy-pasted at call sites again`);
+
+  const helperCalls = [...bootSrc.matchAll(/\bresolveSeed\(setup\)/g)].length;
+  assert.ok(helperCalls >= 5,
+    `expected resolveSeed(setup) to be called at every start* site (>=5: skirmish, escort, raider, bounty, Odyssey), found ${helperCalls}`);
+});

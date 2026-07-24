@@ -57,10 +57,17 @@ The browser loads the repo as-is. So:
 Save data is untrusted input and is version-gated:
 
 - `engine/persist.js` owns `SAVE_VERSION` (skirmish) and `GALAXY_SAVE_VERSION` (Odyssey). **Bump
-  the relevant one whenever you change a save's shape**, and make the loader tolerate older saves
-  (additive fields with sensible defaults) rather than rejecting them.
+  the relevant one whenever you change a save's shape in a way older saves can't survive.** The
+  version check is exact-match (`if (save.v !== SAVE_VERSION) throw`) — there is no migration
+  step, so bumping the version makes every save written under the old version unloadable; the load
+  fails fast with a clear "unsupported save version" error instead of feeding stale-shaped data
+  into the sim. If a change is purely additive (a new optional field with a sensible default), you
+  usually don't need to bump the version — `sanitizeSave`/`cleanEntity` already default missing
+  fields for saves at the *current* version.
 - Loading always sanitizes and coerces (`sanitizeSave`, `cleanEntity`) — never trust a field's
-  type or range straight off the wire.
+  type or range straight off the wire. That coercion covers corrupt or missing fields within a
+  supported version; it's not a substitute for bumping the version when the shape itself changes
+  in an incompatible way.
 
 ## Types (JSDoc + `// @ts-check`)
 

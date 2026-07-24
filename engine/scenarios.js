@@ -91,11 +91,9 @@ export function setupEscort({ planetId = "ferros", seed = 1, difficulty = "mediu
   state.buildings.clear();
 
   const { width, height } = state.map;
-  const y = height * 0.5;
   // Stations evenly spaced left→right; legs = the gaps between them.
   const n = diff.legRisk.length;                 // number of legs
-  const route = [];
-  for (let i = 0; i <= n; i++) route.push({ x: width * (0.08 + (0.86 * i) / n), y });
+  const route = buildRoute(width, height, n);
 
   const start = route[0];
   // Four freighters clustered at the start station.
@@ -332,10 +330,8 @@ export function setupRaider({ planetId = "ferros", seed = 1, difficulty = "mediu
   state.buildings.clear();
 
   const { width, height } = state.map;
-  const y = height * 0.5;
   const n = diff.legs;
-  const route = [];
-  for (let i = 0; i <= n; i++) route.push({ x: width * (0.08 + (0.86 * i) / n), y });
+  const route = buildRoute(width, height, n);
 
   const start = route[0];
   // The AI convoy: four freighters plus its escort, clustered at the start gate.
@@ -356,7 +352,7 @@ export function setupRaider({ planetId = "ferros", seed = 1, difficulty = "mediu
 
   // The player's raider fleet, off the lane near the middle of the route.
   const mid = route[Math.max(1, Math.floor(n / 2))];
-  const ambush = { x: mid.x, y: Math.min(height - 40, y + PIRATE_AMBUSH_OFFSET) };
+  const ambush = { x: mid.x, y: Math.min(height - 40, mid.y + PIRATE_AMBUSH_OFFSET) };
   let pi = 0;
   for (const [type, count] of Object.entries(diff.pirates)) {
     for (let k = 0; k < count; k++) {
@@ -685,6 +681,17 @@ export function departNow(state) {
 }
 
 /* ---------- helpers ---------- */
+
+// The shared convoy lane: `legs + 1` stations evenly spaced left→right across the map (a leg is
+// the gap between two neighbouring stations), all sitting on the map's vertical center. Escort
+// and Raider both run a convoy along this exact lane — only which side owns the freighters
+// differs — so both setup functions build their route through this one definition.
+function buildRoute(width, height, legs) {
+  const y = height * 0.5;
+  const route = [];
+  for (let i = 0; i <= legs; i++) route.push({ x: width * (0.08 + (0.86 * i) / legs), y });
+  return route;
+}
 
 function liveFreighters(state) {
   const owner = state.scenario.freighterOwner;   // "player" in Escort, "ai" in Raider

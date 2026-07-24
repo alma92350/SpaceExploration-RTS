@@ -184,7 +184,7 @@ export function attachInput(canvas, state, onChange) {
     const target = entityAt(p.x, p.y);
     if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
       const workers = selected.filter(u => u.cargo);
-      if (workers.length) { issueAssistBuild(workers, target.id, queue); sound.playOrder(); }
+      if (workers.length) { issueAssistBuild(workers, target.id, queue); sound.playOrder(); onChange(); }
       return;
     }
     // A completed friendly building with logistics buffers (a factory, the Rig, a forward drop-off):
@@ -193,11 +193,11 @@ export function attachInput(canvas, state, onChange) {
     if (target && target.owner === "player" && target.kind === "building" && !target.constructing
         && (recipeOf(target) || storeCapOf(target.type) > 0)) {
       const workers = selected.filter(u => UNITS[u.type].role === "worker");
-      if (workers.length) { issueServiceBuilding(workers, target.id, queue); sound.playOrder(); return; }
+      if (workers.length) { issueServiceBuilding(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
     if (target && target.owner !== "player") {
       const attackers = selected.filter(u => UNITS[u.type].attack);
-      if (attackers.length) { issueAttack(attackers, target.id, queue); sound.playOrder(); }
+      if (attackers.length) { issueAttack(attackers, target.id, queue); sound.playOrder(); onChange(); }
       return;
     }
     // A friendly SHIP as the target: the selection forms a protective escort ring around it and
@@ -205,17 +205,18 @@ export function attachInput(canvas, state, onChange) {
     // excluded, so right-clicking a ship that's part of the selection escorts it with the rest.
     if (target && target.owner === "player" && target.kind === "unit") {
       const escorts = selected.filter(u => u.id !== target.id);
-      if (escorts.length) { issueEscort(escorts, target.id, queue); sound.playOrder(); return; }
+      if (escorts.length) { issueEscort(escorts, target.id, queue); sound.playOrder(); onChange(); return; }
     }
     const node = nodeAt(p.x, p.y);
     if (node) {
       const workers = selected.filter(u => u.cargo);
-      if (workers.length) { issueGather(workers, node.id, queue); sound.playOrder(); }
+      if (workers.length) { issueGather(workers, node.id, queue); sound.playOrder(); onChange(); }
       return;
     }
     if (queue) aggressiveMove(selected, p.x, p.y, true);
     else issueMove(selected, p.x, p.y);
     sound.playOrder();
+    onChange();
   }
 
   canvas.addEventListener("mousedown", e => {
@@ -262,6 +263,11 @@ export function attachInput(canvas, state, onChange) {
   // Double-click a unit to grab every same-type unit of yours currently on
   // screen — the standard "select all of this type" gesture.
   canvas.addEventListener("dblclick", e => {
+    // Mid-build-placement or with attack-move armed, each of the two clicks that make up this
+    // dblclick already went through mousedown's own buildMode/attackMoveArmed handling (placed
+    // the building / committed the attack-move); the reselect-fleet-of-this-type gesture below
+    // doesn't apply on top of that, same as every other handler that checks these flags first.
+    if (buildMode || attackMoveArmed) return;
     selectSameTypeAt(toWorld(e.clientX, e.clientY));
   }, { signal });
 
@@ -504,6 +510,11 @@ export function attachInput(canvas, state, onChange) {
     if (action) { action.click(); return; }
   }, { signal });
   window.addEventListener("keyup", e => heldKeys.delete(e.key.toLowerCase()), { signal });
+  // Browsers don't reliably deliver keyup to a backgrounded tab, so alt-tabbing away while
+  // holding a pan key would otherwise leave it stuck "held" -- the camera keeps drifting after
+  // you tab back in until you tap that key again. Same hazard the touchcancel handler guards
+  // against for touch; this is the keyboard equivalent.
+  window.addEventListener("blur", () => heldKeys.clear(), { signal });
 
   // Only exits build mode on an actual successful placement -- an
   // invalid spot (see engine/colliders.js) or no eligible worker just

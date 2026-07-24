@@ -17,6 +17,15 @@ import { generateMap } from "./map.js";
 import { mulberry32 } from "./rng.js";
 import { createFog, updateFog } from "./fog.js";
 import { archetypeFor } from "./aiArchetypes.js";
+// peekEntityId/restoreEntityId (called at ~4 sites below: gamePayload, deserializeGame,
+// galaxyPayload, deserializeGalaxy) read and overwrite `nextEntityId` in engine/state.js — a
+// SINGLE module-global counter, not per-state. Reading it (peek, on save) is safe any time, but
+// writing it (restore, on load) stomps whatever value newId()/createGameState was mid-using, so a
+// restoreEntityId() must never race or interleave with another id-minting call (newId, or another
+// save/load) — e.g. don't deserialize a save while a tick that mints ids is in flight, and don't
+// load two saves concurrently. Single-threaded JS makes this safe as long as callers don't
+// interleave async id-minting work around these calls; see the "module-global" note on
+// nextEntityId in engine/state.js and test/save-hardening.test.js's freshSkirmishSave helper.
 import { peekEntityId, restoreEntityId } from "./state.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";

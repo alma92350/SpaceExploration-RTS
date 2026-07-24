@@ -90,7 +90,7 @@ export function updateCombat(state, unit, dt) {
 }
 
 // Only genuinely ranged units kite (Lancer 55 / Breacher 150 / Dreadnought 68);
-// short-range brawlers (Skiff 40, Bastion 24) stand and trade.
+// short-range brawlers (Skiff 40, Bastion 44) stand and trade.
 const KITE_MIN_RANGE = 50;
 
 // Stutter-step kiting: while a ranged unit is reloading and an enemy UNIT has

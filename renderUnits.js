@@ -39,8 +39,9 @@ export function drawUnitShape(ctx, u, def, color) {
 }
 
 const _disp = {};   // reused scratch: a shallow view of a unit at its interpolated draw position
-export function drawUnits(ctx, state, view, alpha = 1) {
-  const selSet = new Set(state.selection);
+// `selSet` is the current-selection Set, computed ONCE per frame by the caller (render.js
+// drawFrame) and passed down here rather than allocated fresh on every call.
+export function drawUnits(ctx, state, view, alpha = 1, selSet) {
   // Two passes over the same culled set: ALL hulls first, then ALL overlays (health bars,
   // enemy pips, cargo dots). Otherwise, in a dense melee, a unit drawn later paints its hull
   // over an earlier unit's health bar — exactly when the bar matters most. lerp+cull recompute

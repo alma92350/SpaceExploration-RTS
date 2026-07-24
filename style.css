@@ -114,7 +114,7 @@ html, body {
 .galaxy-toast-stack {
   position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 6px;
-  z-index: 20; pointer-events: none;
+  z-index: 35; pointer-events: none;   /* above .starmap-overlay (30) so "colony under attack/lost" alerts stay visible with the starmap open */
 }
 .galaxy-toast-stack.hidden { display: none; }
 .galaxy-toast {

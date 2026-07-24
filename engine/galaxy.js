@@ -221,6 +221,21 @@ export function activeState(galaxy) {
 // any span — just in coarser, cheaper increments.
 export const BG_STEP = 4;
 
+// id -> roster-index lookup for `galaxy.worlds`, cached by the ARRAY's own identity rather than
+// on the galaxy object: `worlds` is built in two places (createGalaxy above, and
+// deserializeGalaxy in engine/persist.js), and both set it exactly once and never mutate it in
+// place afterwards (append-only roster growth on load rebuilds the array — see persist.js —
+// it doesn't push/splice the live `galaxy.worlds` reference), so a WeakMap keyed on that
+// reference is a safe, self-invalidating O(1) replacement for the old per-frame
+// `galaxy.worlds.indexOf(id)` scan (stepGalaxy runs this once per background world every
+// frame, and per its header comment the whole scheduler is meant to stay well under 1ms/frame).
+const worldIndexCache = new WeakMap();
+function worldIndexMap(worlds) {
+  let idx = worldIndexCache.get(worlds);
+  if (!idx) { idx = new Map(worlds.map((id, i) => [id, i])); worldIndexCache.set(worlds, idx); }
+  return idx;
+}
+
 // Advance the whole galaxy by one frame. The active world ticks every frame at
 // full cadence (it's rendered and controlled). Every background colony ticks on a
 // coarser fixed step, spread round-robin across BG_STEP frames by its fixed roster
@@ -234,9 +249,10 @@ export function stepGalaxy(galaxy, dt) {
   galaxy.time = (galaxy.time || 0) + dt;             // galaxy-wide clock (deterministic: dt is the fixed step)
   tick(activeState(galaxy), dt);                     // active world: full rate
   const dtBg = dt * BG_STEP;
+  const worldIndex = worldIndexMap(galaxy.worlds);
   for (const [id, state] of galaxy.planets) {
     if (id === galaxy.activeId || !state.background) continue;
-    if (t % BG_STEP === galaxy.worlds.indexOf(id) % BG_STEP) tick(state, dtBg);
+    if (t % BG_STEP === worldIndex.get(id) % BG_STEP) tick(state, dtBg);
   }
   // These galaxy-wide scans (conquest progress, milestones, no-foothold relief) all change on a
   // minutes timescale, so running them every frame (20 Hz) is wasted work that grows with the

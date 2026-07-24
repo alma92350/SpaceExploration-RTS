@@ -177,12 +177,7 @@ const FOCUS_RANGE = 340;   // only army units this close to the chosen target co
 // dispersed acquire). Cleared when nothing hostile is in sight, so the razing
 // path uses ordinary targeting untouched.
 export function applyFocusFire(state, army) {
-  const enemies = [];
-  for (const u of state.units.values()) {
-    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
-    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
-    enemies.push(u);
-  }
+  const enemies = [...visibleEnemyCombatUnits(state)];
   if (!enemies.length) { for (const a of army) a.focusId = null; return; }
   enemies.sort((a, b) => a.hp - b.hp
     || (UNITS[b.type].attack - UNITS[a.type].attack)
@@ -196,14 +191,24 @@ export function applyFocusFire(state, army) {
 const RETREAT_FRACTION = 0.4;   // a committed attack ground below this share of its launch size pulls back
 const RETREAT_SIGHT = 260;      // ...if it can see at least as many enemy combat units this close (still losing)
 
+// Enemy (player-owned) combat units the AI can currently SEE in its own fog —
+// the shared "live visible opposition" filter behind applyFocusFire,
+// visibleEnemyCombatNear and visibleThreatsNearHome, so the two-line
+// owner/role/visibility test lives in exactly one place.
+function* visibleEnemyCombatUnits(state) {
+  for (const u of state.units.values()) {
+    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
+    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+    yield u;
+  }
+}
+
 // Player combat units the AI can currently SEE within `radius` of (x, y) — the
 // live opposition at a fight. Zero against an undefended base, which is what
 // makes the retreat safe for the resolves-to-a-winner guarantee.
 function visibleEnemyCombatNear(state, x, y, radius) {
   let n = 0;
-  for (const u of state.units.values()) {
-    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
-    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+  for (const u of visibleEnemyCombatUnits(state)) {
     if (Math.hypot(u.x - x, u.y - y) <= radius) n++;
   }
   return n;
@@ -219,9 +224,7 @@ export function visibleThreatsNearHome(state) {
   const myBuildings = [...state.buildings.values()].filter(b => b.owner === "ai");
   if (!myBuildings.length) return [];
   const threats = [];
-  for (const u of state.units.values()) {
-    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
-    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+  for (const u of visibleEnemyCombatUnits(state)) {
     if (myBuildings.some(b => Math.hypot(b.x - u.x, b.y - u.y) <= DEFEND_RADIUS)) threats.push(u);
   }
   return threats;
@@ -234,11 +237,15 @@ function threatCentroid(threats) {
 }
 
 // Hold back the `garrison` units closest to home; return the rest as the strike
-// force. The near-home units make the standing defense, the forward ones push.
+// force, ordered nearest-home-first / forward-most-last. That ordering is what
+// lets a caller taking only part of the result (the Odyssey wave, below) slice
+// off the tail and get the forward-most units — so it still has to hold for an
+// all-in archetype with garrison:0 (nobody held back, but the order is exactly
+// as load-bearing for a PARTIAL commit as it is when garrison > 0): sort first,
+// then drop the closest `garrison` (zero is a no-op slice, not a skip).
 function withoutHomeGuard(homeArmy, cc, garrison) {
-  if (!garrison || !cc || homeArmy.length <= garrison) {
-    return homeArmy.length > garrison ? homeArmy.slice() : [];
-  }
+  if (homeArmy.length <= garrison) return [];
+  if (!cc) return homeArmy.slice();   // nothing to measure distance from — can't sort, return everyone
   const byDistHome = homeArmy.slice().sort((a, b) =>
     Math.hypot(a.x - cc.x, a.y - cc.y) - Math.hypot(b.x - cc.x, b.y - cc.y));
   return byDistHome.slice(garrison);   // drop the closest `garrison` — they stay home
@@ -351,7 +358,12 @@ export function updateScout(state, army, rangers, defending = false) {
     const current = state.ai.scoutId ? state.units.get(state.ai.scoutId) : null;
     if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;
     if (army.length < 4) { state.ai.scoutId = null; return; }   // need a genuine spare to lend
-    scout = army.find(u => u.id !== state.ai.scoutId);
+    // `army` is EVERY AI combat unit, not just the idle ones — a prior wave still
+    // mid attack-move stays in it. Only an idle/home unit (no order, or still
+    // walking to the rally point — the same "home army" test aiOffense uses) is
+    // eligible, so a unit actively pressing an assault is never yanked off it to
+    // go scouting instead.
+    scout = army.find(u => u.id !== state.ai.scoutId && (!u.order || u.order.type === "move"));
   }
   if (!scout || !canAct(state)) return;   // no spare, or no action budget to send one out yet
   spend(state);

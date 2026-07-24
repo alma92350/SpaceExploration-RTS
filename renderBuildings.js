@@ -53,9 +53,11 @@ export function drawBuildings(ctx, state, view) {
 }
 
 // Building health bars, drawn in a LATER pass than every hull (see drawFrame) so a ship
-// passing over a base no longer paints out the base's bar.
-export function drawBuildingBars(ctx, state, view) {
-  const selSet = new Set(state.selection);
+// passing over a base no longer paints out the base's bar. `selSet` is the current-selection
+// Set — computed ONCE per frame by the caller (drawFrame) and threaded down here, rather than
+// each of drawBuildingBars/drawJumpStaging/drawPowerGrid/drawUnits reallocating their own
+// `new Set(state.selection)` sixty times a second.
+export function drawBuildingBars(ctx, state, view, selSet) {
   for (const b of state.buildings.values()) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
@@ -86,8 +88,7 @@ function drawStoreBar(ctx, b) {
 // engine/galaxy.js stagedRiders), and a highlight on each unit currently inside it.
 // Answers "where do I park units so they come with me?" — drawn only when the
 // Spaceport is selected, so it never clutters the map otherwise.
-export function drawJumpStaging(ctx, state, view) {
-  const selSet = new Set(state.selection);
+export function drawJumpStaging(ctx, state, view, selSet) {
   for (const b of state.buildings.values()) {
     if (b.type !== "spaceport" || b.owner !== "player" || b.constructing || !selSet.has(b.id)) continue;
     if (view && !inView(view, b.x, b.y, JUMP_LOAD_RADIUS + 8)) continue;
@@ -150,8 +151,7 @@ function drawReactorBands(ctx, rx, ry, scale = 1) {
 // its efficiency zones, so a player can see the on-grid / near / far bands — scaled to the source's
 // reach — before placing a factory or rig near it. Drawn only for a selected source (mirrors the
 // Spaceport's jump-staging ring), so it never clutters the field otherwise.
-export function drawPowerGrid(ctx, state, view) {
-  const selSet = new Set(state.selection);
+export function drawPowerGrid(ctx, state, view, selSet) {
   const outer = POWER_TIERS[POWER_TIERS.length - 2].max;
   for (const b of state.buildings.values()) {
     const def = BUILDINGS[b.type];

@@ -24,7 +24,7 @@ import { attachInput } from "./input.js";
 import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, resetEffects } from "./effects.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
-import { renderMapSelect, setup } from "./setup.js";
+import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
 import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, surrenderGalaxy, DOMINATION_TARGET } from "./engine/galaxy.js";
 import { TECHS } from "./engine/techtree.js";
@@ -34,13 +34,26 @@ import * as sound from "./sound.js";
 const UNDER_ATTACK_THROTTLE_MS = 4000;
 const UNDER_ATTACK_BANNER_MS = 2500;
 
-// Difficulty → the two AI dials. Kept here with startGame (the sole consumer);
-// the setup screen's Easy/Medium/Hard labels live in setup.js.
-const DIFFICULTY = {
-  easy: { aiApm: 20, aiMicro: false },
-  medium: { aiApm: 65, aiMicro: false },
-  hard: { aiApm: 140, aiMicro: true },
-};
+// Difficulty → the two AI dials, looked up in setup.js's DIFFICULTY_OPTIONS — the
+// single list that also drives the Easy/Medium/Hard picker, so a difficulty key
+// can't exist in one list and not the other (previously boot.js kept its own
+// separate easy/medium/hard map; if the two ever drifted, an unrecognised key
+// silently fell back to Medium instead of erroring). Computed lazily (not at
+// module top level) because setup.js and boot.js import each other — by the
+// time this runs, both modules have finished loading.
+function difficultyDials(key) {
+  const opt = DIFFICULTY_OPTIONS.find(o => o.mult === key) || DIFFICULTY_OPTIONS.find(o => o.mult === "medium");
+  return { aiApm: opt.aiApm, aiMicro: opt.aiMicro };
+}
+
+// Resolve the seed to actually run with: the setup screen's explicit pick, or a
+// fresh random one (Math.random is fine here — it's not the sim; everything
+// downstream flows from the seeded mulberry32, so same seed => same world), coerced
+// to an unsigned 32-bit int either way. One helper for every start* path (skirmish,
+// the three scenarios, Odyssey) so they can never disagree on how a seed is drawn.
+function resolveSeed(cfg) {
+  return (cfg.seed != null ? cfg.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+}
 
 // Runtime bookkeeping — module-local because only the loop / frame-event pump
 // touch them (state + input live on the shared session instead).
@@ -88,8 +101,8 @@ export function startGame(planetId) {
   // re-enter it to replay the exact same map. The seed itself is drawn from the
   // UI layer (Math.random is fine here — it's not the sim); everything downstream
   // flows from the seeded mulberry32, so same seed ⇒ same world.
-  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
-  const diff = DIFFICULTY[setup.difficulty] || DIFFICULTY.medium;
+  const seed = resolveSeed(setup);
+  const diff = difficultyDials(setup.difficulty);
   // The player picks their faction; the AI's comes from this world's archetype
   // (aiArchetypes.js), so the opponent's identity is part of the world's character.
   const aiFaction = archetypeFor(planetId).faction || "neutral";
@@ -103,7 +116,7 @@ export function startGame(planetId) {
 // the seed/boot machinery with a skirmish; the scenario state carries its own
 // objective (engine/scenarios.js), so bootState wires it the same way.
 export function startScenario(planetId) {
-  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const seed = resolveSeed(setup);
   const fresh = setupEscort({ planetId, seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult });
   bootState(fresh, { intro: false });
 }
@@ -111,7 +124,7 @@ export function startScenario(planetId) {
 // Start a Pirate Raider scenario on `planetId` — the mirror of Escort (you raid
 // the AI convoy). Same boot machinery; the scenario carries its own objective.
 export function startRaider(planetId) {
-  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const seed = resolveSeed(setup);
   const fresh = setupRaider({ planetId, seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult });
   bootState(fresh, { intro: false });
 }
@@ -119,7 +132,7 @@ export function startRaider(planetId) {
 // Start a Bounty Marshal scenario on `planetId` — hunt scattered pirate camps
 // across the sector against a clock. Same boot machinery.
 export function startBounty(planetId) {
-  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
+  const seed = resolveSeed(setup);
   const fresh = setupBounty({ planetId, seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult });
   bootState(fresh, { intro: false });
 }
@@ -128,8 +141,8 @@ export function startBounty(planetId) {
 // randomly-chosen starting world), boots its active planet, and parks the galaxy
 // on the session so the HUD/credits and the later jump machinery can reach it.
 export function startOdyssey() {
-  const seed = (setup.seed != null ? setup.seed : Math.floor(Math.random() * 0x100000000)) >>> 0;
-  const diff = DIFFICULTY[setup.difficulty] || DIFFICULTY.medium;
+  const seed = resolveSeed(setup);
+  const diff = difficultyDials(setup.difficulty);
   bootGalaxy(createGalaxy({
     seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
     playerFaction: setup.faction, aiApm: diff.aiApm, aiMicro: diff.aiMicro,

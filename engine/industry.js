@@ -34,8 +34,11 @@ import { techMult } from "./techtree.js";
 // the factories. And the payoff scales with how well the grid can actually feed the load: the boost
 // is ELECTRIFY_BOOST × the player-wide power throttle, so it's the full +30% only while there's Power to
 // spare and 0 with no grid at all — lighting up the whole base without building Reactors to match
-// just throttles everything. Player-only in practice (the flag is set solely by the Odyssey HUD), so
-// the skirmish path never sets `electrified` and these helpers are inert there → replay untouched.
+// just throttles everything. Not player-only: the Odyssey AI electrifies its own base too (see
+// engine/aiIndustry.js, which flips `electrified` on its buildings the same way the HUD does for
+// the player), so both sides run these helpers identically. It's Odyssey-only, not player-only — a
+// skirmish never sets `electrified` at all (its economy AI doesn't run this code), so the skirmish
+// path never touches these helpers and its replay stays untouched.
 export const ELECTRIFY_POWER = 4;   // grid draw per electrified building (grid-efficiency scaled, like a factory)
 const ELECTRIFY_BOOST = 0.3;        // the headline "+30% with power"
 
@@ -143,7 +146,7 @@ export function powerCap(state, owner) {
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing) continue;
     const def = BUILDINGS[b.type];
-    if (!(def.energyGrants > 0) || !sourceActive(b, def)) continue;   // an unfueled Generator grants nothing
+    if (!(def?.energyGrants > 0) || !sourceActive(b, def)) continue;   // an unfueled Generator grants nothing
     cap += def.energyGrants;
   }
   return cap * techMult(state.players[owner]?.upgrades, "powerMult");
@@ -160,16 +163,16 @@ export function powerDraw(state, owner) {
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing) continue;
     const def = BUILDINGS[b.type];
-    const r = def.recipe ? RECIPE_BY_ID[def.recipe] : null;
+    const r = def?.recipe ? RECIPE_BY_ID[def.recipe] : null;
     const eff = powerEfficiency(state, owner, b.x, b.y).mult;   // ≥1: distance-to-Reactor line loss
     if (r && !b.paused) draw += (r.in.energy || 0) * (def.prodRate || 1) * eff;   // a paused factory frees its reserved Power
     // A wonder still charging loads the grid too, so the Antimatter Gate competes
     // with the factories for Reactor Power (engine/wonder.js) — making the finale a
     // real "feed the factories vs charge the Gate" call, and Fusion Containment worth it.
-    else if (def.wonder && (b.charge || 0) < 1) draw += (def.powerDraw || 0) * eff;
+    else if (def?.wonder && (b.charge || 0) < 1) draw += (def.powerDraw || 0) * eff;
     // A Plasma Rig's arc is a heavy draw too (engine/rig.js) — so it competes with the factories
     // for Power and its digs slow when the grid is short. A paused rig frees its reserved Power.
-    else if (def.rig && !b.paused) draw += (def.rig.power || 0) * eff;
+    else if (def?.rig && !b.paused) draw += (def.rig.power || 0) * eff;
     // An electrified non-power building (Odyssey) adds its own modest, grid-scaled load — the
     // upgrade's running cost, so wiring up the whole base actually competes for Reactor Power.
     else if (b.electrified && isElectrifiable(b.type)) draw += ELECTRIFY_POWER * eff;
@@ -185,6 +188,33 @@ export function powerThrottle(state, owner) {
   const cap = powerCap(state, owner);
   if (cap <= 0) return 0;
   return Math.min(1, cap / draw);
+}
+
+// PER-TICK THROTTLE CACHE — powerThrottle is owner-wide (it never depends on which building is
+// asking), but updateProduction and updatePlasmaRig each call it once per BUILDING, so every factory
+// and every rig an owner has was redoing the identical draw/cap scan — including bestGridDist's O(B)
+// grid-distance search inside powerDraw, for EVERY building — from scratch, every tick. That's the
+// O(B²) recompute this cache kills: modelled on engine/supply.js's lazy-once `boost` and engine/
+// sim.js's countMiners/countLogistics/countMenderTargets ("freeze it once per tick, reuse it"), the
+// real computation now runs at most once per owner per tick no matter how many factories/rigs ask.
+// Keyed on state.tick, so it self-invalidates the instant a real tick advances — and any caller that
+// never goes through updateProduction/updatePlasmaRig (powerThrottle itself, the HUD, repair.js,
+// aiIndustry.js, a direct test call…) never touches this cache and stays exactly as fresh as before.
+function ownerPowerCache(state) {
+  if (!state._powerCache || state._powerCacheTick !== state.tick) {
+    state._powerCache = Object.create(null);
+    state._powerCacheTick = state.tick;
+  }
+  return state._powerCache;
+}
+
+/** powerThrottle, memoized per owner for the current state.tick. Byte-identical to calling
+ * powerThrottle fresh — same formula, same inputs — just computed at most once per owner per tick. */
+export function cachedPowerThrottle(state, owner) {
+  const cache = ownerPowerCache(state);
+  const cached = cache[owner];
+  if (cached !== undefined) return cached;
+  return cache[owner] = powerThrottle(state, owner);
 }
 
 // The bonus an electrified building earns right now: the headline +30%, scaled by the same
@@ -213,7 +243,7 @@ export function updateProduction(state, building, dt) {
   const recipe = recipeOf(building);
   if (!recipe) return;
   if (building.paused) return;   // player-paused to conserve its inputs — banks nothing, draws nothing (see hud.js)
-  const throttle = powerThrottle(state, building.owner);
+  const throttle = cachedPowerThrottle(state, building.owner);   // owner-wide — same number every factory reads this tick
   if (throttle <= 0) return;
   const ups = state.players[building.owner].upgrades;
   const input = building.input || (building.input = {});
