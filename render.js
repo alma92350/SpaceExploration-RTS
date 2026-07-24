@@ -38,17 +38,33 @@ const ICON_BOX = 40;      // css px of the square icon
 const ICON_R = 14;        // normalized sprite radius inside the box
 const iconCache = new Map();
 export function spriteIcon(kind, type, color = "#8fd3ff") {
-  const key = `${kind}:${type}:${color}`;
+  // Rasterize at device-pixel density (min 2×) so button art stays crisp next to the
+  // DPR-scaled map art on a 3× display, instead of a fixed 2×. Computed BEFORE the cache
+  // key (and folded INTO it below) so dragging the window to a different-DPR display
+  // busts the cache instead of the icon staying rasterized at the old, now-wrong scale
+  // for the rest of the session.
+  const scale = Math.max(2, Math.ceil((typeof window !== "undefined" && window.devicePixelRatio) || 1));
+  const key = `${kind}:${type}:${color}:${scale}`;
   if (iconCache.has(key)) return iconCache.get(key);
+
+  let canvas, c;
+  try {
+    canvas = document.createElement("canvas");
+    canvas.width = canvas.height = ICON_BOX * scale;
+    c = canvas.getContext("2d");
+    if (!c) throw new Error("2d context unavailable");
+    c.scale(scale, scale);
+  } catch (e) {
+    // Canvas/context setup failing is an ENVIRONMENT problem (a momentary resource cap,
+    // a lost context, ...) — not something specific to this (kind, type). Don't cache
+    // it, so once the environment recovers the next call gets a real render instead of
+    // being stuck on "" for the rest of the session.
+    console.error(`spriteIcon: canvas setup failed for "${key}"`, e);
+    return "";
+  }
+
   let url = "";
   try {
-    // Rasterize at device-pixel density (min 2×) so button art stays crisp next to the
-    // DPR-scaled map art on a 3× display, instead of a fixed 2×.
-    const scale = Math.max(2, Math.ceil((typeof window !== "undefined" && window.devicePixelRatio) || 1));
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = ICON_BOX * scale;
-    const c = canvas.getContext("2d");
-    c.scale(scale, scale);
     const def = kind === "unit" ? UNITS[type] : BUILDINGS[type];
     const actualR = (def && def.radius) || 16;
     c.translate(ICON_BOX / 2, ICON_BOX / 2);
@@ -61,9 +77,18 @@ export function spriteIcon(kind, type, color = "#8fd3ff") {
     }
     facing.delete("__icon__");                          // don't leave a stray orientation in the shared map
     url = canvas.toDataURL();
-  } catch (e) { url = ""; }
-  if (url) iconCache.set(key, url);   // cache only a SUCCESSFUL render — a transient failure must retry, not
-  return url;                          // permanently downgrade this button to text-only for the whole session
+  } catch (e) {
+    // A failure HERE is deterministic for this (kind, type) — the shape-drawing code
+    // itself is broken (e.g. it reads an undefined `def` property) — so cache the empty
+    // result too: otherwise a genuinely broken icon type would redo the full
+    // allocate+draw+throw cycle on every single call, forever, instead of failing once.
+    console.error(`spriteIcon: failed to draw icon for "${key}"`, e);
+    iconCache.set(key, "");
+    return "";
+  }
+
+  iconCache.set(key, url);   // the valid path: identical to before — a working icon type
+  return url;                 // renders and caches exactly as it always has
 }
 
 // The world-space rectangle currently on screen, padded so an entity straddling
@@ -90,6 +115,10 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   ctx.translate(-camera.x, -camera.y);
 
   const view = viewBounds(camera, viewportW, viewportH, 40);   // 40px pad ≥ largest entity radius
+  // Computed ONCE per frame and threaded down to every draw* helper that needs to test
+  // membership, instead of each of drawBuildingBars/drawJumpStaging/drawPowerGrid/drawUnits
+  // independently allocating its own `new Set(state.selection)` sixty times a second.
+  const selSet = new Set(state.selection);
   drawFogBase(ctx, state, view);
   drawTerrain(ctx, state, view);   // charted geography — under nodes/units, always visible
   // Resource deposits are charted map knowledge (see data.js), not
@@ -98,10 +127,10 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   drawNodes(ctx, state, view);
   if (state.scenario) drawScenario(ctx, state);   // the convoy route + stations, under the units
   drawBuildings(ctx, state, view);     // building hulls + foe pips (bars deferred below)
-  drawUnits(ctx, state, view, alpha);  // unit hulls, then unit overlays (two passes)
-  drawBuildingBars(ctx, state, view);  // building health bars last, so a passing ship can't paint them out
-  drawJumpStaging(ctx, state, view);   // staging ring around a selected Spaceport (Odyssey)
-  drawPowerGrid(ctx, state, view);     // efficiency zones around a selected Reactor (Odyssey)
+  drawUnits(ctx, state, view, alpha, selSet);  // unit hulls, then unit overlays (two passes)
+  drawBuildingBars(ctx, state, view, selSet);  // building health bars last, so a passing ship can't paint them out
+  drawJumpStaging(ctx, state, view, selSet);   // staging ring around a selected Spaceport (Odyssey)
+  drawPowerGrid(ctx, state, view, selSet);     // efficiency zones around a selected Reactor (Odyssey)
   drawEffects(ctx);
   if (buildGhost) drawBuildGhost(ctx, state, buildGhost);
   drawWaypoints(ctx, state);
