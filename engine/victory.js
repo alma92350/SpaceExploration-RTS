@@ -3,6 +3,12 @@
 import { UNITS, BUILDINGS } from "./entities.js";
 import { hasColonyShip } from "./colony.js";
 
+// The world's side ids, in canonical order. createGameState / rehydratePlanet set
+// state.owners; a few narrow unit-test states are hand-built without it, so fall
+// back to the classic pair. Ordering matters — it's the tie-break precedence in
+// scoreLeader (first side listed wins an exact score tie: the defender's edge).
+function ownersOf(state) { return state.owners || ["player", "ai"]; }
+
 // A stalemate breaker: if neither side has lost its last Command Center after
 // this many seconds, the match is decided on score instead of running forever.
 // It sits far beyond a normal game (which resolves in a few minutes), so it
@@ -11,16 +17,18 @@ import { hasColonyShip } from "./colony.js";
 // state.matchTimeLimit can override it (e.g. a future "quick match" option).
 export const DEFAULT_MATCH_TIME_LIMIT = 2400;   // 40 minutes of sim time
 
-// Skirmish ends the moment a side loses its Command Center; a mutual loss on
-// the same tick, or the time limit, is settled by score.
+// Skirmish ends the moment only one side still holds a Command Center — that
+// side wins. A mutual loss on the same tick (no side left standing), or the
+// time limit with several still standing, is settled by score. Last-side-
+// standing over state.owners: for the classic player-vs-ai pair this is exactly
+// the old three-branch check (player-only alive ⇒ player wins, ai-only ⇒ ai,
+// neither ⇒ score), byte-identical, and it already reads for N sides.
 export function checkWinCondition(state) {
   if (state.over) return;
-  const playerHasCC = hasCommandCenter(state, "player");
-  const aiHasCC = hasCommandCenter(state, "ai");
+  const standing = ownersOf(state).filter(o => hasCommandCenter(state, o));
 
-  if (!playerHasCC && !aiHasCC) { finish(state, scoreLeader(state)); return; }
-  if (!playerHasCC) { finish(state, "ai"); return; }
-  if (!aiHasCC) { finish(state, "player"); return; }
+  if (standing.length === 0) { finish(state, scoreLeader(state)); return; }   // mutual wipe → score
+  if (standing.length === 1) { finish(state, standing[0]); return; }          // last side standing wins
 
   const limit = state.matchTimeLimit ?? DEFAULT_MATCH_TIME_LIMIT;
   if (state.time >= limit) finish(state, scoreLeader(state));
@@ -97,8 +105,16 @@ function costValue(cost) {
   return v;
 }
 
-// Higher score wins; an exact tie goes to the player (a defender edge, and it
-// keeps state.winner one of "player"/"ai" as the rest of the game expects).
+// Highest score wins; an exact tie goes to the FIRST side listed in state.owners
+// (a defender edge — the human "player" is always first, so state.winner still
+// resolves to "player" on a dead heat, as the rest of the game expects). A strict
+// `>` keeps the first-seen leader on a tie, so for the player-vs-ai pair this is
+// exactly `ai > player ? "ai" : "player"` — byte-identical.
 function scoreLeader(state) {
-  return playerScore(state, "ai") > playerScore(state, "player") ? "ai" : "player";
+  let best = null, bestScore = -Infinity;
+  for (const o of ownersOf(state)) {
+    const s = playerScore(state, o);
+    if (s > bestScore) { bestScore = s; best = o; }
+  }
+  return best;
 }

@@ -222,7 +222,11 @@ function serPlanet(state) {
     seed: state.seed, planetId: state.planetId,
     sizeMult: state.sizeMult, resourceMult: state.resourceMult, endless: !!state.endless,
     time: state.time, tick: state.tick, over: state.over, winner: state.winner,
-    players: { player: serPlayer(state.players.player), ai: serPlayer(state.players.ai) },
+    // One entry per side, in state.owners order — for the player-vs-ai pair this
+    // serialises as { player, ai }, byte-identical to the old literal. The save
+    // shape stays two-keyed (fog/fogAI below likewise): a save FORMAT built for N
+    // sides is separate, deferred work.
+    players: Object.fromEntries((state.owners || Object.keys(state.players)).map(id => [id, serPlayer(state.players[id])])),
     // `_gi` is the grid broad-phase index — a transient stamped fresh onto every unit each tick
     // by buildUnitGrid, meaningless once saved. Strip it so it doesn't bloat the payload with a
     // per-unit integer that the next tick overwrites anyway. Shallow copy, only at save time.
@@ -280,16 +284,24 @@ function rehydratePlanet(P) {
   const buildings = new Map();
   for (const b of P.buildings) { const def = BUILDINGS[b.type]; if (def) buildings.set(b.id, cleanEntity(b, def, map)); }
 
+  // Rebuild the owner-generic scaffold from the (two-keyed) save: state.owners is
+  // the side list, state.fogs maps each to its fog, and state.fog/state.fogAI stay
+  // as aliases so the many fog consumers keep working. This mirrors createGameState.
+  const players = { player: P.players.player, ai: P.players.ai };
+  const owners = Object.keys(players);
+  const fogs = { player: fog, ai: fogAI };
+
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
     seed: P.seed, planetId: P.planetId, sizeMult: P.sizeMult, resourceMult: P.resourceMult,
     endless: !!P.endless,
     map,
-    players: { player: P.players.player, ai: P.players.ai },
+    owners,
+    players,
     units,
     buildings,
     selection: [],
-    fog, fogAI,
+    fogs, fog, fogAI,
     // Restore the AI controller's bookkeeping into the grouped `state.ai` (see engine/state.js).
     // Wire keys stay `aiThink`/`aiScoutId`/… under the save's `ai:` object for backward compat;
     // only the live shape is nested. The archetype is re-derived from the planet id, not persisted.
@@ -306,8 +318,7 @@ function rehydratePlanet(P) {
     },
     events: [],
   };
-  updateFog(state, state.fog, "player");
-  updateFog(state, state.fogAI, "ai");
+  for (const id of owners) updateFog(state, state.fogs[id], id);
   return state;
 }
 

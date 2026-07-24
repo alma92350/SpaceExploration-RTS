@@ -229,10 +229,12 @@
  * @property {number} resourceMult
  * @property {boolean} endless
  * @property {GameMap} map
- * @property {Object.<string, Player>} players   keyed "player"/"ai"; index-signature so state.players[unit.owner] checks
+ * @property {string[]} owners   the world's side ids in iteration order (["player","ai"]) — drives the owner-generic scaffold
+ * @property {Object.<string, Player>} players   keyed by owner id; index-signature so state.players[unit.owner] checks
  * @property {Map<string, Unit>} units
  * @property {Map<string, Building>} buildings
  * @property {string[]} selection
+ * @property {Object.<string, Fog>} fogs   per-owner fog, keyed by owner id; state.fog/state.fogAI are aliases into it
  * @property {Fog} fog
  * @property {Fog} fogAI
  * @property {AiState} ai

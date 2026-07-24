@@ -95,6 +95,30 @@ export function createGameState(opts = {}) {
     resourceMult: opts.resourceMult || 1,
   });
 
+  // The sides in this world. Today always exactly the human "player" and the AI
+  // opponent, but the SCAFFOLD is owner-generic: state.owners is the canonical
+  // side list, and the player map, per-owner fog, seeding, persistence and the
+  // victory check are all driven by ITERATING it — not by two hardcoded names.
+  // So a future N-faction world is a change to this list, not a sweep across the
+  // engine. (state.fog / state.fogAI stay as aliases into state.fogs so the many
+  // existing fog consumers keep working unchanged.)
+  const ownerDefs = [
+    // Faction is a passive-trait bundle (engine/factions.js). It defaults to
+    // "neutral" (no traits) so a bare createGameState — every engine test —
+    // behaves exactly as before; the setup screen (main.js) passes the real
+    // pick for the player and the archetype's faction for the AI.
+    { id: "player", faction: opts.playerFaction || "neutral", isAI: false, color: "#4fd1ff" },
+    { id: "ai", faction: opts.aiFaction || "neutral", isAI: true, color: "#f87171" },
+  ];
+  const owners = ownerDefs.map(d => d.id);
+  /** @type {Object.<string, Player>} */
+  const players = {};
+  for (const d of ownerDefs)
+    players[d.id] = { id: d.id, faction: d.faction, isAI: d.isAI, resources: startingResources(), color: d.color, upgrades: {} };
+  /** @type {Object.<string, Fog>} */
+  const fogs = {};
+  for (const id of owners) fogs[id] = createFog(map);   // one fog grid per side — the AI scouts for its own intel too (engine/ai.js)
+
   const state = {
     time: 0,
     tick: 0,
@@ -111,19 +135,14 @@ export function createGameState(opts = {}) {
     // (see engine/victory.js checkEndlessLoss + engine/galaxy.js).
     endless: !!opts.endless,
     map,
-    players: {
-      // Faction is a passive-trait bundle (engine/factions.js). It defaults to
-      // "neutral" (no traits) so a bare createGameState — every engine test —
-      // behaves exactly as before; the setup screen (main.js) passes the real
-      // pick for the player and the archetype's faction for the AI.
-      player: { id: "player", faction: opts.playerFaction || "neutral", isAI: false, resources: startingResources(), color: "#4fd1ff", upgrades: {} },
-      ai: { id: "ai", faction: opts.aiFaction || "neutral", isAI: true, resources: startingResources(), color: "#f87171", upgrades: {} },
-    },
+    owners,                 // the world's side ids, in canonical iteration order (["player","ai"])
+    players,
     units: new Map(),
     buildings: new Map(),
     selection: [],          // unit/building ids currently selected by the human player
-    fog: createFog(map),    // the player's fog of war — see engine/fog.js
-    fogAI: createFog(map),  // the AI's own fog: it must scout for intel too, it's no longer omniscient (see engine/ai.js)
+    fogs,                   // per-owner fog of war, keyed by owner id — see engine/fog.js
+    fog: fogs.player,       // alias: the human player's fog (=== state.fogs.player)
+    fogAI: fogs.ai,         // alias: the AI's own fog, no longer omniscient (=== state.fogs.ai)
     // The AI OPPONENT's runtime bookkeeping, grouped under one key so it doesn't clutter the
     // top-level state (which is the shared sim world). This is the AI *controller's* scratch
     // state — distinct from state.players.ai, which is the AI's economy/faction. Serialized under
@@ -149,10 +168,12 @@ export function createGameState(opts = {}) {
                               // production.js/combat.js, drained and turned into sound by main.js each render frame
   };
 
-  seedPlayer(state, "player", map.bases.player);
-  seedPlayer(state, "ai", map.bases.ai);
-  updateFog(state, state.fog, "player");   // so the starting base's vision is correct before the first render
-  updateFog(state, state.fogAI, "ai");     // ...and the AI likewise starts only knowing its own corner
+  // Seed each side's opening (a colony ship in Odyssey, a Command Center + workers in
+  // skirmish) and prime its vision before the first render — both by iterating owners,
+  // so the id-minting order and fog state are byte-identical to the old player-then-ai
+  // pair. map.bases is keyed by owner id (engine/map.js).
+  for (const id of owners) seedPlayer(state, id, map.bases[id]);
+  for (const id of owners) updateFog(state, state.fogs[id], id);
 
   return state;
 }
