@@ -21,6 +21,7 @@ import { peekEntityId, restoreEntityId } from "./state.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
 import { UNITS, BUILDINGS, storeCapOf, inputCapOf } from "./entities.js";
+import { TECHS } from "./techtree.js";   // known research nodes — to sanitise a Datacenter's untrusted researchQueue on load
 import { COM } from "../data.js";
 import { ODYSSEY_WORLDS } from "./galaxy.js";
 
@@ -87,6 +88,28 @@ function cleanEntity(e, def, map) {
   e.hp = Math.max(0, Math.min(num(e.hp, e.maxHp), e.maxHp));
   e.x = Math.max(0, Math.min(num(e.x, 0), map.width));
   e.y = Math.max(0, Math.min(num(e.y, 0), map.height));
+  // An order (and each queued waypoint) can carry target x/y coords that a tampered save could set to
+  // NaN/huge/non-numeric garbage — which then flow straight into stepToward as the move destination
+  // and NaN the unit's position (engine/sim.js, engine/combat.js), permanently poisoning the spatial
+  // hash. Clamp any x/y an order carries the SAME way as the unit's own x/y; orders without coords
+  // (gather/build/scout/attack-by-id) and a null/absent order are left untouched — identity for valid.
+  const clampOrderCoords = o => {
+    if (!o || typeof o !== "object") return;
+    if (o.x !== undefined) o.x = Math.max(0, Math.min(num(o.x, 0), map.width));
+    if (o.y !== undefined) o.y = Math.max(0, Math.min(num(o.y, 0), map.height));
+  };
+  clampOrderCoords(e.order);
+  if (Array.isArray(e.orderQueue)) for (const o of e.orderQueue) clampOrderCoords(o);
+  // A worker's `cargo` hold ({com, qty}) is untrusted too: coerce its qty to a finite value >= 0 (a
+  // NaN/negative haul would poison the gather/haul/bank math on the first tick), and DROP the whole
+  // cargo (→ null) when it isn't an object or names a bogus commodity — a `com` outside COM would
+  // become a phantom treasury key the moment it's banked. An EMPTY hold (com:null) is the valid
+  // resting state of every worker, so it's kept; a non-worker's cargo is already null and is left as
+  // is. Identity for valid data.
+  if (e.cargo !== undefined && e.cargo !== null) {
+    if (typeof e.cargo !== "object" || (e.cargo.com != null && !COM[e.cargo.com])) e.cargo = null;
+    else e.cargo.qty = Math.max(0, num(e.cargo.qty, 0));
+  }
   // A freighter's `freight` hold is untrusted save data (a hand-edited file could smuggle in a
   // negative, NaN, or over-capacity haul, or a bogus commodity): keep only real commodities with a
   // positive finite qty, and clamp the total to the ship's cargoHold. A non-freighter can't carry
@@ -111,6 +134,12 @@ function cleanEntity(e, def, map) {
     e.digProgress = Math.max(0, Math.min(num(e.digProgress, 0), 2));
     e.digCount = Math.max(0, Math.floor(num(e.digCount, 0)));
   }
+  // A wonder's `charge` (a 0..1 float, engine/wonder.js) is untrusted: a hand-edited save could set it
+  // huge, negative, NaN, or non-numeric — and an out-of-band charge trips an instant standalone-endless
+  // win (engine/victory.js checkEndlessWin fires at charge >= 1) or corrupts the charge/HUD math. Clamp
+  // it into [0,1] on load. Only touch a wonder that actually carries the field (an uncharged Gate has
+  // none yet), and a legitimately-saved charge is already in [0,1] — so this is the identity.
+  if (def.wonder && e.charge !== undefined) e.charge = Math.max(0, Math.min(num(e.charge, 0), 1));
   // A producer's output buffer (building.store) and a factory's input buffer (building.input) are
   // untrusted save data — a hand-edited file could smuggle in a bogus commodity, a negative/NaN qty,
   // or an over-capacity buffer. Keep only real commodities with a positive qty and clamp each buffer's
@@ -134,6 +163,21 @@ function cleanEntity(e, def, map) {
           ...(j.alt ? { alt: true } : {}),
         }))
       : [];
+    // A Datacenter's research queue is untrusted exactly like the production queue above: a non-array
+    // `researchQueue` (e.g. the number 5) throws .length/.shift and bricks the game on the first
+    // research tick (engine/techtree.js updateResearch), and a bogus techId derefs an undefined TECHS
+    // def. When the field is present, rebuild it from known-good jobs — real TECHS ids, progress
+    // clamped to [0,1] — or [] for a non-array. A building WITHOUT the field (every non-Datacenter,
+    // and a Datacenter that never queued research) is left untouched, so it's the identity for a valid
+    // save.
+    if (e.researchQueue !== undefined) {
+      e.researchQueue = Array.isArray(e.researchQueue)
+        ? e.researchQueue.filter(j => j && TECHS[j.techId]).map(j => ({
+            techId: j.techId,
+            progress: Math.max(0, Math.min(num(j.progress, 0), 1)),
+          }))
+        : [];
+    }
   }
   return e;
 }
@@ -184,9 +228,11 @@ function serPlanet(state) {
     // per-unit integer that the next tick overwrites anyway. Shallow copy, only at save time.
     units: [...state.units.values()].map(({ _gi, repairTargetId, ...u }) => u),   // both transient (grid index; live repair pick)
     // `haulers`/`servers` (logistics tallies, engine/haul.js), `powered`/`fuel` (Generator fuel
-    // state, engine/industry.js) and `menderClaims` (auto-repair Mender tally, engine/sim.js) are all
-    // transient — stamped fresh each tick like a unit's `_gi` grid index — so strip them from saves.
-    buildings: [...state.buildings.values()].map(({ haulers, servers, powered, fuel, menderClaims, ...b }) => b),
+    // state, engine/industry.js), `menderClaims` (auto-repair Mender tally, engine/sim.js) and
+    // `lastYield`/`lastTier` (a Plasma Rig's last-strike HUD readout, engine/rig.js — regenerated on
+    // the next dig) are all transient — stamped fresh each tick like a unit's `_gi` grid index — so
+    // strip them from saves. (digProgress/digCount are the rig's REAL persisted dig state, kept.)
+    buildings: [...state.buildings.values()].map(({ haulers, servers, powered, fuel, menderClaims, lastYield, lastTier, ...b }) => b),
     nodes: state.map.nodes.map(n => ({ id: n.id, amount: n.amount })),
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],
@@ -377,6 +423,22 @@ export function deserializeGalaxy(input) {
   if (!galaxy.planets.has(galaxy.activeId)) throw new Error("galaxy save has no active planet");
   const active = galaxy.planets.get(galaxy.activeId);
   active.background = false;                                // the seat is never a background world
+  // The galaxy `entitySeq` is the SEPARATE "g"-id counter — ids minted as "g"+entitySeq in
+  // engine/galaxy.js for entities that cross worlds (jump riders, relief + colony ships). Unlike the
+  // u/b counter (hardened above via maxOwnEntityId), it was restored as num(save.entitySeq,0) with NO
+  // recompute — so a save with a low/missing entitySeq but a LIVE "g" entity (an in-flight colony
+  // ship / freighter / relief ship) would later mint a COLLIDING "g"-id and clobber it. Scan every
+  // unit/building id across ALL worlds for the g-scheme and lift entitySeq past the highest, mirroring
+  // how maxOwnEntityId hardens the u/b counter. Identity for a valid save — its entitySeq already
+  // exceeds every g-id, so the max is a no-op. The next mint pre-increments (galaxy.js), so we lift to
+  // the max itself (not +1): entitySeq === g5 ⇒ next id is "g6".
+  let maxGId = 0;
+  const scanG = id => { const s = /^g(\d+)$/.exec(String(id)); if (s) { const n = +s[1]; if (n > maxGId) maxGId = n; } };
+  for (const state of galaxy.planets.values()) {
+    for (const id of state.units.keys()) scanG(id);
+    for (const id of state.buildings.keys()) scanG(id);
+  }
+  galaxy.entitySeq = Math.max(num(save.entitySeq, 0), maxGId);
   // Mint beyond both the saved counter and every loaded id across ALL worlds (see the
   // skirmish note) — identity for a valid save, collision-proof for a corrupt one.
   restoreEntityId(Math.max(num(save.nextEntityId, 0), maxId + 1));

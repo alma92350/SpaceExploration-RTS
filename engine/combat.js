@@ -201,8 +201,11 @@ function attackDamage(state, unit, def, target) {
 
   // Every researched Assault upgrade (attacker side) stacks its damage-dealt
   // multiplier; every Bulwark upgrade (defender side) its damage-taken multiplier.
-  // Data-driven via upgradeMult, so the doctrine tiers just work.
-  dmg *= upgradeMult(state.players[unit.owner].upgrades, "damageDealtMult");
+  // Data-driven via upgradeMult, so the doctrine tiers just work. Both sides
+  // optional-chained symmetrically: an attacker whose owner isn't in state.players
+  // (a corrupt/tampered entity — a valid owner always is) reads no-upgrades (mult 1)
+  // instead of throwing on `.upgrades`, matching the defender-side guard below.
+  dmg *= upgradeMult(state.players[unit.owner]?.upgrades, "damageDealtMult");
   dmg *= upgradeMult(state.players[target.owner]?.upgrades, "damageTakenMult");
 
   // The attacker's faction (and any future world) damage edge, through the same
@@ -334,6 +337,12 @@ export function updateBuildingCombat(state, building, dt) {
   if (!building.targetId || building.attackTimer > 0) return;
 
   const target = getEntity(state, building.targetId);
+  // Same live-target guard the mobile updateCombat path applies before firing: the
+  // acquired target may have been removed or dropped to hp<=0 between acquire and
+  // now (a stale/tampered targetId, or a future reorder of the tick), so re-check it
+  // exists and is alive — otherwise performAttack would deref undefined / NaN-poison
+  // hp. Identity for valid data: a freshly acquired target is always live.
+  if (!target || target.hp <= 0) return;
   performAttack(state, building, def, target);
   building.attackTimer = def.cooldown;
 }

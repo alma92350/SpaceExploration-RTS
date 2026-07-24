@@ -75,6 +75,14 @@ export function keepEscortStation(state, unit, speed, dt) {
 // there.
 /** @param {State} state @param {Unit} unit @param {number} tx @param {number} ty @param {number} speed @param {number} dt @returns {boolean} */
 export function stepToward(state, unit, tx, ty, speed, dt) {
+  // Hardening: a non-finite destination (NaN/Infinity — a tampered save whose order
+  // coords slipped coercion, or a future bug) would drive unit.x/unit.y to NaN below,
+  // and a single NaN position poisons the separation spatial hash for every neighbour
+  // it buckets with. Refuse to step toward an unreachable point: leave the unit's
+  // (finite) position untouched and report arrival, so the caller clears the order as
+  // if it had already been reached. Finite orders never take this branch, so valid
+  // movement replays byte-identically.
+  if (!Number.isFinite(tx) || !Number.isFinite(ty)) return true;
   const dx0 = tx - unit.x, dy0 = ty - unit.y;
   const distToTarget = Math.hypot(dx0, dy0);
   if (distToTarget <= 1) { unit.x = tx; unit.y = ty; return true; }

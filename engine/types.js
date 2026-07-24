@@ -304,4 +304,7 @@
  * @property {string[]} milestones
  * @property {string|null} wonBy
  * @property {number} [lastReliefTime]
+ * @property {Set<string>} discovered
+ * @property {Map<string, string>} claims
+ * @property {Object[]} expansionNotes transient UI queue — freshly-claimed/expanded worlds awaiting a toast; re-derived on load, never persisted
  */
