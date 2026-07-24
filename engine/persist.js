@@ -20,7 +20,7 @@ import { archetypeFor } from "./aiArchetypes.js";
 import { peekEntityId, restoreEntityId } from "./state.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
-import { UNITS, BUILDINGS, storeCapOf, inputCapOf } from "./entities.js";
+import { UNITS, BUILDINGS, UPGRADES, storeCapOf, inputCapOf } from "./entities.js";
 import { TECHS } from "./techtree.js";   // known research nodes — to sanitise a Datacenter's untrusted researchQueue on load
 import { COM } from "../data.js";
 import { ODYSSEY_WORLDS } from "./galaxy.js";
@@ -196,6 +196,39 @@ function coerceBuffer(buf, cap) {
   return clean;
 }
 
+// A player's economy is untrusted save data exactly like an entity's buffers above: `resources`
+// (commodity→qty) and `upgrades` (tech/upgrade id→true) both flow straight into gameplay math the
+// moment the game starts ticking — a bogus commodity key would mint a phantom treasury entry the
+// first time it's spent/produced, a string/NaN/negative qty would poison the market and production
+// math, and a bogus tech/upgrade id sitting in `upgrades` is a landmine for the multiplier scans in
+// techtree.js/entities.js (`for (const id in upgrades) if (upgrades[id] && TECHS[id]/UPGRADES[id]...`)
+// the moment a real id with that name is ever added. Keep only real COM keys with a finite qty >= 0
+// (identity for a valid save — its quantities are already finite and non-negative, no cap to clamp
+// against since a player's bank is unbounded, unlike a building's buffer). For `upgrades`, keep only
+// keys that are a real TECHS or UPGRADES id AND already truthy, normalised to the boolean `true`
+// every grant in the codebase uses (techtree.js: `player.upgrades[job.techId] = true`) — upgrades are
+// a pure presence-flag, so an explicit `false` (or any other falsy value) on a tampered save is
+// dropped rather than preserved, matching how a valid save represents "not researched" (the key is
+// simply absent, never `false`). Mutates and returns `p` so it drops straight into rehydratePlanet.
+function cleanPlayer(p) {
+  const resources = {};
+  if (p.resources && typeof p.resources === "object") {
+    for (const com of Object.keys(p.resources)) {
+      if (!COM[com]) continue;
+      const q = num(p.resources[com], NaN);
+      if (Number.isFinite(q) && q >= 0) resources[com] = q;
+    }
+  }
+  p.resources = resources;
+  const upgrades = {};
+  if (p.upgrades && typeof p.upgrades === "object") {
+    for (const id of Object.keys(p.upgrades))
+      if (p.upgrades[id] && (TECHS[id] || UPGRADES[id])) upgrades[id] = true;
+  }
+  p.upgrades = upgrades;
+  return p;
+}
+
 // Largest numeric suffix among the state's OWN-minted ids ("u12"/"b7" — the ids newId
 // mints from the global counter; "g"-scheme galaxy ids come from a separate counter and
 // are ignored here). Used to guarantee the restored counter can never mint an id that
@@ -268,8 +301,19 @@ function serPlanet(state) {
 // entities/economies/AI bookkeeping, and recompute current visibility. Does NOT
 // touch the global entity-id counter (the caller restores it once, last).
 function rehydratePlanet(P) {
+  // `sizeMult`/`resourceMult` are untrusted save data that feed straight into generateMap's
+  // Math.min/Math.max sizing math (engine/map.js), which only guards FALSY values (`opts.sizeMult ||
+  // 1`) — a NaN, a string, or a non-finite number propagates through unguarded and produces a
+  // NaN-sized map, which then defeats every coordinate clamp cleanEntity performs below (they clamp
+  // against map.width/map.height, themselves NaN). Sanitize to a finite, positive number, defaulting
+  // to 1 (the game's own default — see engine/state.js's `opts.sizeMult || 1` and setup.js) on
+  // anything else, and floor it at 0.1 so a legitimate-but-tiny value can't zero out the map. Compute
+  // ONCE and reuse for both the map generation below AND the state.sizeMult/resourceMult assignment
+  // further down, so the map's real dimensions and the state's reported multiplier can never disagree.
+  const sizeMult = Math.max(0.1, num(P.sizeMult, 1));
+  const resourceMult = Math.max(0.1, num(P.resourceMult, 1));
   const map = generateMap(P.planetId, mulberry32((P.seed ?? 0) >>> 0),
-    { sizeMult: P.sizeMult, resourceMult: P.resourceMult });
+    { sizeMult, resourceMult });
   const amounts = new Map(P.nodes.map(n => [n.id, n.amount]));
   for (const n of map.nodes) if (amounts.has(n.id)) n.amount = amounts.get(n.id);
 
@@ -287,13 +331,15 @@ function rehydratePlanet(P) {
   // Rebuild the owner-generic scaffold from the (two-keyed) save: state.owners is
   // the side list, state.fogs maps each to its fog, and state.fog/state.fogAI stay
   // as aliases so the many fog consumers keep working. This mirrors createGameState.
-  const players = { player: P.players.player, ai: P.players.ai };
+  // Each player's resources/upgrades are untrusted save data too — sanitized by cleanPlayer
+  // (see its comment) before they reach live gameplay math.
+  const players = { player: cleanPlayer(P.players.player), ai: cleanPlayer(P.players.ai) };
   const owners = Object.keys(players);
   const fogs = { player: fog, ai: fogAI };
 
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
-    seed: P.seed, planetId: P.planetId, sizeMult: P.sizeMult, resourceMult: P.resourceMult,
+    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult,
     endless: !!P.endless,
     map,
     owners,

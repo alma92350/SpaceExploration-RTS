@@ -81,7 +81,7 @@ export function drawUnits(ctx, state, view, alpha = 1) {
   }
 }
 
-function drawEnemyPip(ctx, x, y) {
+export function drawEnemyPip(ctx, x, y) {
   ctx.beginPath();
   ctx.moveTo(x - 4, y - 4);
   ctx.lineTo(x + 4, y - 4);

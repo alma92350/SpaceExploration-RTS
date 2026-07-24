@@ -19,6 +19,7 @@ import { updateProductionQueue } from "../engine/production.js";
 import { serializeGame, deserializeGame, serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGalaxy, activeState, stepGalaxy, checkGalaxyRescue, ODYSSEY_WORLDS } from "../engine/galaxy.js";
 import { deployColonyShip } from "../engine/colony.js";
+import { COM } from "../data.js";
 
 // A short, real skirmish save to tamper with. Run FIRST and fully (the id counter is
 // module-global) before any assertion mints ids, so the counter reflects this state.
@@ -306,4 +307,78 @@ test("NET (galaxy): a whole galaxy survives serialize→deserialize→serialize 
   const once = serializeGalaxy(g);
   const twice = serializeGalaxy(deserializeGalaxy(once));
   assert.deepEqual(twice, once, "the whole galaxy payload round-trips — any non-round-tripping field diverges here");
+});
+
+/* ---------- Tier-2 hardening: map size/resource multipliers, player economy ---------- */
+
+test("a tampered sizeMult/resourceMult never produces a NaN-sized map (Gap A)", () => {
+  // A string, NaN, zero, and a negative value on each field — none of these are guarded by
+  // generateMap's own `opts.sizeMult || 1` (only FALSY values are caught; NaN and a numeric
+  // string are truthy and sail straight through into the Math.min/Math.max sizing math).
+  const cases = [
+    { sizeMult: "haxx", resourceMult: "haxx" },
+    { sizeMult: NaN, resourceMult: NaN },
+    { sizeMult: 0, resourceMult: 0 },
+    { sizeMult: -5, resourceMult: -5 },
+  ];
+  for (const c of cases) {
+    const save = freshSkirmishSave(31);
+    save.sizeMult = c.sizeMult;
+    save.resourceMult = c.resourceMult;
+    const st = deserializeGame(save);
+    assert.ok(Number.isFinite(st.sizeMult) && st.sizeMult > 0, `sizeMult (${c.sizeMult}) coerces to a finite positive number`);
+    assert.ok(Number.isFinite(st.resourceMult) && st.resourceMult > 0, `resourceMult (${c.resourceMult}) coerces to a finite positive number`);
+    assert.ok(Number.isFinite(st.map.width) && st.map.width > 0, `map.width is finite for sizeMult=${c.sizeMult}`);
+    assert.ok(Number.isFinite(st.map.height) && st.map.height > 0, `map.height is finite for sizeMult=${c.sizeMult}`);
+    assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) tick(st, 0.1); }, `the loaded game ticks cleanly for sizeMult=${c.sizeMult}`);
+  }
+});
+
+test("a valid sizeMult/resourceMult round-trips exactly (identity, no clamp for real values)", () => {
+  const a = createGameState({ planetId: "ferros", seed: 32, rng: mulberry32(32), sizeMult: 1.5, resourceMult: 0.8 });
+  for (let i = 0; i < 20; i++) tick(a, 0.1);
+  const st = deserializeGame(serializeGame(a));
+  assert.equal(st.sizeMult, 1.5, "a legitimately-saved sizeMult is left exactly as-is");
+  assert.equal(st.resourceMult, 0.8, "a legitimately-saved resourceMult is left exactly as-is");
+});
+
+test("a tampered player resources/upgrades map is sanitized on load (Gap B)", () => {
+  const save = freshSkirmishSave(33);
+  const p = save.players.player;
+  p.resources["☠notacommodity"] = 500;   // bogus commodity key
+  p.resources.crystals = "500";          // string quantity
+  p.resources.radioactives = -50;        // negative quantity
+  p.upgrades["☠notarealupgrade"] = true; // bogus id
+  p.upgrades.metallurgy = "yes";         // real TECHS id, non-boolean truthy value
+  p.upgrades.overchargedWeapons = true;  // real UPGRADES id, valid
+  p.upgrades.reactors = false;           // real TECHS id, explicit false — must be dropped, not kept as false
+
+  const st = deserializeGame(save);
+  const player = st.players.player;
+
+  assert.ok(!("☠notacommodity" in player.resources), "a bogus commodity key is dropped from resources");
+  assert.ok(Number.isFinite(player.resources.crystals) && player.resources.crystals >= 0, "a string quantity is coerced to a finite number");
+  assert.ok(!("radioactives" in player.resources), "a negative quantity is dropped rather than kept negative");
+  for (const com of Object.keys(player.resources)) {
+    assert.ok(COM[com], `every surviving resource key (${com}) is a real commodity`);
+    assert.ok(Number.isFinite(player.resources[com]) && player.resources[com] >= 0, `resources.${com} is a finite non-negative number`);
+  }
+
+  assert.ok(!("☠notarealupgrade" in player.upgrades), "a bogus upgrade id is dropped");
+  assert.ok(!("reactors" in player.upgrades), "an explicit false on a real id is dropped, not kept as false");
+  assert.equal(player.upgrades.metallurgy, true, "a real id with a non-boolean truthy value normalises to true");
+  assert.equal(player.upgrades.overchargedWeapons, true, "a real, validly-set upgrade survives as true");
+  for (const id of Object.keys(player.upgrades)) assert.equal(player.upgrades[id], true, "every surviving upgrade value is exactly true");
+
+  assert.doesNotThrow(() => { for (let i = 0; i < 20; i++) tick(st, 0.1); }, "the loaded game ticks cleanly with a sanitized player economy");
+});
+
+test("a valid player economy round-trips exactly (identity, no change for real values)", () => {
+  const a = createGameState({ planetId: "ferros", seed: 34, rng: mulberry32(34), aiMicro: true });
+  a.players.player.resources.crystals = 42;
+  a.players.player.upgrades.metallurgy = true;
+  for (let i = 0; i < 20; i++) tick(a, 0.1);
+  const st = deserializeGame(serializeGame(a));
+  assert.equal(st.players.player.resources.crystals, 42, "a legitimately-saved resource quantity round-trips exactly");
+  assert.equal(st.players.player.upgrades.metallurgy, true, "a legitimately-saved upgrade round-trips exactly");
 });
