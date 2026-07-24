@@ -119,14 +119,17 @@ export function drawJumpStaging(ctx, state, view, selSet) {
 
 // The grid-efficiency tier palette (engine/industry.js POWER_TIERS): the closer a
 // factory/rig sits to a Reactor the cheaper it is to power, so these zones tell the
-// player WHERE to drop one. Green (on-grid, no loss) → red (isolated, worst).
-const POWER_TIER_COLOR = { linked: "#4ade80", near: "#a3e635", far: "#fbbf24", isolated: "#f87171" };
+// player WHERE to drop one. Green (on-grid, no loss) → red (isolated, worst). Exported:
+// renderEffects.js's drawGhostPowerCue reads it too, for the same tier coloring on a
+// build-placement ghost.
+export const POWER_TIER_COLOR = { linked: "#4ade80", near: "#a3e635", far: "#fbbf24", isolated: "#f87171" };
 
 // Concentric efficiency zones around one power source at (rx, ry): a faint tinted disc per
 // finite band (painted largest-first so each inner band shows its own hue) with a dashed
 // boundary ring. `scale` is the source's powerRange — a short-range Generator's zones shrink,
-// so its rings sit tighter than a Reactor's. Shared by the selected-source overlay and the cue.
-function drawReactorBands(ctx, rx, ry, scale = 1) {
+// so its rings sit tighter than a Reactor's. Shared by the selected-source overlay (below) and
+// renderEffects.js's build-placement ghost cue — exported for that second caller.
+export function drawReactorBands(ctx, rx, ry, scale = 1) {
   const bands = POWER_TIERS.filter(t => Number.isFinite(t.max));
   ctx.save();
   for (let i = bands.length - 1; i >= 0; i--) {        // largest radius first, so inner hues win

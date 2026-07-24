@@ -17,6 +17,7 @@ import { rigSurvey, SURVEY_RADIUS } from "./engine/rig.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects } from "./effects.js";
 import { hexA, lerpXY } from "./renderShared.js";
+import { POWER_TIER_COLOR, drawReactorBands } from "./renderBuildings.js";
 
 // Cached once: whether the viewer asked the OS to reduce motion. Used to swap
 // the repeating alert pulses for a static cue (see drawEffects).
