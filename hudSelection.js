@@ -82,18 +82,24 @@ function queueSignature(sel) {
   return prod + "#" + research;
 }
 
+// Every cost the affordability fingerprint below checks — hoisted to module load
+// time. UNITS/BUILDINGS/UPGRADES (engine/entities.js) are static definitions that
+// never change at runtime, so rebuilding this array from scratch on every call (as
+// availabilitySignature() used to) was pure waste: this runs from renderSelectionPanel
+// every HUD tick (~6-7×/sec), selection or not.
+const ALL_COSTS = [
+  ...Object.values(UNITS).map(u => u.cost),
+  ...Object.values(UNITS).filter(u => u.altCost).map(u => u.altCost),   // e.g. the Worker's biomass price
+  ...Object.values(BUILDINGS).map(b => b.cost),
+  ...Object.values(UPGRADES).map(u => u.cost),
+];
+
 // Fingerprint of what the player can currently afford and which completed
 // buildings they hold — the two inputs to every button's greyed/locked state.
 function availabilitySignature() {
   const { state } = game;
   const res = state.players.player.resources;
-  const costs = [
-    ...Object.values(UNITS).map(u => u.cost),
-    ...Object.values(UNITS).filter(u => u.altCost).map(u => u.altCost),   // e.g. the Worker's biomass price
-    ...Object.values(BUILDINGS).map(b => b.cost),
-    ...Object.values(UPGRADES).map(u => u.cost),
-  ];
-  const afford = costs.map(c => (canAfford(res, c) ? 1 : 0)).join("");
+  const afford = ALL_COSTS.map(c => (canAfford(res, c) ? 1 : 0)).join("");
   const built = [...new Set([...state.buildings.values()]
     .filter(b => b.owner === "player" && !b.constructing).map(b => b.type))].sort().join(",");
   return afford + "|" + built;
@@ -137,8 +143,10 @@ export function renderSelectionPanel() {
     // Rebuild when any button's enabled state would flip: an option crossing the
     // affordability line, or a completed building unlocking a tech option (e.g.
     // the Foundry un-greying Lancer/Breacher). Keeps the greying live without
-    // rebuilding every HUD tick.
-    + "|" + availabilitySignature()
+    // rebuilding every HUD tick. Skipped with nothing selected: rebuildSelectionPanel's
+    // empty-sel branch (just the hint + Idle Worker/Select Army buttons) never reads
+    // affordability or built-building state, so this term can't change what renders then.
+    + "|" + (sel.length ? availabilitySignature() : "")
     // Rebuild when the app flips into touch mode, so the panel's legend + hints
     // swap from mouse/keyboard to finger phrasing on the first touch.
     + "|" + isTouchMode()
@@ -219,14 +227,17 @@ export function renderSelectionPanel() {
   }
 
   if (aggregated) {
-    const rows = panelEl.querySelectorAll(".sel-row");
+    // .sel-row-summary (not the plain .sel-row every unrelated row below also carries —
+    // queue rows, researched-tech rows, the factory recipe line, etc.) so this positional
+    // patch can only ever land on the per-entity summary rows it means to update.
+    const rows = panelEl.querySelectorAll(".sel-row-summary");
     [...countByType(sel).entries()].forEach(([type, entry], i) => {
       const def = UNITS[type];
       const pct = Math.round((entry.hp / entry.maxHp) * 100);
       if (rows[i]) rows[i].textContent = `${entry.count}× ${def.name} — ${pct}% hp`;
     });
   } else {
-    const rows = panelEl.querySelectorAll(".sel-row");
+    const rows = panelEl.querySelectorAll(".sel-row-summary");
     sel.forEach((e, i) => {
       const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
       if (rows[i]) rows[i].textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
@@ -549,14 +560,19 @@ function rebuildSelectionPanel(sel) {
       // to just that type (input.selectType) — click "3× Bastion" to keep only them.
       if (multiType) {
         const btn = document.createElement("button");
-        btn.className = "sel-row type-row";
+        // sel-row-summary marks this as one of the per-entity summary rows the cheap
+        // live-patch path in renderSelectionPanel() positionally rewrites each tick —
+        // plain .sel-row alone isn't specific enough: half a dozen unrelated rows
+        // elsewhere in this function (queue rows, researched-tech rows, the factory
+        // recipe line, …) carry it too.
+        btn.className = "sel-row sel-row-summary type-row";
         btn.textContent = label;
         btn.title = `Select only your ${def.name}s`;
         btn.addEventListener("click", () => input.selectType(type));
         panelEl.appendChild(btn);
       } else {
         const row = document.createElement("div");
-        row.className = "sel-row";
+        row.className = "sel-row sel-row-summary";
         row.textContent = label;
         panelEl.appendChild(row);
       }
@@ -565,7 +581,7 @@ function rebuildSelectionPanel(sel) {
     sel.forEach(e => {
       const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
       const row = document.createElement("div");
-      row.className = "sel-row";
+      row.className = "sel-row sel-row-summary";
       row.textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
       panelEl.appendChild(row);
     });
