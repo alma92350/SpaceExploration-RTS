@@ -168,8 +168,15 @@ function goHome() {
   overlay.className = "home-confirm";
   const card = document.createElement("div");
   card.className = "home-card";
+  // The card is the semantic dialog: it's the focus-bounded box with the heading, body
+  // text, and actions — the overlay is just the click-to-dismiss backdrop behind it.
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.tabIndex = -1;   // focusable as a fallback landing spot if there's ever no button to focus
   const h = document.createElement("h2");
+  h.id = "home-confirm-title";
   h.textContent = scenario ? "Leave the mission?" : "Return to the menu?";
+  card.setAttribute("aria-labelledby", h.id);
   const p = document.createElement("p");
   p.textContent = scenario
     ? "A scenario can't be saved — leaving abandons this run."
@@ -179,8 +186,14 @@ function goHome() {
   card.append(h, p, actions);
   overlay.appendChild(card);
 
+  // Focus management: remember whatever had focus (the Home button, typically) so it can be
+  // restored on close, and move focus into the dialog on open per WAI-ARIA dialog pattern.
+  const previouslyFocused = document.activeElement;
   pauseLoop("home");   // hold the sim while the leave-confirm modal is up
-  const close = () => { resumeLoop("home"); overlay.remove(); window.removeEventListener("keydown", onKey); };
+  const close = () => {
+    resumeLoop("home"); overlay.remove(); window.removeEventListener("keydown", onKey);
+    if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+  };
   const onKey = e => { if (e.key === "Escape") { e.preventDefault(); close(); } };
   const act = (label, fn, cls) => {
     const b = document.createElement("button");
@@ -203,6 +216,7 @@ function goHome() {
   overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
   window.addEventListener("keydown", onKey);
   document.body.appendChild(overlay);
+  (actions.querySelector("button") || card).focus();   // first actionable button, or the card itself
 }
 
 if (saveBtn) saveBtn.addEventListener("click", saveToFile);
