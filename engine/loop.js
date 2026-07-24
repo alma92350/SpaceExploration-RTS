@@ -37,7 +37,15 @@ export function createLoop({ update, render, hz = 20, now = () => performance.no
       steps++;
     }
     if (acc > dtFixed) acc = 0;   // over the cap: drop the backlog rather than carry it forward
-    render(acc / dtFixed);
+    // A throwing render (e.g. a bad draw call on one odd entity) must not brick the whole
+    // loop: without this, the throw unwinds past the requestAnimationFrame call below and
+    // the session is permanently frozen. update() is deliberately left unguarded — a
+    // throwing sim update is a correctness problem this catch isn't meant to paper over.
+    try {
+      render(acc / dtFixed);
+    } catch (err) {
+      console.error("render() threw; skipping this frame", err);
+    }
     rafId = requestAnimationFrame(frame);   // browser-exempt: the render loop IS the browser seam; drives no sim state
   }
 

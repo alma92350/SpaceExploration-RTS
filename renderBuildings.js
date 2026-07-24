@@ -15,6 +15,7 @@ import { isVisibleAt } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
 import { POWER_TIERS } from "./engine/industry.js";
 import { DETAIL, facing, shade, hexA, polygonPoints, pathPoints, inView, drawHealthBar } from "./renderShared.js";
+import { drawEnemyPip } from "./renderUnits.js";
 
 /* ---------- buildings ---------- */
 

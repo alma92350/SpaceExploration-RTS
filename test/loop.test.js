@@ -59,6 +59,33 @@ test("render runs every frame, even one with no fixed update", () => {
   h.restore();
 });
 
+test("a throwing render doesn't stop subsequent frames", () => {
+  const updates = [], renders = [];
+  let cb = null;
+  const prevRaf = globalThis.requestAnimationFrame, prevCancel = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = fn => { cb = fn; return 1; };
+  globalThis.cancelAnimationFrame = () => {};
+  const prevError = console.error;
+  console.error = () => {};   // the loop logs the caught error; keep test output clean
+  let renderCalls = 0;
+  const loop = createLoop({
+    update: dt => updates.push(dt),
+    render: f => { renderCalls++; renders.push(f); if (renderCalls === 2) throw new Error("boom"); },
+    hz: 20,
+  });
+  loop.start();
+  cb(0);     // primes `last`, render call #1 — fine
+  cb(50);    // +50 ms -> one update, render call #2 — throws
+  assert.equal(updates.length, 1, "the update before the throwing render still ran");
+  assert.equal(renders.length, 2, "the throwing render call is still recorded before it throws");
+  // A further frame must still drive update/render normally — the throw above didn't brick the loop.
+  cb(100);   // +50 ms -> another update, render call #3 — doesn't throw
+  assert.equal(updates.length, 2, "a fixed update after the throwing frame still runs");
+  assert.equal(renders.length, 3, "render is still called on the frame after the throw");
+  console.error = prevError;
+  globalThis.requestAnimationFrame = prevRaf; globalThis.cancelAnimationFrame = prevCancel;
+});
+
 test("stop() halts the loop — a further frame callback does nothing", () => {
   let cb = null;
   const prevRaf = globalThis.requestAnimationFrame, prevCancel = globalThis.cancelAnimationFrame;
