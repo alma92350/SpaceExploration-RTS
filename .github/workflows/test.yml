@@ -23,3 +23,11 @@ jobs:
       # standard library alone, which is the whole point. Just run the tests.
       - name: Run the engine test suite
         run: npm test
+      # CONTRIBUTING.md's release checklist requires `npm run typecheck` (tsc -p jsconfig.json)
+      # to pass, but no CI step ever ran it. TypeScript stays out of package.json — this repo is
+      # explicitly "No dependencies, no build step" — so fetch the compiler on-demand via npx
+      # instead of installing it. `--package typescript` names the package explicitly so this
+      # works correctly on a clean runner regardless of any ambient global `tsc`, unlike a bare
+      # `npx tsc` (which depends on npx's registry-matching behavior).
+      - name: Type-check the annotated files
+        run: npx --yes --package typescript -- tsc -p jsconfig.json
