@@ -28,7 +28,7 @@ import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
 import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, surrenderGalaxy, DOMINATION_TARGET } from "./engine/galaxy.js";
 import { TECHS } from "./engine/techtree.js";
-import { planetName } from "./data.js";
+import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
 
 const UNDER_ATTACK_THROTTLE_MS = 4000;
@@ -422,6 +422,13 @@ function processFrameEvents() {
         sound.playExplosion(pan);
         addExplosion(ev.x, ev.y, ev.radius);
         if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
+        break;
+      // A Helium Bomb crater (engine/bomb.js) finished terraforming — the payoff for the
+      // detonation, easy to miss if it's not called out (the deposit can land anywhere the
+      // bomb went off, not necessarily somewhere the player is still looking).
+      case "craterMatured":
+        sound.playBuildingComplete(pan);
+        showGalaxyToast(`${COM[ev.com]?.ico || "◆"} A ${COM[ev.com]?.name || ev.com} deposit has formed in the blast crater`, "good");
         break;
       case "buildingComplete":
         sound.playBuildingComplete(pan);

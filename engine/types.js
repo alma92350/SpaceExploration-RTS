@@ -89,6 +89,7 @@
  * @property {string|null} [repairTargetId]  transient: the friendly an auto-repair Mender is committed to (engine/sim.js)
  * @property {string|null} [targetId] aim target (combat.js / render.js)
  * @property {Object.<string, number>} [freight]  a freighter's player-managed cargo hold, commodity → qty (engine/galaxy.js)
+ * @property {boolean} [armed]  a Helium Bomb set to detonate on attack/enemy presence/command (engine/bomb.js)
  */
 
 /**
@@ -139,6 +140,9 @@
  * @property {number} y
  * @property {boolean} [hidden]   a cache, invisible until scouted
  * @property {number} [miners]    workers currently assigned (engine/gather.js saturation)
+ * @property {boolean} [crater]   spawned by a Helium Bomb detonation (engine/bomb.js), not
+ *   engine/map.js generation — needs its whole shape saved/restored, not just its amount
+ *   (engine/persist.js)
  */
 
 // ---- players / AI ---------------------------------------------------------------
@@ -239,6 +243,8 @@
  * @property {Fog} fogAI
  * @property {AiState} ai
  * @property {Array<Object>} events
+ * @property {Array<{id:string, x:number, y:number, owner:string, spawnAt:number}>} craters
+ *   pending Helium Bomb craters awaiting maturity into a real ResourceNode (engine/bomb.js)
  * @property {Object} [unitGrid]     broad-phase index, rebuilt each tick (engine/grid.js)
  * @property {Market} [market]       Odyssey per-world price book (engine/galaxy.js)
  * @property {Diplomacy} [diplomacy] Odyssey neighbour stance (engine/galaxy.js)
