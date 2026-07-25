@@ -104,6 +104,23 @@ function tracerColor(unitType) {
   return "#f87171";
 }
 
+// The Helium Bomb shockwave (see drawEffects below): the fireball collapses
+// within the first slice of the effect's life, the ring then spends most of
+// the rest slowly traveling out to the true blast radius, and the remainder
+// is left for it to fade out once it arrives.
+const EXPLOSION_FLASH_FRACTION = 0.15;
+const EXPLOSION_SHOCKWAVE_FRACTION = 0.85;
+// Hot (near ground zero, peak damage) -> cool ash-grey (the tapering edge),
+// matching bombDamageAt's own falloff from full HP loss to a scratch.
+const SHOCKWAVE_HOT = [255, 180, 80];
+const SHOCKWAVE_COOL = [148, 163, 184];
+function lerpColor(a, b, t) {
+  const r = Math.round(a[0] + (b[0] - a[0]) * t);
+  const g = Math.round(a[1] + (b[1] - a[1]) * t);
+  const b2 = Math.round(a[2] + (b[2] - a[2]) * t);
+  return `rgb(${r}, ${g}, ${b2})`;
+}
+
 // Attack tracers, death flashes, and under-attack pings: all purely
 // cosmetic and short-lived (see effects.js), so this is the only place
 // in render.js that reads wall-clock-timed state instead of the sim's
@@ -164,22 +181,43 @@ export function drawEffects(ctx) {
     ctx.stroke();
   }
 
-  // The Helium Bomb's detonation (engine/bomb.js): a bright flash that collapses fast, under
-  // an expanding shockwave ring that reaches `e.radius` — the ACTUAL blast radius that just
-  // erased everything inside it — a third of the way through its life, then fades out. The
-  // ring's real size (not a fixed cosmetic one) is what tells the player how far it reached.
+  // The Helium Bomb's detonation (engine/bomb.js): a bright fireball flash at ground zero
+  // that collapses fast, under a slow-moving shockwave ring that crawls out from
+  // e.coreRadius (the guaranteed-kill distance) to e.radius (the true blast radius the
+  // damage falloff reaches zero at) over most of the effect's life — a deliberately
+  // unhurried, decelerating travel (real shockwaves lose speed as they lose energy) so the
+  // blast reads as a big, dramatic event rather than a one-frame pop. The ring cools from a
+  // hot core color to an ash-grey edge color as it travels, echoing bombDamageAt's own
+  // falloff from peak damage to a scratch. Reduced-motion viewers get a single fast static
+  // ring at the true radius instead of the slow travel.
   for (const e of explosions) {
-    const flashR = e.radius * 0.3 * Math.max(0, 1 - e.age * 3);
-    ctx.globalAlpha = Math.max(0, 1 - e.age * 4);
+    const flashT = Math.min(1, e.age / EXPLOSION_FLASH_FRACTION);
+    const flashR = (e.coreRadius || e.radius * 0.3) * Math.max(0, 1 - flashT);
+    ctx.globalAlpha = Math.max(0, 1 - flashT * 1.2);
     ctx.fillStyle = "#fff3c4";
     ctx.beginPath();
     ctx.arc(e.x, e.y, flashR, 0, Math.PI * 2);
     ctx.fill();
 
-    const ringR = e.radius * Math.min(1, e.age * 3);
-    ctx.globalAlpha = Math.max(0, 1 - e.age);
-    ctx.strokeStyle = "#ff8a3d";
-    ctx.lineWidth = 4 * Math.max(0, 1 - e.age);
+    if (reduced) {
+      ctx.globalAlpha = Math.max(0, 0.6 * (1 - e.age));
+      ctx.strokeStyle = "#ff8a3d";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      continue;
+    }
+
+    const travel = Math.min(1, e.age / EXPLOSION_SHOCKWAVE_FRACTION);
+    const eased = 1 - (1 - travel) ** 3;   // ease-out: fast off the blast, decelerating outward
+    const ringR = (e.coreRadius || 0) + (e.radius - (e.coreRadius || 0)) * eased;
+    const ringAlpha = e.age < EXPLOSION_SHOCKWAVE_FRACTION
+      ? 0.9 - 0.5 * travel
+      : Math.max(0, 0.4 * (1 - (e.age - EXPLOSION_SHOCKWAVE_FRACTION) / (1 - EXPLOSION_SHOCKWAVE_FRACTION)));
+    ctx.globalAlpha = Math.max(0, ringAlpha);
+    ctx.strokeStyle = lerpColor(SHOCKWAVE_HOT, SHOCKWAVE_COOL, eased);
+    ctx.lineWidth = Math.max(1, 5 * (1 - eased * 0.6));
     ctx.beginPath();
     ctx.arc(e.x, e.y, ringR, 0, Math.PI * 2);
     ctx.stroke();

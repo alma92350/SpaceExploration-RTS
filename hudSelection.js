@@ -26,7 +26,7 @@ import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
-import { detonateBomb, BOMB_BLAST_RADIUS, BOMB_DETECT_RANGE } from "./engine/bomb.js";
+import { detonateBomb, BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE } from "./engine/bomb.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
@@ -730,7 +730,7 @@ function rebuildSelectionPanel(sel) {
     const bombLocked = !prereqsMet(state, "player", bombDef);
     panelEl.appendChild(prodButton(`Produce ${bombDef.name} (${costText(bombDef.cost)})`,
       () => queueProduction(state, stardock.id, "heliumbomb"),
-      { cost: bombDef.cost, tip: `${unitTip(bombDef)} · ${BOMB_BLAST_RADIUS}-radius blast when armed and triggered`,
+      { cost: bombDef.cost, tip: `${unitTip(bombDef)} · ${BOMB_BLAST_RADIUS}-radius blast when armed and triggered — damage falls off with distance from ground zero`,
         locked: bombLocked, lockTip: bombLocked ? lockTipFor(bombDef) : null, icon: { kind: "unit", type: "heliumbomb" } }));
     if (stardock.queue.length) renderQueueRows(stardock);
   }
@@ -1056,8 +1056,8 @@ function rebuildSelectionPanel(sel) {
     const note = document.createElement("div");
     note.className = "sel-note " + (armed ? "bad" : "good");
     note.textContent = armed
-      ? `⚠ ARMED — erases every unit and building (any owner, including yours) within ${BOMB_BLAST_RADIUS} — a power station's on-grid reach. Detonates on the next hit it takes, if an enemy comes within ${BOMB_DETECT_RANGE}, or on your command.`
-      : `Unarmed — safe to move anywhere. Once armed: ${BOMB_BLAST_RADIUS}-radius blast erasing every unit and building inside it, any owner.`;
+      ? `⚠ ARMED — blasts every unit and building (any owner, including yours) within ${BOMB_BLAST_RADIUS} — a power station's on-grid reach. Anything within ${Math.round(BOMB_CORE_RADIUS)} of ground zero is destroyed outright; damage tapers off with distance beyond that. Detonates on the next hit it takes, if an enemy comes within ${BOMB_DETECT_RANGE}, or on your command.`
+      : `Unarmed — safe to move anywhere. Once armed: ${BOMB_BLAST_RADIUS}-radius blast, any owner — a guaranteed kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that.`;
     panelEl.appendChild(note);
     panelEl.appendChild(makeButton(armed ? "◯ Disarm" : "☢ Arm the Bomb",
       () => { const v = !armed; for (const e of sel) if (e.kind === "unit" && UNITS[e.type].role === "bomb") e.armed = v; },

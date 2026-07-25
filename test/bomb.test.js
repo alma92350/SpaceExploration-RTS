@@ -5,8 +5,9 @@ import { updateCombat } from "../engine/combat.js";
 import { tick } from "../engine/sim.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { POWER_TIERS } from "../engine/industry.js";
-import { detonateBomb, detonateIfAttacked, checkBombProximity, updateCraters,
-         BOMB_BLAST_RADIUS, BOMB_DETECT_RANGE, CRATER_SPAWN_DELAY, CRATER_NODE_AMOUNT, CRATER_COMMODITIES } from "../engine/bomb.js";
+import { detonateBomb, detonateIfAttacked, checkBombProximity, updateCraters, bombDamageAt,
+         BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_MAX_DAMAGE, BOMB_DETECT_RANGE,
+         CRATER_SPAWN_DELAY, CRATER_NODE_AMOUNT, CRATER_COMMODITIES } from "../engine/bomb.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { queueProduction } from "../engine/production.js";
 import { COM } from "../data.js";
@@ -175,54 +176,108 @@ test("detonateBomb on an already-gone bomb is a harmless no-op", () => {
   assert.doesNotThrow(() => detonateBomb(state, bomb));   // calling again on the same (now-orphaned) object
 });
 
-/* ---------- the blast itself: radius, indiscriminate, "erasing" ---------- */
+/* ---------- the blast itself: distance-squared damage falloff ---------- */
 
-test("the blast erases every unit and building within radius, ANY owner — including the bomb's own side", () => {
+test("BOMB_CORE_RADIUS is exactly 1.5x the bomb unit's own footprint", () => {
+  assert.equal(BOMB_CORE_RADIUS, UNITS.heliumbomb.radius * 1.5);
+});
+
+test("bombDamageAt: flat peak damage inside the core, inverse-square falloff beyond it, zero past the blast radius", () => {
+  assert.equal(bombDamageAt(0), BOMB_MAX_DAMAGE, "ground zero itself takes the peak hit");
+  assert.equal(bombDamageAt(BOMB_CORE_RADIUS), BOMB_MAX_DAMAGE, "still full damage exactly at the core boundary");
+  assert.equal(bombDamageAt(BOMB_CORE_RADIUS / 2), BOMB_MAX_DAMAGE, "inside the core the curve is clamped flat, not left to diverge");
+
+  // Distance-SQUARED decay referenced off BOMB_CORE_RADIUS: doubling the distance past the
+  // core should quarter the damage, tripling it should cut damage to a ninth.
+  const at2x = bombDamageAt(BOMB_CORE_RADIUS * 2);
+  const at3x = bombDamageAt(BOMB_CORE_RADIUS * 3);
+  assert.ok(Math.abs(at2x - BOMB_MAX_DAMAGE / 4) < 1e-9, `2x core distance should be ~1/4 damage, got ${at2x}`);
+  assert.ok(Math.abs(at3x - BOMB_MAX_DAMAGE / 9) < 1e-9, `3x core distance should be ~1/9 damage, got ${at3x}`);
+
+  assert.ok(bombDamageAt(BOMB_BLAST_RADIUS) > 0, "still some token damage right at the edge of the blast radius");
+  assert.equal(bombDamageAt(BOMB_BLAST_RADIUS + 0.01), 0, "nothing at all past the blast radius");
+});
+
+test("ground zero (within BOMB_CORE_RADIUS) still kills everything outright, ANY owner — indiscriminate", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 4000, 4000);
   state.units.set(bomb.id, bomb);
 
-  const ownWorker = makeUnit("worker", "player", 4050, 4000);           // friendly, well inside
-  const enemyWorker = makeUnit("worker", "ai", 4000, 4050);             // enemy, well inside
-  const ownBuilding = makeBuilding("command", "player", 4000, 4100);    // friendly building, inside
-  const enemyBuilding = makeBuilding("barracks", "ai", 3900, 4000);     // enemy building, inside
+  const ownWorker = makeUnit("worker", "player", 4005, 4000);            // friendly, well within the core
+  const enemyWorker = makeUnit("worker", "ai", 4000, 4010);              // enemy, well within the core
+  const ownBuilding = makeBuilding("command", "player", 4000, 3986);     // friendly, 1000hp — but at dist 14, inside the core
+  const enemyBuilding = makeBuilding("barracks", "ai", 3985, 4000);      // enemy, at dist 15 — exactly the core boundary
   for (const u of [ownWorker, enemyWorker]) state.units.set(u.id, u);
   for (const b of [ownBuilding, enemyBuilding]) state.buildings.set(b.id, b);
 
   detonateBomb(state, bomb);
 
-  assert.ok(!state.units.has(ownWorker.id), "the bomb owner's own worker is erased too — indiscriminate");
+  assert.ok(!state.units.has(ownWorker.id), "the bomb owner's own worker dies too — indiscriminate");
   assert.ok(!state.units.has(enemyWorker.id));
-  assert.ok(!state.buildings.has(ownBuilding.id), "even the owner's own Command Center is erased");
+  assert.ok(!state.buildings.has(ownBuilding.id), "even the owner's own 1000hp Command Center dies at ground zero");
   assert.ok(!state.buildings.has(enemyBuilding.id));
 });
 
-test("something just outside the blast radius survives untouched", () => {
+test("further from ground zero, damage falls off — a fragile unit dies where a tough building only takes a scratch", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 4000, 4000);
+  state.units.set(bomb.id, bomb);
+
+  const dist = 90;
+  const worker = makeUnit("worker", "ai", 4000 + dist, 4000);            // 40hp
+  const command = makeBuilding("command", "ai", 4000, 4000 + dist);      // 1000hp, same distance
+  state.units.set(worker.id, worker);
+  state.buildings.set(command.id, command);
+  const expectedDmg = bombDamageAt(dist);
+
+  detonateBomb(state, bomb);
+
+  assert.ok(!state.units.has(worker.id), "40hp worker doesn't survive this far out");
+  assert.ok(state.buildings.has(command.id), "1000hp Command Center survives the same distance");
+  const survivor = state.buildings.get(command.id);
+  assert.ok(Math.abs(survivor.hp - (1000 - expectedDmg)) < 1e-6, "took real, partial damage — not untouched, not erased");
+});
+
+test("something well past the blast radius survives completely untouched", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 4000, 4000);
   state.units.set(bomb.id, bomb);
   const safe = makeUnit("worker", "ai", 4000 + BOMB_BLAST_RADIUS + 5, 4000);
   state.units.set(safe.id, safe);
-  const caught = makeUnit("worker", "ai", 4000 + BOMB_BLAST_RADIUS - 5, 4000);
-  state.units.set(caught.id, caught);
 
   detonateBomb(state, bomb);
 
-  assert.ok(state.units.has(safe.id), "just past the blast radius — untouched");
-  assert.ok(!state.units.has(caught.id), "just inside — erased");
+  assert.ok(state.units.has(safe.id), "past the blast radius — untouched");
+  assert.equal(state.units.get(safe.id).hp, safe.hp, "not even scratched");
 });
 
-test("erased entities grant no salvage — a total loss, not a normal kill", () => {
+test("right at the ragged edge of the blast radius, a fragile unit only takes a scratch — not necessarily lethal", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 4000, 4000);
+  state.units.set(bomb.id, bomb);
+  const dist = BOMB_BLAST_RADIUS - 5;
+  const edge = makeUnit("worker", "ai", 4000 + dist, 4000);
+  state.units.set(edge.id, edge);
+  const expectedDmg = bombDamageAt(dist);
+
+  detonateBomb(state, bomb);
+
+  assert.ok(state.units.has(edge.id), "the tapering tail of the blast isn't lethal to a full-hp worker this far out");
+  assert.ok(Math.abs(state.units.get(edge.id).hp - (40 - expectedDmg)) < 1e-6);
+});
+
+test("entities killed by the blast grant no salvage — a total loss, not a normal kill", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 5000, 5000);
   state.units.set(bomb.id, bomb);
-  const skiff = makeUnit("skiff", "ai", 5010, 5000);
+  const skiff = makeUnit("skiff", "ai", 5010, 5000);   // well within the core — guaranteed kill
   state.units.set(skiff.id, skiff);
   const resourcesBefore = { ...state.players.ai.resources };
 
   detonateBomb(state, bomb);
 
-  assert.deepEqual(state.players.ai.resources, resourcesBefore, "no salvage was granted for the erased skiff");
+  assert.ok(!state.units.has(skiff.id), "sanity check: it actually died");
+  assert.deepEqual(state.players.ai.resources, resourcesBefore, "no salvage was granted for the blast-killed skiff");
 });
 
 /* ---------- terraforming: the crater matures into a mineable deposit ---------- */

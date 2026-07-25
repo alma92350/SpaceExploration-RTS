@@ -453,10 +453,11 @@ function processFrameEvents() {
         addDeathFlash(ev.x, ev.y);
         break;
       // The Helium Bomb's detonation (engine/bomb.js) — one event for the blast itself,
-      // alongside the individual entityKilled events for everything it erased.
+      // alongside the individual entityKilled events for everything the falloff-damaged
+      // blast actually killed outright.
       case "bombDetonated":
         sound.playExplosion(pan);
-        addExplosion(ev.x, ev.y, ev.radius);
+        addExplosion(ev.x, ev.y, ev.radius, ev.coreRadius);
         if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
       // A Helium Bomb crater (engine/bomb.js) finished terraforming — the payoff for the
