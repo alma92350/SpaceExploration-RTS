@@ -38,7 +38,7 @@ import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
-import { performJump } from "./boot.js";
+import { initiateJump } from "./boot.js";
 import { flashHint } from "./overlays.js";
 import { spriteIcon } from "./render.js";
 import { planetName, COM } from "./data.js";
@@ -988,7 +988,7 @@ function rebuildSelectionPanel(sel) {
       const cost = jumpCost(game.galaxy, w);
       const afford = game.galaxy.credits >= cost;
       panelEl.appendChild(makeButton(`Jump ▸ ${name}${owned ? " · your colony" : ` · ◈${cost}`}`,
-        () => performJump(w),
+        () => initiateJump(w),
         { tip: owned ? "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
                      : "Settle new ground: carry the staged expedition here. Bring a Colony Ship to found a base.",
           locked: !afford,

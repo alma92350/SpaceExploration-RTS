@@ -14,7 +14,7 @@
 import { starmapEl, starmapBtn } from "./dom.js";
 import { game } from "./session.js";
 import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost } from "./engine/galaxy.js";
-import { performJump, surrenderOdyssey, pauseLoop, resumeLoop } from "./boot.js";
+import { initiateJump, surrenderOdyssey, pauseLoop, resumeLoop } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
 import { planetName as worldName, LORE_FACTIONS } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
@@ -109,7 +109,7 @@ function onWorldClick(w) {
   const cost = jumpCost(g, w.id);   // free to a world you hold, JUMP_COST to reach a new one
   if (g.credits < cost) { showGalaxyToast(`Need ◈${cost} fuel to jump to ${worldName(w.id)}.`, "warn"); return; }
   closeStarmap();
-  performJump(w.id);   // carries the expedition (or, if stranded, evacuates the force) to the world
+  initiateJump(w.id);   // carries the expedition (or, if stranded, evacuates the force) to the world — may open a landing-site picker first
 }
 
 export function openStarmap() { if (!game.galaxy) return; renderStarmap(); starmapEl.classList.remove("hidden"); pauseLoop("starmap"); }   // hold the sim while the starmap is up

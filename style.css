@@ -442,6 +442,29 @@ body.paused::after {
 .home-actions .btn { width: auto; margin: 0; padding: 10px 16px; }
 .btn.primary { border-color: var(--accent); color: var(--accent); }
 .btn.ghost { background: none; color: var(--muted); }
+.btn.primary:disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--border); color: var(--muted); }
+
+/* Landing-site picker (landingPicker.js) — a blind minimap pick shown before a jump lands on a
+   world with no player Spaceport standing on it. Same overlay/card idiom as .home-confirm, just
+   wide enough to hold the chart canvas. */
+.landing-pick-confirm {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 7, 15, 0.82); padding: 20px;
+}
+.landing-pick-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 22px 26px; max-width: 540px; text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.landing-pick-card h2 { margin: 0 0 8px; font-size: 1.15rem; color: var(--text); }
+.landing-pick-card p { margin: 0 0 14px; font-size: 0.9rem; color: var(--muted); }
+.landing-pick-canvas-wrap { display: flex; justify-content: center; margin-bottom: 12px; }
+.landing-pick-canvas {
+  max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px;
+  cursor: crosshair;
+}
+.landing-pick-hint { font-size: 0.85rem; }
 
 /* Controls reference shown in the empty selection panel. */
 .legend { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }

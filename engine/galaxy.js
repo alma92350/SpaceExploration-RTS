@@ -543,7 +543,7 @@ const isPlayerSpaceport = b => b.owner === "player" && b.type === "spaceport" &&
 // upgrading the first). Sorted by id for a stable, deterministic iteration order (matches the
 // codebase's usual entity tie-break), so which pad "goes first" below can never depend on Map
 // insertion order.
-const playerSpaceports = state => [...state.buildings.values()].filter(isPlayerSpaceport).sort((a, b) => (a.id < b.id ? -1 : 1));
+export const playerSpaceports = state => [...state.buildings.values()].filter(isPlayerSpaceport).sort((a, b) => (a.id < b.id ? -1 : 1));
 
 // The colony ship that would carry an interplanetary jump: a player colony ship staged within
 // JUMP_LOAD_RADIUS of ANY completed Spaceport (not just one — see playerSpaceports). A jump
@@ -782,6 +782,47 @@ function loadCargo(from, dest, riders) {
   return delivered;
 }
 
+// A minimap pick is necessarily coarse — that's the whole point of it (a blind landing on a
+// world with no beacon should feel like one, not a precise coordinate entry). Rounds the raw
+// clicked point onto a fixed grid, THEN clamps it away from the map edge — in that order, so
+// the clamp is the last word and the final point can never drift back outside the margin the
+// rounding might otherwise have pushed it past. The margin comfortably exceeds the widest
+// rider-spawn ring jumpCapital uses below (46 + 2*18 = 82), so a picked corner can never spawn
+// a unit off the map.
+export const LANDING_PICK_GRID = 160;
+const LANDING_PICK_MARGIN = 100;
+export function snapLandingPoint(map, x, y) {
+  const snap = (v, span) => Math.min(Math.max(Math.round(v / LANDING_PICK_GRID) * LANDING_PICK_GRID, LANDING_PICK_MARGIN), span - LANDING_PICK_MARGIN);
+  return { x: snap(num(x), map.width), y: snap(num(y), map.height) };
+}
+function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+
+// Where a jump's riders actually touch down on `dest`. In priority order:
+//   1. The player's own Spaceport most recently used to LAND here (`lastLanding`, a galaxy.time
+//      stamp — see below) — a return trip comes in at your own infrastructure, not the world's
+//      fixed generation-time anchor, which could by now be nowhere near where you actually
+//      built. Ties (never-landed-at pads) fall to the lowest id, same as every other tie-break
+//      in this file.
+//   2. No Spaceport stands on `dest` at all (never settled, or one stood here and was since
+//      razed): there's no beacon to home in on, so the player chose an approximate spot
+//      themselves (the landingPicker.js "blind minimap" screen) — `landingPoint`, already
+//      fuzzed by snapLandingPoint above before it ever reaches here.
+//   3. Neither — an old save, or a caller that skipped the picker: the planet's fixed
+//      generation-time anchor, exactly today's (pre-this-feature) behaviour.
+function landingZone(dest, landingPoint) {
+  const pads = playerSpaceports(dest);
+  if (pads.length) {
+    let best = pads[0];
+    for (const p of pads) if ((p.lastLanding || 0) > (best.lastLanding || 0)) best = p;
+    return { x: best.x, y: best.y, pad: best };
+  }
+  if (landingPoint && Number.isFinite(landingPoint.x) && Number.isFinite(landingPoint.y)) {
+    const p = snapLandingPoint(dest.map, landingPoint.x, landingPoint.y);
+    return { x: p.x, y: p.y, pad: null };
+  }
+  return { x: dest.map.bases.player.x, y: dest.map.bases.player.y, pad: null };
+}
+
 // Launch an interplanetary jump to `destId`: player units move to the destination's landing
 // zone along with the cargo hold. NO deployed base moves — the origin keeps ALL its buildings
 // and becomes a background colony. Costs fuel only for a NEW world (jumpCost); returning to a
@@ -796,9 +837,13 @@ function loadCargo(from, dest, riders) {
 //     ship) WITHOUT dragging a garrison home — you bring the ship to the stranded force, not the
 //     force back. To actually ferry units off a world, build a Spaceport there. See canJumpTo.
 //
+// `opts.landingPoint` (world coords) is consulted ONLY when `dest` has no player Spaceport of
+// its own — see landingZone above. Ignored (harmlessly) whenever a pad is standing, and never
+// required: every other case falls back cleanly on its own.
+//
 // Returns a summary, or null if the jump can't run (no way to reach the destination, same world,
 // or too poor to fuel a new-world jump).
-export function jumpCapital(galaxy, destId) {
+export function jumpCapital(galaxy, destId, opts = {}) {
   const from = activeState(galaxy);
   if (destId === galaxy.activeId) return null;
   const hasSpaceport = playerSpaceports(from).length > 0;
@@ -815,16 +860,20 @@ export function jumpCapital(galaxy, destId) {
   galaxy.credits -= cost;   // fuel — free to a world you already hold
 
   const dest = galaxy.planets.get(destId) || addPlanet(galaxy, destId, { unsettled: true });
-  const lz = dest.map.bases.player;
+  const { x: lzx, y: lzy, pad } = landingZone(dest, opts.landingPoint);
   const nextId = () => "g" + (galaxy.entitySeq = (galaxy.entitySeq || 0) + 1);   // fresh ids: no cross-state collision
 
   riders.forEach((u, i) => {
     from.units.delete(u.id);
     const a = (i / Math.max(1, riders.length)) * Math.PI * 2, ring = 46 + (i % 3) * 18;
-    u.id = nextId(); u.x = lz.x + Math.cos(a) * ring; u.y = lz.y + Math.sin(a) * ring;
+    u.id = nextId(); u.x = lzx + Math.cos(a) * ring; u.y = lzy + Math.sin(a) * ring;
     u.order = null; u.orderQueue = [];
     dest.units.set(u.id, u);
   });
+  // Remember this pad for the NEXT return trip (landingZone above prefers whichever pad has
+  // the highest `lastLanding`). Only worth stamping when riders actually landed — an empty
+  // control-switch hop (see the file header comment) doesn't touch anything here.
+  if (pad && riders.length) pad.lastLanding = galaxy.time || 0;
 
   const cargo = loadCargo(from, dest, riders);   // deliver each staged freighter's hold (empty ones auto-fill)
 
