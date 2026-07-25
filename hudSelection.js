@@ -23,7 +23,7 @@ import {
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
 import { issueSetAILogistics, issueSetCollectPoint, issueRecycle, issueCancelRecycle } from "./engine/commands.js";
-import { canRecycle, recycleFrac } from "./engine/recycle.js";
+import { canRecycle, recycleFrac, recycleValue } from "./engine/recycle.js";
 import { FREIGHTER_AI_TECH, aiUpkeepRate } from "./engine/haul.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
@@ -1317,15 +1317,15 @@ function rebuildSelectionPanel(sel) {
   if (recyclable.length) {
     const one = recyclable.length === 1 ? recyclable[0] : null;
     const frac = recycleFrac(state, "player", recyclable[0]);
+    // recycleValue folds in whatever the entity is CURRENTLY holding (a factory's larder/backlog,
+    // a freighter's freight, a worker's cargo) at full value, on top of the cost-based fraction —
+    // so a single-entity preview shows the real total the player will actually get back, not just
+    // the cost-based estimate.
     const label = one
-      ? (() => {
-          const def = one.kind === "unit" ? UNITS[one.type] : BUILDINGS[one.type];
-          const refund = Object.entries(def.cost || {}).map(([com, qty]) => `${Math.round(qty * frac)} ${com}`).join(", ");
-          return `♻ Recycle (+${refund})`;
-        })()
+      ? `♻ Recycle (+${Object.entries(recycleValue(state, one)).map(([com, qty]) => `${Math.round(qty)} ${com}`).join(", ")})`
       : `♻ Recycle Selected (${Math.round(frac * 100)}%)`;
     panelEl.appendChild(makeButton(label, () => { issueRecycle(recyclable); renderHUD(); },
-      { tip: `Scrap it for ${Math.round(frac * 100)}% of its cost back — takes a little time in place, and a Command Center can't be recycled` }));
+      { tip: `Scrap it for ${Math.round(frac * 100)}% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled` }));
   }
 
   if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {

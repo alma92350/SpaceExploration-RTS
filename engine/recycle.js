@@ -19,6 +19,13 @@
    flag in player.upgrades, so recycleFrac only ever needs to check the one id,
    the same way FREIGHTER_AI_TECH is read directly rather than through a
    generic multiplier (engine/haul.js).
+
+   That fraction applies to the build COST only. Whatever inventory the entity is
+   physically holding when it finishes recycling — a factory's input larder and
+   output backlog, a freighter's freight hold, a worker's carried cargo — is
+   recovered in FULL (recycleValue below), separately: that stock was already
+   gathered/produced, not spent constructing the thing, so scrapping it shouldn't
+   also erase whatever it happened to be carrying.
    ============================================================ */
 
 "use strict";
@@ -92,12 +99,33 @@ export function cancelRecycle(entity) {
   if (entity.kind === "unit" && entity.order?.type === "recycle") entity.order = null;
 }
 
-function grantRefund(state, entity) {
+// Every commodity a recycle would return RIGHT NOW, merged into one commodity→qty map: the
+// type/research-scaled fraction of its build cost (recycleFrac), PLUS every bit of its own
+// current inventory at full (1:1) value — a factory's input larder and output backlog
+// (engine/haul.js), a freighter's freight hold, a worker's carried cargo. That inventory is stock
+// the player already gathered or produced, sitting in the thing being scrapped rather than spent
+// on building it, so recycling recovers all of it rather than letting it vanish with the
+// structure. The single source of truth for both the actual bank (below) and the HUD's refund
+// preview (hudSelection.js), so the two can never drift apart.
+export function recycleValue(state, entity) {
   const def = defOf(entity);
-  if (!def?.cost) return;
-  const frac = recycleFrac(state, entity.owner, entity);
+  const out = {};
+  const add = (com, qty) => { if (com && qty > 0) out[com] = (out[com] || 0) + qty; };
+  if (def?.cost) {
+    const frac = recycleFrac(state, entity.owner, entity);
+    for (const [com, qty] of Object.entries(def.cost)) add(com, qty * frac);
+  }
+  const addBuffer = buf => { if (buf) for (const com in buf) add(com, buf[com] || 0); };
+  addBuffer(entity.store);
+  addBuffer(entity.input);
+  addBuffer(entity.freight);
+  if (entity.cargo) add(entity.cargo.com, entity.cargo.qty || 0);
+  return out;
+}
+
+function grantRecycleValue(state, entity) {
   const res = state.players[entity.owner].resources;
-  for (const [com, qty] of Object.entries(def.cost)) res[com] = (res[com] || 0) + qty * frac;
+  for (const [com, qty] of Object.entries(recycleValue(state, entity))) res[com] = (res[com] || 0) + qty;
 }
 
 /** Advance a recycling BUILDING by dt — called from sim.js's per-building loop. A no-op unless
@@ -106,7 +134,7 @@ export function updateBuildingRecycle(state, building, dt) {
   if (!building.recycling) return;
   building.recycling.progress += dt / building.recycling.time;
   if (building.recycling.progress >= 1) {
-    grantRefund(state, building);
+    grantRecycleValue(state, building);
     removeEntity(state, building.id);
     state.events.push({ type: "recycled", x: building.x, y: building.y, owner: building.owner });
   }
@@ -119,7 +147,7 @@ export function updateUnitRecycle(state, unit, dt) {
   if (!unit.recycling) return false;
   unit.recycling.progress += dt / unit.recycling.time;
   if (unit.recycling.progress >= 1) {
-    grantRefund(state, unit);
+    grantRecycleValue(state, unit);
     removeEntity(state, unit.id);
     state.events.push({ type: "recycled", x: unit.x, y: unit.y, owner: unit.owner });
   }
