@@ -11,6 +11,7 @@ import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
 import { formationSlots } from "./formation.js";
 import { FREIGHTER_AI_TECH } from "./haul.js";
+import { canRecycle, beginRecycle, cancelRecycle } from "./recycle.js";
 
 // Give a unit an order, either replacing what it's doing (a plain command)
 // or appending it as a waypoint (queue = true, the Ctrl+command from input.js).
@@ -288,8 +289,32 @@ export function issueAssistBuild(units, buildingId, queue = false) {
 // enemy that wanders into range next tick), but it won't chase or resume a
 // path — the standard RTS "stop" that pulls a unit out of a move or a chain.
 // A direct order like this always releases the unit from a squad it was following.
+// Also stands down an in-progress Recycle (engine/recycle.js) — Stop is the general "abort
+// whatever this unit is doing" command, and a recycle left running with its order cleared would
+// otherwise strand the unit: sim.js keeps skipping it every tick (it checks `recycling`, not
+// `order`) with no way back short of the dedicated Cancel Recycle button.
 export function issueStop(units) {
-  units.forEach(u => { setSquadLeader(u, null); u.order = null; u.orderQueue = []; u.hold = false; });
+  units.forEach(u => { setSquadLeader(u, null); u.order = null; u.orderQueue = []; u.hold = false; u.recycling = null; });
+}
+
+// Recycle an OWNED, eligible unit or building for part of its cost back (engine/recycle.js —
+// refund fraction and the in-place timer). A unit is released from its squad and any Hold stance,
+// same as a direct order; a building just starts its timer where it stands, staying fully
+// functional until the timer completes (see updateBuildingRecycle). Ineligible entries (a
+// Command Center, something already constructing or already recycling) are silently skipped, so
+// a mixed selection just recycles whatever in it actually can be.
+export function issueRecycle(entities) {
+  entities.forEach(e => {
+    if (!canRecycle(e)) return;
+    if (e.kind === "unit") { setSquadLeader(e, null); e.hold = false; }
+    beginRecycle(e);
+  });
+}
+
+// Stand a recycle back down — free, since nothing was ever paid or disabled beyond refusing new
+// orders (a building) or acting at all (a unit): no refund, the entity just resumes normal life.
+export function issueCancelRecycle(entities) {
+  entities.forEach(e => { if (e.recycling) cancelRecycle(e); });
 }
 
 // Hold position: a combat unit stands its ground and fires on anything that

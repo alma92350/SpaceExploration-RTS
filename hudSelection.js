@@ -22,7 +22,8 @@ import {
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
-import { issueSetAILogistics, issueSetCollectPoint } from "./engine/commands.js";
+import { issueSetAILogistics, issueSetCollectPoint, issueRecycle, issueCancelRecycle } from "./engine/commands.js";
+import { canRecycle, recycleFrac } from "./engine/recycle.js";
 import { FREIGHTER_AI_TECH, aiUpkeepRate } from "./engine/haul.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
@@ -262,7 +263,10 @@ export function renderSelectionPanel() {
         const e = game.galaxy && sel.find(x => x.kind === "building" && x.owner === "player"
           && !x.constructing && isElectrifiable(x.type));
         return e ? `${!!e.electrified}:${Math.round(electrifyBoost(state, e.owner) * 100)}` : "";
-      })();
+      })()
+    // Rebuild when any selected entity's Recycle state starts/stops/finishes (the button ↔
+    // progress-row swap) — the live % itself is then patched in place below, not rebuilt.
+    + "|" + sel.map(e => e.recycling ? "r" : canRecycle(e) ? "c" : "x").join("");
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -307,6 +311,20 @@ export function renderSelectionPanel() {
     const row = panelEl.querySelector(".research-progress");
     if (row) row.textContent = researchRowText(building.researchQueue);
   }
+
+  // Same live patch for an in-progress Recycle — one row per currently-recycling selected
+  // entity, in selection order (matches how rebuildSelectionPanel laid them out).
+  const recycling = sel.filter(e => e.recycling);
+  if (recycling.length) {
+    const rows = panelEl.querySelectorAll(".recycle-progress");
+    recycling.forEach((e, i) => { if (rows[i]) rows[i].textContent = recycleRowText(e); });
+  }
+}
+
+// "♻ Recycling Plasma Rig — 42%" — shared by the rebuild and the live patch so they never drift.
+function recycleRowText(entity) {
+  const def = entity.kind === "building" ? BUILDINGS[entity.type] : UNITS[entity.type];
+  return `♻ Recycling ${def.name} — ${Math.round(entity.recycling.progress * 100)}%`;
 }
 
 // The Datacenter research header text — shared by the rebuild and the live patch so the two
@@ -1274,6 +1292,38 @@ function rebuildSelectionPanel(sel) {
   if (sel.some(e => e.kind === "unit")) {
     panelEl.appendChild(makeButton("Stop ( X )", () => input.stopSelected()));
   }
+
+  // Recycle: reclaim part of an OWNED unit/building's cost (engine/recycle.js — the refund
+  // fraction depends on type and research). Shown for the whole current selection: an
+  // already-recycling entity gets a live progress row (patched each tick above) + a free Cancel;
+  // an eligible-but-idle one gets a Recycle button. A Command Center, and anything already
+  // recycling, is filtered out by canRecycle, so it just silently doesn't appear.
+  const recyclingNow = sel.filter(e => e.recycling);
+  if (recyclingNow.length) {
+    recyclingNow.forEach(e => {
+      const row = document.createElement("div");
+      row.className = "sel-row recycle-progress";
+      row.textContent = recycleRowText(e);
+      panelEl.appendChild(row);
+    });
+    panelEl.appendChild(makeButton("Cancel Recycle", () => { issueCancelRecycle(recyclingNow); renderHUD(); },
+      { tip: "Stand it back down — free, nothing was spent or lost" }));
+  }
+  const recyclable = sel.filter(e => canRecycle(e));
+  if (recyclable.length) {
+    const one = recyclable.length === 1 ? recyclable[0] : null;
+    const frac = recycleFrac(state, "player", recyclable[0]);
+    const label = one
+      ? (() => {
+          const def = one.kind === "unit" ? UNITS[one.type] : BUILDINGS[one.type];
+          const refund = Object.entries(def.cost || {}).map(([com, qty]) => `${Math.round(qty * frac)} ${com}`).join(", ");
+          return `♻ Recycle (+${refund})`;
+        })()
+      : `♻ Recycle Selected (${Math.round(frac * 100)}%)`;
+    panelEl.appendChild(makeButton(label, () => { issueRecycle(recyclable); renderHUD(); },
+      { tip: `Scrap it for ${Math.round(frac * 100)}% of its cost back — takes a little time in place, and a Command Center can't be recycled` }));
+  }
+
   if (sel.some(e => e.kind === "unit" && UNITS[e.type].role === "combat")) {
     // Attack-move as a button — the only way to arm it on touch (no A key), and a
     // discoverable one on desktop. Shows ARMED while waiting for the target tap.

@@ -15,6 +15,7 @@ import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBombFuse, updateCraters } from "./bomb.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
+import { updateUnitRecycle, updateBuildingRecycle } from "./recycle.js";
 import { updateProduction, updateCombustors } from "./industry.js";
 import { updatePlasmaRig } from "./rig.js";
 import { updateResearch } from "./techtree.js";
@@ -72,6 +73,7 @@ export function tick(state, dt) {
     updateWonder(state, building, dt);       // Odyssey Antimatter Gate charges toward the galaxy win (no-op off a wonder)
     if (state.endless && !state.background) updateDecay(building, dt);   // Odyssey structures wear out if not mended
     updateBuildingCombat(state, building, dt);
+    updateBuildingRecycle(state, building, dt);   // last: may remove the building this tick (engine/commands.js issueRecycle)
   }
 
   // Healing runs last, once every combatant and building has taken its damage
@@ -141,6 +143,11 @@ function updateUnit(state, unit, dt) {
   // might bypass that path, matching the same "if (!def) skip" style repair.js uses
   // for mender defs above.
   if (!def) return;
+  // A unit the player is Recycling (engine/commands.js issueRecycle) is on its own countdown,
+  // checked before anything else this tick — same "takes no further orders" precedent as the bomb
+  // fuse right below, and before the role dispatch so EVERY role (worker, combat, support, a
+  // freighter, …) is covered by the one check rather than needing it threaded into each branch.
+  if (updateUnitRecycle(state, unit, dt)) return;
   if (def.role === "combat") { updateCombat(state, unit, dt); return; }
   if (def.role === "support") { updateSupport(state, unit, def, dt); return; }
   // An ARMED Helium Bomb lights its fuse the instant a live enemy comes within
