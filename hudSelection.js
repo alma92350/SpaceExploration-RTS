@@ -39,11 +39,22 @@ import { deployColonyShip } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { initiateJump } from "./boot.js";
+import { FORMATION_SHAPES } from "./engine/formation.js";
 import { flashHint } from "./overlays.js";
 import { spriteIcon } from "./render.js";
 import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
 import { renderHUD } from "./hud.js";
+
+// Display text for the formation shape picker (engine/formation.js FORMATION_SHAPES) — UI
+// copy, kept out of the engine module.
+const FORMATION_LABELS = { grid: "Grid", line: "Line", wedge: "Wedge", circle: "Circle" };
+const FORMATION_TIPS = {
+  grid: "A simple spread — no leader, no facing",
+  line: "Abreast the direction of travel, the leader nudged to the front or back",
+  wedge: "A V: the leader at the tip (front) or shielded at the rear vertex (back)",
+  circle: "A ring around the leader at its center, protected",
+};
 
 // Panel-rebuild guard: the last signature the selection panel was rebuilt for.
 // Module-local (only renderSelectionPanel reads/writes it); hud.js's
@@ -140,6 +151,9 @@ export function renderSelectionPanel() {
     // Rebuild when attack-move arms/disarms so the Attack-Move button's ARMED label +
     // .armed class actually appear — without this the state changed with no panel cue.
     + "|" + input.attackArmed
+    // Rebuild when the formation shape/leader-position choice changes, so the picker's
+    // .active button + the leader-position row (line/wedge only) actually update.
+    + "|" + game.formation.shape + ":" + game.formation.leaderPos
     + "|" + queueSignature(sel)
     // Rebuild when any button's enabled state would flip: an option crossing the
     // affordability line, or a completed building unlocking a tech option (e.g.
@@ -1097,6 +1111,64 @@ function rebuildSelectionPanel(sel) {
     }
   }
 
+  // Formation: shown for any multi-unit selection. Picks the shape (and, where it matters, the
+  // leader position) that THIS and every later move/attack-move/Hold-Formation command uses — a
+  // session preference (game.formation, session.js), not per-unit state, so it carries across
+  // selections until changed. Grid is the plain default (today's spread-to-a-grid, unchanged);
+  // the other three trade that for a deliberate shape (engine/formation.js has the geometry).
+  if (sel.length > 1 && sel.some(e => e.kind === "unit")) {
+    const head = document.createElement("div");
+    head.className = "sel-group";
+    head.textContent = "Formation";
+    panelEl.appendChild(head);
+
+    const shapeRow = document.createElement("div");
+    shapeRow.className = "formation-row";
+    for (const shape of FORMATION_SHAPES) {
+      const btn = document.createElement("button");
+      btn.className = "btn formation-btn" + (game.formation.shape === shape ? " active" : "");
+      btn.textContent = FORMATION_LABELS[shape];
+      btn.title = FORMATION_TIPS[shape];
+      btn.addEventListener("click", () => {
+        game.formation.shape = shape;
+        // A Circle's leader is always centered — force leaderPos to "center" so a stale
+        // "front"/"back" left over from Line/Wedge can't silently put it ON the ring instead
+        // (engine/formation.js's circleOffsets treats anything other than exactly "front"/"back"
+        // as "center"). Leaving Circle resets it back to a sane Line/Wedge default.
+        if (shape === "circle") game.formation.leaderPos = "center";
+        else if (game.formation.leaderPos === "center") game.formation.leaderPos = "front";
+        renderHUD();
+      });
+      shapeRow.appendChild(btn);
+    }
+    panelEl.appendChild(shapeRow);
+
+    // Leader position only matters for a shape with a real front/back — Grid has no natural
+    // leader slot, and a Circle's leader is always centered (protected), not toggled.
+    if (game.formation.shape === "line" || game.formation.shape === "wedge") {
+      const leaderRow = document.createElement("div");
+      leaderRow.className = "formation-row";
+      for (const leaderPos of ["front", "back"]) {
+        const btn = document.createElement("button");
+        btn.className = "btn formation-btn" + (game.formation.leaderPos === leaderPos ? " active" : "");
+        btn.textContent = leaderPos === "front" ? "Leader: Front" : "Leader: Back";
+        btn.title = leaderPos === "front" ? "The strongest unit leads at the point"
+                                           : "The strongest unit is shielded at the rear; flanks lead";
+        btn.addEventListener("click", () => { game.formation.leaderPos = leaderPos; renderHUD(); });
+        leaderRow.appendChild(btn);
+      }
+      panelEl.appendChild(leaderRow);
+    } else if (game.formation.shape === "circle") {
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = "Leader: center — protected in the middle of the ring.";
+      panelEl.appendChild(note);
+    }
+
+    panelEl.appendChild(makeButton("Hold Formation ( F )", () => input.formSelected(),
+      { tip: "Form up right here in the chosen shape and hold — a defensive stance for the whole group, not just one ship" }));
+  }
+
   if (sel.some(e => e.kind === "unit")) {
     panelEl.appendChild(makeButton("Stop ( X )", () => input.stopSelected()));
   }
@@ -1162,7 +1234,7 @@ function controlsLegend() {
     ["Tap map", "move / attack / gather"],
     ["Drag", "box-select your units"],
     ["Two fingers", "pan · pinch to zoom"],
-    ["Buttons", "Attack-Move · Stop · Hold · Scout"],
+    ["Buttons", "Attack-Move · Stop · Hold · Scout · Form Up"],
     ["Minimap", "tap to jump the view"],
     ["▾ handle", "hide / show this panel"],
     ["?", "all controls"],
@@ -1173,7 +1245,7 @@ function controlsLegend() {
     ["Ctrl+right", "queue a waypoint"],
     ["Shift+1–9", "set group · 1–9 recall"],
     ["Double-click", "select all of that type"],
-    ["Q · E · X · H", "army · scout · stop · hold"],
+    ["Q · E · X · H · F", "army · scout · stop · hold · form up"],
     ["Minimap", "left jumps · right orders"],
     ["Wheel", "zoom · arrows / edge-scroll pan"],
     ["F1 / ?", "all controls"],

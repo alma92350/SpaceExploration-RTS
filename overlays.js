@@ -126,6 +126,7 @@ const HELP_ROWS = [
   ["Double-click", "Select every unit of that type on screen"],
   ["Q · E · X", "Select army · Ranger scout mode · stop"],
   ["H", "Hold position — fire in range, don't chase"],
+  ["F", "Form up — hold the chosen formation shape right here"],
   ["Z C V B N", "Produce / build the selected panel's Nth option"],
   ["`", "Jump to the next idle worker"],
   ["Space", "Jump the camera to your base"],

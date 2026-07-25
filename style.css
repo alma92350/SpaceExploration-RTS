@@ -407,6 +407,12 @@ body.paused::after {
   cursor: pointer;
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Formation shape / leader-position pickers (hudSelection.js) — small toggle buttons in a row,
+   not full-width .btn blocks, so all 4 shapes (or both leader positions) sit on one line. */
+.formation-row { display: flex; gap: 6px; margin-top: 6px; }
+.formation-btn { flex: 1 1 0; margin-top: 0; padding: 6px 4px; font-size: 0.78rem; text-align: center; }
+.formation-btn.active { border-color: var(--accent); background: var(--panel-2); color: var(--accent); }
 /* A build/produce button carrying a sprite icon: the icon sits left of the label,
    both vertically centered. The icon is the actual unit/building art (render.js
    spriteIcon), on a faint inset tile so it reads on the panel background. */

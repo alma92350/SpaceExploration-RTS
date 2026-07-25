@@ -9,7 +9,7 @@
 "use strict";
 
 import { game } from "./session.js";
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueHoldFormation } from "./engine/commands.js";
 import { UNITS, BUILDINGS, storeCapOf } from "./engine/entities.js";
 import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
@@ -84,14 +84,21 @@ export function attachInput(canvas, state, onChange) {
       && Math.hypot(n.x - x, n.y - y) <= NODE_PICK_RADIUS) || null;
   }
 
+  // The player's current formation choice (session.js), read fresh on every order — so
+  // switching shapes in the HUD mid-game takes effect on the very next command issued.
+  function currentFormation() {
+    return { shape: game.formation.shape, leaderPos: game.formation.leaderPos };
+  }
+
   // Attack-move to (x,y): combat units advance-and-engage anything met on the
   // way; non-combat units (workers, the Ranger) can't attack-move, so they just
   // move. Same split the Ctrl-queue and minimap-command paths use.
   function aggressiveMove(units, x, y, queue = false) {
     const combatants = units.filter(u => UNITS[u.type].role === "combat");
     const others = units.filter(u => UNITS[u.type].role !== "combat");
-    if (combatants.length) issueAttackMove(combatants, x, y, queue);
-    if (others.length) issueMove(others, x, y, queue);
+    const formation = currentFormation();
+    if (combatants.length) issueAttackMove(combatants, x, y, queue, formation);
+    if (others.length) issueMove(others, x, y, queue, formation);
   }
 
   // The A key arms attack-move; the crosshair cursor + field tint show it's armed, and the
@@ -214,7 +221,7 @@ export function attachInput(canvas, state, onChange) {
       return;
     }
     if (queue) aggressiveMove(selected, p.x, p.y, true);
-    else issueMove(selected, p.x, p.y);
+    else issueMove(selected, p.x, p.y, false, currentFormation());
     sound.playOrder();
     onChange();
   }
@@ -445,6 +452,12 @@ export function attachInput(canvas, state, onChange) {
   function holdSelected() {
     issueHold(selectedUnits());
   }
+  // Form up right where the selection stands, in the player's chosen shape, and hold there —
+  // the "protect a formation" stance (engine/commands.js issueHoldFormation), the group-scale
+  // sibling of Escort (which protects one external ship instead).
+  function formSelected() {
+    issueHoldFormation(selectedUnits(), game.formation.shape, game.formation.leaderPos);
+  }
   function selectAllArmy() {
     state.selection = [...state.units.values()]
       .filter(u => u.owner === "player" && UNITS[u.type].role === "combat")
@@ -499,6 +512,7 @@ export function attachInput(canvas, state, onChange) {
     if (k === "e") { scoutSelected(); onChange(); return; }   // send selected Rangers to auto-scout
     if (k === "a") { setArmed(true); return; }        // arm attack-move; next left-click commits it
     if (k === "h") { holdSelected(); onChange(); return; }   // hold position
+    if (k === "f") { formSelected(); onChange(); return; }   // form up in place and hold the shape
     if (k === "escape") { setArmed(false); buildMode = null; onChange(); return; }   // bail out of a pending action
     if (k === "`") { focusIdleWorker(); return; }   // it calls onChange itself
     if (k === " ") { e.preventDefault(); centerOnBase(); return; }   // Space — jump the camera to your base
@@ -548,6 +562,7 @@ export function attachInput(canvas, state, onChange) {
     stopSelected: () => { stopSelected(); onChange(); },
     scoutSelected: () => { scoutSelected(); onChange(); },
     holdSelected: () => { holdSelected(); onChange(); },
+    formSelected: () => { formSelected(); onChange(); },
     // Recall a group from the HUD chip (touch has no number row); same double-press-recenter
     // as the keyboard path.
     recallGroup: digit => { recallGroup(digit); onChange(); },

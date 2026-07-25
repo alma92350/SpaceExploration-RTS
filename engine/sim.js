@@ -6,7 +6,7 @@
 
 "use strict";
 
-import { stepToward, keepEscortStation } from "./movement.js";
+import { stepToward, keepEscortStation, keepFormationStation } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "./haul.js";
@@ -177,6 +177,10 @@ function updateUnit(state, unit, dt) {
       // A non-combat escort (worker) just keeps station on the ring around the guarded ship.
       keepEscortStation(state, unit, def.speed, dt);
       break;
+    case "hold-formation":
+      // A non-combat unit (worker, freighter) sheltering in a formation just keeps its slot.
+      keepFormationStation(state, unit, def.speed, dt);
+      break;
     case "scout":
       updateScoutMode(state, unit, dt);
       break;
@@ -229,6 +233,12 @@ function updateSupport(state, unit, def, dt) {
   // via the global repair pass — a medic keeping station on the fleet it's protecting.
   if (o.type === "escort") {
     keepEscortStation(state, unit, def.speed, dt);
+    return;
+  }
+  // Holding a defensive formation: same idea, station-keeping at a fixed slot instead of a
+  // moving target — the drone mends whatever's near it (the repair pass) right where it stands.
+  if (o.type === "hold-formation") {
+    keepFormationStation(state, unit, def.speed, dt);
     return;
   }
   let tx, ty, follow = false;

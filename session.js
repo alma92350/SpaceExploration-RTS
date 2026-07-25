@@ -28,4 +28,10 @@ export const game = {
   // and rebuilds attachInput — and can be shown in the HUD and persisted UI-side. Never part
   // of the deterministic sim; kept out of engine/persist.js's sanitized save payload.
   groups: {},
+  // The player's current formation choice (engine/formation.js FORMATION_SHAPES /
+  // LEADER_POSITIONS) — a UI preference, not per-game state, so it's fine to just carry over
+  // across a "choose another battlefield" restart like any other setup preference. Read by
+  // input.js when issuing a move/attack-move/Hold-Formation order, and mutated directly by
+  // hudSelection.js's formation picker buttons.
+  formation: { shape: "grid", leaderPos: "front" },
 };

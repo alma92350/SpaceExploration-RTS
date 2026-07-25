@@ -9,24 +9,7 @@
 import { BUILDINGS, UNITS, canAfford, payCost, prereqsMet } from "./entities.js";
 import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
-
-const FORMATION_SPACING = 20;
-
-// Spreads a group moving to the same point across a grid centered on it,
-// so a multi-unit move/attack-move doesn't converge into one stacked pile.
-function formationSpots(count, x, y) {
-  const cols = Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(count / cols);
-  const spots = [];
-  for (let i = 0; i < count; i++) {
-    const col = i % cols, row = Math.floor(i / cols);
-    spots.push({
-      x: x + (col - (cols - 1) / 2) * FORMATION_SPACING,
-      y: y + (row - (rows - 1) / 2) * FORMATION_SPACING,
-    });
-  }
-  return spots;
-}
+import { formationSlots } from "./formation.js";
 
 // Give a unit an order, either replacing what it's doing (a plain command)
 // or appending it as a waypoint (queue = true, the Ctrl+command from input.js).
@@ -45,8 +28,11 @@ function dispatch(unit, order, queue) {
   }
 }
 
-export function issueMove(units, x, y, queue = false) {
-  const spots = formationSpots(units.length, x, y);
+// `formation` ({shape, leaderPos}, engine/formation.js) is optional — omitted, it's the
+// original flat grid spread (byte-identical to the old behaviour), unchanged for any caller
+// that doesn't pass one (the AI, and every pre-existing test).
+export function issueMove(units, x, y, queue = false, formation) {
+  const spots = formationSlots(units, x, y, formation);
   units.forEach((u, i) => dispatch(u, { type: "move", x: spots[i].x, y: spots[i].y }, queue));
 }
 
@@ -77,8 +63,8 @@ export function issueAttack(units, targetId, queue = false) {
   });
 }
 
-export function issueAttackMove(units, x, y, queue = false) {
-  const spots = formationSpots(units.length, x, y);
+export function issueAttackMove(units, x, y, queue = false, formation) {
+  const spots = formationSlots(units, x, y, formation);
   units.forEach((u, i) => dispatch(u, { type: "attack-move", x: spots[i].x, y: spots[i].y }, queue));
 }
 
@@ -90,6 +76,28 @@ export function issueAttackMove(units, x, y, queue = false) {
 export function issueEscort(units, targetId, queue = false) {
   const n = units.length;
   units.forEach((u, i) => dispatch(u, { type: "escort", targetId, slot: i, slots: n }, queue));
+}
+
+// Protection of a FORMATION, not one external ship: the group forms up in the chosen shape
+// right where it's standing (its own current centroid — see formationSlots) and holds there,
+// each unit re-seeking its own slot every tick (engine/movement.js keepFormationStation) so a
+// unit nudged out of place (avoidance jostling, a broken engagement) settles back rather than
+// drifting. Persists like escort — never cleared on arrival — until a new order replaces it.
+// Combat units also take the Hold stance (issueHold's existing "stand fast, don't chase" rule),
+// so the whole formation keeps its shape instead of scattering to run down a distant target;
+// non-combat units (workers, a Mender) still take a slot — sheltering behind/inside the line —
+// they just have no stance flag to set. Each unit's slot is baked into its OWN order as a fixed
+// offset from the anchor at issue time, so holding station never needs to re-scan the group.
+export function issueHoldFormation(units, shape = "grid", leaderPos = "front") {
+  if (!units.length) return;
+  let sx = 0, sy = 0;
+  for (const u of units) { sx += u.x; sy += u.y; }
+  const anchorX = sx / units.length, anchorY = sy / units.length;
+  const slots = formationSlots(units, anchorX, anchorY, { shape, leaderPos, originX: anchorX, originY: anchorY });
+  units.forEach((u, i) => {
+    dispatch(u, { type: "hold-formation", anchorX, anchorY, offsetX: slots[i].x - anchorX, offsetY: slots[i].y - anchorY }, false);
+    if (UNITS[u.type] && UNITS[u.type].role === "combat") u.hold = true;
+  });
 }
 
 // Pays the cost up front, drops a constructing building on the spot, and
