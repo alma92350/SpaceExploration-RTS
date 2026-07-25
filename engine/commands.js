@@ -187,6 +187,20 @@ export function issueSetAILogistics(units, on, state) {
   });
 }
 
+// Toggle a freighter's COLLECTION-POINT mode (engine/haul.js assignShuttle/updateFreighterShuttle):
+// once its hold is full it drives itself to the nearest Command Center, banks everything, and
+// returns to its ANCHOR to keep collecting. No research needed — unlike AI-logistics this doesn't
+// fold it into the base's whole haul/service chain, it's just "empty me when I'm full". Turning it
+// ON stamps the freighter's CURRENT spot as that anchor, so it comes back to wherever it was
+// standing when you switched it on. Turning it OFF always works.
+export function issueSetCollectPoint(units, on) {
+  units.forEach(u => {
+    if (UNITS[u.type]?.role !== "freighter") return;
+    u.collectPoint = on;
+    if (on) u.anchor = { x: u.x, y: u.y };
+  });
+}
+
 // Only ARMED units (or a support drone, whose 'attack' order updateSupport reinterprets
 // as "advance on that foe" and mend nearby, dealing no damage) accept an attack order.
 // A weaponless rider — a colony ship, a freighter — has no `attack` stat, so routing an

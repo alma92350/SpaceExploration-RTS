@@ -98,6 +98,8 @@
  * @property {string|null} [targetId] aim target (combat.js / render.js)
  * @property {Object.<string, number>} [freight]  a freighter's player-managed cargo hold, commodity → qty (engine/galaxy.js)
  * @property {boolean} [aiLogistics]  a freighter toggled into autonomous haul/service work, like a worker (engine/commands.js issueSetAILogistics, engine/sim.js) — requires FREIGHTER_AI_TECH researched, burns AI Cores while active (engine/haul.js payAIUpkeep)
+ * @property {boolean} [collectPoint]  a freighter toggled into collection-point mode (engine/commands.js issueSetCollectPoint) — full hold triggers a SHUTTLE run to the nearest Command Center and back to `anchor` (engine/haul.js assignShuttle/updateFreighterShuttle); no research needed
+ * @property {{x:number, y:number}} [anchor]  a collection-point freighter's home spot, stamped when the mode is switched on — a shuttle run returns here (engine/haul.js updateFreighterShuttle)
  * @property {boolean} [armed]  a Helium Bomb set to detonate on attack/enemy presence/command (engine/bomb.js)
  * @property {number} [fuseUntil]  the state.time an ARMED Helium Bomb's lit fuse detonates at — set by lightFuse, absent while unlit (engine/bomb.js)
  * @property {Unit} [squadLeader]     transient, NEVER persisted: the leader this unit is following, if any (engine/commands.js setSquadLeader) — a live object reference
