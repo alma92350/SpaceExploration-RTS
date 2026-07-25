@@ -68,7 +68,7 @@ export function drawBuildings(ctx, state, view) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;   // off-screen (pad for the hp bar above it)
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
     const color = state.players[b.owner].color;
-    ctx.globalAlpha = b.constructing ? 0.5 : 1;
+    ctx.globalAlpha = b.constructing ? 0.5 : b.recycling ? 0.65 : 1;   // ghosted while going up OR coming down
 
     drawBuildingShape(ctx, state, b, color);
 

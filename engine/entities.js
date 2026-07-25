@@ -397,6 +397,17 @@ export const UPGRADES = {
     cost: { crystals: 160, ore: 120 }, requires: ["logisticsNetwork"],
     desc: "-20% unit & building production time", produceTimeMult: 0.8,
   },
+  // No multiplier field: unlike its two Logistics siblings above, this GATES a capability
+  // (raises the recycling refund cap) rather than feeding the generic upgradeMult product — read
+  // directly by id, the same way FREIGHTER_AI_TECH is (engine/recycle.js RECYCLE_TECH). Shares
+  // that exact id with the Odyssey tech tree's own "recycling" node (engine/techtree.js) — only
+  // one of the two trees is ever active in a given match, so the shared key is safe and lets
+  // engine/recycle.js check a single flag regardless of mode.
+  recycling: {
+    id: "recycling", name: "Field Recycling", doctrine: "logistics", tier: 3, ico: "♻️",
+    cost: { crystals: 180, ore: 140 }, requires: ["rapidFabrication"],
+    desc: "+30% of a recycled unit/building's cost reclaimed (up to an 80% cap)",
+  },
 };
 
 // Product of a multiplier field across a player's RESEARCHED upgrades (1 when

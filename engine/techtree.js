@@ -60,6 +60,13 @@ export const TECHS = {
   // payAIUpkeep) — cultivating the Cores to spend on automation IS the cost of automating.
   freighterai: { id: "freighterai", name: "Autonomous Freight AI", ico: "🧠", cost: { ai: 60, electronics: 90 }, time: 40, requires: ["aicores"],
     desc: "Freighters can be toggled into the local logistics chain like a worker — far greater capacity per trip — while burning AI Cores to run themselves." },
+  // engine/recycle.js RECYCLE_TECH — the string id here MUST match that constant, and matches the
+  // skirmish doctrine tree's OWN "recycling" node (engine/entities.js UPGRADES) too: only one of
+  // the two trees is ever active in a given match, so sharing the id is safe, and it's what lets
+  // recycleFrac check a single player.upgrades flag regardless of mode. No multiplier field —
+  // gates recycleFrac's research bonus directly by id, same as freighterai above.
+  recycling: { id: "recycling", name: "Reclamation Engineering", ico: "♻️", cost: { crystals: 140, radioactives: 40 }, time: 30, requires: ["automation"],
+    desc: "+30% of a recycled unit/building's cost reclaimed (up to an 80% cap)." },
 };
 
 // Research develops faster on a high-tech world (data.js PLANETS.tech, 1..10) and

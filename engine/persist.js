@@ -156,6 +156,18 @@ function cleanEntity(e, def, map) {
     e.digProgress = Math.max(0, Math.min(num(e.digProgress, 0), 2));
     e.digCount = Math.max(0, Math.floor(num(e.digCount, 0)));
   }
+  // A recycling entity's `recycling` ({progress, time}, engine/recycle.js) is untrusted too — a
+  // tampered save could set progress negative/huge/NaN (skipping or stalling the countdown) or
+  // time to zero/negative (dividing by it goes non-finite the moment the next tick advances it).
+  // Clamp progress into [0,1] and time to a sane positive floor; drop the field entirely if it
+  // isn't a real object, so a bad value just reads as "not recycling" — the identity for valid data.
+  if (e.recycling !== undefined) {
+    if (!e.recycling || typeof e.recycling !== "object") delete e.recycling;
+    else {
+      e.recycling.time = Math.max(1, num(e.recycling.time, 1));
+      e.recycling.progress = Math.max(0, Math.min(num(e.recycling.progress, 0), 1));
+    }
+  }
   // A wonder's `charge` (a 0..1 float, engine/wonder.js) is untrusted: a hand-edited save could set it
   // huge, negative, NaN, or non-numeric — and an out-of-band charge trips an instant standalone-endless
   // win (engine/victory.js checkEndlessWin fires at charge >= 1) or corrupts the charge/HUD math. Clamp

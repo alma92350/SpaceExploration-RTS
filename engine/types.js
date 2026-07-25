@@ -101,6 +101,7 @@
  * @property {boolean} [collectPoint]  a freighter toggled into collection-point mode (engine/commands.js issueSetCollectPoint) — full hold triggers a SHUTTLE run to the nearest Command Center and back to `anchor` (engine/haul.js assignShuttle/updateFreighterShuttle); no research needed
  * @property {{x:number, y:number}} [anchor]  a collection-point freighter's home spot, stamped when the mode is switched on — a shuttle run returns here (engine/haul.js updateFreighterShuttle)
  * @property {number} [ferriers]  transient per-tick count of workers ferrying this freighter, manual or auto-assigned (engine/haul.js countLogistics/assignFerry) — stripped on serialize
+ * @property {{progress:number, time:number}} [recycling]  an in-progress player Recycle (engine/commands.js issueRecycle) — persisted; progress 0..1, removes the unit and refunds part of its cost at 1 (engine/recycle.js updateUnitRecycle)
  * @property {boolean} [armed]  a Helium Bomb set to detonate on attack/enemy presence/command (engine/bomb.js)
  * @property {number} [fuseUntil]  the state.time an ARMED Helium Bomb's lit fuse detonates at — set by lightFuse, absent while unlit (engine/bomb.js)
  * @property {Unit} [squadLeader]     transient, NEVER persisted: the leader this unit is following, if any (engine/commands.js setSquadLeader) — a live object reference
@@ -144,6 +145,7 @@
  * @property {boolean} [powered]      transient: a Combustion Generator is fed & granting Power this tick (engine/industry.js)
  * @property {string} [fuel]          transient: which fuel the Generator burned this tick (HUD)
  * @property {number} [menderClaims]  transient: auto-repair Menders committed to this building this tick (engine/sim.js)
+ * @property {{progress:number, time:number}} [recycling]  an in-progress player Recycle (engine/commands.js issueRecycle) — persisted; progress 0..1, removes the building and refunds part of its cost at 1 (engine/recycle.js updateBuildingRecycle); the building stays fully functional until then
  */
 
 /**
