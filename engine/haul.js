@@ -15,23 +15,28 @@
      both by auto-assignment and when the player manually assigns a worker to a building
      (`order.manual`, which makes it keep serving that one building instead of going idle).
 
-   - FERRY: a worker manually assigned to a specific landed FREIGHTER (right-click it,
-     like a building — engine/commands.js issueFerryFreighter). It carries a nearby
-     producer's backlog straight onto the ship's hold — a freighter parked out at a
-     remote claim becomes its own COLLECTION POINT, without every load detouring through
-     the Command Center — and, once there's nothing left to load, carries some of the
-     ship's hold back to the treasury instead. Any landed freighter qualifies; no
-     research needed — this is a worker loading a crate onto a ship, not the ship acting
-     on its own (that's the separate AI-logistics mode below).
+   - FERRY: a worker assigned to a specific landed FREIGHTER — manually (right-click it,
+     like a building — engine/commands.js issueFerryFreighter) or, for a COLLECTION-POINT
+     freighter, automatically (assignFerry, the same idle-worker offer haul/service get).
+     It carries a nearby producer's backlog straight onto the ship's hold — a freighter
+     parked out at a remote claim becomes its own COLLECTION POINT, without every load
+     detouring through the Command Center. Any landed freighter qualifies for a MANUAL
+     assignment; no research needed — this is a worker loading a crate onto a ship, not
+     the ship acting on its own (that's the separate AI-logistics mode below).
 
    A freighter parked as a FERRY target can also be toggled into COLLECTION-POINT mode
    (`unit.collectPoint`, HUD button — no research needed, engine/commands.js
    issueSetCollectPoint): once its hold is full it drives itself to the nearest own
    Command Center, banks everything, and returns to its ANCHOR (the spot it was
    standing when the mode was switched on) to keep collecting — assignShuttle /
-   updateFreighterShuttle below. A worker ferrying it still tops it up (and can carry a
-   partial load home itself, updateFerry's "toPickup"/"toReturn"); the shuttle is the
-   freighter's own complementary big single trip once it's actually full.
+   updateFreighterShuttle below. That toggle changes TWO things about how workers treat
+   it: idle workers now offer themselves to ferry it automatically (assignFerry), the
+   same way they offer to haul a producer or service a factory — no right-click needed —
+   and a ferry worker (manual or auto) never DRAINS a collection-point freighter to carry
+   its cargo home itself (updateFerry's "toPickup" leg is skipped for one), since the
+   ship's own shuttle run already owns that trip; a plain (non-collection-point) freighter
+   still gets that pickup-and-carry-home leg from a MANUALLY-ferrying worker, same as
+   before, since nothing else will ever empty it.
 
    A freighter can ALSO be folded into the SAME auto-assigned HAUL/SERVICE chain a worker
    runs — "Autonomous Freight AI" (engine/techtree.js FREIGHTER_AI_TECH) lets the player
@@ -101,8 +106,10 @@ function tripCapacity(def) { return def.cargoCap ?? def.cargoHold ?? 0; }
 
 /**
  * Tally, per building, how many workers are hauling from it (`haulers`) or servicing it
- * (`servers`) — the caps ASSIGN reads. Frozen at tick start (before any assignment) so every idle
- * worker this tick sees the same counts regardless of Map order. Transient (stripped on serialize).
+ * (`servers`) — and, per FREIGHTER, how many workers are ferrying it (`ferriers`, manual or
+ * auto-assigned alike) — the caps ASSIGN reads. Frozen at tick start (before any assignment) so
+ * every idle worker this tick sees the same counts regardless of Map order. Transient (stripped
+ * on serialize).
  * @param {State} state
  */
 export function countLogistics(state) {
@@ -111,16 +118,26 @@ export function countLogistics(state) {
     if (recipeOf(b)) b.servers = 0;
   }
   for (const u of state.units.values()) {
+    if (UNITS[u.type]?.cargoHold) u.ferriers = 0;
+  }
+  for (const u of state.units.values()) {
     const o = u.order;
-    if (!o || !o.buildingId) continue;
-    const b = state.buildings.get(o.buildingId);
-    if (!b) continue;
-    if (o.type === "haul") b.haulers = (b.haulers || 0) + 1;
-    else if (o.type === "service") b.servers = (b.servers || 0) + 1;
-    // A FERRY worker's "toSource" leg draws on the same producer backlog auto-haulers do (and
-    // clears its buildingId once it moves past that leg — see updateFerry), so it counts against
-    // the SAME per-producer hauler cap, keeping the ≤MAX_HAULERS rule fair across both job types.
-    else if (o.type === "ferry") b.haulers = (b.haulers || 0) + 1;
+    if (!o) continue;
+    if (o.buildingId) {
+      const b = state.buildings.get(o.buildingId);
+      if (b) {
+        if (o.type === "haul") b.haulers = (b.haulers || 0) + 1;
+        else if (o.type === "service") b.servers = (b.servers || 0) + 1;
+        // A FERRY worker's "toSource" leg draws on the same producer backlog auto-haulers do (and
+        // clears its buildingId once it moves past that leg — see updateFerry), so it counts against
+        // the SAME per-producer hauler cap, keeping the ≤MAX_HAULERS rule fair across both job types.
+        else if (o.type === "ferry") b.haulers = (b.haulers || 0) + 1;
+      }
+    }
+    if (o.type === "ferry" && o.freighterId) {
+      const f = state.units.get(o.freighterId);
+      if (f) f.ferriers = (f.ferriers || 0) + 1;
+    }
   }
 }
 
@@ -186,7 +203,8 @@ function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTIO
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing || recipeOf(b)) continue;   // factories are serviced, not hauled
     const cap = storeCapOf(b.type);
-    if (cap <= 0 || storeTotal(b) < cap * minFraction) continue;
+    const total = storeTotal(b);
+    if (cap <= 0 || total <= 0 || total < cap * minFraction) continue;   // total<=0: a minFraction of 0 must still require SOME backlog
     if ((b.haulers || 0) >= MAX_HAULERS) continue;
     const d = Math.hypot(b.x - x, b.y - y);
     if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
@@ -227,6 +245,36 @@ export function assignService(state, unit) {
   if (!best) return;
   best.servers = (best.servers || 0) + 1;
   unit.order = { type: "service", buildingId: best.id, phase: "plan" };
+}
+
+/**
+ * Give an idle worker a FERRY job on the nearest own COLLECTION-POINT freighter (`unit.collectPoint`
+ * — a plain freighter is never auto-assigned, only ever ferried by hand) that has room AND sits
+ * near a backlog actually worth fetching — the auto-assigned counterpart to a manual
+ * issueFerryFreighter, so a freighter switched into collection-point mode gets treated like any
+ * other collection point (haul it, service it) without the player chasing down a worker for it
+ * every time. Shares the `ferriers` tally with manual assignments (MAX_HAULERS-capped), so labour
+ * doesn't all pile onto one ship. Lands straight in "toSource" with its producer already picked
+ * and that producer's `haulers` slot already claimed — same as assignHaul — so a plain haul auto-
+ * assignment running later THIS SAME tick can't also grab it before countLogistics would otherwise
+ * have caught up next tick. Deterministic: nearest freighter by distance, ties broken by id.
+ * @param {State} state @param {Unit} unit
+ */
+export function assignFerry(state, unit) {
+  let best = null, bestD = Infinity;
+  for (const f of state.units.values()) {
+    if (f.owner !== unit.owner || !f.collectPoint || !UNITS[f.type]?.cargoHold) continue;
+    if (freightRoom(f) <= 0) continue;
+    if ((f.ferriers || 0) >= MAX_HAULERS) continue;
+    const d = Math.hypot(f.x - unit.x, f.y - unit.y);
+    if (d < bestD || (d === bestD && best && f.id < best.id)) { bestD = d; best = f; }
+  }
+  if (!best) return;
+  const src = nearestBacklogProducer(state, unit.owner, best.x, best.y);
+  if (!src) return;   // nothing worth bringing it yet
+  best.ferriers = (best.ferriers || 0) + 1;
+  src.haulers = (src.haulers || 0) + 1;
+  unit.order = { type: "ferry", freighterId: best.id, buildingId: src.id, phase: "toSource" };
 }
 
 /**
@@ -355,13 +403,16 @@ function parkNear(state, unit, b, def, dt) {
 }
 
 /**
- * Advance a FERRY job: a worker manually assigned to a specific landed freighter
- * (engine/commands.js issueFerryFreighter). While the freighter has room, it keeps ferrying the
- * nearest own producer's backlog straight onto its hold (the freighter IS the collection point —
- * no CC detour); once there's nothing left to load, it instead draws some of the freighter's hold
- * and carries it home to the treasury. Loops forever like a manually-assigned SERVICE job — only
- * re-ordering the worker elsewhere ends it. Salvages gracefully if the freighter jumps away/dies
- * (carries home whatever's already aboard) or the CC is gone.
+ * Advance a FERRY job: a worker assigned to a specific landed freighter, manually
+ * (engine/commands.js issueFerryFreighter, `order.manual`) or automatically (assignFerry, for a
+ * COLLECTION-POINT one). While the freighter has room, it keeps ferrying the nearest own
+ * producer's backlog straight onto its hold (the freighter IS the collection point — no CC
+ * detour). Once there's nothing left to load: a PLAIN freighter still gets drained and carried
+ * home by the worker (nothing else ever will); a COLLECTION-POINT one does NOT — its own shuttle
+ * run (assignShuttle) owns that trip, so a ferry worker just tops it up and otherwise stays out of
+ * its way. A MANUAL assignment then waits by the ship for more to load; an AUTO one goes idle,
+ * freeing the worker for other work — same manual/auto split as SERVICE. Salvages gracefully if
+ * the freighter jumps away/dies (carries home whatever's already aboard) or the CC is gone.
  * @param {State} state @param {Unit} unit @param {number} dt
  */
 export function updateFerry(state, unit, dt) {
@@ -385,11 +436,16 @@ export function updateFerry(state, unit, dt) {
       const src = nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0);
       if (src) { src.haulers = (src.haulers || 0) + 1; order.buildingId = src.id; order.phase = "toSource"; return; }
     }
-    if (f && freightUsed(f) > 0) { order.phase = "toPickup"; return; }    // nothing to load → bring some cargo home instead
-    if (f) {                                                              // nothing to do → wait by the ship
+    // A collection-point freighter drives its own hold home once full (assignShuttle) — a ferry
+    // worker only LOADS one, never drains it, so the two don't duplicate (or fight over) the same
+    // trip. A plain freighter has no such run of its own, so the worker still carries it home.
+    if (f && freightUsed(f) > 0 && !f.collectPoint) { order.phase = "toPickup"; return; }
+    if (f && order.manual) {                                            // dedicated by hand → wait by the ship
       const fr = UNITS[f.type]?.radius || 0;
       if (Math.hypot(f.x - unit.x, f.y - unit.y) > REACH + fr) stepToward(state, unit, f.x, f.y, def.speed, dt);
+      return;
     }
+    unit.order = null;                                                  // auto-assigned & nothing to do → free for other work
     return;
   }
 
@@ -442,16 +498,22 @@ function bankFreight(state, unit) {
 
 /**
  * Give an idle COLLECTION-POINT freighter (`unit.collectPoint`, HUD toggle — no research needed,
- * unlike AI-logistics) a SHUTTLE run the moment its hold is full: drive to the nearest own Command
- * Center, bank the whole hold, then drive back to its anchor (the spot it was standing when the
- * mode was switched on — engine/commands.js issueSetCollectPoint) to keep collecting. A worker
- * ferrying the same freighter (updateFerry above) still tops it up and can carry a partial load
- * home itself; this is the freighter's OWN complementary "I'm full, empty me" run for the big
- * single trip once it hits capacity.
+ * unlike AI-logistics) a SHUTTLE run: drive to the nearest own Command Center, bank the whole
+ * hold, then drive back to its anchor (the spot it was standing when the mode was switched on —
+ * engine/commands.js issueSetCollectPoint) to keep collecting. Triggers when the hold is literally
+ * full, OR — since most producers can never actually fill a freighter's much bigger hold (a
+ * 120-cap Plasma Rig can't fill a 250-cap Hauler on its own) — once there's SOME cargo aboard and
+ * nothing left nearby worth waiting for. Without that second case a freighter fed by a small
+ * producer would sit there holding SOMETHING forever, never quite reaching exact capacity and
+ * never actually delivering it.
  * @param {State} state @param {Unit} unit
  */
 export function assignShuttle(state, unit) {
-  if (!unit.collectPoint || freightRoom(unit) > 1e-6) return;
+  if (!unit.collectPoint) return;
+  const used = freightUsed(unit);
+  if (used <= 0) return;                                            // empty — nothing to deliver yet
+  const full = freightRoom(unit) <= 1e-6;
+  if (!full && nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0)) return;   // more still worth waiting for
   if (!unit.anchor) unit.anchor = { x: unit.x, y: unit.y };   // defensive fallback — issueSetCollectPoint normally sets this
   unit.order = { type: "shuttle", phase: "toCC" };
 }

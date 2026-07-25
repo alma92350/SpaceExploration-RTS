@@ -9,7 +9,7 @@
 import { stepToward, keepEscortStation, keepFormationStation, keepFollowingLeader, orderedSpeed } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
-import { updateHaul, assignHaul, updateService, assignService, updateFerry, assignShuttle, updateFreighterShuttle, countLogistics, payAIUpkeep, FREIGHTER_AI_TECH } from "./haul.js";
+import { updateHaul, assignHaul, updateService, assignService, updateFerry, assignFerry, assignShuttle, updateFreighterShuttle, countLogistics, payAIUpkeep, FREIGHTER_AI_TECH } from "./haul.js";
 import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
@@ -161,22 +161,32 @@ function updateUnit(state, unit, dt) {
   // AI-logistics below — whatever's in its hold just sits there until reassigned.
   if (unit.order && unit.order.type === "shuttle" && !unit.collectPoint) { unit.order = null; }
 
-  // An idle Odyssey worker with nothing queued offers itself for logistics: first it clears a
-  // pure producer's backed-up output to a Command Center (haul — the Rig, the drop-offs), else it
-  // runs a factory a round-trip service (carry inputs in, output back). Player-only — the AI builds
-  // no producers/factories, so its workers never do this and its replay is unchanged.
+  // An idle Odyssey worker with nothing queued offers itself for logistics: FIRST it offers to
+  // ferry a nearby COLLECTION-POINT freighter (`assignFerry`) — checked ahead of haul/service
+  // because ferry and haul share the SAME per-producer ≤MAX_HAULERS cap (engine/haul.js
+  // countLogistics). If plain CC-bound haulers got first refusal, a busy rig's two slots would
+  // always go to them as workers cycle through, and a collection-point freighter parked right next
+  // to it would never actually get fed — exactly the "workers don't see it" gap this priority
+  // avoids. THEN it clears a pure producer's backed-up output to a Command Center (haul — the Rig,
+  // the drop-offs), else it runs a factory a round-trip service (carry inputs in, output back).
+  // Player-only — the AI builds no producers/factories, so its workers never do this and its
+  // replay is unchanged.
   //
   // A freighter the player has toggled into AI-logistics mode (`aiLogistics`, HUD button — requires
-  // the FREIGHTER_AI_TECH research) offers itself the SAME way, at its own far larger cargo capacity
-  // (engine/haul.js tripCapacity) — the order it lands is stamped `aiJob` so the upkeep check below
-  // knows to bill it. Regular freighters (aiLogistics off) are untouched — fully player-controlled,
-  // same as before. Claiming a NEW job also requires at least SOME AI Cores in stock: a freighter
-  // that can't afford to move shouldn't still reserve one of a producer's scarce ≤MAX_HAULERS
-  // slots doing nothing — an already-running job is a separate case, handled by the upkeep check
-  // below, which pauses it in place rather than dropping it the instant the treasury dips dry.
+  // the FREIGHTER_AI_TECH research) offers itself the haul/service way too (never ferry — a
+  // freighter doesn't ferry another freighter), at its own far larger cargo capacity (engine/
+  // haul.js tripCapacity) — the order it lands is stamped `aiJob` so the upkeep check below knows
+  // to bill it. Regular freighters (aiLogistics off) are untouched — fully player-controlled, same
+  // as before. Claiming a NEW job also requires at least SOME AI Cores in stock: a freighter that
+  // can't afford to move shouldn't still reserve one of a producer's scarce ≤MAX_HAULERS slots
+  // doing nothing — an already-running job is a separate case, handled by the upkeep check below,
+  // which pauses it in place rather than dropping it the instant the treasury dips dry.
   const aiFreighter = def.role === "freighter" && unit.owner === "player" && unit.aiLogistics
     && !!state.players[unit.owner].upgrades[FREIGHTER_AI_TECH]
     && (state.players[unit.owner].resources.ai || 0) > 0;
+  if (!unit.order && def.role === "worker" && unit.owner === "player") {
+    assignFerry(state, unit);
+  }
   if (!unit.order && (def.role === "worker" || aiFreighter) && unit.owner === "player") {
     assignHaul(state, unit);
     if (!unit.order) assignService(state, unit);
