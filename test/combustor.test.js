@@ -37,22 +37,18 @@ test("a Combustion Generator grants Power only while its OWN fuel larder is fed 
 });
 
 test("out of fuel (or paused), a Generator grants no Power", () => {
-  const dry = stub([combustor()], {});                 // empty larder — no gas, no radioactives
+  const dry = stub([combustor()], {});                 // empty larder — no gas
   updateCombustors(dry, 0.1);
   assert.equal(powerCap(dry, "player"), 0, "no fuel → dead");
 
-  const paused = stub([combustor({ paused: true, input: { radioactives: 100 } })], {});
+  const paused = stub([combustor({ paused: true, input: { gas: 100 } })], {});
   updateCombustors(paused, 0.1);
   assert.equal(powerCap(paused, "player"), 0, "paused → dead, and no fuel burned");
-  assert.equal([...paused.buildings.values()][0].input.radioactives, 100, "…the larder is untouched");
+  assert.equal([...paused.buildings.values()][0].input.gas, 100, "…the larder is untouched");
 });
 
-test("it burns gas OR radioactives — whichever its larder has more of", () => {
-  const s = stub([combustor({ input: { radioactives: 50 } })], {});      // only radioactives on hand
-  updateCombustors(s, 0.1);
-  const gen = [...s.buildings.values()][0];
-  assert.equal(gen.fuel, "radioactives", "falls back to radioactives when there's no gas");
-  assert.ok(gen.input.radioactives < 50, "…and consumes it");
+test("the Combustion Generator is gas-only", () => {
+  assert.deepEqual(BUILDINGS.combustor.combust.fuels, ["gas"]);
 });
 
 test("the Biomass Reactor is the Combustion Generator's sibling — same deal, but biomass-only", () => {

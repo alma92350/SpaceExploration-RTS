@@ -16,8 +16,9 @@
      power station (the Combustion Generator, the Biomass Reactor — def.combust). A factory
      both consumes inputs and produces output: the worker carries a needed INPUT from the
      treasury to it AND carries its finished OUTPUT back, so neither leg runs empty. A power
-     station only ever needs fuel hauled IN (gas/radioactives for the Combustion Generator,
-     biomass for the Biomass Reactor — any ONE of its accepted fuels, not all at once); it
+     station only ever needs fuel hauled IN (gas for the Combustion Generator, biomass for
+     the Biomass Reactor — any ONE of its accepted fuels, not all at once, for a building
+     that ever took more than one); it
      has no output to carry back, so the trip just ends there — the SAME "no output, just
      deliver the input" leg-skip a factory with a cleared backlog already uses. inputNeedsOf
      below is the single place that maps EITHER kind of building to "what does it need hauled

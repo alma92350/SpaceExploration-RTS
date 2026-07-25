@@ -108,21 +108,21 @@ export const BUILDINGS = {
     cost: { ore: 70 }, buildTime: 12, sight: 110,
     // A cheap, fuel-burning alternative to the Reactor: it GRANTS less Power (energyGrants 10 vs 20)
     // over a SMALLER grid (powerRange 0.55 shrinks its efficiency zones — industry.js), and only while
-    // it's fed. It burns gas (Helium-3) OR radioactives (combust.rate/sec, whichever its own local
-    // fuel buffer has more of) — a real WORKER hauls the fuel in from the treasury, same as a
-    // factory's input larder (engine/haul.js SERVICE), it isn't just auto-drawn from the treasury —
-    // so it's cheap to raise but carries an ongoing fuel bill AND a logistics chore, the mirror of
-    // the Reactor's free-but-pricey grid. Out of fuel (or paused) it grants nothing. See
-    // engine/industry.js updateCombustors. Its biomass-burning sibling is the Biomass Reactor below.
+    // it's fed. It burns gas (Helium-3, combust.rate/sec) from its own local fuel buffer — a real
+    // WORKER hauls it in from the treasury, same as a factory's input larder (engine/haul.js
+    // SERVICE), it isn't just auto-drawn from the treasury — so it's cheap to raise but carries an
+    // ongoing fuel bill AND a logistics chore, the mirror of the Reactor's free-but-pricey grid. Out
+    // of fuel (or paused) it grants nothing. See engine/industry.js updateCombustors. Its
+    // biomass-burning sibling is the Biomass Reactor below.
     energyGrants: 10, powerRange: 0.55,
-    combust: { fuels: ["gas", "radioactives"], rate: 0.6 },
+    combust: { fuels: ["gas"], rate: 0.6 },
     odysseyOnly: true,
   },
   biomassreactor: {
     id: "biomassreactor", name: "Biomass Reactor", hp: 300, radius: 13,
     cost: { ore: 70 }, buildTime: 12, sight: 110,
-    // The Combustion Generator's sibling, for a claim rich in biomass instead of gas/radioactives —
-    // same cheap-but-fed deal (energyGrants/powerRange/rate all match), just a single fuel and a
+    // The Combustion Generator's sibling, for a claim rich in biomass instead of Helium-3 — same
+    // cheap-but-fed deal (energyGrants/powerRange/rate all match), just its own single fuel and a
     // worker hauling it in the same way (engine/haul.js SERVICE, engine/industry.js updateCombustors).
     energyGrants: 10, powerRange: 0.55,
     combust: { fuels: ["biomass"], rate: 0.6 },
@@ -328,10 +328,11 @@ export function storeCapOf(type) {
 // The REAL (haulable) input commodities a building needs hauled in — a recipe's ingredients
 // (every key but "energy", which is a live per-tick Power draw, engine/industry.js, never a
 // hauled/stored good), or a fuel-burning power station's acceptable fuels (def.combust.fuels —
-// gas/radioactives for the Combustion Generator, biomass for the Biomass Reactor; ANY ONE of
-// them keeps it running, not all at once — see haul.js inputNeedsOf/neededInput, which already
-// treats "pick whichever's neediest" the same way for both an AND-recipe and an OR-fuel-choice).
-// Empty for a building with neither (or an unknown recipe id — belt-and-suspenders for stale data).
+// gas for the Combustion Generator, biomass for the Biomass Reactor; a building CAN accept more
+// than one — ANY ONE of them keeps it running, not all at once — see haul.js inputNeedsOf/
+// neededInput, which already treats "pick whichever's neediest" the same way for both an
+// AND-recipe and an OR-fuel-choice). Empty for a building with neither (or an unknown recipe id —
+// belt-and-suspenders for stale data).
 function realInputComs(type) {
   const def = BUILDINGS[type];
   const recipe = RECIPE_BY_ID[def?.recipe];
