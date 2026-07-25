@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold } from "../engine/commands.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation } from "../engine/commands.js";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 
@@ -39,6 +39,28 @@ test("issueAttackMove centers the formation on the target point", () => {
   assert.equal(avgX, 900);
   assert.equal(avgY, 700);
   units.forEach(u => assert.equal(u.order.type, "attack-move"));
+});
+
+test("issueMove's optional formation shape changes how the group spreads (line vs the default grid)", () => {
+  const grid = dummyUnits(4);
+  grid.forEach(u => { u.x = 0; u.y = 0; });
+  issueMove(grid, 1000, 0);
+  const line = dummyUnits(4);
+  line.forEach(u => { u.x = 0; u.y = 0; });
+  issueMove(line, 1000, 0, false, { shape: "line", leaderPos: "front" });
+  const gridSpread = new Set(grid.map(u => u.order.y.toFixed(1))).size;
+  const lineSpread = new Set(line.map(u => u.order.y.toFixed(1))).size;
+  assert.ok(gridSpread >= 2 && lineSpread >= 2, "both shapes spread the group across distinct lateral positions");
+  assert.notDeepEqual(grid.map(u => u.order), line.map(u => u.order), "a chosen shape actually changes the destinations");
+});
+
+test("issueAttackMove passes its formation option through the same way as issueMove", () => {
+  const units = dummyUnits(3);
+  units.forEach(u => { u.x = 0; u.y = 0; });
+  issueAttackMove(units, 1000, 0, false, { shape: "circle" });
+  units.forEach(u => assert.equal(u.order.type, "attack-move"));
+  const avgX = units.reduce((s, u) => s + u.order.x, 0) / units.length;
+  assert.ok(Math.abs(avgX - 1000) < 1, "still centers on the target point");
 });
 
 test("issueAttack sends every unit at the same explicit target id (focus fire, no spreading)", () => {

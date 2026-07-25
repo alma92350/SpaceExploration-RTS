@@ -35,7 +35,7 @@
 
 /**
  * A unit order. `type` is always present; the rest depend on the order kind
- * (move/gather/attack/attack-move/build/escort/scout).
+ * (move/gather/attack/attack-move/build/escort/scout/hold-formation).
  * @typedef {Object} Order
  * @property {string} type
  * @property {number} [x]
@@ -48,6 +48,10 @@
  * @property {number} [slots]
  * @property {string} [phase]
  * @property {boolean} [manual]   a player-assigned service order sticks to its building (engine/haul.js)
+ * @property {number} [anchorX]   hold-formation: the formation's fixed anchor point (engine/commands.js issueHoldFormation)
+ * @property {number} [anchorY]
+ * @property {number} [offsetX]   hold-formation: this unit's fixed offset from the anchor (engine/formation.js)
+ * @property {number} [offsetY]
  */
 
 /**

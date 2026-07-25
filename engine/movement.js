@@ -70,6 +70,18 @@ export function keepEscortStation(state, unit, speed, dt) {
   return true;
 }
 
+// Advance a unit holding a formation station (order {type:"hold-formation", anchorX, anchorY,
+// offsetX, offsetY} — engine/commands.js issueHoldFormation) one tick toward its assigned slot,
+// a fixed offset from the anchor baked in at issue time. Unlike escort's ring (which re-seeks a
+// MOVING external target every tick), the anchor here never moves — that's the point: this is a
+// group defending its own position, not following anyone. So there's nothing that can "vanish"
+// and drop the order the way an escort's target can; it persists until a new order replaces it.
+/** @param {State} state @param {Unit} unit @param {number} speed @param {number} dt */
+export function keepFormationStation(state, unit, speed, dt) {
+  const o = unit.order;
+  stepToward(state, unit, o.anchorX + o.offsetX, o.anchorY + o.offsetY, speed, dt);
+}
+
 // Moves `unit` at most `speed * dt` toward (tx, ty). Returns true once it
 // has arrived (within 1 unit), so callers can clear the order that got it
 // there.

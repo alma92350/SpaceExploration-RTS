@@ -15,7 +15,7 @@
 
 "use strict";
 
-import { stepToward, keepEscortStation } from "./movement.js";
+import { stepToward, keepEscortStation, keepFormationStation } from "./movement.js";
 import { UNITS, BUILDINGS, upgradeMult } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
@@ -87,6 +87,11 @@ export function updateCombat(state, unit, dt) {
   // so the escort trails the target wherever it's ordered until given a new order.
   if (unit.order && unit.order.type === "escort") {
     keepEscortStation(state, unit, def.speed, dt);
+  } else if (unit.order && unit.order.type === "hold-formation") {
+    // Same idea, but the "target" is the group's own fixed anchor rather than a moving ship —
+    // a defensive formation holding its ground, still fully combat-reactive above (this only
+    // runs once no threat was acquired/engaged this tick).
+    keepFormationStation(state, unit, def.speed, dt);
   }
 }
 
