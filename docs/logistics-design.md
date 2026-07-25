@@ -95,7 +95,13 @@ storage cascades to AI worker logic — the riskier half.
    in the HUD, not as "the market is broken".
 10. **Freighters.** Interplanetary freight already exists (`unit.freight`); keep it
     orthogonal — freighters move goods *between worlds*, workers move goods *within* a
-    world. Don't conflate.
+    world. Don't conflate. **Superseded by Phase D below**, which deliberately DOES
+    connect the two: workers can now physically load/unload a landed freighter's hold
+    (the ship becomes a mobile collection point *within* a world), and a researched
+    freighter can join the *within-world* haul/service chain itself. The panel-driven
+    load/unload (this section) and the interplanetary jump (`unit.freight`, moved
+    *between* worlds) are untouched — Phase D adds a THIRD, physical path onto the same
+    hold, it doesn't replace the first two.
 
 ### 2.4 Phased plan (each phase is its own merge, suite-green + determinism-verified)
 
@@ -170,16 +176,60 @@ cycling a drop-off planted *very close* to a node can separation-deadlock in the
 walk (confirmed identical on the pre-Phase-C code). It's a movement/separation bug, out
 of scope here; a real placement keeps the drop-off far enough from the node to avoid it.
 
+**Phase D — Freighters join the local logistics chain. ✅ DONE (player-only, Odyssey-only).**
+Revisits item 10 above: a landed freighter (`hauler`/`heavyhauler`/`bulkfreighter`) is now a
+*physical* object on the world map, not just a menu-driven hold, in two ways:
+
+- **Workers can load/unload it — FERRY (`engine/haul.js updateFerry`).** Right-click a
+  friendly freighter with workers selected (`engine/commands.js issueFerryFreighter`,
+  `input.js`) to assign them to it, the same idiom as `issueServiceBuilding`. A ferry
+  worker keeps carrying the nearest own producer's backlog straight onto the freighter's
+  `freight` hold — the freighter becomes its own **collection point**, no detour through
+  the Command Center — and once there's nothing left to load, draws some of the hold back
+  out and banks it at the treasury instead. Any freighter qualifies, no research needed:
+  this is a worker loading a crate onto a ship, not the ship acting on its own. Shares
+  `nearestBacklogProducer` with `assignHaul` (parameterised: a fresh auto-haul still waits
+  for a ≥34%-full buffer; a worker already dedicated to a freighter takes any backlog) and
+  the same per-producer `haulers` cap, so it can't out-compete regular haulage for labour.
+- **A freighter can BE the logistics chain — AI-LOGISTICS (`FREIGHTER_AI_TECH`).** A new
+  Datacenter tech, `freighterai` (requires `aicores`, costs AI Cores to research), unlocks
+  a per-freighter toggle (`unit.aiLogistics`, HUD button, `engine/commands.js
+  issueSetAILogistics`). Toggled on, a freighter offers itself to the SAME
+  `assignHaul`/`assignService` idle-worker logic every tick (`engine/sim.js`) — it grabs
+  a haul or service job exactly like a worker would, but at its own trip capacity: with no
+  `cargoCap` of its own, `tripCapacity()` falls back to the ship's whole `cargoHold`
+  (250/650/1600 vs. a worker's 10), so one autonomous run clears a backlog a worker would
+  need many trips for. Running this way isn't free: every tick an autonomous job is active
+  it burns AI Cores from the treasury (`payAIUpkeep`, rate scaled by the ship's own
+  `cargoHold` — a bigger hold costs more to run unmanned). Out of AI Cores, it just pauses
+  in place for the tick (order and cargo untouched) rather than stranding anything;
+  toggling AI-logistics off stands it down immediately. A freighter with no AI Cores in
+  stock also never *claims* a fresh job in the first place, so it doesn't sit there hogging
+  one of a producer's ≤2 hauler slots while unable to move.
+- Both paths reuse the SAME `loadFrom`/cargo machinery workers already use (generalised to
+  take a plain commodity→qty store instead of a building, so it works against either a
+  building's `store` or a freighter's `freight`) — no parallel implementation to keep in
+  sync. `freightUsed`/`freightRoom` moved from `engine/galaxy.js` to `engine/entities.js`
+  (re-exported from galaxy.js for every existing caller) so `engine/haul.js` can read a
+  freighter's room without an import cycle (`galaxy.js` → `sim.js` → `haul.js`).
+- Player-only and Odyssey-only by construction (freighters are `odysseyOnly`, the tech is
+  gated behind the Datacenter/`aicores`, and the sim only ever offers this to
+  `owner === "player"`) — the AI never builds a freighter, so the skirmish AI and its
+  byte-identical replay are untouched. Tests in `test/ferry.test.js`.
+
 ---
 
 ## Outcome
 
-All three phases shipped. Storage is finite end-to-end — collection (forward drop-offs),
+All four phases shipped. Storage is finite end-to-end — collection (forward drop-offs),
 production output (rig + factories), and factory inputs — and workers move every good
-between them (gather → drop-off → haul → CC → supply → factory → haul → CC). Logistics is
-now a standing demand on labour to the end of the game, with the Command Center as the one
-bottomless warehouse. Energy stays a placement decision (grid efficiency), no workers.
-Everything player-only and deterministic; the AI and skirmish replays are byte-identical.
+between them (gather → drop-off → haul → CC → supply → factory → haul → CC). A landed
+freighter now sits IN that chain too — a physical collection point workers can ferry to
+directly, or (once teched) a large-capacity autonomous hauler in its own right, paid for
+in AI Cores while it runs. Logistics is a standing demand on labour (and, for an automated
+fleet, on AI Cores) to the end of the game, with the Command Center as the one bottomless
+warehouse. Energy stays a placement decision (grid efficiency), no workers. Everything
+player-only and deterministic; the AI and skirmish replays are byte-identical.
 
 ### 2.5 Recommended order & risk
 

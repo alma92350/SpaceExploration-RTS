@@ -9,7 +9,7 @@
 "use strict";
 
 import { game } from "./session.js";
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueHoldFormation } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueHoldFormation } from "./engine/commands.js";
 import { UNITS, BUILDINGS, storeCapOf } from "./engine/entities.js";
 import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
@@ -241,6 +241,15 @@ export function attachInput(canvas, state, onChange) {
       const attackers = selected.filter(u => UNITS[u.type].attack);
       if (attackers.length) { issueAttack(attackers, target.id, queue); sound.playOrder(); onChange(); }
       return;
+    }
+    // A friendly, landed FREIGHTER as the target: selected WORKERS are assigned to FERRY it — carry
+    // nearby producer backlog onto its hold (engine/haul.js updateFerry), so it becomes its own
+    // mobile collection point — instead of escorting it. Any non-worker selection (or a selection
+    // with no workers at all) falls through to the general friendly-ship escort branch below, so
+    // e.g. combat ships still escort a freighter through hostile space.
+    if (target && target.owner === "player" && target.kind === "unit" && UNITS[target.type]?.role === "freighter") {
+      const workers = selected.filter(u => UNITS[u.type]?.role === "worker");
+      if (workers.length) { issueFerryFreighter(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
     // A friendly SHIP as the target: the selection forms a protective escort ring around it and
     // follows it wherever it's ordered (engine/commands.js issueEscort). The target itself is

@@ -26,7 +26,7 @@ import { updateFog } from "./fog.js";
 import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
 import { createDiplomacy, aiDevelopment } from "./diplomacy.js";
-import { UNITS, BUILDINGS } from "./entities.js";
+import { UNITS, BUILDINGS, freightUsed, freightRoom } from "./entities.js";
 import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
 import { PLANETS, COM } from "../data.js";
@@ -716,18 +716,11 @@ export function cargoManifest(from, capacity = 0) {
   return manifest;
 }
 
-// How full a freighter's hold is (sum of its commodity quantities). 0 for a non-freighter.
-export function freightUsed(unit) {
-  let n = 0;
-  if (unit && unit.freight) for (const com in unit.freight) n += unit.freight[com] || 0;
-  return n;
-}
-
-// A freighter's remaining hold room = its cargoHold minus what's aboard.
-export function freightRoom(unit) {
-  const cap = unit ? (UNITS[unit.type]?.cargoHold || 0) : 0;
-  return Math.max(0, cap - freightUsed(unit));
-}
+// freightUsed/freightRoom (how full a freighter's hold is, and its remaining room) now live in
+// entities.js — engine/haul.js needs them for the worker↔freighter physical loading path and can't
+// import this module (galaxy.js -> sim.js -> haul.js would cycle back here). Re-exported (imported
+// above) so every existing caller of these two from "./galaxy.js" is unaffected.
+export { freightUsed, freightRoom };
 
 // Load up to `qty` of commodity `com` from the CURRENT world's player stockpile into a freighter's
 // hold, clamped to the hold's room and what's actually in stock. Returns the amount loaded (0 if

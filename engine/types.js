@@ -43,11 +43,13 @@
  * @property {string} [targetId]
  * @property {string} [nodeId]
  * @property {string} [buildingId]
+ * @property {string} [freighterId]  ferry: the specific landed freighter a worker is assigned to load/unload (engine/haul.js updateFerry)
  * @property {string} [com]
  * @property {number} [slot]
  * @property {number} [slots]
  * @property {string} [phase]
- * @property {boolean} [manual]   a player-assigned service order sticks to its building (engine/haul.js)
+ * @property {boolean} [manual]   a player-assigned service/ferry order sticks to its building/freighter (engine/haul.js)
+ * @property {boolean} [aiJob]    haul/service: this order was auto-assigned to an AI-logistics freighter, not a worker — bills AI Cores upkeep (engine/sim.js, engine/haul.js payAIUpkeep)
  * @property {number} [anchorX]   hold-formation: this unit's own fixed anchor point (engine/commands.js issueHoldFormation)
  * @property {number} [anchorY]
  * @property {number} [offsetX]   hold-formation/follow-leader: this unit's fixed offset from the anchor/leader (engine/formation.js)
@@ -95,6 +97,7 @@
  * @property {string|null} [repairTargetId]  transient: the friendly an auto-repair Mender is committed to (engine/sim.js)
  * @property {string|null} [targetId] aim target (combat.js / render.js)
  * @property {Object.<string, number>} [freight]  a freighter's player-managed cargo hold, commodity → qty (engine/galaxy.js)
+ * @property {boolean} [aiLogistics]  a freighter toggled into autonomous haul/service work, like a worker (engine/commands.js issueSetAILogistics, engine/sim.js) — requires FREIGHTER_AI_TECH researched, burns AI Cores while active (engine/haul.js payAIUpkeep)
  * @property {boolean} [armed]  a Helium Bomb set to detonate on attack/enemy presence/command (engine/bomb.js)
  * @property {number} [fuseUntil]  the state.time an ARMED Helium Bomb's lit fuse detonates at — set by lightFuse, absent while unlit (engine/bomb.js)
  * @property {Unit} [squadLeader]     transient, NEVER persisted: the leader this unit is following, if any (engine/commands.js setSquadLeader) — a live object reference
