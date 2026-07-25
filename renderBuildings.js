@@ -300,6 +300,16 @@ function drawHabitat(ctx, b, color) {
 
   ctx.fillStyle = DETAIL;
   for (const dx of [-w * 0.25, 0, w * 0.25]) ctx.fillRect(cx + dx - 1.5, cy + h * 0.2, 3, 3);
+
+  // Electrified (Odyssey): wired into the power grid for +30% supply capacity
+  // (engine/industry.js electrifyBoost, toggled in hudSelection.js) — a small lit dot inside the
+  // dome, so a powered Habitat reads at a glance without opening its panel.
+  if (b.electrified) {
+    ctx.beginPath();
+    ctx.arc(cx, cy - w * 0.42 * 0.55, Math.max(1.8, r * 0.16), 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd166";
+    ctx.fill();
+  }
 }
 
 // Foundry — the Tier-2 war-smeltery that unlocks the Lancer and Breacher: an
