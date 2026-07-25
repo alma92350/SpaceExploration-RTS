@@ -5,8 +5,8 @@ import { updateCombat } from "../engine/combat.js";
 import { tick } from "../engine/sim.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { POWER_TIERS } from "../engine/industry.js";
-import { detonateBomb, detonateIfAttacked, checkBombProximity, updateCraters, bombDamageAt,
-         BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_MAX_DAMAGE, BOMB_DETECT_RANGE,
+import { detonateBomb, detonateIfAttacked, checkBombProximity, updateBombFuse, lightFuse, updateCraters, bombDamageAt,
+         BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_MAX_DAMAGE, BOMB_DETECT_RANGE, BOMB_FUSE_DELAY,
          CRATER_SPAWN_DELAY, CRATER_NODE_AMOUNT, CRATER_COMMODITIES } from "../engine/bomb.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { queueProduction } from "../engine/production.js";
@@ -75,36 +75,78 @@ test("detonateIfAttacked returns false (and changes nothing) for a non-bomb or a
   assert.ok(state.units.has(bomb.id));
 });
 
-/* ---------- trigger 2: enemy presence ---------- */
+/* ---------- the fuse: BOMB_FUSE_DELAY between a trigger and the actual blast ---------- */
 
-test("an ARMED bomb detonates on tick() the instant a live enemy comes within BOMB_DETECT_RANGE", () => {
-  const state = createGameState({ planetId: "ferros", endless: true });
-  const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
-  bomb.armed = true;
-  state.units.set(bomb.id, bomb);
-  // Just inside DETECT_RANGE but — deliberately, since detect is set past the blast radius
-  // itself — just OUTSIDE BOMB_BLAST_RADIUS, so this pins the detection boundary specifically,
-  // not the blast boundary (a separate test below covers an enemy close enough to be caught).
-  const enemy = makeUnit("worker", "ai", 2000 + BOMB_DETECT_RANGE - 5, 2000);
-  state.units.set(enemy.id, enemy);
-
-  assert.ok(checkBombProximity(state, bomb), "proximity check reports a detonation");
-  assert.ok(!state.units.has(bomb.id));
+test("BOMB_DETECT_RANGE is exactly BOMB_CORE_RADIUS — you have to be point-blank to trip the fuse", () => {
+  assert.equal(BOMB_DETECT_RANGE, BOMB_CORE_RADIUS);
 });
 
-test("an enemy close enough to trigger AND be caught in the same blast is erased", () => {
+test("lightFuse timestamps the detonation BOMB_FUSE_DELAY sim-seconds out, and is idempotent", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 3000, 3000);
+  state.units.set(bomb.id, bomb);
+
+  lightFuse(state, bomb);
+  assert.equal(bomb.fuseUntil, state.time + BOMB_FUSE_DELAY);
+  assert.ok(state.units.has(bomb.id), "lighting the fuse doesn't detonate it on the spot");
+
+  const firstFuseUntil = bomb.fuseUntil;
+  state.time += 1;
+  lightFuse(state, bomb);   // re-triggering an already-lit fuse
+  assert.equal(bomb.fuseUntil, firstFuseUntil, "the clock isn't restarted");
+
+  const fused = state.events.filter(e => e.type === "bombFused");
+  assert.equal(fused.length, 1, "the fuse-lit event fires once, not on every re-trigger");
+});
+
+test("updateBombFuse detonates once state.time reaches fuseUntil, not a moment before", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 3000, 3000);
+  bomb.armed = true;
+  state.units.set(bomb.id, bomb);
+  lightFuse(state, bomb);
+
+  state.time += BOMB_FUSE_DELAY - 0.01;
+  assert.ok(updateBombFuse(state, bomb), "still committed/fused — nothing left for it to do this tick");
+  assert.ok(state.units.has(bomb.id), "not due yet");
+
+  state.time += 0.01;
+  assert.ok(updateBombFuse(state, bomb));
+  assert.ok(!state.units.has(bomb.id), "the timer came due — it actually detonated");
+});
+
+/* ---------- trigger 2: enemy presence lights the fuse (doesn't detonate on the spot) ---------- */
+
+test("an ARMED bomb lights its fuse — but does NOT detonate yet — the instant a live enemy comes within BOMB_DETECT_RANGE", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
   bomb.armed = true;
   state.units.set(bomb.id, bomb);
-  const enemy = makeUnit("worker", "ai", 2000 + 10, 2000);   // well inside both DETECT_RANGE and BLAST_RADIUS
+  const enemy = makeUnit("worker", "ai", 2000 + BOMB_DETECT_RANGE - 2, 2000);
+  state.units.set(enemy.id, enemy);
+
+  assert.ok(checkBombProximity(state, bomb), "proximity check reports it lit the fuse");
+  assert.ok(state.units.has(bomb.id), "still here — the blast is delayed, not instant");
+  assert.equal(bomb.fuseUntil, state.time + BOMB_FUSE_DELAY);
+});
+
+test("an enemy close enough to trigger AND be caught in the eventual blast dies once the fuse comes due", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
+  bomb.armed = true;
+  state.units.set(bomb.id, bomb);
+  const enemy = makeUnit("worker", "ai", 2000 + 10, 2000);   // well inside both DETECT_RANGE and the core
   state.units.set(enemy.id, enemy);
 
   assert.ok(checkBombProximity(state, bomb));
-  assert.ok(!state.units.has(enemy.id), "close enough to trigger it is close enough to die to it");
+  assert.ok(state.units.has(enemy.id), "the fuse is only lit so far — nobody's died yet");
+
+  state.time += BOMB_FUSE_DELAY;
+  updateBombFuse(state, bomb);
+  assert.ok(!state.units.has(enemy.id), "close enough to trigger it is close enough to die once it actually blows");
 });
 
-test("an ARMED bomb does NOT detonate from an enemy just outside BOMB_DETECT_RANGE", () => {
+test("an ARMED bomb does NOT light its fuse from an enemy just outside BOMB_DETECT_RANGE", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
   bomb.armed = true;
@@ -113,11 +155,12 @@ test("an ARMED bomb does NOT detonate from an enemy just outside BOMB_DETECT_RAN
   state.units.set(enemy.id, enemy);
 
   assert.equal(checkBombProximity(state, bomb), false);
+  assert.equal(bomb.fuseUntil, undefined);
   assert.ok(state.units.has(bomb.id));
   assert.ok(state.units.has(enemy.id));
 });
 
-test("an ARMED bomb detonates from a nearby ENEMY BUILDING too, not just units", () => {
+test("an ARMED bomb's fuse also lights from a nearby ENEMY BUILDING, not just units", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
   bomb.armed = true;
@@ -126,6 +169,9 @@ test("an ARMED bomb detonates from a nearby ENEMY BUILDING too, not just units",
   state.buildings.set(enemyBase.id, enemyBase);
 
   assert.ok(checkBombProximity(state, bomb));
+  assert.ok(state.buildings.has(enemyBase.id), "not yet — only the fuse is lit");
+  state.time += BOMB_FUSE_DELAY;
+  updateBombFuse(state, bomb);
   assert.ok(!state.buildings.has(enemyBase.id));
 });
 
@@ -141,7 +187,7 @@ test("an UNARMED bomb ignores enemy presence entirely, even point-blank", () => 
   assert.ok(state.units.has(enemy.id));
 });
 
-test("a full tick() detonates an armed bomb from enemy proximity — the real integration path", () => {
+test("a full tick() loop: proximity lights the fuse, and the blast lands BOMB_FUSE_DELAY sim-seconds later — the real integration path", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
   bomb.armed = true;
@@ -150,18 +196,39 @@ test("a full tick() detonates an armed bomb from enemy proximity — the real in
   state.units.set(enemy.id, enemy);
 
   tick(state, 0.1);
+  assert.ok(state.units.has(bomb.id), "the fuse only just lit this tick — no blast yet");
+  assert.ok(state.units.has(enemy.id));
 
-  assert.ok(!state.units.has(bomb.id));
-  assert.ok(!state.units.has(enemy.id));
+  // 20 Hz fixed step (see engine/loop.js) — enough ticks to cross the fuse delay. A fused
+  // bomb takes no more orders and sits put (asserted below), but the enemy that tripped it
+  // is a normal AI-controlled unit and free to wander off during those 4 real sim-seconds —
+  // so its eventual fate isn't asserted here (a dedicated, non-AI-driven test above already
+  // covers "close enough to trigger it is close enough to die to it" deterministically).
+  const dt = 0.05;
+  for (let i = 0; i < Math.ceil(BOMB_FUSE_DELAY / dt) + 1; i++) tick(state, dt);
+
+  assert.ok(!state.units.has(bomb.id), "the fuse came due — it actually went off");
 });
 
-/* ---------- trigger 3: player-triggered ---------- */
+/* ---------- trigger 3: player-triggered (also lights the fuse, not an instant blast) ---------- */
 
-test("detonateBomb fires on direct command regardless of any enemy presence at all", () => {
+test("lightFuse arms the countdown on direct command regardless of any enemy presence at all", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 3000, 3000);
   bomb.armed = true;
   state.units.set(bomb.id, bomb);   // nothing else nearby
+
+  lightFuse(state, bomb);
+
+  assert.ok(state.units.has(bomb.id), "the fuse is lit, but it hasn't blown yet");
+  assert.equal(bomb.fuseUntil, state.time + BOMB_FUSE_DELAY);
+});
+
+test("detonateBomb still fires immediately when called directly — the underlying blast itself is unchanged", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 3000, 3000);
+  bomb.armed = true;
+  state.units.set(bomb.id, bomb);
 
   detonateBomb(state, bomb);
 
@@ -511,4 +578,35 @@ test("a tampered armed field is coerced to a real boolean on load, not passed th
 
   const loaded = deserializeGame(save);
   assert.equal(loaded.units.get(bomb.id).armed, true, "coerced to boolean true, not left as the raw string");
+});
+
+test("a lit fuse survives a save/load round-trip, and still detonates on schedule after loading", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 500, 500);
+  bomb.armed = true;
+  state.units.set(bomb.id, bomb);
+  lightFuse(state, bomb);
+  const fuseUntil = bomb.fuseUntil;
+
+  const loaded = deserializeGame(serializeGame(state));
+  const loadedBomb = loaded.units.get(bomb.id);
+  assert.equal(loadedBomb.fuseUntil, fuseUntil);
+
+  loaded.time = fuseUntil;
+  assert.ok(updateBombFuse(loaded, loadedBomb));
+  assert.ok(!loaded.units.has(bomb.id), "still detonates right on schedule after the reload");
+});
+
+test("a tampered fuseUntil field is dropped (not coerced) when it isn't a finite number", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 500, 500);
+  bomb.armed = true;
+  state.units.set(bomb.id, bomb);
+  lightFuse(state, bomb);
+  const save = serializeGame(state);
+  const savedBomb = save.units.find(u => u.id === bomb.id);
+  savedBomb.fuseUntil = "soon-ish";   // a hand-edited save smuggling in garbage
+
+  const loaded = deserializeGame(save);
+  assert.equal(loaded.units.get(bomb.id).fuseUntil, undefined, "dropped, not left as a NaN-poisoning string");
 });

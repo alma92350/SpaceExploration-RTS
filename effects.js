@@ -19,14 +19,16 @@ const PING_LIFETIME_MS = 3000;
 const FIREWORK_LIFETIME_MS = 1500;
 // Long enough for the shockwave ring (renderEffects.js) to visibly crawl
 // out to its real blast radius rather than snapping there in a couple of
-// frames — the slow travel is what sells the blast's true reach.
-const EXPLOSION_LIFETIME_MS = 2400;
+// frames — the slow travel is what sells the blast's true reach. 20% slower
+// than the ring's original travel time (2400ms).
+const EXPLOSION_LIFETIME_MS = 2880;
 
 let tracers = [];
 let deaths = [];
 let pings = [];
 let fireworks = [];
 let explosions = [];
+let fuseWarnings = [];
 
 export function addTracer(fromX, fromY, toX, toY, unitType) {
   tracers.push({ fromX, fromY, toX, toY, unitType, born: performance.now() });
@@ -51,6 +53,15 @@ export function addUnderAttackPing(x, y) {
 // damage, near ground zero) to cool (the tapering edge) as it goes.
 export function addExplosion(x, y, radius, coreRadius = 0) {
   explosions.push({ x, y, radius, coreRadius, born: performance.now() });
+}
+
+// A Helium Bomb's fuse just lit (engine/bomb.js's bombFused event — an enemy came within
+// range, or the player hit "Detonate Now"): a fast, urgent pulsing warning ring at ground
+// zero for exactly as long as the fuse itself burns (`durationMs`, straight from the sim's
+// BOMB_FUSE_DELAY so it can never drift out of sync with when the real blast actually
+// lands), so the countdown reads as a ticking hazard rather than a silent, invisible timer.
+export function addFuseWarning(x, y, durationMs) {
+  fuseWarnings.push({ x, y, born: performance.now(), life: durationMs });
 }
 
 // A celebratory burst show for Odyssey progress milestones (engine/galaxy.js). Screen-space,
@@ -99,11 +110,13 @@ export function activeEffects() {
   deaths = deaths.filter(d => now - d.born < DEATH_LIFETIME_MS);
   pings = pings.filter(p => now - p.born < PING_LIFETIME_MS);
   explosions = explosions.filter(e => now - e.born < EXPLOSION_LIFETIME_MS);
+  fuseWarnings = fuseWarnings.filter(f => now - f.born < f.life);
   return {
     tracers: tracers.map(t => ({ ...t, age: (now - t.born) / TRACER_LIFETIME_MS })),
     deaths: deaths.map(d => ({ ...d, age: (now - d.born) / DEATH_LIFETIME_MS })),
     pings: pings.map(p => ({ ...p, age: (now - p.born) / PING_LIFETIME_MS })),
     explosions: explosions.map(e => ({ ...e, age: (now - e.born) / EXPLOSION_LIFETIME_MS })),
+    fuseWarnings: fuseWarnings.map(f => ({ ...f, age: (now - f.born) / f.life })),
   };
 }
 
@@ -115,4 +128,5 @@ export function resetEffects() {
   pings = [];
   fireworks = [];
   explosions = [];
+  fuseWarnings = [];
 }

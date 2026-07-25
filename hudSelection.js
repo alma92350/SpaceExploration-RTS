@@ -26,7 +26,7 @@ import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
-import { detonateBomb, BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE } from "./engine/bomb.js";
+import { lightFuse, BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE, BOMB_FUSE_DELAY } from "./engine/bomb.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
@@ -198,10 +198,11 @@ export function renderSelectionPanel() {
         const all = jumpManifestAll(state);
         return `${spaceportTier(sp)}:${m.used}:${m.leftBehind}:${m.staged}:${all.used}:${all.leftBehind}`;
       })()
-    // Rebuild the Helium Bomb panel when its armed state flips.
+    // Rebuild the Helium Bomb panel when its armed state flips, or its fuse lights/is cut —
+    // the note text and Disarm/Detonate buttons all depend on both.
     + "|" + (() => {
         const b = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "bomb");
-        return b ? !!b.armed : "";
+        return b ? `${!!b.armed}:${b.fuseUntil != null}` : "";
       })()
     // Rebuild the freighter cargo panel when its hold or the loadable stockpile changes, so the
     // Load/Unload buttons and the used/cap readout stay live as goods move in and out of the hold.
@@ -730,7 +731,7 @@ function rebuildSelectionPanel(sel) {
     const bombLocked = !prereqsMet(state, "player", bombDef);
     panelEl.appendChild(prodButton(`Produce ${bombDef.name} (${costText(bombDef.cost)})`,
       () => queueProduction(state, stardock.id, "heliumbomb"),
-      { cost: bombDef.cost, tip: `${unitTip(bombDef)} · ${BOMB_BLAST_RADIUS}-radius blast when armed and triggered — damage falls off with distance from ground zero`,
+      { cost: bombDef.cost, tip: `${unitTip(bombDef)} · ${BOMB_BLAST_RADIUS}-radius blast, ${BOMB_FUSE_DELAY}s fuse once triggered — damage falls off with distance from ground zero`,
         locked: bombLocked, lockTip: bombLocked ? lockTipFor(bombDef) : null, icon: { kind: "unit", type: "heliumbomb" } }));
     if (stardock.queue.length) renderQueueRows(stardock);
   }
@@ -1047,25 +1048,36 @@ function rebuildSelectionPanel(sel) {
 
   // Helium Bomb: an Arm/Disarm toggle (same direct-mutation pattern as the Mender's
   // auto-repair above) plus a manual trigger, once armed. UNARMED it's inert and safe to
-  // move anywhere; ARMED it detonates on the first hit it takes, the instant a live enemy
-  // comes within range, or the moment "Detonate Now" is clicked — see engine/bomb.js, the
-  // one place the blast itself happens, so all three can never disagree about the result.
+  // move anywhere; ARMED it detonates instantly on the first hit it takes, but proximity
+  // and "Detonate Now" instead light a BOMB_FUSE_DELAY-second fuse (engine/bomb.js's
+  // lightFuse) — the actual blast (detonateBomb) follows once that timer comes due, not
+  // on the spot. Disarming while fused cuts it — the whole point of "reversible."
   const bomb = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "bomb");
   if (bomb) {
     const armed = !!bomb.armed;
+    const fused = armed && bomb.fuseUntil != null;
     const note = document.createElement("div");
-    note.className = "sel-note " + (armed ? "bad" : "good");
-    note.textContent = armed
-      ? `⚠ ARMED — blasts every unit and building (any owner, including yours) within ${BOMB_BLAST_RADIUS} — a power station's on-grid reach. Anything within ${Math.round(BOMB_CORE_RADIUS)} of ground zero is destroyed outright; damage tapers off with distance beyond that. Detonates on the next hit it takes, if an enemy comes within ${BOMB_DETECT_RANGE}, or on your command.`
-      : `Unarmed — safe to move anywhere. Once armed: ${BOMB_BLAST_RADIUS}-radius blast, any owner — a guaranteed kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that.`;
+    note.className = "sel-note " + (fused || armed ? "bad" : "good");
+    note.textContent = fused
+      ? `🔥 FUSE LIT — detonating in ~${BOMB_FUSE_DELAY}s. Disarm now to cut the fuse.`
+      : armed
+        ? `⚠ ARMED — a live enemy within ${Math.round(BOMB_DETECT_RANGE)} of it (point-blank) lights a ${BOMB_FUSE_DELAY}s fuse, and so does your command. The blast that follows reaches ${BOMB_BLAST_RADIUS} — any owner, including yours — an outright kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that. A direct hit still sets it off instantly, no fuse.`
+        : `Unarmed — safe to move anywhere. Once armed: ${BOMB_BLAST_RADIUS}-radius blast, any owner — a guaranteed kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that.`;
     panelEl.appendChild(note);
     panelEl.appendChild(makeButton(armed ? "◯ Disarm" : "☢ Arm the Bomb",
-      () => { const v = !armed; for (const e of sel) if (e.kind === "unit" && UNITS[e.type].role === "bomb") e.armed = v; },
-      { tip: armed ? "Stand down — safe again until re-armed"
-                   : "Arm it: from now on it detonates on a hit, enemy presence, or your command" }));
-    if (armed) {
-      panelEl.appendChild(makeButton("💥 Detonate Now", () => detonateBomb(state, bomb),
-        { tip: "Trigger it right now, on the spot" }));
+      () => {
+        const v = !armed;
+        for (const e of sel) if (e.kind === "unit" && UNITS[e.type].role === "bomb") {
+          e.armed = v;
+          if (!v) e.fuseUntil = null;   // standing down cuts a lit fuse too
+        }
+      },
+      { tip: armed ? (fused ? "Stand down — cuts the fuse, cancelling the detonation"
+                            : "Stand down — safe again until re-armed")
+                   : "Arm it: from now on a hit detonates it instantly; proximity or your command lights a fuse" }));
+    if (armed && !fused) {
+      panelEl.appendChild(makeButton("💥 Detonate Now", () => lightFuse(state, bomb),
+        { tip: `Light the fuse — detonates in ${BOMB_FUSE_DELAY}s` }));
     }
   }
 

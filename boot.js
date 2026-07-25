@@ -21,7 +21,7 @@ import { drawFrame, resetFacing, snapshotPositions } from "./render.js";
 import { drawMinimap } from "./minimap.js";
 import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
-import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, resetEffects } from "./effects.js";
+import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, addFuseWarning, resetEffects } from "./effects.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
@@ -451,6 +451,14 @@ function processFrameEvents() {
       case "entityKilled":
         sound.playEntityKilled(pan);
         addDeathFlash(ev.x, ev.y);
+        break;
+      // A Helium Bomb's fuse just lit (engine/bomb.js) — proximity or the player's own
+      // "Detonate Now" command. The real blast (bombDetonated below) doesn't land for
+      // another ev.delay sim-seconds; this is the warning that it's now inevitable.
+      case "bombFused":
+        sound.playFuseLit(pan);
+        addFuseWarning(ev.x, ev.y, ev.delay * 1000);
+        if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
       // The Helium Bomb's detonation (engine/bomb.js) — one event for the blast itself,
       // alongside the individual entityKilled events for everything the falloff-damaged

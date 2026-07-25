@@ -119,6 +119,17 @@ export function playExplosion(pan = 0) {
   throttled("explosion", 500, () => tone({ freq: 55, duration: 0.6, type: "sawtooth", gain: 0.2, sweep: -35, jitter: 0.02, pan }));
 }
 
+// A Helium Bomb's fuse just lit (engine/bomb.js's bombFused event, proximity or "Detonate
+// Now"): three rising, urgent square-wave beeps — a distinct countdown cue, deliberately
+// different from playUnderAttack's flat two-blip alarm, so a lit fuse reads unmistakably as
+// "this is about to explode" rather than "something's merely under attack."
+export function playFuseLit(pan = 0) {
+  throttled("fuseLit", 1000, () => {
+    [440, 550, 660].forEach((freq, i) =>
+      tone({ freq, duration: 0.1, type: "square", gain: 0.14, sweep: 30, pan, when: i * 0.13 }));
+  });
+}
+
 export function playBuildingComplete(pan = 0) {
   throttled("building", 200, () => tone({ freq: 400, duration: 0.18, type: "sine", gain: 0.13, sweep: 260, pan }));
 }
