@@ -4,13 +4,25 @@
    landingZone falls back to a player-chosen point in exactly that case — see
    its header comment). With no beacon to home in on, the player picks an
    approximate touchdown spot themselves, blind: the canvas here draws NO
-   terrain, fog, nodes or entities — genuinely nothing but a faint reference
-   grid — because a world you've never set foot on (the overwhelmingly common
-   case this fires for) really is a total unknown. The pick itself is
-   necessarily coarse (a minimap click, not a coordinate field), and
-   engine/galaxy.js's snapLandingPoint further snaps it onto a fixed grid —
-   so the dashed ring drawn around the marker previews that same imprecision
-   rather than promising a precision the landing won't actually have.
+   terrain, fog, enemy units/buildings or resource nodes — genuinely nothing
+   but a faint reference grid — because a world you've never set foot on (the
+   overwhelmingly common case this fires for) really is a total unknown. The
+   pick itself is necessarily coarse (a minimap click, not a coordinate
+   field), and engine/galaxy.js's snapLandingPoint further snaps it onto a
+   fixed grid — so the dashed ring drawn around the marker previews that same
+   imprecision rather than promising a precision the landing won't actually
+   have.
+
+   This picker isn't ONLY reached for total unknowns, though: `needsPick`
+   (boot.js's initiateJump) fires whenever no COMPLETED player Spaceport
+   stands here — which also covers a colony you already hold whose pad is
+   still under construction, or was lost. On worlds like that the player's
+   own buildings and units are already known intel (never fogged to their
+   owner — same rule the main minimap.js follows), so the chart marks them:
+   a bigger circle for a Spaceport (built or not — it's still the landmark
+   you're aiming relative to), small squares for other buildings, and dots
+   for units. A genuinely unvisited world owns none of these, so it stays as
+   blind as before with no special-casing needed.
 
    A leaf UI module: no import of boot.js (or anything else that imports
    this file), so it stays free of the pause/resume and jump-execution
@@ -35,6 +47,10 @@ const PICKER_MAX_W = 480;
 export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
   const map = dest.map;
   const mmW = PICKER_MAX_W, mmH = Math.round(map.height * (PICKER_MAX_W / map.width));
+  // Whether the player already has a footprint here (see the header comment) — drives both the
+  // marked-up chart below and this copy, which otherwise oversells the pick as totally blind.
+  const hasFootprint = [...dest.buildings.values()].some(b => b.owner === "player")
+    || [...dest.units.values()].some(u => u.owner === "player");
 
   const overlay = document.createElement("div");
   overlay.className = "landing-pick-confirm";
@@ -50,7 +66,9 @@ export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
   card.setAttribute("aria-labelledby", h.id);
 
   const p = document.createElement("p");
-  p.textContent = "No Spaceport beacon here to guide the fleet in. Fog of war is total — pick an approximate site on the chart below; a minimap pick is never exact.";
+  p.textContent = hasFootprint
+    ? "No completed Spaceport here to guide the fleet in. Your own buildings and units are marked on the chart below — pick an approximate site; a minimap pick is never exact."
+    : "No Spaceport beacon here to guide the fleet in. Fog of war is total — pick an approximate site on the chart below; a minimap pick is never exact.";
 
   const canvasWrap = document.createElement("div");
   canvasWrap.className = "landing-pick-canvas-wrap";
@@ -59,7 +77,9 @@ export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
   canvas.width = mmW; canvas.height = mmH;
   canvas.tabIndex = 0;
   canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", "Blind starmap chart — click to mark an approximate landing site");
+  canvas.setAttribute("aria-label", hasFootprint
+    ? "Starmap chart marked with your own buildings and units — click to mark an approximate landing site"
+    : "Blind starmap chart — click to mark an approximate landing site");
   canvasWrap.appendChild(canvas);
 
   const hint = document.createElement("p");
@@ -93,6 +113,26 @@ export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
     for (let gy = 1; gy < 4; gy++) { const y = (mmH / 4) * gy; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(mmW, y); ctx.stroke(); }
     ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
     ctx.strokeRect(0.5, 0.5, mmW - 1, mmH - 1);
+
+    // The player's own footprint on this world, if any — see the header comment. Never
+    // fog-gated (it's the player's own owned intel), and drawn every time regardless of
+    // `picked` so it's visible before the first click, not just after.
+    const sx = mmW / map.width, sy = mmH / map.height;
+    ctx.fillStyle = dest.players?.player?.color || "#4fd1ff";
+    for (const b of dest.buildings.values()) {
+      if (b.owner !== "player") continue;
+      const bx = b.x * sx, by = b.y * sy;
+      if (b.type === "spaceport") {
+        ctx.beginPath(); ctx.arc(bx, by, 7, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillRect(bx - 3, by - 3, 6, 6);
+      }
+    }
+    for (const u of dest.units.values()) {
+      if (u.owner !== "player") continue;
+      ctx.beginPath(); ctx.arc(u.x * sx, u.y * sy, 2, 0, Math.PI * 2); ctx.fill();
+    }
+
     if (!picked) return;
     // The dashed ring previews the picker's built-in imprecision (LANDING_PICK_GRID, the same
     // grid engine/galaxy.js's snapLandingPoint rounds onto) — "you'll land roughly here", not a

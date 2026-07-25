@@ -198,6 +198,11 @@ export function initiateJump(destId) {
   if (!dest) return performJump(destId);   // shouldn't happen (every world exists from turn one) — fall through unchanged
   const needsPick = canJump(activeState(g)) && playerSpaceports(dest).length === 0;
   if (!needsPick) return performJump(destId);
+  // A right-click-drag (or box-select, or an armed attack-move) started on the origin's canvas
+  // just before this modal opens is otherwise still "live" — see input.js's cancelGesture — and
+  // its eventual mouseup, landing anywhere on the picker, would read as a move order on the
+  // current planet instead of a landing pick. Cancel it before the picker can steal that release.
+  if (game.input) game.input.cancelGesture();
   pauseLoop("landing-pick");
   openLandingPicker(dest, planetName(destId), {
     onPick: point => { resumeLoop("landing-pick"); performJump(destId, point); },

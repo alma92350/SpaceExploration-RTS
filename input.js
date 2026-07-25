@@ -127,6 +127,27 @@ export function attachInput(canvas, state, onChange) {
     if (!document.body.classList.contains("touch")) document.body.classList.add("touch");
   }
 
+  // Abandon any gesture in progress without issuing it. mousedown/touchstart arm this
+  // controller's drag state on the CANVAS, but the matching mouseup is a WINDOW listener (so a
+  // drag that ends off-canvas — e.g. at a screen edge while panning — still completes, by
+  // design). That means a right-click-drag (or box-select, or an armed attack-move) begun on the
+  // canvas is still "live" even after a blocking modal opens over it — the eventual mouseup,
+  // wherever it lands, bubbles to window and resolves against the STALE start point on the world
+  // behind the modal. Concretely: right-click-drag toward a Spaceport's Jump button, the picker
+  // opens mid-drag, and releasing over its landing-site chart reads as a move order on the
+  // current planet instead of a landing pick. Callers that open such a modal (boot.js's
+  // initiateJump, starmap.js's openStarmap) must call this first so no gesture is left armed to
+  // resolve later against a canvas the player can no longer see or intend to be clicking on.
+  function cancelGesture() {
+    dragBox = null;
+    rightDragStart = null;
+    buildMode = null;
+    setArmed(false);
+    touchStart = null;
+    pinchPrev = null;
+    gestureActive = false;
+  }
+
   // ---- shared selection / command logic ----
   // Extracted so the mouse and touch paths issue byte-identical orders: a
   // finger-tap runs exactly the same routing as a right-click, a drag-box the
@@ -618,6 +639,10 @@ export function attachInput(canvas, state, onChange) {
       const { vw, vh } = viewport();
       panCamera(camera, state.map, vw, vh, dx, dy, dt);
     },
+    // See cancelGesture above: call this before showing any modal that pauses the loop and
+    // covers the canvas (a landing pick, the starmap), so a drag armed before it opened can't
+    // resolve later against the world hidden behind it.
+    cancelGesture,
     // Removes every listener this call added — without this, starting a
     // new game (map picker -> startGame again) would stack a second,
     // third, ... full set of handlers on the same canvas/window, each
