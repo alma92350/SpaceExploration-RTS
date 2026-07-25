@@ -116,20 +116,23 @@ export function onPowerGrid(state, owner, x, y) {
   return Number.isFinite(d) && d <= POWER_TIERS[POWER_TIERS.length - 2].max;
 }
 
-// Burn one tick of fuel for every Combustion Generator: it draws combust.rate/sec of gas OR biomass
-// (whichever the treasury has more of) and is `powered` only while fed — paused or dry, it grants no
-// Power. Runs at tick start, before anything reads powerCap, so the grid it provides is settled for
-// the tick. Deterministic (fuel-gated); a no-op for any building without a `combust` def.
+// Burn one tick of fuel for every fuel-burning power station (the Combustion Generator: gas or
+// radioactives; the Biomass Reactor: biomass) — it draws combust.rate/sec from its OWN local fuel
+// buffer (`b.input`, whichever accepted fuel it has more of), the SAME finite larder a factory's
+// input larder is, kept fed by a worker SERVICE run (engine/haul.js inputNeedsOf/updateService) —
+// never straight from the treasury. `powered` only while actually fed — paused or dry (nobody's
+// hauled fuel in yet, or the larder ran out), it grants no Power. Runs at tick start, before
+// anything reads powerCap, so the grid it provides is settled for the tick. Deterministic
+// (fuel-gated); a no-op for any building without a `combust` def.
 export function updateCombustors(state, dt) {
   for (const b of state.buildings.values()) {
     const def = BUILDINGS[b.type];
     if (!def?.combust || b.constructing) continue;
-    const res = state.players[b.owner]?.resources;
-    if (b.paused || !res) { b.powered = false; continue; }
+    if (b.paused) { b.powered = false; continue; }
     const need = def.combust.rate * dt;
     let fuel = null, most = 0;
-    for (const f of def.combust.fuels) { const have = res[f] || 0; if (have > most) { most = have; fuel = f; } }
-    if (fuel && (res[fuel] || 0) >= need) { res[fuel] -= need; b.powered = true; b.fuel = fuel; }
+    for (const f of def.combust.fuels) { const have = b.input?.[f] || 0; if (have > most) { most = have; fuel = f; } }
+    if (fuel && (b.input[fuel] || 0) >= need) { b.input[fuel] -= need; b.powered = true; b.fuel = fuel; }
     else b.powered = false;
   }
 }

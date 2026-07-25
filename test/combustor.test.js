@@ -17,34 +17,59 @@ function stub(buildings = [], resources = {}) {
   };
 }
 const combustor = (o = {}) => ({ type: "combustor", ...o });
+const biomassreactor = (o = {}) => ({ type: "biomassreactor", ...o });
 const reactor = (o = {}) => ({ type: "reactor", ...o });
 
-test("a Combustion Generator grants Power only while it's fuelled", () => {
-  const s = stub([combustor()], { gas: 100 });
+test("a Combustion Generator grants Power only while its OWN fuel larder is fed — not the treasury directly", () => {
+  // Fuel now lives in the building's own `input` larder (engine/haul.js — a worker hauls it in,
+  // same as a factory's input), not drawn straight from state.players.resources. A full treasury
+  // with an EMPTY larder still grants nothing.
+  const untouched = stub([combustor()], { gas: 100 });
+  updateCombustors(untouched, 0.1);
+  assert.equal(powerCap(untouched, "player"), 0, "a full treasury doesn't power it — the larder is what matters, and it's empty");
+
+  const s = stub([combustor({ input: { gas: 100 } })], {});
   assert.equal(powerCap(s, "player"), 0, "before a tick it hasn't burned fuel → grants nothing");
   updateCombustors(s, 0.1);
   assert.equal(powerCap(s, "player"), BUILDINGS.combustor.energyGrants, "fuelled → grants its Power");
   const gen = [...s.buildings.values()][0];
-  assert.ok(gen.powered && s.players.player.resources.gas < 100, "…having burned some gas to do it");
+  assert.ok(gen.powered && gen.input.gas < 100, "…having burned some gas from its OWN larder to do it");
 });
 
 test("out of fuel (or paused), a Generator grants no Power", () => {
-  const dry = stub([combustor()], {});                 // no gas, no biomass
+  const dry = stub([combustor()], {});                 // empty larder — no gas, no radioactives
   updateCombustors(dry, 0.1);
   assert.equal(powerCap(dry, "player"), 0, "no fuel → dead");
 
-  const paused = stub([combustor({ paused: true })], { biomass: 100 });
+  const paused = stub([combustor({ paused: true, input: { radioactives: 100 } })], {});
   updateCombustors(paused, 0.1);
   assert.equal(powerCap(paused, "player"), 0, "paused → dead, and no fuel burned");
-  assert.equal(paused.players.player.resources.biomass, 100, "…the stockpile is untouched");
+  assert.equal([...paused.buildings.values()][0].input.radioactives, 100, "…the larder is untouched");
 });
 
-test("it burns gas OR biomass — whichever the stockpile has more of", () => {
-  const s = stub([combustor()], { biomass: 50 });      // only biomass on hand
+test("it burns gas OR radioactives — whichever its larder has more of", () => {
+  const s = stub([combustor({ input: { radioactives: 50 } })], {});      // only radioactives on hand
   updateCombustors(s, 0.1);
   const gen = [...s.buildings.values()][0];
-  assert.equal(gen.fuel, "biomass", "falls back to biomass when there's no gas");
-  assert.ok(s.players.player.resources.biomass < 50, "…and consumes it");
+  assert.equal(gen.fuel, "radioactives", "falls back to radioactives when there's no gas");
+  assert.ok(gen.input.radioactives < 50, "…and consumes it");
+});
+
+test("the Biomass Reactor is the Combustion Generator's sibling — same deal, but biomass-only", () => {
+  assert.deepEqual(BUILDINGS.biomassreactor.combust.fuels, ["biomass"]);
+  assert.equal(BUILDINGS.biomassreactor.energyGrants, BUILDINGS.combustor.energyGrants);
+  assert.equal(BUILDINGS.biomassreactor.powerRange, BUILDINGS.combustor.powerRange);
+
+  const dry = stub([biomassreactor()], { biomass: 100 });   // a full treasury still doesn't power it
+  updateCombustors(dry, 0.1);
+  assert.equal(powerCap(dry, "player"), 0, "empty larder → dead, regardless of the treasury");
+
+  const s = stub([biomassreactor({ input: { biomass: 40 } })], {});
+  updateCombustors(s, 0.1);
+  const gen = [...s.buildings.values()][0];
+  assert.equal(powerCap(s, "player"), BUILDINGS.biomassreactor.energyGrants, "fuelled from its own larder → grants its Power");
+  assert.equal(gen.fuel, "biomass");
+  assert.ok(gen.input.biomass < 40, "…having burned biomass from its larder");
 });
 
 test("a Generator's grid is SMALLER than a Reactor's (its powerRange shrinks the tiers)", () => {
@@ -70,22 +95,24 @@ test("the Generator is Odyssey-only and its fuel state is deterministic + save-c
   const run = () => {
     const s = createGameState({ planetId: "ferros", endless: true });
     const gen = makeBuilding("combustor", "player", 600, 500);
+    gen.input = { gas: 100 };
     s.buildings.set(gen.id, gen);
-    s.players.player.resources.gas = 100;
     for (let i = 0; i < 50; i++) tick(s, 0.1);
-    return s.players.player.resources.gas;
+    return gen.input.gas;
   };
   assert.equal(run(), run(), "same seed → identical fuel burn");
 
-  // `powered`/`fuel` are transient — they must not ride along in a save.
+  // `powered`/`fuel` are transient — they must not ride along in a save. `input` (the real fuel
+  // larder, same field a factory's input is) is NOT transient — it must survive the round-trip.
   const s = createGameState({ planetId: "ferros", endless: true });
   const gen = makeBuilding("combustor", "player", 600, 500);
+  gen.input = { gas: 100 };
   s.buildings.set(gen.id, gen);
-  s.players.player.resources.gas = 100;
   tick(s, 0.1);
   const saved = serializeGame(s).buildings.find(b => b.type === "combustor");
   assert.equal(saved.powered, undefined, "the transient power flag is stripped from the save");
   assert.equal(saved.fuel, undefined, "…and so is the transient fuel tag");
+  assert.ok(saved.input.gas > 0, "…but the real fuel larder survives");
   assert.ok(deserializeGame(serializeGame(s)), "and the save round-trips");
 });
 

@@ -242,10 +242,15 @@ export function renderSelectionPanel() {
           && storeCapOf(e.type) > 0 && !BUILDINGS[e.type].recipe && !BUILDINGS[e.type].isCommandCenter);
         return d ? Math.round((storeTotal(d) / (storeCapOf(d.type) || 1)) * 10) : "";
       })()
-    // Rebuild a selected Combustion Generator's status when its fuel/power state flips.
+    // Rebuild a selected fuel-burning power station's (Combustion Generator / Biomass Reactor)
+    // status when its power state flips, OR its fuel larder level changes enough to matter — a
+    // worker topping it up should surface live, same quantized-buffer idiom as the factory Larder
+    // signature elsewhere (rebuild on a change of ~4 units, not literally every drop delivered).
     + "|" + (() => {
-        const gen = sel.find(e => e.kind === "building" && e.type === "combustor" && !e.constructing);
-        return gen ? `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}` : "";
+        const gen = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.combust && !e.constructing);
+        if (!gen) return "";
+        const fuels = BUILDINGS[gen.type].combust.fuels.map(f => Math.round((gen.input?.[f] || 0) / 4)).join(",");
+        return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}`;
       })()
     // Rebuild a selected Reactor's status when its Pause/Resume toggle flips.
     + "|" + (() => {
@@ -961,21 +966,31 @@ function rebuildSelectionPanel(sel) {
                              : "Take it off the grid until resumed — e.g. to switch over to a Combustion Generator" }));
   }
 
-  // Combustion Generator (Odyssey): cheap Power that burns gas/biomass over a small grid. Say how
-  // much it grants, whether it's fuelled right now, and let the player pause it to stop the fuel bill.
-  const gen = sel.find(e => e.kind === "building" && e.type === "combustor" && !e.constructing);
+  // A fuel-burning power station (Odyssey) — the Combustion Generator (gas/radioactives) or the
+  // Biomass Reactor (biomass) — cheap Power over a small grid, but it burns its OWN local fuel
+  // larder, kept fed by a worker SERVICE run (engine/haul.js), not drawn straight from the
+  // treasury: say how much it grants, how full each accepted fuel's slice of the larder is,
+  // whether it's actually fed right now, and let the player pause it to stop the fuel bill.
+  const gen = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.combust && !e.constructing);
   if (gen) {
-    const def = BUILDINGS.combustor;
+    const def = BUILDINGS[gen.type];
+    const fuelCap = inputCapOf(gen.type);
+    const larder = def.combust.fuels.map(f => `${Math.floor(gen.input?.[f] || 0)}/${Math.floor(fuelCap)}${COM[f]?.ico || ""}`).join(" ");
     const row = document.createElement("div");
     const lit = !gen.paused && gen.powered;
     row.className = "sel-note " + (gen.paused ? "" : lit ? "good" : "bad");
     row.textContent = gen.paused ? `Paused — grants no Power (⚡${def.energyGrants} when running)`
       : lit ? `Grants ⚡${def.energyGrants} Power · burning ${COM[gen.fuel]?.name || gen.fuel}`
-            : `Stalled — out of fuel (needs ${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")})`;
+            : `Stalled — larder empty (needs ${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} hauled in)`;
     panelEl.appendChild(row);
+    const larderRow = document.createElement("div");
+    larderRow.className = "sel-note";
+    larderRow.textContent = `Larder ${larder} — carried in by workers`;
+    panelEl.appendChild(larderRow);
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = `Cheap Power on a tight grid — half a Reactor's reach. Burns ${def.combust.rate}/s of gas or biomass while running; keep the stockpile fed or pause it.`;
+    note.textContent = `Cheap Power on a tight grid — half a Reactor's reach. Burns ${def.combust.rate}/s of `
+      + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's, or pause it.`;
     panelEl.appendChild(note);
     panelEl.appendChild(makeButton(gen.paused ? "▶ Resume generator" : "⏸ Pause generator",
       () => { gen.paused = !gen.paused; },
@@ -1206,14 +1221,14 @@ function rebuildSelectionPanel(sel) {
       // tier would bury the menu), mirroring how the Barracks hides units you can't yet
       // field.
       const GROUPS = [
-        ["Economy", ["reactor", "combustor", "smelter", "datacenter", "assembler", "chipfab",
+        ["Economy", ["reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
                      "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
         ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
         ["Endgame", ["antimatter_gate"]],
         ["Travel", ["spaceport"]],
       ];
       const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
-                                  "habitat", "reactor", "combustor", "smelter", "datacenter", "spaceport"]);
+                                  "habitat", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "spaceport"]);
       for (const [title, types] of GROUPS) {
         const shown = types.filter(t => alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t]));
         if (!shown.length) continue;

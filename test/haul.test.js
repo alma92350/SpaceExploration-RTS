@@ -293,3 +293,79 @@ test("assignService is owner-scoped and skips a well-stocked, cleared factory", 
   assignService(s, w);
   assert.equal(w.order, null, "a fed, cleared factory pulls no worker");
 });
+
+// ---- fuel-burning power stations: a worker SERVICE run refills the larder, same as a factory --
+
+// A player Combustion Generator (or Biomass Reactor) planted next to the CC, empty larder by default.
+function plantGenerator(s, cc, type = "combustor") {
+  const gen = makeBuilding(type, "player", cc.x + 45, cc.y);
+  s.buildings.set(gen.id, gen);
+  return gen;
+}
+
+test("a service worker carries fuel from the treasury into a Combustion Generator's own larder", () => {
+  const { s, cc, workers } = base(1);
+  const gen = plantGenerator(s, cc);
+  s.players.player.resources.gas = 100;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: gen.id, phase: "plan" };
+
+  for (let i = 0; i < 4000 && inputTotal(gen) <= 0; i++) updateService(s, w, 0.05);
+
+  assert.ok(inputTotal(gen) > 0, "the Generator's larder was filled");
+  assert.ok((s.players.player.resources.gas || 0) < 100, "…drawn from the treasury");
+});
+
+test("an idle worker auto-refuels an empty Combustion Generator, and it powers on entirely on its own", () => {
+  const { s, cc } = base(2);
+  const gen = plantGenerator(s, cc);
+  s.players.player.resources.gas = 200;
+  assert.equal(gen.powered, undefined, "starts unfed");
+
+  for (let i = 0; i < 800; i++) tick(s, 0.1);
+
+  assert.ok(inputTotal(gen) > 0, "a worker hauled gas into its larder on its own — no manual assignment");
+  assert.equal(gen.powered, true, "…and it's now actually running");
+});
+
+test("an idle worker auto-refuels a Biomass Reactor the same way, with biomass", () => {
+  const { s, cc } = base(3);
+  const gen = plantGenerator(s, cc, "biomassreactor");
+  s.players.player.resources.biomass = 200;
+
+  for (let i = 0; i < 800; i++) tick(s, 0.1);
+
+  assert.ok((gen.input?.biomass || 0) > 0, "a worker hauled biomass into its larder on its own");
+  assert.equal(gen.powered, true);
+});
+
+test("countLogistics resets a power station's `servers` tally each tick, same as a factory's — so a SECOND refuel run isn't permanently blocked", () => {
+  // Regression: countLogistics used to only reset `servers` for a recipe-having building, never
+  // for a fuel-burning power station — its tally could only ever climb, hard-capping out at
+  // MAX_SERVERS after the very first worker and locking out every worker after, forever.
+  const { s, cc, workers } = base(4);
+  const gen = plantGenerator(s, cc);
+  s.players.player.resources.gas = 500;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+
+  for (let cycle = 0; cycle < 3; cycle++) {
+    countLogistics(s);
+    w.order = null;
+    assignService(s, w);
+    assert.equal(w.order?.type, "service", `cycle ${cycle}: still assignable — servers wasn't left stuck maxed-out`);
+    for (let i = 0; i < 3000 && w.order; i++) { countLogistics(s); updateService(s, w, 0.05); }
+  }
+});
+
+test("a Combustion Generator's fuel larder is deterministic: two same-seed runs end up identically fuelled", () => {
+  const run = () => {
+    const { s, cc } = base(5);
+    const gen = plantGenerator(s, cc);
+    s.players.player.resources.gas = 150;
+    for (let i = 0; i < 600; i++) tick(s, 0.1);
+    return { gas: gen.input?.gas || 0, powered: !!gen.powered };
+  };
+  assert.deepEqual(run(), run());
+});
