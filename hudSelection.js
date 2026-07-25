@@ -869,12 +869,16 @@ function rebuildSelectionPanel(sel) {
 
     // Local logistics buffers (engine/haul.js): the input larder workers fill and the output
     // buffer workers drain. Makes visible why a factory is fed/starved and clear/backed-up.
+    // Each input commodity gets its OWN slice of the larder (entities.js inputCapOf — an
+    // oversupplied one can never crowd out room for another the recipe still needs), so the
+    // breakdown shows each commodity against ITS OWN cap rather than one misleading combined total.
     const input = factory.input || {};
+    const inCap = inputCapOf(factory.type);
     const inList = Object.keys(recipe.in).filter(c => c !== "energy")
-      .map(c => `${Math.floor(input[c] || 0)}${COM[c]?.ico || ""}`).join(" ");
+      .map(c => `${Math.floor(input[c] || 0)}/${Math.floor(inCap)}${COM[c]?.ico || ""}`).join(" ");
     const larder = document.createElement("div");
     larder.className = "sel-note";
-    larder.textContent = `Larder ${Math.round(inputTotal(factory))}/${inputCapOf(factory.type)}${inList ? " · " + inList : ""} — carried in by workers`;
+    larder.textContent = `Larder${inList ? " " + inList : ""} — carried in by workers`;
     panelEl.appendChild(larder);
 
     const outBuf = document.createElement("div");

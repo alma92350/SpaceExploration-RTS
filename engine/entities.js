@@ -7,6 +7,8 @@
 
 "use strict";
 
+import { RECIPES } from "../data.js";
+
 export const BUILDINGS = {
   command: {
     id: "command", name: "Command Center", hp: 1000, radius: 26,
@@ -295,7 +297,10 @@ export function isElectrifiable(type) {
 // building with a `recipe` (the factories) otherwise gets the shared default. Everything
 // else has no buffer (cap 0), so these helpers are no-ops for the whole skirmish roster.
 const DEFAULT_FACTORY_STORE = 80;   // a factory's output backlog before it stalls, ~tens of batches
-const DEFAULT_FACTORY_INPUT = 80;   // a factory's input larder before it starves
+const DEFAULT_FACTORY_INPUT = 80;   // a factory's WHOLE input larder before it starves — split evenly
+                                     // per real input commodity below, NOT one pool every commodity races for
+
+const RECIPE_BY_ID = Object.fromEntries(RECIPES.map(r => [r.id, r]));
 
 /** The output-buffer capacity of a building type, or 0 if it has no buffer. */
 export function storeCapOf(type) {
@@ -305,12 +310,29 @@ export function storeCapOf(type) {
   return def.recipe ? DEFAULT_FACTORY_STORE : 0;
 }
 
-/** The input-buffer capacity of a building type (factories only), or 0 if it has none. */
+// The REAL (haulable) input commodities a recipe needs — every key but "energy", which is a
+// live per-tick Power draw (engine/industry.js), never a hauled/stored good. Empty for a
+// building with no recipe (or an unknown recipe id — belt-and-suspenders for stale data).
+function realInputComs(type) {
+  const recipe = RECIPE_BY_ID[BUILDINGS[type]?.recipe];
+  return recipe ? Object.keys(recipe.in).filter(c => c !== "energy") : [];
+}
+
+// The input larder's total capacity is split EVENLY across however many real commodities the
+// recipe needs, so each gets its OWN guaranteed slice — a 2-input recipe (e.g. chipfab: crystals +
+// metals) gets 40 each of an 80 total, a 3-input one (e.g. plasmafab) gets ~26.7 each. Without
+// this a single over-supplied input (workers keep bringing whichever the treasury happens to have
+// plenty of) can fill the WHOLE shared pool on its own, leaving zero room for whichever OTHER
+// input the recipe is actually starved of — the factory then sits stalled forever on a "Starved"
+// input it can never actually receive, since haul.js's inputRoom check (below) always reads 0.
+/** The per-commodity input-buffer capacity of a building type (factories only), or 0 if it has none. */
 export function inputCapOf(type) {
   const def = BUILDINGS[type];
   if (!def) return 0;
-  if (def.inputCap != null) return def.inputCap;
-  return def.recipe ? DEFAULT_FACTORY_INPUT : 0;
+  const total = def.inputCap != null ? def.inputCap : (def.recipe ? DEFAULT_FACTORY_INPUT : 0);
+  if (total <= 0) return 0;
+  const n = realInputComs(type).length;
+  return n > 0 ? total / n : total;
 }
 
 /** Sum a commodity→qty buffer (order-independent → deterministic); 0 for a missing buffer. */
@@ -328,12 +350,14 @@ export function storeRoom(building) {
   return Math.max(0, storeCapOf(building.type) - storeTotal(building));
 }
 
-/** How much is currently sitting in a factory's input buffer (0 if none). */
+/** How much (of every commodity combined) is currently sitting in a factory's input buffer. */
 export function inputTotal(building) { return bufTotal(building.input); }
 
-/** The free room left in a factory's input buffer (clamped ≥ 0). */
-export function inputRoom(building) {
-  return Math.max(0, inputCapOf(building.type) - inputTotal(building));
+/** The free room left for ONE SPECIFIC input commodity (clamped ≥ 0) — each real input commodity
+ * gets its own independent slice of the larder (inputCapOf), so one oversupplied input can never
+ * crowd out room for another the recipe still needs. @param {Building} building @param {string} com */
+export function inputRoom(building, com) {
+  return Math.max(0, inputCapOf(building.type) - (building.input?.[com] || 0));
 }
 
 // ---- Freighter cargo hold (Odyssey freight) ------------------------------------

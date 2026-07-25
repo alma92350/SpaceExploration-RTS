@@ -179,13 +179,18 @@ function loadFrom(store, unit, cargoCap) {
 }
 
 // The input commodity a factory most needs and the treasury can supply: the one with the fewest
-// batches buffered (below the top-up target) that the owner has in stock. Null when it's well-stocked
-// on everything the treasury could bring. Deterministic (recipe key order is stable).
+// batches buffered (below the top-up target) that the owner has in stock AND that still has room
+// in its OWN slice of the larder (inputRoom is per-commodity, entities.js — so one over-supplied
+// input can never crowd out another the recipe is actually starved of). Null when it's well-stocked
+// on everything the treasury could bring, or everything it still lacks has no room left (a stale
+// state that shouldn't arise given the per-commodity split, but a safe no-op if it ever did).
+// Deterministic (recipe key order is stable).
 function neededInput(building, recipe, res) {
   let want = null, fewest = Infinity;
   for (const com in recipe.in) {
     if (com === "energy") continue;
     if ((res[com] || 0) <= 0) continue;
+    if (inputRoom(building, com) <= 0) continue;
     const batches = (building.input?.[com] || 0) / recipe.in[com];
     if (batches >= SUPPLY_BATCHES) continue;
     if (batches < fewest) { fewest = batches; want = com; }
@@ -239,7 +244,7 @@ export function assignService(state, unit) {
     if (b.owner !== unit.owner || b.constructing) continue;
     const recipe = recipeOf(b);
     if (!recipe || (b.servers || 0) >= MAX_SERVERS) continue;
-    const needsIn = inputRoom(b) > 0 && neededInput(b, recipe, res);
+    const needsIn = neededInput(b, recipe, res);   // already room-checked per-commodity (see neededInput)
     const needsOut = storeTotal(b) >= storeCapOf(b.type) * ASSIGN_FRACTION;
     if (!needsIn && !needsOut) continue;
     const d = Math.hypot(b.x - unit.x, b.y - unit.y);
@@ -368,7 +373,7 @@ export function updateService(state, unit, dt) {
 
   if (order.phase === "plan") {
     if (unit.cargo && unit.cargo.qty > 0) {                                    // finish whatever's aboard first
-      const isInput = recipe && recipe.in[unit.cargo.com] && inputRoom(b) > 0;
+      const isInput = recipe && recipe.in[unit.cargo.com] && inputRoom(b, unit.cargo.com) > 0;
       order.phase = isInput ? "toBuilding" : "toReturn";
       return;
     }
@@ -384,7 +389,7 @@ export function updateService(state, unit, dt) {
     const cc = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
     if (!cc) { unit.order = null; return; }
     if (reached(unit, cc)) {
-      const want = Math.min(tripCapacity(def), res[order.com] || 0, inputRoom(b));
+      const want = Math.min(tripCapacity(def), res[order.com] || 0, inputRoom(b, order.com));
       if (want > 0) { res[order.com] -= want; unit.cargo.com = order.com; unit.cargo.qty = want; order.phase = "toBuilding"; }
       else order.phase = "plan";                                              // treasury dried up → re-plan
     } else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
@@ -394,7 +399,7 @@ export function updateService(state, unit, dt) {
   if (order.phase === "toBuilding") {                                          // deliver input, grab output for the return
     if (reached(unit, b)) {
       if (unit.cargo && unit.cargo.qty > 0 && recipe && recipe.in[unit.cargo.com]) {
-        const give = Math.min(unit.cargo.qty, inputRoom(b));
+        const give = Math.min(unit.cargo.qty, inputRoom(b, unit.cargo.com));
         if (give > 0) { b.input = b.input || {}; b.input[unit.cargo.com] = (b.input[unit.cargo.com] || 0) + give; unit.cargo.qty -= give; }
         if (unit.cargo.qty <= 1e-9) { unit.cargo.qty = 0; unit.cargo.com = null; }
       }

@@ -197,11 +197,12 @@ function cleanEntity(e, def, map) {
   if (e.facing !== undefined) { const f = num(e.facing, NaN); if (Number.isFinite(f)) e.facing = f; else delete e.facing; }
   // A producer's output buffer (building.store) and a factory's input buffer (building.input) are
   // untrusted save data — a hand-edited file could smuggle in a bogus commodity, a negative/NaN qty,
-  // or an over-capacity buffer. Keep only real commodities with a positive qty and clamp each buffer's
-  // total to its capacity (storeCapOf / inputCapOf apply the factory defaults); a building with no such
-  // buffer can't hold one, so strip any a tampered save bolted on.
+  // or an over-capacity buffer. Keep only real commodities with a positive qty, clamped to capacity —
+  // `store` as one shared pooled total (storeCapOf), `input` per-commodity independently (inputCapOf
+  // is now a per-commodity slice, coerceInputBuffer clamps each on its own, see its doc comment); a
+  // building with no such buffer can't hold one, so strip any a tampered save bolted on.
   e.store = coerceBuffer(e.store, storeCapOf(e.type));
-  e.input = coerceBuffer(e.input, inputCapOf(e.type));
+  e.input = coerceInputBuffer(e.input, inputCapOf(e.type));
   if (storeCapOf(e.type) <= 0) delete e.store;
   if (inputCapOf(e.type) <= 0) delete e.input;
   // A building's production queue is untrusted: a bogus/unknown unitType would deref undefined and
@@ -238,7 +239,8 @@ function cleanEntity(e, def, map) {
 }
 
 // Sanitize an untrusted commodity→qty buffer: real commodities only, positive finite qty,
-// total clamped to `cap`. Returns {} for a zero/undefined cap.
+// TOTAL (summed across every commodity) clamped to `cap` — a genuinely shared pool, which is
+// what a producer's output buffer (building.store) actually is. Returns {} for a zero/undefined cap.
 function coerceBuffer(buf, cap) {
   const clean = {};
   if (cap <= 0 || !buf || typeof buf !== "object") return clean;
@@ -247,6 +249,21 @@ function coerceBuffer(buf, cap) {
     if (!COM[com] || used >= cap) continue;
     const q = num(buf[com], 0);
     if (q > 0) { const take = Math.min(q, cap - used); clean[com] = take; used += take; }
+  }
+  return clean;
+}
+
+// Same sanitizing as coerceBuffer, but for a factory's INPUT larder (building.input), where `cap`
+// (entities.js inputCapOf) is now a PER-COMMODITY slice, not one shared pool (see its own doc
+// comment: an oversupplied input must never crowd out room for another the recipe still needs) —
+// so each commodity is clamped to `cap` INDEPENDENTLY, not against a shared running total.
+function coerceInputBuffer(buf, cap) {
+  const clean = {};
+  if (cap <= 0 || !buf || typeof buf !== "object") return clean;
+  for (const com of Object.keys(buf)) {
+    if (!COM[com]) continue;
+    const q = num(buf[com], 0);
+    if (q > 0) clean[com] = Math.min(q, cap);
   }
   return clean;
 }
