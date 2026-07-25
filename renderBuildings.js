@@ -13,26 +13,54 @@ import { COM, RECIPES } from "./data.js";
 import { BUILDINGS, storeCapOf, storeTotal } from "./engine/entities.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
-import { POWER_TIERS } from "./engine/industry.js";
+import { POWER_TIERS, powerThrottle } from "./engine/industry.js";
+import { hashStr } from "./engine/rng.js";
 import { DETAIL, facing, shade, hexA, polygonPoints, pathPoints, inView, drawHealthBar } from "./renderShared.js";
 import { drawEnemyPip } from "./renderUnits.js";
 
 /* ---------- buildings ---------- */
 
 // The shape dispatch, factored out of drawBuildings so the HUD's button icons
-// (spriteIcon) render the exact same silhouette the map does. Only the turret reads
-// `state` (it aims at its live target); an icon passes a stub state with empty Maps.
+// (spriteIcon) render the exact same silhouette the map does. The turret (aims at its live
+// target) and every ELECTRIFIABLE building (Command Center / Barracks / Habitat / Star Dock —
+// their lit-window cue below) read `state`; an icon passes a stub state with empty Maps and no
+// `players`/`time`, which is safe here because electrifiedLight bails out before touching either
+// unless the building it's drawing is actually electrified — and an icon's stub building never is.
 export function drawBuildingShape(ctx, state, b, color) {
-  if (b.type === "command") drawCommandCenter(ctx, b, color);
-  else if (b.type === "barracks") drawBarracks(ctx, b, color);
+  if (b.type === "command") drawCommandCenter(ctx, state, b, color);
+  else if (b.type === "barracks") drawBarracks(ctx, state, b, color);
   else if (b.type === "refinery") drawRefinery(ctx, b, color);
   else if (b.type === "foundry") drawFoundry(ctx, b, color);
   else if (b.type === "arsenal") drawArsenal(ctx, b, color);
   else if (b.type === "turret") drawTurret(ctx, state, b, color);
-  else if (b.type === "habitat") drawHabitat(ctx, b, color);
+  else if (b.type === "habitat") drawHabitat(ctx, state, b, color);
   else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
-  else if (factoryGlyph(b.type)) drawFactory(ctx, b, color);   // Odyssey factories + reactor/datacenter/etc: stamp a function glyph
+  else if (factoryGlyph(b.type)) drawFactory(ctx, state, b, color);   // Odyssey factories + reactor/datacenter/etc: stamp a function glyph
   else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
+}
+
+// A small lit cue on an ELECTRIFIED building (Odyssey: Command Center / Barracks / Habitat / Star
+// Dock wired into the power grid for +30% — engine/entities.js isElectrifiable, engine/industry.js
+// electrifyBoost). Steady gold while the grid can carry its full load; FLICKERING — the same
+// throttle that scales the boost itself down, so the light is an honest read of "is this actually
+// getting its +30% right now" — whenever it can't, including a dead grid (throttle 0). The flicker
+// is deterministic in state.time (this is presentation, not sim, so that's only for a stable
+// screenshot/replay-scrub, not a determinism requirement) with a per-building phase (hashStr(b.id))
+// so several flickering lights don't blink in lockstep. Draws nothing for a non-electrified
+// building — the pre-existing look (a plain DETAIL-coloured fixture, or nothing at all) is
+// untouched by this.
+function electrifiedLight(ctx, state, b, x, y, r) {
+  if (!b.electrified) return;
+  let on = true;
+  const throttle = powerThrottle(state, b.owner);
+  if (throttle < 0.999) {
+    const t = state.time * 9 + (hashStr(b.id) % 100);
+    on = Math.sin(t) + Math.sin(t * 2.7 + 1.3) * 0.5 > 0.15;   // mostly lit, brief irregular dark beats
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = on ? "#ffd166" : "#3a2f14";   // lit gold, or a dim, currently-unlit fixture
+  ctx.fill();
 }
 
 export function drawBuildings(ctx, state, view) {
@@ -168,7 +196,7 @@ export function drawPowerGrid(ctx, state, view, selSet) {
 // Command Center — the base's biggest, most "important-looking" structure:
 // an octagonal hull, a raised central dome, four corner struts and a
 // blinking antenna, so it reads as the hub building even before checking HP.
-function drawCommandCenter(ctx, b, color) {
+function drawCommandCenter(ctx, state, b, color) {
   const r = b.radius, cx = b.x, cy = b.y;
 
   pathPoints(ctx, polygonPoints(cx, cy, r, 8, Math.PI / 8));
@@ -197,10 +225,14 @@ function drawCommandCenter(ctx, b, color) {
   ctx.moveTo(cx, cy - r * 0.85);
   ctx.lineTo(cx, cy - r * 1.2);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx, cy - r * 1.2, 2, 0, Math.PI * 2);
-  ctx.fillStyle = DETAIL;
-  ctx.fill();
+  if (b.electrified) {
+    electrifiedLight(ctx, state, b, cx, cy - r * 1.2, 2.2);
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy - r * 1.2, 2, 0, Math.PI * 2);
+    ctx.fillStyle = DETAIL;
+    ctx.fill();
+  }
 
   // The anchored Capital (engine/galaxy.js upgradeToCapital) wears a gold ring, so a
   // fortified, non-jumping Capital reads apart from a normal Command Center at a glance.
@@ -215,7 +247,7 @@ function drawCommandCenter(ctx, b, color) {
 // Barracks — an angular bunker (a "home plate" silhouette with a pointed
 // front) with hangar-door stripes and a radar dish, distinct from the
 // Command Center's rounded dome and the Refinery's cylindrical tanks.
-function drawBarracks(ctx, b, color) {
+function drawBarracks(ctx, state, b, color) {
   const r = b.radius, cx = b.x, cy = b.y, w = r * 1.9, h = r * 1.6;
   pathPoints(ctx, [
     [cx - w / 2, cy - h / 2],
@@ -240,10 +272,14 @@ function drawBarracks(ctx, b, color) {
   ctx.moveTo(cx + w * 0.4, cy - h / 2);
   ctx.lineTo(cx + w * 0.48, cy - h * 0.75);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx + w * 0.48, cy - h * 0.75, 2, 0, Math.PI * 2);
-  ctx.fillStyle = DETAIL;
-  ctx.fill();
+  if (b.electrified) {
+    electrifiedLight(ctx, state, b, cx + w * 0.48, cy - h * 0.75, 2.2);
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx + w * 0.48, cy - h * 0.75, 2, 0, Math.PI * 2);
+    ctx.fillStyle = DETAIL;
+    ctx.fill();
+  }
 }
 
 // Refinery — a low industrial base with two cylindrical storage tanks
@@ -286,7 +322,7 @@ function drawRefinery(ctx, b, color) {
 // Habitat — a small residential dome: a squat foundation slab, a half-dome
 // roof and a row of lit windows, so a supply building reads as "people live
 // here" rather than as another weapons platform.
-function drawHabitat(ctx, b, color) {
+function drawHabitat(ctx, state, b, color) {
   const r = b.radius, cx = b.x, cy = b.y, w = r * 1.8, h = r * 0.9;
   ctx.fillStyle = shade(color, -20);
   ctx.fillRect(cx - w / 2, cy, w, h * 0.7);
@@ -304,12 +340,7 @@ function drawHabitat(ctx, b, color) {
   // Electrified (Odyssey): wired into the power grid for +30% supply capacity
   // (engine/industry.js electrifyBoost, toggled in hudSelection.js) — a small lit dot inside the
   // dome, so a powered Habitat reads at a glance without opening its panel.
-  if (b.electrified) {
-    ctx.beginPath();
-    ctx.arc(cx, cy - w * 0.42 * 0.55, Math.max(1.8, r * 0.16), 0, Math.PI * 2);
-    ctx.fillStyle = "#ffd166";
-    ctx.fill();
-  }
+  electrifiedLight(ctx, state, b, cx, cy - w * 0.42 * 0.55, Math.max(1.8, r * 0.16));
 }
 
 // Foundry — the Tier-2 war-smeltery that unlocks the Lancer and Breacher: an
@@ -402,8 +433,13 @@ function factoryGlyph(type) {
 // in the build menu. Stamp the building's glyph (its product's emoji, or the explicit icon) on a
 // dark disc so each reads at a glance as what it does. Keyed on the building TYPE, so the HUD button
 // icon (spriteIcon renders this same shape) gets the glyph too.
-function drawFactory(ctx, b, color) {
+function drawFactory(ctx, state, b, color) {
   drawGenericBuilding(ctx, b, color);
+  // Electrified (Odyssey): only the Star Dock among everything sharing this silhouette is
+  // ELECTRIFIABLE (engine/entities.js isElectrifiable) — a lit beacon above the hex, same cue as
+  // the Command Center/Barracks/Habitat. electrifiedLight no-ops for every other type here (their
+  // `electrified` flag is never set), so this is safe to call unconditionally.
+  electrifiedLight(ctx, state, b, b.x, b.y - b.radius * 0.85, 2.2);
   const ico = factoryGlyph(b.type);
   if (!ico) return;
   const r = b.radius;
