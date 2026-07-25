@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { recycleFrac, canRecycle, beginRecycle, cancelRecycle, updateBuildingRecycle, updateUnitRecycle, RECYCLE_TECH } from "../engine/recycle.js";
+import { recycleFrac, recycleValue, canRecycle, beginRecycle, cancelRecycle, updateBuildingRecycle, updateUnitRecycle, RECYCLE_TECH } from "../engine/recycle.js";
 import { issueRecycle, issueCancelRecycle, issueStop } from "../engine/commands.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
@@ -85,6 +85,70 @@ test("a Plasma Rig (advanced) refunds 50%; a Barracks (ordinary) refunds 40%", (
 
   assert.ok(near(afterRig - before, BUILDINGS.plasmarig.cost.ore * 0.5), "Plasma Rig: 50%");
   assert.ok(near(afterBarracks - afterRig, BUILDINGS.barracks.cost.ore * 0.4), "Barracks: 40%");
+});
+
+test("recycling a building banks ALL of its current output backlog and input larder, in full — not just the cost-based fraction", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const rig = makeBuilding("plasmarig", "player", 500, 500);
+  rig.store = { ore: 44 };   // a raw backlog sitting uncollected in the rig
+  state.buildings.set(rig.id, rig);
+  const smelter = makeBuilding("smelter", "player", 600, 500);
+  smelter.input = { ore: 12 };     // an input larder mid-fill
+  smelter.store = { metals: 8 };   // and an output backlog too
+  state.buildings.set(smelter.id, smelter);
+  const oreBefore = state.players.player.resources.ore;
+  const metalsBefore = state.players.player.resources.metals || 0;
+
+  issueRecycle([rig, smelter]);
+  updateBuildingRecycle(state, rig, rig.recycling.time);
+  updateBuildingRecycle(state, smelter, smelter.recycling.time);
+
+  const oreGain = (state.players.player.resources.ore || 0) - oreBefore;
+  const metalsGain = (state.players.player.resources.metals || 0) - metalsBefore;
+  // The Smelter has a recipe, so it's an "advanced" building (0.5 frac) like the Plasma Rig, not
+  // "ordinary" (0.4) — see the recycleFrac tests above.
+  assert.ok(near(oreGain, BUILDINGS.plasmarig.cost.ore * 0.5 + 44 + BUILDINGS.smelter.cost.ore * 0.5 + 12, 1e-6),
+    "both buildings' cost-fraction ore AND their full ore inventory (rig backlog + smelter larder) all landed");
+  assert.ok(near(metalsGain, 8, 1e-6), "the smelter's output backlog (a commodity not even in its build cost) came back in full too");
+});
+
+test("recycling a freighter banks its whole freight hold; recycling a worker banks whatever it's carrying — both in full", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const freighter = makeUnit("hauler", "player", 500, 500);
+  freighter.freight = { crystals: 30, radioactives: 15 };
+  state.units.set(freighter.id, freighter);
+  const worker = makeUnit("worker", "player", 600, 500);
+  worker.cargo = { com: "ore", qty: 7 };
+  state.units.set(worker.id, worker);
+  const before = { ...state.players.player.resources };
+
+  issueRecycle([freighter, worker]);
+  updateUnitRecycle(state, freighter, freighter.recycling.time);
+  updateUnitRecycle(state, worker, worker.recycling.time);
+
+  const res = state.players.player.resources;
+  assert.ok(near((res.crystals || 0) - (before.crystals || 0), 30, 1e-6), "the freighter's crystals came back in full");
+  assert.ok(near((res.radioactives || 0) - (before.radioactives || 0), 15, 1e-6), "…and its radioactives too");
+  // Both the Hauler's own cost-fraction refund (a freighter is "advanced": 0.5) AND the Worker's
+  // (ordinary: 0.4) land in ore — both units cost ore — plus the 7 ore the worker was carrying.
+  assert.ok(near((res.ore || 0) - (before.ore || 0), UNITS.hauler.cost.ore * 0.5 + UNITS.worker.cost.ore * 0.4 + 7, 1e-6),
+    "the hauler's + worker's cost refunds (both paid in ore) PLUS the 7 ore the worker was carrying");
+});
+
+test("recycleValue previews exactly what recycling will actually bank — cost fraction plus full current inventory", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const rig = makeBuilding("plasmarig", "player", 500, 500);
+  rig.store = { ore: 20 };
+  state.buildings.set(rig.id, rig);
+
+  const preview = recycleValue(state, rig);
+  assert.ok(near(preview.ore, BUILDINGS.plasmarig.cost.ore * 0.5 + 20, 1e-6));
+
+  const before = state.players.player.resources.ore;
+  issueRecycle([rig]);
+  updateBuildingRecycle(state, rig, rig.recycling.time);
+  assert.ok(near((state.players.player.resources.ore || 0) - before, preview.ore, 1e-6),
+    "the preview matches exactly what actually landed in the treasury");
 });
 
 test("issueRecycle + updateUnitRecycle: a unit refunds its fraction and is removed once its timer completes", () => {
