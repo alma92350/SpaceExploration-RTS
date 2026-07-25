@@ -314,7 +314,10 @@ function serPlanet(state) {
     // fields, and null out a live `follow-leader` order too (it embeds the same leader
     // reference) — a reload simply drops squad membership, the same "recomputed/reset, never
     // persisted" treatment repairTargetId already gets.
-    units: [...state.units.values()].map(({ _gi, repairTargetId, squadLeader, squadFollowers, ...u }) =>
+    // `ferriers` (a freighter's per-tick ferry-worker tally, engine/haul.js countLogistics) is
+    // transient too, same reasoning as `haulers`/`servers` below — strip it here since it lives on
+    // a UNIT, not a building.
+    units: [...state.units.values()].map(({ _gi, repairTargetId, squadLeader, squadFollowers, ferriers, ...u }) =>
       u.order && u.order.type === "follow-leader" ? { ...u, order: null } : u),
     // `haulers`/`servers` (logistics tallies, engine/haul.js), `powered`/`fuel` (Generator fuel
     // state, engine/industry.js), `menderClaims` (auto-repair Mender tally, engine/sim.js) and
