@@ -966,7 +966,7 @@ function rebuildSelectionPanel(sel) {
                              : "Take it off the grid until resumed — e.g. to switch over to a Combustion Generator" }));
   }
 
-  // A fuel-burning power station (Odyssey) — the Combustion Generator (gas/radioactives) or the
+  // A fuel-burning power station (Odyssey) — the Combustion Generator (gas) or the
   // Biomass Reactor (biomass) — cheap Power over a small grid, but it burns its OWN local fuel
   // larder, kept fed by a worker SERVICE run (engine/haul.js), not drawn straight from the
   // treasury: say how much it grants, how full each accepted fuel's slice of the larder is,
