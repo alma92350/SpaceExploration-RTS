@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
-import { powerCap, powerEfficiency, updateCombustors } from "../engine/industry.js";
+import { powerCap, powerEfficiency, onPowerGrid, updateCombustors } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 
 // A tiny stub, like industry.test.js: the power helpers read only buildings + resources.
@@ -87,4 +87,45 @@ test("the Generator is Odyssey-only and its fuel state is deterministic + save-c
   assert.equal(saved.powered, undefined, "the transient power flag is stripped from the save");
   assert.equal(saved.fuel, undefined, "…and so is the transient fuel tag");
   assert.ok(deserializeGame(serializeGame(s)), "and the save round-trips");
+});
+
+// ---- Reactor pause: taking a "free" power source off the grid by hand ----------------------
+// Unlike a Generator, a Reactor has no fuel to run dry on — it grants Power unconditionally once
+// built. `paused` (the HUD's Pause/Resume toggle, same idiom as a factory/Plasma Rig/Generator) is
+// the only way to take one off the grid, e.g. to run purely on Generators (or switch back).
+
+test("a Reactor grants Power until it's paused, then grants none — and resumes cleanly", () => {
+  const s = stub([reactor()]);
+  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "an unpaused Reactor grants its Power");
+
+  const r = [...s.buildings.values()][0];
+  r.paused = true;
+  assert.equal(powerCap(s, "player"), 0, "paused → off the grid, same as a dry Generator");
+
+  r.paused = false;
+  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "resumed → back on the grid");
+});
+
+test("a paused Reactor isn't a grid source at all (no false on-grid reading, matching a dead Generator)", () => {
+  const s = stub([reactor({ x: 0, y: 0, paused: true })]);
+  assert.equal(powerEfficiency(s, "player", 30, 0).name, "linked",
+    "with no ACTIVE source, a spot reads the neutral tier — not 'on-grid' off a paused Reactor");
+  assert.equal(onPowerGrid(s, "player", 30, 0), false);
+});
+
+test("pausing one of two Reactors leaves the other's Power on the grid", () => {
+  const s = stub([reactor({ id: "r1" }), reactor({ id: "r2", paused: true })]);
+  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "only the un-paused one counts");
+});
+
+test("a Reactor's pause is a real, persisted decision — it survives a save/load round-trip", () => {
+  const s = createGameState({ planetId: "ferros", endless: true });
+  const r = makeBuilding("reactor", "player", 600, 500);
+  r.paused = true;
+  s.buildings.set(r.id, r);
+
+  const b = deserializeGame(serializeGame(s));
+  const loaded = [...b.buildings.values()].find(x => x.type === "reactor");
+  assert.equal(loaded.paused, true, "unlike `powered`/`fuel`, a Reactor's pause isn't transient — it's a player choice");
+  assert.equal(powerCap(b, "player"), 0, "…and the loaded game still honours it");
 });

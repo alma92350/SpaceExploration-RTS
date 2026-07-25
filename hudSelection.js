@@ -240,6 +240,11 @@ export function renderSelectionPanel() {
         const gen = sel.find(e => e.kind === "building" && e.type === "combustor" && !e.constructing);
         return gen ? `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}` : "";
       })()
+    // Rebuild a selected Reactor's status when its Pause/Resume toggle flips.
+    + "|" + (() => {
+        const reactor = sel.find(e => e.kind === "building" && e.type === "reactor" && !e.constructing);
+        return reactor ? `${!!reactor.paused}` : "";
+      })()
     // Rebuild the Mender panel when its auto-repair toggle or on-grid power state flips.
     + "|" + (() => {
         const m = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "support");
@@ -884,17 +889,25 @@ function rebuildSelectionPanel(sel) {
   }
 
   // Reactor (Odyssey): grants Power to the grid rather than running a recipe, so
-  // it has no factory panel — say what it feeds and why it matters.
+  // it has no factory panel — say what it feeds and why it matters. Pausable (engine/industry.js
+  // sourceActive) the same way a Combustion Generator is, so a player can take a Reactor off the
+  // grid by hand — e.g. to run purely on Generators — without demolishing it.
   const reactor = sel.find(e => e.kind === "building" && e.type === "reactor" && !e.constructing);
   if (reactor) {
     const row = document.createElement("div");
-    row.className = "sel-note good";
-    row.textContent = `Grants ⚡${BUILDINGS.reactor.energyGrants || 0} Power`;
+    row.className = "sel-note " + (reactor.paused ? "bad" : "good");
+    row.textContent = reactor.paused
+      ? `Paused — off the grid (⚡${BUILDINGS.reactor.energyGrants || 0} when running)`
+      : `Grants ⚡${BUILDINGS.reactor.energyGrants || 0} Power`;
     panelEl.appendChild(row);
     const note = document.createElement("p");
     note.className = "hint";
     note.textContent = "Powers your factories. If total draw outruns Power, every factory throttles — build more Reactors (or research Fusion Containment).";
     panelEl.appendChild(note);
+    panelEl.appendChild(makeButton(reactor.paused ? "▶ Resume reactor" : "⏸ Pause reactor",
+      () => { reactor.paused = !reactor.paused; },
+      { tip: reactor.paused ? "Bring it back online, feeding the grid again"
+                             : "Take it off the grid until resumed — e.g. to switch over to a Combustion Generator" }));
   }
 
   // Combustion Generator (Odyssey): cheap Power that burns gas/biomass over a small grid. Say how

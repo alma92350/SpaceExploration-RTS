@@ -69,9 +69,13 @@ export const POWER_TIERS = [
   { name: "isolated", max: Infinity, mult: 2.3, label: "Isolated" },
 ];
 
-// Whether a power SOURCE is actually feeding the grid right now: a Reactor always is; a
-// fuel-burning Generator only while it's fed (engine/industry.js updateCombustors sets `powered`).
+// Whether a power SOURCE is actually feeding the grid right now: a fuel-burning Generator only
+// while it's fed (engine/industry.js updateCombustors sets `powered`); any source (Reactor
+// included) can also be taken off the grid by hand — the HUD's Pause/Resume toggle, same idiom as
+// pausing a factory or a Plasma Rig — so a player can run purely on Generators (or vice versa)
+// without demolishing the building they're not using right now.
 function sourceActive(building, def) {
+  if (building.paused) return false;
   return def.combust ? !!building.powered : true;
 }
 
