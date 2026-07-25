@@ -22,6 +22,8 @@ import {
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
+import { issueSetAILogistics } from "./engine/commands.js";
+import { FREIGHTER_AI_TECH, aiUpkeepRate } from "./engine/haul.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
@@ -211,6 +213,13 @@ export function renderSelectionPanel() {
         if (!f) return "";
         const res = state.players.player.resources;
         return freightUsed(f) + ":" + JSON.stringify(f.freight) + ":" + loadableComs(state, f).map(c => Math.floor(res[c] || 0)).join(",");
+      })()
+    // Rebuild the freighter AI-logistics toggle when it flips or the treasury's AI Cores count
+    // changes by a whole unit (quantised, like the rig/factory buffers above), so the ON/OFF
+    // label and the burning/stalled note stay live without a per-tick rebuild.
+    + "|" + (() => {
+        const f = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
+        return f ? `${!!f.aiLogistics}:${Math.round(state.players.player.resources.ai || 0)}` : "";
       })()
     // Rebuild a selected Plasma Rig's status as it digs — its progress, last strike (each dig
     // increments digCount), and its power/nuclear situation — without a per-tick rebuild.
@@ -452,6 +461,38 @@ function renderFreight(state, f) {
       if (unloadFreighter(state, f.id, com, f.freight[com] || 0) > 0) renderHUD(); else sound.playProductionBlocked();
     });
     row.appendChild(unBtn);
+    panelEl.appendChild(row);
+  }
+}
+
+// A freighter's AI-LOGISTICS toggle: once FREIGHTER_AI_TECH is researched (a Datacenter node —
+// engine/techtree.js), fold it into the local haul/service chain like a worker (engine/sim.js
+// updateUnit), at its own cargoHold-sized capacity per trip — routed through issueSetAILogistics
+// (engine/commands.js) rather than a bare direct mutation (the Mender/Bomb toggles' usual idiom)
+// because turning it ON has to re-check the research gate.
+function renderAILogistics(state, f) {
+  const upgrades = state.players.player.upgrades;
+  if (!upgrades[FREIGHTER_AI_TECH]) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Research Autonomous Freight AI at a Datacenter to fold this ship into your local logistics chain like a worker.";
+    panelEl.appendChild(hint);
+    return;
+  }
+  const on = !!f.aiLogistics;
+  panelEl.appendChild(makeButton(on ? "🤖 AI Logistics: ON" : "🤖 AI Logistics: OFF",
+    () => { issueSetAILogistics([f], !on, state); renderHUD(); },
+    { tip: on ? "Stand down — it stops auto-hauling and waits for your orders"
+              : `Put it to work in the local haul/service chain like a worker, at its full ${UNITS[f.type].cargoHold} cargo hold per trip` }));
+  if (on) {
+    const res = state.players.player.resources;
+    const rate = aiUpkeepRate(f);
+    const stalled = (res.ai || 0) <= 1e-6;
+    const row = document.createElement("div");
+    row.className = "sel-note " + (stalled ? "bad" : "good");
+    row.textContent = stalled
+      ? `⚠ STALLED — out of AI Cores (burns ${rate.toFixed(2)}/s while active)`
+      : `Autonomous — burning ${rate.toFixed(2)} AI Cores/s (${Math.floor(res.ai || 0)} in reserve)`;
     panelEl.appendChild(row);
   }
 }
@@ -1023,9 +1064,10 @@ function rebuildSelectionPanel(sel) {
         tip: "Settle: the colony ship becomes a Command Center on this spot (it can't move again). Colonists disembark as workers." }));
   }
 
-  // Freighter (Odyssey cargo ship): a load/unload cargo panel for the first one selected.
+  // Freighter (Odyssey cargo ship): a load/unload cargo panel for the first one selected, plus its
+  // AI-logistics toggle once FREIGHTER_AI_TECH is researched.
   const freighter = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
-  if (freighter) renderFreight(state, freighter);
+  if (freighter) { renderFreight(state, freighter); renderAILogistics(state, freighter); }
 
   // Mender: an auto-repair toggle (roam and mend on its own) + its Odyssey power state (it heals at
   // full rate only on the powered grid, near a Reactor/Generator).

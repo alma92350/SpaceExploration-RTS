@@ -336,6 +336,22 @@ export function inputRoom(building) {
   return Math.max(0, inputCapOf(building.type) - inputTotal(building));
 }
 
+// ---- Freighter cargo hold (Odyssey freight) ------------------------------------
+// A freighter's `freight` is a multi-commodity hold (unlike a worker's single-slot `cargo`),
+// capped by `def.cargoHold`. Lives here (not engine/galaxy.js, where the player-manual
+// load/unload panel logic lives) so engine/haul.js can read a freighter's room/fill too — the
+// worker↔freighter physical loading path — without importing galaxy.js, which itself imports
+// engine/sim.js -> engine/haul.js and would otherwise be a cycle. galaxy.js re-exports both.
+
+/** How much is currently aboard a freighter's hold (0 for a non-freighter unit). */
+export function freightUsed(unit) { return unit ? bufTotal(unit.freight) : 0; }
+
+/** A freighter's remaining hold room = its cargoHold minus what's aboard (0 for a non-freighter). */
+export function freightRoom(unit) {
+  const cap = unit ? (UNITS[unit.type]?.cargoHold || 0) : 0;
+  return Math.max(0, cap - freightUsed(unit));
+}
+
 // One-time, player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE
 // doctrines of two tiers each. You commit to Assault (offense) OR Bulwark
 // (defense) — researching any upgrade of one doctrine locks the other — and can

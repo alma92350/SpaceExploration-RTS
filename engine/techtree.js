@@ -53,6 +53,13 @@ export const TECHS = {
   // Antimatter Gate and the Leviathan capital ship.
   aicores: { id: "aicores", name: "Machine Minds", ico: "🧠", cost: { crystals: 260, radioactives: 130 }, time: 48, requires: ["antimatter"],
     desc: "Unlock the AI Foundry and Torpedo Works — cultivate AI Cores and Plasma Torpedoes." },
+  // engine/haul.js FREIGHTER_AI_TECH — the string id here MUST match that constant. An unlock node
+  // like metallurgy/electronics/machining above (no multiplier field: it gates a CAPABILITY, read
+  // directly off player.upgrades by id in sim.js/commands.js/hudSelection.js, not through techMult).
+  // Priced partly in the very good it lets a freighter burn to run itself (engine/haul.js
+  // payAIUpkeep) — cultivating the Cores to spend on automation IS the cost of automating.
+  freighterai: { id: "freighterai", name: "Autonomous Freight AI", ico: "🧠", cost: { ai: 60, electronics: 90 }, time: 40, requires: ["aicores"],
+    desc: "Freighters can be toggled into the local logistics chain like a worker — far greater capacity per trip — while burning AI Cores to run themselves." },
 };
 
 // Research develops faster on a high-tech world (data.js PLANETS.tech, 1..10) and

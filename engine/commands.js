@@ -10,6 +10,7 @@ import { BUILDINGS, UNITS, canAfford, payCost, prereqsMet } from "./entities.js"
 import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
 import { formationSlots } from "./formation.js";
+import { FREIGHTER_AI_TECH } from "./haul.js";
 
 // Give a unit an order, either replacing what it's doing (a plain command)
 // or appending it as a waypoint (queue = true, the Ctrl+command from input.js).
@@ -157,6 +158,32 @@ export function issueGather(units, nodeId, queue = false) {
 export function issueServiceBuilding(units, buildingId, queue = false) {
   units.forEach(u => {
     if (UNITS[u.type]?.role === "worker") dispatch(u, { type: "service", buildingId, phase: "plan", manual: true }, queue);
+  });
+}
+
+// Assign workers to FERRY a landed freighter — a standing loop that carries nearby producer
+// backlog onto its hold (so it becomes its own mobile collection point) and, once there's nothing
+// left to load, carries some of that hold back to the treasury (engine/haul.js updateFerry). Any
+// freighter qualifies — this is a worker physically loading a ship, not the ship acting on its
+// own; see issueSetAILogistics for that separate, research-gated mode.
+export function issueFerryFreighter(units, freighterId, queue = false) {
+  units.forEach(u => {
+    if (UNITS[u.type]?.role === "worker") dispatch(u, { type: "ferry", freighterId, phase: "plan", manual: true }, queue);
+  });
+}
+
+// Toggle a freighter's AI-LOGISTICS mode: put to work in the local haul/service chain like a
+// worker (engine/sim.js updateUnit), but at its own far larger cargo capacity, burning AI Cores
+// from the treasury while active (engine/haul.js payAIUpkeep). Turning it OFF always works (stand
+// down is never gated); turning it ON requires its owner to have researched FREIGHTER_AI_TECH —
+// unresearched freighters in the selection are silently skipped rather than the whole call failing,
+// so a mixed selection still does what it can.
+export function issueSetAILogistics(units, on, state) {
+  units.forEach(u => {
+    if (UNITS[u.type]?.role !== "freighter") return;
+    if (on && !state.players[u.owner]?.upgrades[FREIGHTER_AI_TECH]) return;
+    u.aiLogistics = on;
+    if (on && !u.cargo) u.cargo = { com: null, qty: 0 };
   });
 }
 
