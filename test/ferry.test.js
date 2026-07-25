@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { updateFerry, updateHaul, countLogistics, assignHaul, FREIGHTER_AI_TECH, aiUpkeepRate, payAIUpkeep } from "../engine/haul.js";
-import { issueFerryFreighter, issueSetAILogistics } from "../engine/commands.js";
+import { updateFerry, updateHaul, countLogistics, assignHaul, assignShuttle, updateFreighterShuttle, FREIGHTER_AI_TECH, aiUpkeepRate, payAIUpkeep } from "../engine/haul.js";
+import { issueFerryFreighter, issueSetAILogistics, issueSetCollectPoint } from "../engine/commands.js";
 import { storeTotal, freightUsed, freightRoom } from "../engine/entities.js";
 import { TECHS } from "../engine/techtree.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
@@ -294,4 +294,158 @@ test("payAIUpkeep is a no-op (always succeeds) for a non-freighter unit — carg
   assert.equal(s.players.player.resources.ai || 0, before, "…and nothing was charged");
   assert.equal(aiUpkeepRate(workers[0]), 0);
   assert.ok(aiUpkeepRate({ type: "hauler" }) > 0, "a freighter's rate scales with its own cargoHold");
+});
+
+// ---- COLLECTION POINT: a freighter shuttles itself to the CC and back when full ------------
+
+test("issueSetCollectPoint toggles the flag and stamps the anchor at the freighter's current spot", () => {
+  const { s } = base(20);
+  const f = plantFreighter(s, "hauler", 300, 450);
+
+  issueSetCollectPoint([f], true);
+  assert.equal(f.collectPoint, true);
+  assert.deepEqual(f.anchor, { x: 300, y: 450 }, "anchored where it was standing when switched on");
+
+  f.x = 999; f.y = 999;   // moved since
+  issueSetCollectPoint([f], false);
+  assert.equal(f.collectPoint, false);
+  assert.deepEqual(f.anchor, { x: 300, y: 450 }, "turning off doesn't touch the anchor");
+
+  issueSetCollectPoint([f], true);
+  assert.deepEqual(f.anchor, { x: 999, y: 999 }, "re-enabling re-anchors at the NEW current spot");
+});
+
+test("assignShuttle is a no-op unless the freighter is a full, idle, collection-point freighter", () => {
+  const { s } = base(21);
+  const f = plantFreighter(s, "hauler", 100, 100);
+
+  assignShuttle(s, f);
+  assert.equal(f.order, null, "not a collection point yet");
+
+  issueSetCollectPoint([f], true);
+  assignShuttle(s, f);
+  assert.equal(f.order, null, "collection point, but its hold isn't full");
+
+  f.freight = { ore: 250 };   // a Hauler's cargoHold is 250 — now full
+  assignShuttle(s, f);
+  assert.equal(f.order?.type, "shuttle");
+  assert.equal(f.order.phase, "toCC");
+});
+
+test("a full collection-point freighter shuttles to the nearest CC, banks its WHOLE hold, then returns to its anchor", () => {
+  const { s, cc } = base(22);
+  const f = plantFreighter(s, "hauler", cc.x + 300, cc.y + 200);
+  issueSetCollectPoint([f], true);
+  f.freight = { ore: 150, crystals: 100 };   // full (Hauler cargoHold 250)
+  const oreBefore = s.players.player.resources.ore || 0;
+  const crystalsBefore = s.players.player.resources.crystals || 0;
+
+  assignShuttle(s, f);
+  for (let i = 0; i < 8000 && f.order; i++) updateFreighterShuttle(s, f, 0.05);
+
+  assert.equal(f.order, null, "the run completes and it goes idle again");
+  assert.equal(freightUsed(f), 0, "the whole hold was unloaded — not just one commodity");
+  assert.ok(near((s.players.player.resources.ore || 0) - oreBefore, 150, 1e-3));
+  assert.ok(near((s.players.player.resources.crystals || 0) - crystalsBefore, 100, 1e-3));
+  assert.ok(Math.hypot(f.x - f.anchor.x, f.y - f.anchor.y) <= 30, "back at (near) its anchor");
+});
+
+test("without a Command Center to deliver to, a full collection-point freighter just waits — nothing lost", () => {
+  const s = createGameState({ planetId: "ferros" });
+  for (const b of [...s.buildings.values()]) if (b.type === "command") s.buildings.delete(b.id);
+  const f = plantFreighter(s, "hauler", 500, 500);
+  issueSetCollectPoint([f], true);
+  f.freight = { ore: 250 };
+  assignShuttle(s, f);
+  const x0 = f.x, y0 = f.y;
+
+  for (let i = 0; i < 100; i++) updateFreighterShuttle(s, f, 0.1);
+
+  assert.equal(f.x, x0); assert.equal(f.y, y0);
+  assert.equal(freightUsed(f), 250, "cargo is untouched — nowhere to deliver it");
+  assert.equal(f.order?.type, "shuttle", "still waiting, not stuck in a bad state");
+});
+
+test("toggling collection-point mode off mid-shuttle stands the freighter down immediately, cargo intact", () => {
+  const { s, cc } = base(23);
+  const f = plantFreighter(s, "hauler", cc.x + 300, cc.y);
+  f.collectPoint = true;
+  f.anchor = { x: f.x, y: f.y };
+  f.freight = { ore: 250 };
+  f.order = { type: "shuttle", phase: "toCC" };
+
+  f.collectPoint = false;
+  tick(s, 0.1);
+
+  assert.equal(f.order, null, "stood down instantly");
+  assert.deepEqual(f.freight, { ore: 250 }, "…but its cargo is untouched");
+});
+
+test("ferry-fed collection-point shuttling is deterministic: two same-seed runs bank identical treasuries", () => {
+  const run = () => {
+    const { s, cc, workers } = base(24);
+    const rig = plantRig(s, cc, { ore: 300 }, 300, 200);
+    const f = plantFreighter(s, "hauler", rig.x, rig.y);
+    issueSetCollectPoint([f], true);
+    issueFerryFreighter([workers[0]], f.id);
+    for (let i = 0; i < 4000; i++) tick(s, 0.1);
+    return { ore: s.players.player.resources.ore || 0, freight: freightUsed(f), pos: [f.x, f.y] };
+  };
+  assert.deepEqual(run(), run());
+});
+
+test("a full freighter fed by a ferry worker shuttles itself home and back, clearing a rig no worker alone could keep up with", () => {
+  const { s, cc, workers } = base(25);
+  removeSeededWorkers(s, workers.slice(1));   // keep exactly one ferry worker
+  const rig = plantRig(s, cc, { ore: 250 }, 300, 200);
+  const f = plantFreighter(s, "hauler", rig.x, rig.y);
+  issueSetCollectPoint([f], true);
+  issueFerryFreighter([workers[0]], f.id);
+  const oreBefore = s.players.player.resources.ore || 0;
+
+  for (let i = 0; i < 6000; i++) tick(s, 0.1);
+
+  assert.equal(storeTotal(rig), 0, "the rig's backlog was fully cleared");
+  assert.ok(near((s.players.player.resources.ore || 0) - oreBefore, 250, 1e-2),
+    "…and it all reached the treasury — through the ferry worker loading the ship and the ship shuttling itself home");
+});
+
+test("collectPoint, anchor, and an in-progress shuttle order all survive a save/load round-trip", () => {
+  const { s, cc } = base(26);
+  const f = plantFreighter(s, "hauler", cc.x + 220, cc.y + 150);
+  issueSetCollectPoint([f], true);
+  f.freight = { ore: 250 };
+  assignShuttle(s, f);
+
+  const loaded = deserializeGame(serializeGame(s));
+  const f2 = loaded.units.get(f.id);
+  assert.equal(f2.collectPoint, true);
+  assert.deepEqual(f2.anchor, f.anchor);
+  assert.equal(f2.order?.type, "shuttle");
+  assert.equal(f2.order?.phase, "toCC");
+  assert.deepEqual(f2.freight, { ore: 250 });
+
+  for (let i = 0; i < 8000 && loaded.units.get(f.id)?.order; i++) tick(loaded, 0.05);
+  assert.equal(loaded.units.get(f.id).order, null, "the reloaded shuttle run completes normally");
+});
+
+test("a corrupted anchor is clamped into the map (or dropped) on load, never NaN-poisoning the freighter", () => {
+  const { s, cc } = base(27);
+  const f1 = plantFreighter(s, "hauler", cc.x, cc.y);
+  f1.collectPoint = true;
+  f1.anchor = { x: NaN, y: 99999999 };   // NaN JSON-round-trips to null; huge stays huge
+  const f2 = plantFreighter(s, "hauler", cc.x + 40, cc.y);
+  f2.collectPoint = true;
+  f2.anchor = "not an object";
+
+  const loaded = deserializeGame(serializeGame(s));
+  const loaded1 = loaded.units.get(f1.id), loaded2 = loaded.units.get(f2.id);
+
+  assert.ok(Number.isFinite(loaded1.anchor.x) && Number.isFinite(loaded1.anchor.y), "NaN/huge clamped to finite, in-bounds");
+  assert.ok(loaded1.anchor.x >= 0 && loaded1.anchor.x <= loaded.map.width);
+  assert.ok(loaded1.anchor.y >= 0 && loaded1.anchor.y <= loaded.map.height);
+  assert.equal(loaded2.anchor, undefined, "a non-object anchor is dropped outright, not coerced");
+
+  // And the sim doesn't choke on either — a shuttle run just re-plans from wherever it ends up.
+  assert.doesNotThrow(() => { for (let i = 0; i < 5; i++) tick(loaded, 0.1); });
 });

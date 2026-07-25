@@ -22,7 +22,7 @@ import {
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
-import { issueSetAILogistics } from "./engine/commands.js";
+import { issueSetAILogistics, issueSetCollectPoint } from "./engine/commands.js";
 import { FREIGHTER_AI_TECH, aiUpkeepRate } from "./engine/haul.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
@@ -220,6 +220,12 @@ export function renderSelectionPanel() {
     + "|" + (() => {
         const f = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
         return f ? `${!!f.aiLogistics}:${Math.round(state.players.player.resources.ai || 0)}` : "";
+      })()
+    // Rebuild the freighter Collection-Point toggle when it flips or a shuttle run starts/changes
+    // leg, so the ON/OFF label and the "shuttling to CC / back to anchor" note stay live.
+    + "|" + (() => {
+        const f = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
+        return f ? `${!!f.collectPoint}:${f.order?.type === "shuttle" ? f.order.phase : ""}` : "";
       })()
     // Rebuild a selected Plasma Rig's status as it digs — its progress, last strike (each dig
     // increments digCount), and its power/nuclear situation — without a per-tick rebuild.
@@ -493,6 +499,29 @@ function renderAILogistics(state, f) {
     row.textContent = stalled
       ? `⚠ STALLED — out of AI Cores (burns ${rate.toFixed(2)}/s while active)`
       : `Autonomous — burning ${rate.toFixed(2)} AI Cores/s (${Math.floor(res.ai || 0)} in reserve)`;
+    panelEl.appendChild(row);
+  }
+}
+
+// A freighter's COLLECTION-POINT toggle: once switched on, a full hold triggers a SHUTTLE run to
+// the nearest Command Center and back to its anchor (engine/haul.js assignShuttle/
+// updateFreighterShuttle) — no research needed, unlike AI Logistics. Routed through
+// issueSetCollectPoint (engine/commands.js) so the anchor-stamping lives in one place, not
+// duplicated at every call site.
+function renderCollectPoint(state, f) {
+  const on = !!f.collectPoint;
+  panelEl.appendChild(makeButton(on ? "📍 Collection Point: ON" : "📍 Collection Point: OFF",
+    () => { issueSetCollectPoint([f], !on); renderHUD(); },
+    { tip: on ? "Stand down — it stops shuttling to the Command Center on its own"
+              : "Anchor it here: once its hold fills up, it drives itself to the nearest Command Center, unloads, and comes back" }));
+  if (on) {
+    const used = freightUsed(f), cap = UNITS[f.type].cargoHold;
+    const shuttling = f.order && f.order.type === "shuttle";
+    const row = document.createElement("div");
+    row.className = "sel-note " + (shuttling ? "warn" : "good");
+    row.textContent = shuttling
+      ? `Shuttling ${f.order.phase === "toCC" ? "to the Command Center to unload" : "back to its anchor"}…`
+      : `Collecting at this spot — ${Math.round(used)}/${cap} aboard`;
     panelEl.appendChild(row);
   }
 }
@@ -1065,9 +1094,10 @@ function rebuildSelectionPanel(sel) {
   }
 
   // Freighter (Odyssey cargo ship): a load/unload cargo panel for the first one selected, plus its
-  // AI-logistics toggle once FREIGHTER_AI_TECH is researched.
+  // Collection Point toggle (no research needed) and its AI-logistics toggle once
+  // FREIGHTER_AI_TECH is researched.
   const freighter = game.galaxy && sel.find(e => e.kind === "unit" && UNITS[e.type].cargoHold);
-  if (freighter) { renderFreight(state, freighter); renderAILogistics(state, freighter); }
+  if (freighter) { renderFreight(state, freighter); renderCollectPoint(state, freighter); renderAILogistics(state, freighter); }
 
   // Mender: an auto-repair toggle (roam and mend on its own) + its Odyssey power state (it heals at
   // full rate only on the powered grid, near a Reactor/Generator).

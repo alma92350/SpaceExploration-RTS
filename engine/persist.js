@@ -138,6 +138,18 @@ function cleanEntity(e, def, map) {
   } else if (e.freight !== undefined) {
     delete e.freight;
   }
+  // A collection-point freighter's `anchor` ({x,y}, engine/commands.js issueSetCollectPoint) is
+  // untrusted the same way — a NaN/huge value would flow straight into stepToward on the shuttle
+  // run's return leg and poison the unit's position. Clamp it like the entity's own x/y, or drop it
+  // entirely if it isn't a real {x,y} pair (a shuttle run just re-anchors on its own next tick, see
+  // assignShuttle's fallback).
+  if (e.anchor !== undefined) {
+    if (!e.anchor || typeof e.anchor !== "object") delete e.anchor;
+    else {
+      e.anchor.x = Math.max(0, Math.min(num(e.anchor.x, 0), map.width));
+      e.anchor.y = Math.max(0, Math.min(num(e.anchor.y, 0), map.height));
+    }
+  }
   // A Plasma Rig's dig state is untrusted too: clamp digProgress into a sane band (a tampered huge
   // value would otherwise drive the dig loop to mint resources) and floor the dig counter.
   if (def.rig) {

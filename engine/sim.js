@@ -9,7 +9,7 @@
 import { stepToward, keepEscortStation, keepFormationStation, keepFollowingLeader, orderedSpeed } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
-import { updateHaul, assignHaul, updateService, assignService, updateFerry, countLogistics, payAIUpkeep, FREIGHTER_AI_TECH } from "./haul.js";
+import { updateHaul, assignHaul, updateService, assignService, updateFerry, assignShuttle, updateFreighterShuttle, countLogistics, payAIUpkeep, FREIGHTER_AI_TECH } from "./haul.js";
 import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
@@ -150,6 +150,17 @@ function updateUnit(state, unit, dt) {
   // to update (it's no longer in state.units).
   if (def.role === "bomb" && updateBombFuse(state, unit)) return;
 
+  // A COLLECTION-POINT freighter (`unit.collectPoint`, HUD toggle — no research needed) that's
+  // idle and full offers itself a SHUTTLE run: drive to the Command Center, bank the whole hold,
+  // drive back to its anchor (engine/haul.js assignShuttle/updateFreighterShuttle). Checked before
+  // the AI-logistics offer below so a full collection-point freighter always empties itself first.
+  if (!unit.order && def.role === "freighter" && unit.owner === "player" && unit.collectPoint) {
+    assignShuttle(state, unit);
+  }
+  // Toggling collection-point mode off mid-run stands the freighter down immediately, same as
+  // AI-logistics below — whatever's in its hold just sits there until reassigned.
+  if (unit.order && unit.order.type === "shuttle" && !unit.collectPoint) { unit.order = null; }
+
   // An idle Odyssey worker with nothing queued offers itself for logistics: first it clears a
   // pure producer's backed-up output to a Command Center (haul — the Rig, the drop-offs), else it
   // runs a factory a round-trip service (carry inputs in, output back). Player-only — the AI builds
@@ -201,6 +212,9 @@ function updateUnit(state, unit, dt) {
       break;
     case "ferry":
       updateFerry(state, unit, dt);
+      break;
+    case "shuttle":
+      updateFreighterShuttle(state, unit, dt);
       break;
     case "escort":
       // A non-combat escort (worker) just keeps station on the ring around the guarded ship.

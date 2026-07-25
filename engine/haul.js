@@ -24,6 +24,15 @@
      research needed — this is a worker loading a crate onto a ship, not the ship acting
      on its own (that's the separate AI-logistics mode below).
 
+   A freighter parked as a FERRY target can also be toggled into COLLECTION-POINT mode
+   (`unit.collectPoint`, HUD button — no research needed, engine/commands.js
+   issueSetCollectPoint): once its hold is full it drives itself to the nearest own
+   Command Center, banks everything, and returns to its ANCHOR (the spot it was
+   standing when the mode was switched on) to keep collecting — assignShuttle /
+   updateFreighterShuttle below. A worker ferrying it still tops it up (and can carry a
+   partial load home itself, updateFerry's "toPickup"/"toReturn"); the shuttle is the
+   freighter's own complementary big single trip once it's actually full.
+
    A freighter can ALSO be folded into the SAME auto-assigned HAUL/SERVICE chain a worker
    runs — "Autonomous Freight AI" (engine/techtree.js FREIGHTER_AI_TECH) lets the player
    toggle `unit.aiLogistics` on a hauler/heavy hauler/bulk freighter (engine/sim.js), at
@@ -31,6 +40,8 @@
    own (far larger) cargo capacity — see `tripCapacity`. Running autonomously burns AI
    Cores from the treasury every tick (`payAIUpkeep`, called from sim.js): out of stock
    just pauses it in place for the tick, nothing lost, rather than stranding its cargo.
+   Unlike collectPoint, this is research-gated and folds the freighter into the WHOLE
+   base's logistics, not just its own hold — the two toggles are independent.
 
    Deterministic and DOM-free: nearest-target picks are distance-then-id, the per-tick
    job tallies are frozen before assignment, no wall clock or unseeded randomness. Player-
@@ -416,5 +427,57 @@ export function updateFerry(state, unit, dt) {
       bankCargo(state, unit);
       order.phase = "plan";
     } else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
+  }
+}
+
+// Bank a freighter's WHOLE freight hold into the owner's treasury (1:1, every commodity aboard)
+// and empty it — the shuttle's unload step. Mirrors bankCargo's shape but for the multi-commodity
+// `freight` hold instead of a worker's single-slot `cargo`.
+function bankFreight(state, unit) {
+  if (!unit.freight) return;
+  const res = state.players[unit.owner].resources;
+  for (const com in unit.freight) res[com] = (res[com] || 0) + unit.freight[com];
+  unit.freight = {};
+}
+
+/**
+ * Give an idle COLLECTION-POINT freighter (`unit.collectPoint`, HUD toggle — no research needed,
+ * unlike AI-logistics) a SHUTTLE run the moment its hold is full: drive to the nearest own Command
+ * Center, bank the whole hold, then drive back to its anchor (the spot it was standing when the
+ * mode was switched on — engine/commands.js issueSetCollectPoint) to keep collecting. A worker
+ * ferrying the same freighter (updateFerry above) still tops it up and can carry a partial load
+ * home itself; this is the freighter's OWN complementary "I'm full, empty me" run for the big
+ * single trip once it hits capacity.
+ * @param {State} state @param {Unit} unit
+ */
+export function assignShuttle(state, unit) {
+  if (!unit.collectPoint || freightRoom(unit) > 1e-6) return;
+  if (!unit.anchor) unit.anchor = { x: unit.x, y: unit.y };   // defensive fallback — issueSetCollectPoint normally sets this
+  unit.order = { type: "shuttle", phase: "toCC" };
+}
+
+/**
+ * Advance a freighter's own SHUTTLE run (see assignShuttle): walk to the Command Center, bank the
+ * whole hold, walk back to the anchor, then go idle — ready to fill up again. Salvages gracefully
+ * if there's no Command Center to deliver to (holds position, tries again next tick) or the anchor
+ * is missing (a tampered/old save — just stops where it is).
+ * @param {State} state @param {Unit} unit @param {number} dt
+ */
+export function updateFreighterShuttle(state, unit, dt) {
+  const def = UNITS[unit.type];
+  const order = unit.order;
+
+  if (order.phase === "toCC") {
+    const cc = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
+    if (!cc) return;   // no CC to deliver to — hold position and cargo, retry next tick
+    if (reached(unit, cc)) { bankFreight(state, unit); order.phase = "toAnchor"; }
+    else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
+    return;
+  }
+
+  if (order.phase === "toAnchor") {
+    const a = unit.anchor;
+    if (!a || Math.hypot(a.x - unit.x, a.y - unit.y) <= REACH) { unit.order = null; return; }
+    stepToward(state, unit, a.x, a.y, def.speed, dt);
   }
 }
