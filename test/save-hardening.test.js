@@ -382,3 +382,36 @@ test("a valid player economy round-trips exactly (identity, no change for real v
   assert.equal(st.players.player.resources.crystals, 42, "a legitimately-saved resource quantity round-trips exactly");
   assert.equal(st.players.player.upgrades.metallurgy, true, "a legitimately-saved upgrade round-trips exactly");
 });
+
+// A multi-input factory's `input` larder (engine/entities.js inputCapOf) gives each real input
+// commodity its OWN independent slice — a Chip Fab (crystals + metals) gets 40/40, not one
+// shared 80 pool — so an oversupplied commodity can never crowd out room for the other one the
+// recipe still needs. persist.js's load-time clamp must honour that same per-commodity slice
+// (coerceInputBuffer), not sum-clamp the whole buffer to one shared total the way `store` does.
+test("a tampered factory input larder is clamped PER COMMODITY, not as one shared pool (Chip Fab: crystals + metals)", () => {
+  const a = createGameState({ planetId: "ferros", seed: 40, rng: mulberry32(40) });
+  const cc = [...a.buildings.values()].find(b => b.type === "command");
+  const fab = makeBuilding("chipfab", "player", cc.x + 60, cc.y);
+  fab.input = { metals: 999, crystals: 5 };   // metals wildly over its own 40-unit slice
+  a.buildings.set(fab.id, fab);
+
+  const st = deserializeGame(serializeGame(a));
+  const loaded = st.buildings.get(fab.id);
+
+  assert.ok(loaded.input.metals <= 40 + 1e-9, "metals is clamped to its OWN 40-unit slice");
+  assert.equal(loaded.input.crystals, 5, "crystals is untouched — an oversupplied metals never eats into its room");
+});
+
+test("a legitimately-saved multi-commodity input larder round-trips exactly (identity, no change for real values)", () => {
+  const a = createGameState({ planetId: "ferros", seed: 41, rng: mulberry32(41) });
+  const cc = [...a.buildings.values()].find(b => b.type === "command");
+  const fab = makeBuilding("chipfab", "player", cc.x + 60, cc.y);
+  fab.input = { metals: 30, crystals: 12 };   // both well within their own 40-unit slice
+  a.buildings.set(fab.id, fab);
+
+  const st = deserializeGame(serializeGame(a));
+  const loaded = st.buildings.get(fab.id);
+
+  assert.equal(loaded.input.metals, 30);
+  assert.equal(loaded.input.crystals, 12);
+});

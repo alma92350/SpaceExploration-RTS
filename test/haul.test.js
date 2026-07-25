@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "../engine/haul.js";
-import { storeTotal, storeCapOf, inputTotal } from "../engine/entities.js";
+import { storeTotal, storeCapOf, inputTotal, inputRoom, inputCapOf } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
@@ -207,6 +207,45 @@ test("a service worker also carries the finished OUTPUT back on the return trip 
 
   assert.ok((s.players.player.resources.metals || 0) > 0, "the worker hauled the factory's output back to the treasury");
   assert.ok(storeTotal(sm) < 40, "…drawing down its output buffer");
+});
+
+// ---- multi-input recipes: one oversupplied input must never crowd out room for another --------
+
+test("inputCapOf splits the larder evenly across a recipe's real (non-energy) input commodities", () => {
+  const single = inputCapOf("smelter");     // recipe "smelt": ore + energy — one real input
+  const dual = inputCapOf("chipfab");       // recipe "chipfab": crystals + metals + energy — two real inputs
+  assert.ok(near(single, 80, 1e-6), "a single-input factory keeps the whole 80 to itself");
+  assert.ok(near(dual, 40, 1e-6), "a two-input factory splits it 40/40 — its own guaranteed slice each");
+});
+
+test("a Chip Fab starved of crystals can still receive them even with its metals larder already topped up", () => {
+  const { s, cc, workers } = base(1);
+  const fab = plantFactory(s, cc, "chipfab");
+  // Metals already banked deep (well past where the OLD shared 80-total pool would have left
+  // crystals no room at all) — crystals sits at zero despite the treasury having plenty of both.
+  fab.input = { metals: 35 };
+  s.players.player.resources.metals = 100;
+  s.players.player.resources.crystals = 100;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: fab.id, phase: "plan" };
+
+  assert.ok(inputRoom(fab, "crystals") > 0, "crystals still has its OWN room even though metals is nearly full");
+
+  for (let i = 0; i < 4000 && (fab.input.crystals || 0) <= 0; i++) updateService(s, w, 0.05);
+
+  assert.ok((fab.input.crystals || 0) > 0, "the worker actually delivered the missing crystals — not stalled behind metals");
+});
+
+test("an oversupplied input is capped at its OWN slice, not the whole larder — so it can't starve the other input's room", () => {
+  const { s, cc } = base(1);
+  const fab = plantFactory(s, cc, "chipfab");
+  fab.input = { metals: 39.9 };   // right at the edge of its own 40-unit slice
+  s.players.player.resources.metals = 100;
+
+  assert.ok(inputRoom(fab, "metals") > 0, "still a sliver of room in metals' own slice");
+  assert.ok(near(inputRoom(fab, "crystals"), 40, 1e-6),
+    "crystals' room is UNCHANGED by metals sitting almost full — each commodity has its own independent slice");
 });
 
 test("an idle worker auto-services a starving factory, and its metals come back to the treasury", () => {
