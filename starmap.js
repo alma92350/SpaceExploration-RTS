@@ -112,7 +112,10 @@ function onWorldClick(w) {
   initiateJump(w.id);   // carries the expedition (or, if stranded, evacuates the force) to the world — may open a landing-site picker first
 }
 
-export function openStarmap() { if (!game.galaxy) return; renderStarmap(); starmapEl.classList.remove("hidden"); pauseLoop("starmap"); }   // hold the sim while the starmap is up
+// Same dangling-gesture hazard as boot.js's initiateJump (see input.js's cancelGesture): a
+// right-click-drag begun on the canvas just before the starmap opens would otherwise still
+// resolve into a move order once released over it.
+export function openStarmap() { if (!game.galaxy) return; if (game.input) game.input.cancelGesture(); renderStarmap(); starmapEl.classList.remove("hidden"); pauseLoop("starmap"); }   // hold the sim while the starmap is up
 export function closeStarmap() { starmapEl.classList.add("hidden"); resumeLoop("starmap"); }
 function toggleStarmap() { if (starmapEl.classList.contains("hidden")) openStarmap(); else closeStarmap(); }
 
