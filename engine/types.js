@@ -96,6 +96,7 @@
  * @property {string|null} [targetId] aim target (combat.js / render.js)
  * @property {Object.<string, number>} [freight]  a freighter's player-managed cargo hold, commodity → qty (engine/galaxy.js)
  * @property {boolean} [armed]  a Helium Bomb set to detonate on attack/enemy presence/command (engine/bomb.js)
+ * @property {number} [fuseUntil]  the state.time an ARMED Helium Bomb's lit fuse detonates at — set by lightFuse, absent while unlit (engine/bomb.js)
  * @property {Unit} [squadLeader]     transient, NEVER persisted: the leader this unit is following, if any (engine/commands.js setSquadLeader) — a live object reference
  * @property {Unit[]} [squadFollowers]  transient, NEVER persisted: the units following THIS unit as their leader (engine/commands.js dispatchFormation)
  * @property {number} [facing]  a player-set facing angle (radians), from a click-and-drag move/attack-move (engine/commands.js applyFacing) — overrides the movement-inferred angle a STATIONARY unit would otherwise freeze at (renderShared.js updateFacing); a plain (non-drag) move/attack-move clears it, so it never lingers stale after a later un-aimed order

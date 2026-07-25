@@ -154,6 +154,13 @@ function cleanEntity(e, def, map) {
   // save can't smuggle in a truthy non-boolean that reads oddly elsewhere. Only a role:"bomb"
   // unit carries the field at all; harmless to any other def, but only worth writing there.
   if (def.role === "bomb") e.armed = !!e.armed;
+  // A Helium Bomb's `fuseUntil` (the state.time its lit fuse detonates at, engine/bomb.js) is
+  // untrusted too: a tampered save could set it to a non-numeric or non-finite value, which
+  // would then poison the `state.time >= bomb.fuseUntil` comparison in updateBombFuse (NaN
+  // compares false forever, so it'd sit fused but never actually go off). Drop the field
+  // entirely when it isn't a finite number, so a bad value reads as "no fuse lit" — a real
+  // saved fuse is already a plain finite number, so this is the identity for valid data.
+  if (e.fuseUntil !== undefined) { const f = num(e.fuseUntil, NaN); if (Number.isFinite(f)) e.fuseUntil = f; else delete e.fuseUntil; }
   // A Spaceport's `lastLanding` (the galaxy-time it last received a jump — engine/galaxy.js's
   // landingZone) is untrusted too: clamp to a finite, non-negative number so a tampered huge/NaN
   // value can't win the "most recently used pad" tie-break it's only ever compared with. Only

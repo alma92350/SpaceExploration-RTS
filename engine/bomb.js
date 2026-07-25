@@ -2,19 +2,26 @@
    The Helium Bomb (engine/entities.js UNITS.heliumbomb): a mobile doomsday
    device, built unarmed — free to move without risk. Once the player ARMS it
    (a direct field flip, `bomb.armed = true`, the same pattern hudSelection.js
-   already uses for the Mender's auto-repair toggle), it detonates the instant
-   any of three triggers fires:
+   already uses for the Mender's auto-repair toggle), one of three triggers
+   sets it off:
      - it takes a hit at all (combat.js's performAttack calls detonateIfAttacked
-       before applying normal damage),
+       before applying normal damage) — an impact fuze, instantaneous,
      - a live enemy unit or building comes within BOMB_DETECT_RANGE (checked
-       once per tick from engine/sim.js),
-     - the player manually triggers it (detonateBomb, called directly from the
-       HUD's "Detonate Now" button).
-   All three funnel through detonateBomb() so they can never disagree about
-   what the blast actually does. An UNARMED bomb ignores all three — it can be
-   shot, stood next to, or driven right up to a base with no effect, exactly
-   like any other unit — so arming is a deliberate, reversible (see disarm in
-   hudSelection.js) commitment, not an inherent property of the unit.
+       once per tick from engine/sim.js via updateBombFuse) — lights the fuse,
+     - the player manually triggers it ("Detonate Now" in hudSelection.js,
+       which calls lightFuse) — also lights the fuse, not an instant blast.
+   The two fuse-based triggers don't detonate on the spot: lightFuse just
+   timestamps when the blast is due (BOMB_FUSE_DELAY sim-seconds later), and
+   updateBombFuse (engine/sim.js, every tick) is what actually calls
+   detonateBomb() once that time comes — a real window for the enemy that
+   tripped it, or anything standing in the blast, to react. Being attacked
+   stays instantaneous by design: it's a defensive reflex, not a timed device.
+   Every path that DOES fire the actual blast funnels through detonateBomb()
+   so they can never disagree about what it does. An UNARMED bomb ignores all
+   three — it can be shot, stood next to, or driven right up to a base with no
+   effect, exactly like any other unit — so arming is a deliberate, reversible
+   (see disarm in hudSelection.js, which also cuts a lit fuse) commitment, not
+   an inherent property of the unit.
 
    The blast radius is deliberately tied to POWER_TIERS[0] (engine/industry.js)
    — the same "on-grid" ring every Reactor/Generator projects — rather than an
@@ -61,11 +68,6 @@ import { COM } from "../data.js";
 // out (or beyond) takes any blast damage at all.
 export const BOMB_BLAST_RADIUS = POWER_TIERS[0].max;
 
-// How close a live enemy has to come before an ARMED bomb detonates on its
-// own — a little past the blast itself, so "I can see it" distance is
-// already too late to back out of the blast.
-export const BOMB_DETECT_RANGE = BOMB_BLAST_RADIUS + 30;
-
 // The falloff curve's "unitary distance": 1.5x the bomb unit's own radius
 // (engine/entities.js). Derived, not a separate magic number, so it can
 // never drift out of proportion to the unit it's describing. Everything at
@@ -73,6 +75,13 @@ export const BOMB_DETECT_RANGE = BOMB_BLAST_RADIUS + 30;
 // square curve diverges as distance approaches zero, so it has to be capped
 // somewhere, and this is the natural "ground zero" radius to cap it at.
 export const BOMB_CORE_RADIUS = UNITS.heliumbomb.radius * 1.5;
+
+// How close a live enemy has to come before an ARMED bomb lights its fuse on
+// its own — the same 1.5x-radius "point-blank" distance the damage falloff
+// itself is anchored to (BOMB_CORE_RADIUS), not a separate magic number: if
+// you're already standing close enough to take full damage, you're close
+// enough to have set it off.
+export const BOMB_DETECT_RANGE = BOMB_CORE_RADIUS;
 
 // Peak HP loss at/inside BOMB_CORE_RADIUS — comfortably past the toughest
 // building in the game (the Antimatter Gate, 1200hp) so ground zero still
@@ -90,6 +99,14 @@ export function bombDamageAt(dist) {
   const d = Math.max(dist, BOMB_CORE_RADIUS);
   return BOMB_MAX_DAMAGE * (BOMB_CORE_RADIUS / d) ** 2;
 }
+
+// How long (sim seconds — state.time, not wall clock) an armed bomb spends
+// "cooking" after its fuse is lit — by an enemy coming within
+// BOMB_DETECT_RANGE, or the player's own "Detonate Now" command — before the
+// actual blast (detonateBomb) goes off. A real window to react instead of the
+// old instant, unavoidable detonation. Being attacked is a separate trigger
+// (detonateIfAttacked below) and stays instantaneous, unaffected by this.
+export const BOMB_FUSE_DELAY = 4;
 
 // How long (sim seconds — state.time, not wall clock) after a detonation the
 // crater takes to mature into a mineable deposit.
@@ -187,25 +204,54 @@ function spawnCraterNode(state, crater) {
 // death path runs. Returns whether it detonated, so the caller can
 // short-circuit (the normal hp/salvage/entityKilled bookkeeping doesn't
 // apply — detonateBomb already erased it, along with everything else caught).
+// Unlike the other two triggers, this one is instantaneous — no fuse.
 export function detonateIfAttacked(state, target) {
   if (!isBomb(target) || !target.armed) return false;
   detonateBomb(state, target);
   return true;
 }
 
+// Lights `bomb`'s fuse: BOMB_FUSE_DELAY sim-seconds from now, updateBombFuse
+// will detonate it — no matter what else happens to it between now and then.
+// Idempotent: re-triggering an already-lit fuse (another enemy wanders into
+// range, "Detonate Now" pressed again) does NOT restart the clock. Fires a
+// bombFused event (once, the moment it's actually lit) so the VFX/sound layer
+// can warn the player something is about to go off, and where.
+export function lightFuse(state, bomb) {
+  if (bomb.fuseUntil != null) return;
+  bomb.fuseUntil = state.time + BOMB_FUSE_DELAY;
+  state.events.push({ type: "bombFused", x: bomb.x, y: bomb.y, owner: bomb.owner, delay: BOMB_FUSE_DELAY });
+}
+
 // Per-tick check for an ARMED bomb: is any live enemy unit or building within
-// BOMB_DETECT_RANGE? Called from sim.js for every role:"bomb" unit, before its
-// normal per-tick update. Returns whether it detonated, so sim.js can skip the
-// rest of this tick's update for it (there's nothing left to update).
+// BOMB_DETECT_RANGE? Lights the fuse (see lightFuse) rather than detonating
+// outright. Called from updateBombFuse below; also safe to call standalone
+// (e.g. tests) since lightFuse is idempotent either way.
 export function checkBombProximity(state, bomb) {
-  if (!bomb.armed) return false;
+  if (!bomb.armed || bomb.fuseUntil != null) return false;
   for (const u of state.units.values()) {
     if (u.owner === bomb.owner || u.hp <= 0) continue;
-    if (Math.hypot(u.x - bomb.x, u.y - bomb.y) <= BOMB_DETECT_RANGE) { detonateBomb(state, bomb); return true; }
+    if (Math.hypot(u.x - bomb.x, u.y - bomb.y) <= BOMB_DETECT_RANGE) { lightFuse(state, bomb); return true; }
   }
   for (const b of state.buildings.values()) {
     if (b.owner === bomb.owner || b.constructing) continue;
-    if (Math.hypot(b.x - bomb.x, b.y - bomb.y) <= BOMB_DETECT_RANGE) { detonateBomb(state, bomb); return true; }
+    if (Math.hypot(b.x - bomb.x, b.y - bomb.y) <= BOMB_DETECT_RANGE) { lightFuse(state, bomb); return true; }
   }
   return false;
+}
+
+// Per-tick update for an ARMED bomb (engine/sim.js, once per role:"bomb" unit,
+// before its normal per-tick update): if the fuse is already lit, detonates
+// it the instant state.time reaches bomb.fuseUntil; otherwise runs the
+// proximity check, which may light it. Returns whether the bomb is
+// "committed" this tick — fused (about to blow, or just did) — so sim.js can
+// skip the rest of the tick's update for it: once lit, a bomb no longer takes
+// orders, same as it never did in the old instant-detonate world.
+export function updateBombFuse(state, bomb) {
+  if (!bomb.armed) return false;
+  if (bomb.fuseUntil != null) {
+    if (state.time >= bomb.fuseUntil) detonateBomb(state, bomb);
+    return true;
+  }
+  return checkBombProximity(state, bomb);
 }

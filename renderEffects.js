@@ -126,7 +126,7 @@ function lerpColor(a, b, t) {
 // in render.js that reads wall-clock-timed state instead of the sim's
 // own state object.
 export function drawEffects(ctx) {
-  const { tracers, deaths, pings, explosions } = activeEffects();
+  const { tracers, deaths, pings, explosions, fuseWarnings } = activeEffects();
 
   for (const t of tracers) {
     const color = tracerColor(t.unitType);
@@ -178,6 +178,31 @@ export function drawEffects(ctx) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(p.x, p.y, 14 + pulse * 40, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // A Helium Bomb's fuse just lit (engine/bomb.js's bombFused event): an amber warning ring
+  // pulsing right at ground zero for the whole fuse burn — distinct from the red under-attack
+  // ping above and the hot explosion ring below, its own place in the alert color language.
+  // The pulse rate itself accelerates as f.age climbs toward 1, so the rhythm quickens right
+  // up to the moment the real blast (drawn below, once detonateBomb actually fires) takes over.
+  for (const f of fuseWarnings) {
+    if (reduced) {
+      ctx.globalAlpha = Math.max(0, 0.5 * (1 - f.age));
+      ctx.strokeStyle = "#fbbf24";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 20, 0, Math.PI * 2);
+      ctx.stroke();
+      continue;
+    }
+    const pulseHz = 2 + f.age * 4;   // ~2Hz freshly lit, accelerating to ~6Hz right before it blows
+    const pulse = (f.age * pulseHz) % 1;
+    ctx.globalAlpha = Math.max(0, (1 - pulse) * 0.85);
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, 10 + pulse * 22, 0, Math.PI * 2);
     ctx.stroke();
   }
 
