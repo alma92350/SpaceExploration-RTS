@@ -87,6 +87,16 @@ function clientFor(controller, wx, wy) {
   return { clientX: VW / 2 + (wx - cam.x) * cam.zoom, clientY: VH / 2 + (wy - cam.y) * cam.zoom };
 }
 
+// A real right-click (as of the click-and-drag heading gesture) is a button-2 mousedown on the
+// canvas followed by a button-2 mouseup on window — commandAt now fires from mouseup, not a bare
+// `contextmenu` event (contextmenu's only remaining job is suppressing the browser's native
+// menu). Mouse down and up at the SAME point is a plain click: no drag, so no explicit heading —
+// byte-identical to the old single-event behaviour these tests were written against.
+function rightClick(canvas, window, clientX, clientY, ctrlKey = false) {
+  canvas.dispatchEvent(ev("mousedown", { button: 2, clientX, clientY }));
+  window.dispatchEvent(ev("mouseup", { button: 2, clientX, clientY, ctrlKey }));
+}
+
 // ============================================================================
 // Bug 1 — alt-tab camera drift: a backgrounded tab doesn't reliably get a keyup, so a
 // pan key held at the moment of alt-tab must not stay "held" forever. A window blur is
@@ -148,7 +158,7 @@ test("commandAt still notifies on a rally order (regression: the branch that alr
   state.selection = [cc.id];
 
   const { clientX, clientY } = clientFor(controller, 2500, 2600);
-  canvas.dispatchEvent(ev("contextmenu", { clientX, clientY, ctrlKey: false }));
+  rightClick(canvas, window, clientX, clientY);
 
   assert.deepEqual(cc.rally, { x: 2500, y: 2600, nodeId: null });
   assert.equal(calls(), 1, "onChange fires exactly once for the order");
@@ -164,7 +174,7 @@ test("commandAt notifies on an attack order (the headline branch the review flag
   reveal(state.fog, enemy.x, enemy.y);   // entityAt only returns a non-player unit if it's visible
 
   const { clientX, clientY } = clientFor(controller, enemy.x, enemy.y);
-  canvas.dispatchEvent(ev("contextmenu", { clientX, clientY, ctrlKey: false }));
+  rightClick(canvas, window, clientX, clientY);
 
   assert.deepEqual(attacker.order, { type: "attack", targetId: enemy.id });
   assert.equal(calls(), 1, "the HUD's Attack-Move button (and everything else onChange refreshes) must hear about this immediately, not on a stray HUD tick");
@@ -179,7 +189,7 @@ test("commandAt notifies on a gather order", () => {
   state.map.nodes.push(node);
 
   const { clientX, clientY } = clientFor(controller, node.x, node.y);
-  canvas.dispatchEvent(ev("contextmenu", { clientX, clientY, ctrlKey: false }));
+  rightClick(canvas, window, clientX, clientY);
 
   assert.deepEqual(worker.order, { type: "gather", nodeId: "node-1" });
   assert.equal(calls(), 1);
@@ -192,10 +202,48 @@ test("commandAt notifies on the plain move fallback (nothing at the click point)
   state.selection = [worker.id];
 
   const { clientX, clientY } = clientFor(controller, 2800, 1400);   // empty ground, no unit/building/node
-  canvas.dispatchEvent(ev("contextmenu", { clientX, clientY, ctrlKey: false }));
+  rightClick(canvas, window, clientX, clientY);
 
   assert.deepEqual(worker.order, { type: "move", x: 2800, y: 1400 });
   assert.equal(calls(), 1, "the fallback move branch must notify too, not just the rally special case");
+});
+
+// ============================================================================
+// Click-and-drag heading: a right-DRAG (mousedown then mouseup at a different point) sets the
+// destination at the DRAG'S START and stamps the drag direction as an explicit facing (a plain
+// click carries none — the two commandAt tests above already cover that byte-identical case).
+// ============================================================================
+
+test("a right-drag moves to where the drag STARTED, not where it ended", () => {
+  const { state, canvas, controller } = setup();
+  const worker = makeUnit("worker", "player", 500, 500);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+
+  const start = clientFor(controller, 2800, 1400);
+  const end = clientFor(controller, 3200, 1400);   // dragged further along +x
+  canvas.dispatchEvent(ev("mousedown", { button: 2, clientX: start.clientX, clientY: start.clientY }));
+  window.dispatchEvent(ev("mouseup", { button: 2, clientX: end.clientX, clientY: end.clientY }));
+
+  assert.deepEqual(worker.order, { type: "move", x: 2800, y: 1400 }, "destination is the drag's START point");
+});
+
+test("a right-drag stamps the drag direction as the unit's facing; a plain click clears it", () => {
+  const { state, canvas, controller } = setup();
+  const worker = makeUnit("worker", "player", 500, 500);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+
+  const start = clientFor(controller, 2800, 1400);
+  const end = clientFor(controller, 2800, 1800);   // dragged straight down (+y) from the start point
+  canvas.dispatchEvent(ev("mousedown", { button: 2, clientX: start.clientX, clientY: start.clientY }));
+  window.dispatchEvent(ev("mouseup", { button: 2, clientX: end.clientX, clientY: end.clientY }));
+
+  assert.ok(Number.isFinite(worker.facing), "the drag set an explicit facing");
+  assert.ok(Math.abs(worker.facing - Math.PI / 2) < 1e-6, "facing straight down (+y) is angle PI/2");
+
+  rightClick(canvas, window, start.clientX, start.clientY);   // a later PLAIN click, no drag
+  assert.ok(!Number.isFinite(worker.facing), "a plain command with no heading clears the earlier facing");
 });
 
 // ============================================================================

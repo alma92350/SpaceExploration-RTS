@@ -120,6 +120,7 @@ export function flashHint(msg) {
 const HELP_ROWS = [
   ["Left-drag", "Select units · Ctrl+drag adds to selection"],
   ["Right-click", "Move · attack an enemy · gather a node"],
+  ["Right-click and drag", "…the drag direction also becomes the group's (or a lone unit's) facing"],
   ["A, then click", "Attack-move — advance and engage on the way"],
   ["Ctrl+right-click", "Queue a waypoint (chain a path)"],
   ["1–9 / Shift+1–9", "Recall / bind a control group"],

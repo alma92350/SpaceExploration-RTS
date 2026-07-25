@@ -159,6 +159,11 @@ function cleanEntity(e, def, map) {
   // value can't win the "most recently used pad" tie-break it's only ever compared with. Only
   // present once a jump has actually landed there, so this only fires when the field exists.
   if (e.type === "spaceport" && e.lastLanding !== undefined) e.lastLanding = Math.max(0, num(e.lastLanding, 0));
+  // A unit's player-set `facing` (engine/commands.js applyFacing) is untrusted too — a bogus
+  // non-numeric value would flow straight into Math.cos/sin (renderShared.js) as NaN, silently
+  // mis-drawing (never crashing) the sprite. Coerce it to a finite number, or drop the field
+  // entirely so the unit just falls back to its normal movement-inferred facing.
+  if (e.facing !== undefined) { const f = num(e.facing, NaN); if (Number.isFinite(f)) e.facing = f; else delete e.facing; }
   // A producer's output buffer (building.store) and a factory's input buffer (building.input) are
   // untrusted save data — a hand-edited file could smuggle in a bogus commodity, a negative/NaN qty,
   // or an over-capacity buffer. Keep only real commodities with a positive qty and clamp each buffer's
@@ -282,7 +287,16 @@ function serPlanet(state) {
     // `_gi` is the grid broad-phase index — a transient stamped fresh onto every unit each tick
     // by buildUnitGrid, meaningless once saved. Strip it so it doesn't bloat the payload with a
     // per-unit integer that the next tick overwrites anyway. Shallow copy, only at save time.
-    units: [...state.units.values()].map(({ _gi, repairTargetId, ...u }) => u),   // both transient (grid index; live repair pick)
+    // `squadLeader`/`squadFollowers` (engine/commands.js) are live UNIT OBJECT REFERENCES, not
+    // ids — session-only, transient bookkeeping like the rest of this denylist, but they ALSO
+    // can't survive JSON.stringify at all: a follower points at its leader, the leader's own
+    // squadFollowers list points right back, and JSON.stringify throws on a circular structure
+    // rather than silently truncating it — a live squad would crash every save. Strip both
+    // fields, and null out a live `follow-leader` order too (it embeds the same leader
+    // reference) — a reload simply drops squad membership, the same "recomputed/reset, never
+    // persisted" treatment repairTargetId already gets.
+    units: [...state.units.values()].map(({ _gi, repairTargetId, squadLeader, squadFollowers, ...u }) =>
+      u.order && u.order.type === "follow-leader" ? { ...u, order: null } : u),
     // `haulers`/`servers` (logistics tallies, engine/haul.js), `powered`/`fuel` (Generator fuel
     // state, engine/industry.js), `menderClaims` (auto-repair Mender tally, engine/sim.js) and
     // `lastYield`/`lastTier` (a Plasma Rig's last-strike HUD readout, engine/rig.js — regenerated on

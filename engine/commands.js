@@ -17,7 +17,14 @@ import { formationSlots } from "./formation.js";
 // fully idle unit acts immediately, so the first waypoint of a chain doesn't
 // sit inert. A plain command always wipes any queued waypoints, so it cancels a
 // chain cleanly. sim.js pulls the next queued order in as soon as `order` clears.
+//
+// A DIRECT order (anything except the follow-leader order dispatchFormation itself hands out)
+// releases the unit from whatever squad it was following — direct control always wins. The
+// squad's leader is untouched by this (a leader never carries squadLeader itself), so giving
+// the LEADER a fresh order here never disbands the squad; only a follower ordered on its own
+// leaves it.
 function dispatch(unit, order, queue) {
+  if (order.type !== "follow-leader") setSquadLeader(unit, null);
   if (!unit.orderQueue) unit.orderQueue = [];
   unit.hold = false;   // any positive order (move/attack/gather/waypoint) cancels a Hold stance
   if (queue && (unit.order || unit.orderQueue.length)) {
@@ -28,12 +35,116 @@ function dispatch(unit, order, queue) {
   }
 }
 
-// `formation` ({shape, leaderPos}, engine/formation.js) is optional — omitted, it's the
-// original flat grid spread (byte-identical to the old behaviour), unchanged for any caller
-// that doesn't pass one (the AI, and every pre-existing test).
-export function issueMove(units, x, y, queue = false, formation) {
+// Attach/detach `unit` to/from `leader`'s squad (or clear it with leader=null). Keeps the
+// relationship bidirectional and consistent: leaving a DIFFERENT leader's squad always trims
+// that leader's own squadFollowers list too, so a leader never keeps dragging along a unit that
+// no longer considers it the leader. Transient, session-only state (never persisted — see
+// persist.js's serPlanet, which strips both fields and drops a live follow-leader order
+// entirely rather than trying to serialize the object reference it carries).
+function setSquadLeader(unit, leader) {
+  const old = unit.squadLeader;
+  if (old && old !== leader && old.squadFollowers) {
+    const i = old.squadFollowers.indexOf(unit);
+    if (i >= 0) old.squadFollowers.splice(i, 1);
+  }
+  unit.squadLeader = leader || undefined;
+}
+
+// The shared machinery behind issueMove/issueAttackMove/issueHoldFormation: lay the group out
+// in `formation`'s shape, give the LEADER (units[0] — see engine/formation.js) its own real
+// order via `makeLeaderOrder(point)`, and give every OTHER unit a persistent "follow-leader"
+// order that keeps it at a fixed offset from the leader's LIVE position from now on
+// (engine/movement.js keepFollowingLeader) — not just for this one command. That's what makes
+// "select the leader alone and move it" drag the rest of the formation along for free: a later
+// solo command to the leader (the n===1 branch below) re-uses its EXISTING squadFollowers
+// (pruned of anything that's died) purely to recompute the group's speed cap; it never touches
+// the followers' own orders, because they're already perpetually chasing the leader regardless
+// of what NEW order the leader receives.
+//
+// The whole squad's travel speed is capped to its SLOWEST member (order.speedCap, read by
+// engine/movement.js's orderedSpeed) so a fast leader can't outrun its own formation — without
+// this, followers would perpetually lag behind a leader moving at its own full speed, stretching
+// the shape out instead of holding it.
+function dispatchFormation(units, x, y, formation, queue, makeLeaderOrder) {
+  const leader = units[0];
+
+  // The leader/follow squad is a PLAYER selection-UX feature — there's no analogous "the unit
+  // you built a selection around" concept for the scripted AI (or a test double with no owner
+  // set at all), and the existing tactical AI (kiting, retreats, feint response, wave sizing…)
+  // reads every one of ITS units' own real move/attack-move order directly. So anything that
+  // isn't a confirmed player unit skips the whole leader/follower mechanic and just gets the
+  // plain per-unit spread this replaces — one real order per unit, exactly as before this
+  // feature existed. (Every player-issued command always passes real player.owner==="player"
+  // units — see input.js's selectedUnits().)
+  if (leader.owner !== "player") {
+    const spots = formationSlots(units, x, y, formation);
+    units.forEach((u, i) => dispatch(u, makeLeaderOrder(spots[i]), queue));
+    return;
+  }
+
+  if (units.length === 1) {
+    const order = makeLeaderOrder({ x, y });
+    if (leader.squadFollowers && leader.squadFollowers.length) {
+      leader.squadFollowers = leader.squadFollowers.filter(f => f.hp > 0);
+      const groupSpeed = [leader, ...leader.squadFollowers].reduce((m, u) => Math.min(m, UNITS[u.type]?.speed ?? Infinity), Infinity);
+      if (Number.isFinite(groupSpeed)) order.speedCap = groupSpeed;
+    }
+    dispatch(leader, order, queue);
+    return;
+  }
+
   const spots = formationSlots(units, x, y, formation);
-  units.forEach((u, i) => dispatch(u, { type: "move", x: spots[i].x, y: spots[i].y }, queue));
+  const leaderSpot = spots[0];
+  const newFollowers = units.slice(1);
+
+  // Redefining the squad for exactly this unit set: anyone who WAS following this leader but
+  // isn't part of it this time is released — and actually stopped, not just unlinked, so a
+  // dropped unit doesn't silently keep chasing a leader that no longer lists it.
+  if (leader.squadFollowers) {
+    for (const old of leader.squadFollowers) {
+      if (!newFollowers.includes(old)) { setSquadLeader(old, null); old.order = null; }
+    }
+  }
+  leader.squadFollowers = newFollowers;
+
+  const groupSpeed = units.reduce((m, u) => Math.min(m, UNITS[u.type]?.speed ?? Infinity), Infinity);
+  const leaderOrder = makeLeaderOrder(leaderSpot);
+  if (Number.isFinite(groupSpeed)) leaderOrder.speedCap = groupSpeed;
+  dispatch(leader, leaderOrder, queue);
+
+  for (let i = 1; i < units.length; i++) {
+    setSquadLeader(units[i], leader);
+    dispatch(units[i], {
+      type: "follow-leader", leader,
+      offsetX: spots[i].x - leaderSpot.x, offsetY: spots[i].y - leaderSpot.y,
+    }, queue);
+  }
+}
+
+// A click-and-drag command's drag vector (formation.headingX/headingY) is also the direction
+// the player wants the group to FACE — not just how the shape is oriented while travelling.
+// Stamped onto every commanded unit as `facing` (read by renderShared.js's updateFacing once a
+// unit stops moving, overriding the angle it would otherwise just freeze at) — the "give a
+// formation, or a single/multiple selection, a direction to face" ask (e.g. holding a line
+// facing the enemy). A PLAIN command (a click, no drag — no explicit heading) clears any
+// earlier facing instead, so it never lingers stale once the player stops aiming their orders.
+function applyFacing(units, formation) {
+  const hx = formation?.headingX || 0, hy = formation?.headingY || 0;
+  if (hx || hy) {
+    const angle = Math.atan2(hy, hx);
+    for (const u of units) u.facing = angle;
+  } else {
+    for (const u of units) delete u.facing;
+  }
+}
+
+// `formation` ({shape, leaderPos, headingX, headingY}, engine/formation.js) is optional —
+// omitted, it's the original flat grid spread (byte-identical to the old behaviour), unchanged
+// for any caller that doesn't pass one (the AI, and every pre-existing test).
+export function issueMove(units, x, y, queue = false, formation) {
+  if (!units.length) return;
+  dispatchFormation(units, x, y, formation, queue, pt => ({ type: "move", x: pt.x, y: pt.y }));
+  applyFacing(units, formation);
 }
 
 export function issueGather(units, nodeId, queue = false) {
@@ -64,8 +175,9 @@ export function issueAttack(units, targetId, queue = false) {
 }
 
 export function issueAttackMove(units, x, y, queue = false, formation) {
-  const spots = formationSlots(units, x, y, formation);
-  units.forEach((u, i) => dispatch(u, { type: "attack-move", x: spots[i].x, y: spots[i].y }, queue));
+  if (!units.length) return;
+  dispatchFormation(units, x, y, formation, queue, pt => ({ type: "attack-move", x: pt.x, y: pt.y }));
+  applyFacing(units, formation);
 }
 
 // Escort a friendly ship: each unit takes a stable slot on a protective ring around the
@@ -79,25 +191,22 @@ export function issueEscort(units, targetId, queue = false) {
 }
 
 // Protection of a FORMATION, not one external ship: the group forms up in the chosen shape
-// right where it's standing (its own current centroid — see formationSlots) and holds there,
-// each unit re-seeking its own slot every tick (engine/movement.js keepFormationStation) so a
-// unit nudged out of place (avoidance jostling, a broken engagement) settles back rather than
-// drifting. Persists like escort — never cleared on arrival — until a new order replaces it.
-// Combat units also take the Hold stance (issueHold's existing "stand fast, don't chase" rule),
-// so the whole formation keeps its shape instead of scattering to run down a distant target;
-// non-combat units (workers, a Mender) still take a slot — sheltering behind/inside the line —
-// they just have no stance flag to set. Each unit's slot is baked into its OWN order as a fixed
-// offset from the anchor at issue time, so holding station never needs to re-scan the group.
+// right where it's standing (its own current centroid) and holds there — the LEADER holds its
+// own fixed anchor (engine/movement.js keepFormationStation), everyone else follows it there and
+// keeps station relative to it (keepFollowingLeader) exactly like a hold-formation-flavoured
+// move, so a later solo command to just the leader picks the whole formation back up too (see
+// dispatchFormation). Combat units also take the Hold stance (issueHold's existing "stand fast,
+// don't chase" rule) — LEADER AND FOLLOWERS alike — so the whole formation keeps its shape
+// instead of scattering to run down a distant target; non-combat units (workers, a Mender) still
+// take a slot — sheltering behind/inside the line — they just have no stance flag to set.
 export function issueHoldFormation(units, shape = "grid", leaderPos = "front") {
   if (!units.length) return;
   let sx = 0, sy = 0;
   for (const u of units) { sx += u.x; sy += u.y; }
   const anchorX = sx / units.length, anchorY = sy / units.length;
-  const slots = formationSlots(units, anchorX, anchorY, { shape, leaderPos, originX: anchorX, originY: anchorY });
-  units.forEach((u, i) => {
-    dispatch(u, { type: "hold-formation", anchorX, anchorY, offsetX: slots[i].x - anchorX, offsetY: slots[i].y - anchorY }, false);
-    if (UNITS[u.type] && UNITS[u.type].role === "combat") u.hold = true;
-  });
+  dispatchFormation(units, anchorX, anchorY, { shape, leaderPos, originX: anchorX, originY: anchorY }, false,
+    pt => ({ type: "hold-formation", anchorX: pt.x, anchorY: pt.y, offsetX: 0, offsetY: 0 }));
+  for (const u of units) if (UNITS[u.type] && UNITS[u.type].role === "combat") u.hold = true;
 }
 
 // Pays the cost up front, drops a constructing building on the spot, and
@@ -121,6 +230,7 @@ export function issueBuild(state, workerId, buildingType, x, y) {
   payCost(player.resources, def.cost);
   const building = makeBuilding(buildingType, worker.owner, x, y, { constructing: true });
   state.buildings.set(building.id, building);
+  setSquadLeader(worker, null);   // a direct order releases the worker from any squad it was following
   worker.order = { type: "build", buildingId: building.id };
   return building.id;
 }
@@ -136,8 +246,9 @@ export function issueAssistBuild(units, buildingId, queue = false) {
 // where it stands. A combat unit still defends itself (it re-auto-acquires an
 // enemy that wanders into range next tick), but it won't chase or resume a
 // path — the standard RTS "stop" that pulls a unit out of a move or a chain.
+// A direct order like this always releases the unit from a squad it was following.
 export function issueStop(units) {
-  units.forEach(u => { u.order = null; u.orderQueue = []; u.hold = false; });
+  units.forEach(u => { setSquadLeader(u, null); u.order = null; u.orderQueue = []; u.hold = false; });
 }
 
 // Hold position: a combat unit stands its ground and fires on anything that
@@ -146,7 +257,7 @@ export function issueStop(units) {
 // holding a line or a choke. Any move/attack order, or Stop, clears it.
 export function issueHold(units) {
   units.forEach(u => {
-    if (UNITS[u.type] && UNITS[u.type].role === "combat") { u.order = null; u.orderQueue = []; u.hold = true; }
+    if (UNITS[u.type] && UNITS[u.type].role === "combat") { setSquadLeader(u, null); u.order = null; u.orderQueue = []; u.hold = true; }
   });
 }
 
@@ -157,7 +268,7 @@ export function issueHold(units) {
 // a plain command — the mode is persistent, not something to stack behind.
 export function issueScout(units) {
   units.forEach(u => {
-    if (UNITS[u.type] && UNITS[u.type].role === "scout") { u.order = { type: "scout" }; u.orderQueue = []; }
+    if (UNITS[u.type] && UNITS[u.type].role === "scout") { setSquadLeader(u, null); u.order = { type: "scout" }; u.orderQueue = []; }
   });
 }
 

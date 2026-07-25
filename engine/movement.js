@@ -70,16 +70,48 @@ export function keepEscortStation(state, unit, speed, dt) {
   return true;
 }
 
-// Advance a unit holding a formation station (order {type:"hold-formation", anchorX, anchorY,
-// offsetX, offsetY} — engine/commands.js issueHoldFormation) one tick toward its assigned slot,
-// a fixed offset from the anchor baked in at issue time. Unlike escort's ring (which re-seeks a
-// MOVING external target every tick), the anchor here never moves — that's the point: this is a
-// group defending its own position, not following anyone. So there's nothing that can "vanish"
-// and drop the order the way an escort's target can; it persists until a new order replaces it.
+// Advance a formation LEADER holding station (order {type:"hold-formation", anchorX, anchorY,
+// offsetX, offsetY} — engine/commands.js issueHoldFormation) one tick toward its own fixed
+// anchor point. Unlike escort's ring (which re-seeks a MOVING external target every tick), the
+// anchor here never moves — that's the point: this is a unit (or a formation's leader — see
+// keepFollowingLeader below for everyone else in the group) defending its own position, not
+// following anyone. Nothing can "vanish" and drop the order the way an escort's target can; it
+// persists until a new order replaces it.
 /** @param {State} state @param {Unit} unit @param {number} speed @param {number} dt */
 export function keepFormationStation(state, unit, speed, dt) {
   const o = unit.order;
-  stepToward(state, unit, o.anchorX + o.offsetX, o.anchorY + o.offsetY, speed, dt);
+  stepToward(state, unit, o.anchorX + o.offsetX, o.anchorY + o.offsetY, orderedSpeed(speed, o), dt);
+}
+
+// Advance a formation FOLLOWER (order {type:"follow-leader", leader, offsetX, offsetY} —
+// engine/commands.js dispatchFormation) one tick toward a fixed offset from its leader's LIVE
+// position — re-seeked every tick, exactly like escort's ring around its guarded ship, except
+// the "target" is another player unit that itself is under direct orders (move/attack-move/
+// hold-formation) rather than just standing still. This is what makes "select the leader alone
+// and move it" drag the rest of the formation along for free: the leader gets a fresh order,
+// the followers were never re-ordered at all — they're still chasing `leader.pos + offset`
+// every tick, whatever that position now is. Drops the order (returns to independent control)
+// the moment the leader dies, the same as an escort losing its guarded ship.
+/** @param {State} state @param {Unit} unit @param {number} speed @param {number} dt @returns {boolean} */
+export function keepFollowingLeader(state, unit, speed, dt) {
+  const o = unit.order;
+  const leader = o.leader;
+  if (!leader || leader.hp <= 0) { unit.order = null; return false; }
+  stepToward(state, unit, leader.x + o.offsetX, leader.y + o.offsetY, speed, dt);
+  return true;
+}
+
+// A formation's overall pace is capped to its SLOWEST member (order.speedCap, stamped by
+// engine/commands.js's dispatchFormation) so a fast leader can't outrun the group it's
+// supposedly leading — without this, followers (who each move at their OWN top speed toward the
+// leader's live position) would perpetually lag behind while the leader is in motion, stretching
+// the shape out instead of holding it. Followers never need this themselves: every follower's own
+// speed is, by construction, at least the group minimum, so they can always keep pace with a
+// leader that's capped to it. Identity (returns `speed` unchanged) for any order without a cap —
+// every order type except move/attack-move/hold-formation, and those two before this feature.
+/** @param {number} speed @param {Order} order @returns {number} */
+export function orderedSpeed(speed, order) {
+  return Number.isFinite(order?.speedCap) ? Math.min(speed, order.speedCap) : speed;
 }
 
 // Moves `unit` at most `speed * dt` toward (tx, ty). Returns true once it

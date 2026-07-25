@@ -6,7 +6,7 @@
 
 "use strict";
 
-import { stepToward, keepEscortStation, keepFormationStation } from "./movement.js";
+import { stepToward, keepEscortStation, keepFormationStation, keepFollowingLeader, orderedSpeed } from "./movement.js";
 import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "./haul.js";
@@ -160,7 +160,7 @@ function updateUnit(state, unit, dt) {
   if (!unit.order) return;
   switch (unit.order.type) {
     case "move": {
-      const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
+      const arrived = stepToward(state, unit, unit.order.x, unit.order.y, orderedSpeed(def.speed, unit.order), dt);
       if (arrived) unit.order = null;
       break;
     }
@@ -178,8 +178,12 @@ function updateUnit(state, unit, dt) {
       keepEscortStation(state, unit, def.speed, dt);
       break;
     case "hold-formation":
-      // A non-combat unit (worker, freighter) sheltering in a formation just keeps its slot.
+      // A non-combat formation LEADER (worker, freighter) holds its own fixed anchor.
       keepFormationStation(state, unit, def.speed, dt);
+      break;
+    case "follow-leader":
+      // A non-combat formation FOLLOWER just keeps its slot relative to the leader.
+      keepFollowingLeader(state, unit, def.speed, dt);
       break;
     case "scout":
       updateScoutMode(state, unit, dt);
@@ -235,23 +239,28 @@ function updateSupport(state, unit, def, dt) {
     keepEscortStation(state, unit, def.speed, dt);
     return;
   }
-  // Holding a defensive formation: same idea, station-keeping at a fixed slot instead of a
-  // moving target — the drone mends whatever's near it (the repair pass) right where it stands.
+  // Holding a defensive formation: same idea, station-keeping at its own fixed anchor instead
+  // of a moving target — the drone mends whatever's near it (the repair pass) right where it stands.
   if (o.type === "hold-formation") {
     keepFormationStation(state, unit, def.speed, dt);
     return;
   }
-  let tx, ty, follow = false;
+  // Following a formation leader: keeps its slot relative to the leader's LIVE position.
+  if (o.type === "follow-leader") {
+    keepFollowingLeader(state, unit, def.speed, dt);
+    return;
+  }
+  let tx, ty, follow = false, speed = def.speed;
   if (o.type === "attack") {
     const t = getEntity(state, o.targetId);
     if (!t || t.hp <= 0) { unit.order = null; return; }
     tx = t.x; ty = t.y; follow = true;   // keep chasing a moving foe rather than stopping on arrival
   } else if (o.type === "move" || o.type === "attack-move") {
-    tx = o.x; ty = o.y;
+    tx = o.x; ty = o.y; speed = orderedSpeed(def.speed, o);
   } else {
     unit.order = null; return;   // gather / scout / build are meaningless for a drone
   }
-  const arrived = stepToward(state, unit, tx, ty, def.speed, dt);
+  const arrived = stepToward(state, unit, tx, ty, speed, dt);
   if (arrived && !follow) unit.order = null;
 }
 

@@ -15,7 +15,7 @@
 
 "use strict";
 
-import { stepToward, keepEscortStation, keepFormationStation } from "./movement.js";
+import { stepToward, keepEscortStation, keepFormationStation, keepFollowingLeader, orderedSpeed } from "./movement.js";
 import { UNITS, BUILDINGS, upgradeMult } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
@@ -28,7 +28,7 @@ export function updateCombat(state, unit, dt) {
   unit.attackTimer = Math.max(0, unit.attackTimer - dt);
 
   if (unit.order && unit.order.type === "move") {
-    const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
+    const arrived = stepToward(state, unit, unit.order.x, unit.order.y, orderedSpeed(def.speed, unit.order), dt);
     if (arrived) unit.order = null;
     return;
   }
@@ -77,7 +77,7 @@ export function updateCombat(state, unit, dt) {
   }
 
   if (unit.order && unit.order.type === "attack-move") {
-    const arrived = stepToward(state, unit, unit.order.x, unit.order.y, def.speed, dt);
+    const arrived = stepToward(state, unit, unit.order.x, unit.order.y, orderedSpeed(def.speed, unit.order), dt);
     if (arrived) unit.order = null;
     return;
   }
@@ -88,10 +88,14 @@ export function updateCombat(state, unit, dt) {
   if (unit.order && unit.order.type === "escort") {
     keepEscortStation(state, unit, def.speed, dt);
   } else if (unit.order && unit.order.type === "hold-formation") {
-    // Same idea, but the "target" is the group's own fixed anchor rather than a moving ship —
-    // a defensive formation holding its ground, still fully combat-reactive above (this only
-    // runs once no threat was acquired/engaged this tick).
+    // Same idea, but the "target" is this unit's OWN fixed anchor rather than a moving ship —
+    // a formation leader holding its ground, still fully combat-reactive above (this only runs
+    // once no threat was acquired/engaged this tick).
     keepFormationStation(state, unit, def.speed, dt);
+  } else if (unit.order && unit.order.type === "follow-leader") {
+    // A formation follower: keeps its slot relative to the leader's live position, same
+    // combat-reactive treatment as escort/hold-formation above.
+    keepFollowingLeader(state, unit, def.speed, dt);
   }
 }
 

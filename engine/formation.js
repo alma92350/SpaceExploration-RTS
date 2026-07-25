@@ -18,20 +18,28 @@
                 explicitly asked for), or takes a point ON the ring at the
                 front/back with everyone else filling the rest evenly
 
-   The "leader" is deterministic, not selection-order-dependent: the unit
-   with the most maxHp (a bigger hull naturally leads), ties broken by id —
-   see pickLeader.
+   The "leader" is whichever unit is FIRST in the `units` array — i.e.
+   whichever unit the player selected first and added the rest to (the
+   normal box-select-additive selection order preserves this: an existing
+   selection is kept first, newly-added picks are appended after — see
+   input.js's applyBoxSelection). Deliberately NOT a stat-based pick (e.g.
+   highest maxHp): the player chooses their leader by building the
+   selection around it, the same unit engine/commands.js then keeps giving
+   its own real order to while everyone else follows it (issueHoldFormation
+   / follow-leader — see commands.js and movement.js).
 
    NESTED formations: a selection that's ALREADY spread into distinct spatial
    clusters (e.g. two armies on opposite sides of the map, box-selected
    together) is laid out as a formation OF formations — clusterUnits splits
-   it, the SAME shape arranges the clusters' centres relative to each other
-   (a wedge of wedges, a line of lines, …), spaced by each cluster's own
-   footprint so sub-formations can't overlap, and each cluster is then laid
-   out again internally around its assigned centre. A single blob of units —
-   the ordinary case, everyone selected in one place — collapses to exactly
-   ONE cluster, so nesting only ever engages when the selection already
-   calls for it.
+   it (preserving each unit's relative position in the original array, so
+   the cluster CONTAINING the overall leader is always clusters[0] and thus
+   still gets the outer leader slot), the SAME shape arranges the clusters'
+   centres relative to each other (a wedge of wedges, a line of lines, …),
+   spaced by each cluster's own footprint so sub-formations can't overlap,
+   and each cluster is then laid out again internally around its assigned
+   centre. A single blob of units — the ordinary case, everyone selected in
+   one place — collapses to exactly ONE cluster, so nesting only ever
+   engages when the selection already calls for it.
 
    Spacing is derived from the group's own hull sizes (spacingFor), not a
    flat constant, EXCEPT the plain single-group "grid" path, which keeps the
@@ -69,17 +77,11 @@ function centroid(units) {
   return { x: sx / units.length, y: sy / units.length };
 }
 
-// The deterministic "flagship": the unit with the most maxHp (ties broken by id, never by
-// selection/array order — the same pick must come out of the same group regardless of how the
-// player happened to box-select it).
+// The leader is simply whichever unit is first in the given array — see the file header. A
+// one-line function so callers (engine/commands.js) don't have to know/duplicate the rule.
 /** @param {Unit[]} units @returns {Unit} */
 export function pickLeader(units) {
-  let best = units[0];
-  for (const u of units) {
-    const bhp = best.maxHp ?? 0, uhp = u.maxHp ?? 0;
-    if (uhp > bhp || (uhp === bhp && u.id < best.id)) best = u;
-  }
-  return best;
+  return units[0];
 }
 
 // Radius-aware baseline spacing for a group: room for the two largest hulls present to clear
@@ -96,6 +98,11 @@ function spacingFor(units) {
 // other (transitively) land in the same cluster — a plain union-find pass over CURRENT
 // positions. A single blob of units (the common case) collapses to one cluster. O(n^2) on the
 // selection size, which is issue-time work on a small array, not a per-tick cost.
+//
+// Preserves each unit's relative order from the input array within its cluster, AND across
+// clusters (the cluster containing units[0] is always clusters[0]) — both `layout` calls below
+// rely on member[0] being the leader, so this ordering guarantee is what keeps the overall
+// leader's own cluster the "leader cluster" of the outer formation too.
 /** @param {Unit[]} units @returns {Unit[][]} */
 export function clusterUnits(units) {
   const n = units.length;
@@ -186,12 +193,13 @@ function shapeOffsets(n, shape, leaderPos, spacing) {
   return centerOffsets(raw);
 }
 
-// Lay out `members` (units OR cluster-arrays — anything `weightOf`/`idOf`/`spacingOf` can read)
-// into `shape`, oriented by (headingX,headingY), centred on (cx,cy). Returns points in the SAME
-// order as `members`. `shape==="grid"` ignores heading entirely (world-axis-aligned, exactly the
-// legacy behaviour); every other shape orients its forward axis along the heading (or a stable
-// default when the group isn't actually travelling — e.g. re-forming in place).
-function layout(members, cx, cy, headingX, headingY, shape, leaderPos, spacingOf, weightOf, idOf) {
+// Lay out `members` (units OR cluster-arrays) into `shape`, oriented by (headingX,headingY),
+// centred on (cx,cy). Returns points in the SAME order as `members` — member[0] (the leader,
+// see the file header) always takes the shape's own leader slot (raw[0]). `shape==="grid"`
+// ignores heading entirely (world-axis-aligned, exactly the legacy behaviour); every other
+// shape orients its forward axis along the heading (or a stable default when the group isn't
+// actually travelling — e.g. re-forming in place).
+function layout(members, cx, cy, headingX, headingY, shape, leaderPos, spacingOf) {
   const n = members.length;
   if (n === 1) return [{ x: cx, y: cy }];
   const spacing = spacingOf(members);
@@ -208,33 +216,28 @@ function layout(members, cx, cy, headingX, headingY, shape, leaderPos, spacingOf
   const hlen = Math.hypot(hx, hy);
   if (hlen < 1e-6) { hx = 1; hy = 0; } else { hx /= hlen; hy /= hlen; }
 
-  // Leader-first slot order: which member sits in raw[0] (the shape's leader treatment) — most
-  // weight wins, ties by id — same rule as pickLeader, generalised to non-Unit members (clusters).
-  const order = members.map((_, i) => i).sort((ia, ib) => {
-    const wa = weightOf(members[ia]), wb = weightOf(members[ib]);
-    if (wa !== wb) return wb - wa;
-    const a = idOf(members[ia]), b = idOf(members[ib]);
-    return a < b ? -1 : (a > b ? 1 : 0);
-  });
-
   const raw = shapeOffsets(n, shape, leaderPos, spacing);
-  const out = new Array(n);
-  order.forEach((memberIdx, slot) => {
-    const { forward, right } = raw[slot];
-    out[memberIdx] = { x: cx + forward * hx + right * hy, y: cy + forward * hy - right * hx };
+  return members.map((_, i) => {
+    const { forward, right } = raw[i];
+    return { x: cx + forward * hx + right * hy, y: cy + forward * hy - right * hx };
   });
-  return out;
 }
 
 /**
  * Where each unit in `units` should stand for a move to (destX,destY) — or, for a stationary
  * hold, where the group's own current centroid already is (pass it as both the destination AND
- * `originX`/`originY`, or simply omit `originX`/`originY` and let it default there). Returns
- * one {x,y} per unit, in the SAME order as `units`.
+ * `originX`/`originY`, or simply omit `originX`/`originY` and let it default there). `units[0]`
+ * is always the leader (see the file header) and always lands on the shape's own leader slot.
+ * Returns one {x,y} per unit, in the SAME order as `units`.
+ *
+ * The heading (which way the shape faces) is normally derived from `origin -> dest`, but a
+ * player can instead set it explicitly — e.g. a click-and-drag command, where the drag vector
+ * IS the desired facing regardless of how far the destination actually is — via `headingX`/
+ * `headingY`; either non-zero overrides the origin-derived heading entirely.
  * @param {Unit[]} units
  * @param {number} destX
  * @param {number} destY
- * @param {{shape?:string, leaderPos?:string, originX?:number, originY?:number}} [opts]
+ * @param {{shape?:string, leaderPos?:string, originX?:number, originY?:number, headingX?:number, headingY?:number}} [opts]
  * @returns {{x:number, y:number}[]}
  */
 export function formationSlots(units, destX, destY, opts = {}) {
@@ -243,19 +246,22 @@ export function formationSlots(units, destX, destY, opts = {}) {
   const { shape = "grid", leaderPos = "front" } = opts || {};
   if (n === 1) return [{ x: destX, y: destY }];
 
-  let { originX, originY } = opts || {};
-  if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
-    const c = centroid(units);
-    originX = c.x; originY = c.y;
+  let headingX = opts?.headingX, headingY = opts?.headingY;
+  if (!((headingX || 0) || (headingY || 0))) {
+    let { originX, originY } = opts || {};
+    if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
+      const c = centroid(units);
+      originX = c.x; originY = c.y;
+    }
+    headingX = destX - originX; headingY = destY - originY;
   }
-  const headingX = destX - originX, headingY = destY - originY;
 
   const clusters = clusterUnits(units);
   if (clusters.length <= 1) {
     // The one path that must stay byte-identical to the old flat grid spread: no shape chosen,
     // one blob of units — the legacy formationSpots' exact spacing constant, untouched.
     const spacingOf = shape === "grid" ? () => GRID_SPACING : spacingFor;
-    return layout(units, destX, destY, headingX, headingY, shape, leaderPos, spacingOf, u => u.maxHp ?? 0, u => u.id);
+    return layout(units, destX, destY, headingX, headingY, shape, leaderPos, spacingOf);
   }
 
   // Nested: a formation OF formations. Each cluster is one outer slot, arranged by the SAME
@@ -263,17 +269,13 @@ export function formationSlots(units, destX, destY, opts = {}) {
   // footprint so sub-formations can't overlap ("sufficient spacing… in formation of formations").
   const footprints = clusters.map(c => Math.max(1, Math.ceil(Math.sqrt(c.length))) * spacingFor(c));
   const outerSpacing = Math.max(...footprints) * NEST_GAP_MULT;
-  const clusterWeight = c => c.reduce((s, u) => s + (u.maxHp ?? 0), 0);
-  const centers = layout(
-    clusters, destX, destY, headingX, headingY, shape, leaderPos,
-    () => outerSpacing, clusterWeight, c => c[0].id,
-  );
+  const centers = layout(clusters, destX, destY, headingX, headingY, shape, leaderPos, () => outerSpacing);
 
   const placed = new Map();
   clusters.forEach((cluster, i) => {
     const { x: ccx, y: ccy } = centers[i];
     const cc = centroid(cluster);
-    const inner = layout(cluster, ccx, ccy, ccx - cc.x, ccy - cc.y, shape, leaderPos, spacingFor, u => u.maxHp ?? 0, u => u.id);
+    const inner = layout(cluster, ccx, ccy, ccx - cc.x, ccy - cc.y, shape, leaderPos, spacingFor);
     cluster.forEach((u, k) => placed.set(u, inner[k]));
   });
   return units.map(u => placed.get(u));
