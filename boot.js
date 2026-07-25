@@ -26,7 +26,8 @@ import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
-import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, surrenderGalaxy, DOMINATION_TARGET } from "./engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, surrenderGalaxy, DOMINATION_TARGET, playerSpaceports, canJump, canJumpTo, jumpCost } from "./engine/galaxy.js";
+import { openLandingPicker } from "./landingPicker.js";
 import { TECHS } from "./engine/techtree.js";
 import { planetName, COM } from "./data.js";
 import * as sound from "./sound.js";
@@ -161,13 +162,48 @@ export function bootGalaxy(galaxy, { intro = false } = {}) {
 // Launch an interplanetary jump to `destId` — relocate the capital + staged
 // units (engine/galaxy.js), then repoint the running loop at the new world. The
 // loop keeps running and keeps ticking the world you left (now a background
-// colony), so this only swaps what's rendered and controlled.
-export function performJump(destId) {
+// colony), so this only swaps what's rendered and controlled. `landingPoint`
+// (world coords) is only ever consulted by jumpCapital when the destination has
+// no player Spaceport of its own — see initiateJump below, the picker's own
+// caller.
+export function performJump(destId, landingPoint) {
   if (!game.galaxy) return null;
-  const result = jumpCapital(game.galaxy, destId);
+  const result = jumpCapital(game.galaxy, destId, landingPoint ? { landingPoint } : undefined);
   if (!result) return null;   // couldn't launch (no Spaceport here, or too poor for a new world)
   focusActivePlanet();
   return result;
+}
+
+// The entry point every "Jump ▸ world" affordance should call (starmap.js, hudSelection.js's
+// Spaceport panel, notifyColony's reinforce/retake toasts below) — NOT performJump directly.
+// Decides whether the destination needs a player-chosen landing site first: engine/galaxy.js's
+// landingZone lands at the player's own Spaceport when one already stands on `destId` (no pick
+// needed — it already knows where "home" is there), and otherwise falls back to a point the
+// player chooses on a blind minimap (landingPicker.js) — there's no beacon to home in on, and no
+// scouted intel to show while picking. A Spaceport-less ORIGIN never needs a pick at all: with
+// nothing to load, that's a pure control-switch hop (jumpCapital's header comment) that moves no
+// units, so there's nowhere for a landing site to matter.
+//
+// Runs the same afford/reachability checks jumpCapital itself re-validates at launch (mirroring
+// the pre-check every existing call site already did before calling performJump), so a jump that
+// plain can't happen still fails fast, synchronously, with no picker ever shown. Returns null on
+// that failure, the jump's result object if it launched immediately, or `true` if a picker opened
+// (the jump completes later, from the picker's own Confirm button, once the player commits to a
+// spot).
+export function initiateJump(destId) {
+  const g = game.galaxy;
+  if (!g || !canJumpTo(g, destId)) return null;
+  if (g.credits < jumpCost(g, destId)) return null;
+  const dest = g.planets.get(destId);
+  if (!dest) return performJump(destId);   // shouldn't happen (every world exists from turn one) — fall through unchanged
+  const needsPick = canJump(activeState(g)) && playerSpaceports(dest).length === 0;
+  if (!needsPick) return performJump(destId);
+  pauseLoop("landing-pick");
+  openLandingPicker(dest, planetName(destId), {
+    onPick: point => { resumeLoop("landing-pick"); performJump(destId, point); },
+    onCancel: () => resumeLoop("landing-pick"),
+  });
+  return true;
 }
 
 // Voluntarily end the Odyssey — the ONLY way it ends (a wipeout just sends relief). Marks the
@@ -345,7 +381,7 @@ const lastColonyNote = {};
 function notifyColony(n) {
   const name = planetName(n.planetId);
   const jumpThere = () => {
-    if (!performJump(n.planetId))
+    if (!initiateJump(n.planetId))
       showGalaxyToast(`Build a Spaceport on your current world to jump to ${name}.`, "warn");
   };
   if (n.type === "lost") { showGalaxyToast(`⚠ Your colony on ${name} has fallen — click to retake ▸`, "bad", jumpThere); return; }

@@ -154,6 +154,11 @@ function cleanEntity(e, def, map) {
   // save can't smuggle in a truthy non-boolean that reads oddly elsewhere. Only a role:"bomb"
   // unit carries the field at all; harmless to any other def, but only worth writing there.
   if (def.role === "bomb") e.armed = !!e.armed;
+  // A Spaceport's `lastLanding` (the galaxy-time it last received a jump — engine/galaxy.js's
+  // landingZone) is untrusted too: clamp to a finite, non-negative number so a tampered huge/NaN
+  // value can't win the "most recently used pad" tie-break it's only ever compared with. Only
+  // present once a jump has actually landed there, so this only fires when the field exists.
+  if (e.type === "spaceport" && e.lastLanding !== undefined) e.lastLanding = Math.max(0, num(e.lastLanding, 0));
   // A producer's output buffer (building.store) and a factory's input buffer (building.input) are
   // untrusted save data — a hand-edited file could smuggle in a bogus commodity, a negative/NaN qty,
   // or an over-capacity buffer. Keep only real commodities with a positive qty and clamp each buffer's
