@@ -35,7 +35,7 @@
 
 /**
  * A unit order. `type` is always present; the rest depend on the order kind
- * (move/gather/attack/attack-move/build/escort/scout/hold-formation).
+ * (move/gather/attack/attack-move/build/escort/scout/hold-formation/follow-leader).
  * @typedef {Object} Order
  * @property {string} type
  * @property {number} [x]
@@ -48,10 +48,12 @@
  * @property {number} [slots]
  * @property {string} [phase]
  * @property {boolean} [manual]   a player-assigned service order sticks to its building (engine/haul.js)
- * @property {number} [anchorX]   hold-formation: the formation's fixed anchor point (engine/commands.js issueHoldFormation)
+ * @property {number} [anchorX]   hold-formation: this unit's own fixed anchor point (engine/commands.js issueHoldFormation)
  * @property {number} [anchorY]
- * @property {number} [offsetX]   hold-formation: this unit's fixed offset from the anchor (engine/formation.js)
+ * @property {number} [offsetX]   hold-formation/follow-leader: this unit's fixed offset from the anchor/leader (engine/formation.js)
  * @property {number} [offsetY]
+ * @property {Unit} [leader]      follow-leader: the formation leader this unit is chasing (engine/movement.js keepFollowingLeader) — a live object reference, NEVER persisted (engine/persist.js drops a follow-leader order entirely on save)
+ * @property {number} [speedCap]  move/attack-move/hold-formation: a formation leader's travel speed, capped to its slowest member (engine/movement.js orderedSpeed)
  */
 
 /**
@@ -94,6 +96,9 @@
  * @property {string|null} [targetId] aim target (combat.js / render.js)
  * @property {Object.<string, number>} [freight]  a freighter's player-managed cargo hold, commodity → qty (engine/galaxy.js)
  * @property {boolean} [armed]  a Helium Bomb set to detonate on attack/enemy presence/command (engine/bomb.js)
+ * @property {Unit} [squadLeader]     transient, NEVER persisted: the leader this unit is following, if any (engine/commands.js setSquadLeader) — a live object reference
+ * @property {Unit[]} [squadFollowers]  transient, NEVER persisted: the units following THIS unit as their leader (engine/commands.js dispatchFormation)
+ * @property {number} [facing]  a player-set facing angle (radians), from a click-and-drag move/attack-move (engine/commands.js applyFacing) — overrides the movement-inferred angle a STATIONARY unit would otherwise freeze at (renderShared.js updateFacing); a plain (non-drag) move/attack-move clears it, so it never lingers stale after a later un-aimed order
  */
 
 /**

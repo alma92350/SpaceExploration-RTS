@@ -81,14 +81,22 @@ export function resetFacing() {
 
 // Infer and store a unit's facing angle from its frame-to-frame movement; returns the angle so
 // an oriented hull can draw pointing the way it's actually moving. A near-stationary unit keeps
-// its previous angle (no jitter). Buildings call it too (a turret barrel) — the "b*"/"u*" id
-// spaces can't collide in the shared map.
+// its previous angle EXCEPT when the player has set an explicit one (unit.facing — a real,
+// engine-side field set by a click-and-drag move/attack-move, engine/commands.js applyFacing):
+// then it snaps to/holds THAT instead, so a formation told to face the enemy actually does once
+// it stops, rather than freezing at whatever direction its last step of pathing happened to
+// leave it pointing. While actually moving, travel direction still wins — a unit sliding
+// sideways while nominally "facing" a fixed angle would read as broken, not deliberate. Buildings
+// call it too (a turret barrel, which never sets unit.facing) — the "b*"/"u*" id spaces can't
+// collide in the shared map.
 export function updateFacing(unit) {
   const prev = facing.get(unit.id);
-  let angle = prev ? prev.angle : -Math.PI / 2;
+  const explicit = Number.isFinite(unit.facing);
+  let angle = prev ? prev.angle : (explicit ? unit.facing : -Math.PI / 2);
   if (prev) {
     const dx = unit.x - prev.x, dy = unit.y - prev.y;
     if (Math.hypot(dx, dy) > 0.5) angle = Math.atan2(dy, dx);
+    else if (explicit) angle = unit.facing;
   }
   facing.set(unit.id, { x: unit.x, y: unit.y, angle });
   return angle;

@@ -1122,6 +1122,11 @@ function rebuildSelectionPanel(sel) {
     head.textContent = "Formation";
     panelEl.appendChild(head);
 
+    const leaderHint = document.createElement("p");
+    leaderHint.className = "hint";
+    leaderHint.textContent = "The first unit you selected leads — the rest follow it, even on a later solo move.";
+    panelEl.appendChild(leaderHint);
+
     const shapeRow = document.createElement("div");
     shapeRow.className = "formation-row";
     for (const shape of FORMATION_SHAPES) {
@@ -1206,7 +1211,7 @@ function rebuildSelectionPanel(sel) {
     const hint = document.createElement("p");
     hint.className = "hint";
     hint.textContent = touch ? "Tap the map to move. Tap a foe to attack. Attack-Move advances and engages."
-                             : "A + click to attack-move. Right-click moves (ignores enemies). Ctrl+right-click queues a waypoint.";
+                             : "A + click to attack-move. Right-click moves (ignores enemies). Right-drag also sets a facing. Ctrl+right-click queues a waypoint.";
     panelEl.appendChild(hint);
   } else if (sel.length === 1 && (cc || barracks)) {
     const hint = document.createElement("p");
@@ -1241,6 +1246,7 @@ function controlsLegend() {
   ] : [
     ["Left-drag", "select · Ctrl+drag adds"],
     ["Right-click", "move / attack / gather"],
+    ["Right-drag", "…and face that direction"],
     ["A + click", "attack-move"],
     ["Ctrl+right", "queue a waypoint"],
     ["Shift+1–9", "set group · 1–9 recall"],

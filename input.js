@@ -38,6 +38,7 @@ export function attachInput(canvas, state, onChange) {
   const heldKeys = new Set();
 
   let dragBox = null;
+  let rightDragStart = null;   // world-space {x,y} where a right-button drag began, or null between drags
   let buildMode = null;
   let attackMoveArmed = false;   // set by the A key; the next left-click issues an attack-move
   let lastWorldPos = { x: state.map.width / 2, y: state.map.height / 2 };
@@ -86,17 +87,25 @@ export function attachInput(canvas, state, onChange) {
 
   // The player's current formation choice (session.js), read fresh on every order — so
   // switching shapes in the HUD mid-game takes effect on the very next command issued.
-  function currentFormation() {
-    return { shape: game.formation.shape, leaderPos: game.formation.leaderPos };
+  // `heading` ({x,y}, a world-space vector — NOT normalized, engine/formation.js does that) is
+  // set only by a right-click-DRAG (see rightDragStart below): the drag direction becomes both
+  // the formation's facing while it travels and the persisted `unit.facing` it holds once
+  // stopped (engine/commands.js applyFacing). A plain click carries no heading, so the shape
+  // orients itself off the group's own travel direction as before, and any earlier facing is
+  // cleared.
+  function currentFormation(heading) {
+    const f = { shape: game.formation.shape, leaderPos: game.formation.leaderPos };
+    if (heading) { f.headingX = heading.x; f.headingY = heading.y; }
+    return f;
   }
 
   // Attack-move to (x,y): combat units advance-and-engage anything met on the
   // way; non-combat units (workers, the Ranger) can't attack-move, so they just
   // move. Same split the Ctrl-queue and minimap-command paths use.
-  function aggressiveMove(units, x, y, queue = false) {
+  function aggressiveMove(units, x, y, queue = false, heading) {
     const combatants = units.filter(u => UNITS[u.type].role === "combat");
     const others = units.filter(u => UNITS[u.type].role !== "combat");
-    const formation = currentFormation();
+    const formation = currentFormation(heading);
     if (combatants.length) issueAttackMove(combatants, x, y, queue, formation);
     if (others.length) issueMove(others, x, y, queue, formation);
   }
@@ -173,7 +182,12 @@ export function attachInput(canvas, state, onChange) {
   // a single selected production building sets its rally; otherwise the current
   // unit selection assists-builds, attacks, gathers, or moves as the target
   // warrants. `queue` chains it as a waypoint instead of replacing the order.
-  function commandAt(p, queue) {
+  // `heading` (world-space {x,y}, only ever set by a right-click-drag — see
+  // rightDragStart) only matters to the final plain-move fallback: gathering,
+  // attacking, escorting, and assisting/servicing a building all target a SPECIFIC
+  // entity/node, where "which way to face while getting there" isn't a choice —
+  // only an undirected move onto open ground is.
+  function commandAt(p, queue, heading) {
     if (state.selection.length === 1) {
       const building = state.buildings.get(state.selection[0]);
       if (building && building.owner === "player" && BUILDINGS[building.type].produces) {
@@ -220,13 +234,19 @@ export function attachInput(canvas, state, onChange) {
       if (workers.length) { issueGather(workers, node.id, queue); sound.playOrder(); onChange(); }
       return;
     }
-    if (queue) aggressiveMove(selected, p.x, p.y, true);
-    else issueMove(selected, p.x, p.y, false, currentFormation());
+    if (queue) aggressiveMove(selected, p.x, p.y, true, heading);
+    else issueMove(selected, p.x, p.y, false, currentFormation(heading));
     sound.playOrder();
     onChange();
   }
 
   canvas.addEventListener("mousedown", e => {
+    if (e.button === 2) {
+      // The actual command (or a build/attack-move cancel) fires on mouseup below, once we
+      // know whether this stayed a click or became a drag — just mark where it started.
+      rightDragStart = toWorld(e.clientX, e.clientY);
+      return;
+    }
     if (e.button !== 0) return;
     const p = toWorld(e.clientX, e.clientY);
     if (buildMode) { placeBuildingAt(p); return; }
@@ -258,6 +278,23 @@ export function attachInput(canvas, state, onChange) {
   canvas.addEventListener("mouseleave", () => { edgePan = [0, 0]; }, { signal });
 
   window.addEventListener("mouseup", e => {
+    if (e.button === 2) {
+      const start = rightDragStart;
+      rightDragStart = null;
+      if (!start) return;   // the button went down somewhere this listener never saw (e.g. off-canvas)
+      if (buildMode) { buildMode = null; onChange(); return; }
+      if (attackMoveArmed) { setArmed(false); return; }   // right-click cancels a pending attack-move
+      const end = toWorld(e.clientX, e.clientY);
+      const dx = end.x - start.x, dy = end.y - start.y;
+      // A plain click carries no heading (the shape/facing fall back to the group's own travel
+      // direction, exactly as before); a real drag's direction becomes the explicit heading —
+      // see currentFormation/applyFacing. Holding Ctrl queues the order as a waypoint instead of
+      // replacing what the units are doing, so a sequence of Ctrl+right-drags lays down a
+      // multi-leg, individually-aimed path.
+      const heading = Math.hypot(dx, dy) >= CLICK_THRESHOLD ? { x: dx, y: dy } : null;
+      commandAt(start, e.ctrlKey, heading);
+      return;
+    }
     if (e.button !== 0 || !dragBox) return;
     const box = dragBox;
     dragBox = null;
@@ -278,19 +315,13 @@ export function attachInput(canvas, state, onChange) {
     selectSameTypeAt(toWorld(e.clientX, e.clientY));
   }, { signal });
 
-  canvas.addEventListener("contextmenu", e => {
-    e.preventDefault();
-    if (buildMode) { buildMode = null; onChange(); return; }
-    if (attackMoveArmed) { setArmed(false); return; }   // right-click cancels a pending attack-move
-
-    // Holding Ctrl queues the order as a waypoint instead of replacing what the
-    // units are doing, so a sequence of Ctrl+right-clicks lays down a path
-    // (move/attack/gather steps) the units run through in order. A plain
-    // right-click issues immediately and clears any queued waypoints. NOT Shift:
-    // Firefox force-shows the native context menu on Shift+right-click and
-    // bypasses preventDefault, so a Shift-queued order could never be captured.
-    commandAt(toWorld(e.clientX, e.clientY), e.ctrlKey);
-  }, { signal });
+  // The actual right-click handling (build/attack-move cancel, or commandAt with whatever
+  // heading the drag implies) lives on mouseup above, which fires before this — contextmenu's
+  // only remaining job is suppressing the browser's native menu. NOT Shift+right-click: Firefox
+  // force-shows the native context menu on it and bypasses preventDefault, so a Shift-modified
+  // right-drag could never be captured — Ctrl is the queue modifier here instead, for exactly
+  // that reason.
+  canvas.addEventListener("contextmenu", e => { e.preventDefault(); }, { signal });
 
   canvas.addEventListener("wheel", e => {
     e.preventDefault();

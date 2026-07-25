@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formationSlots, clusterUnits, pickLeader, FORMATION_SHAPES } from "../engine/formation.js";
-import { issueHoldFormation } from "../engine/commands.js";
+import { issueHoldFormation, issueMove, issueAttackMove, issueStop } from "../engine/commands.js";
 import { UNITS } from "../engine/entities.js";
 import { createGameState, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
@@ -9,9 +9,14 @@ import { updateCombat } from "../engine/combat.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 
 // A bare positioned "unit" — enough for formation.js (which only reads id/type/x/y/maxHp),
-// without going through makeUnit/a real game state.
+// without going through makeUnit/a real game state. No `owner` on purpose for the pure-geometry
+// tests below (formation.js itself doesn't care); tests that exercise the PLAYER leader/follow
+// squad mechanic (engine/commands.js) need a real owner:"player" — see fakePlayerUnit.
 function fakeUnit(id, type, x, y, maxHp) {
-  return { id, type, x, y, maxHp: maxHp ?? UNITS[type].hp };
+  return { id, type, x, y, maxHp: maxHp ?? UNITS[type].hp, order: null };
+}
+function fakePlayerUnit(id, type, x, y) {
+  return { ...fakeUnit(id, type, x, y), owner: "player" };
 }
 
 // A minimal state (as the movement/combat tests use): just a unit Map + players, so we can drive
@@ -25,20 +30,13 @@ function miniState(...units) {
   };
 }
 
-// ---- pickLeader -------------------------------------------------------------
+// ---- pickLeader: the unit FIRST in the array, not a stat-based pick ----------
 
-test("pickLeader picks the unit with the most maxHp", () => {
-  const a = fakeUnit("u2", "skiff", 0, 0);         // maxHp 72
-  const b = fakeUnit("u1", "dreadnought", 0, 0);   // maxHp 340
-  const c = fakeUnit("u3", "worker", 0, 0);        // maxHp 40
-  assert.equal(pickLeader([a, b, c]).id, "u1");
-});
-
-test("pickLeader breaks a maxHp tie by the lower id, never by array order", () => {
-  const first = fakeUnit("u5", "skiff", 0, 0);
-  const second = fakeUnit("u4", "skiff", 0, 0);   // same maxHp, lower id, listed SECOND
-  assert.equal(pickLeader([first, second]).id, "u4");
-  assert.equal(pickLeader([second, first]).id, "u4");
+test("pickLeader is simply the first unit in the array — the one the rest were added to", () => {
+  const a = fakeUnit("u2", "dreadnought", 0, 0);   // highest maxHp, but NOT first
+  const b = fakeUnit("u1", "skiff", 0, 0);          // listed first
+  assert.equal(pickLeader([b, a]).id, "u1");
+  assert.equal(pickLeader([a, b]).id, "u2", "array order alone decides it — not maxHp");
 });
 
 // ---- clusterUnits: the nesting trigger ---------------------------------------
@@ -54,6 +52,13 @@ test("clusterUnits splits a selection spread across the map into separate armies
   const clusters = clusterUnits([...near, ...far]);
   assert.equal(clusters.length, 2);
   assert.deepEqual(clusters.map(c => c.length).sort(), [3, 3]);
+});
+
+test("clusterUnits keeps the cluster containing units[0] first, so it stays the outer leader cluster", () => {
+  const leaderSide = [0, 1].map(i => fakeUnit(`L${i}`, "skiff", i * 10, 0));
+  const otherSide = [0, 1].map(i => fakeUnit(`O${i}`, "skiff", 3000 + i * 10, 0));
+  const clusters = clusterUnits([...leaderSide, ...otherSide]);
+  assert.equal(clusters[0][0].id, "L0", "units[0]'s cluster is clusters[0]");
 });
 
 // ---- formationSlots: the default (grid, single cluster) path stays legacy-exact ----
@@ -89,65 +94,74 @@ test("line/wedge/circle center their group's centroid exactly on the destination
   }
 });
 
+// ---- explicit heading override ------------------------------------------------
+
+test("an explicit headingX/headingY overrides the origin-derived heading", () => {
+  const units = [0, 1, 2, 3].map(i => fakeUnit(`u${i}`, "skiff", 0, 0));
+  // origin==dest (no travel at all) defaults to a stable heading (see the "line formation"
+  // tests below, which rely on exactly this default) — an explicit override must still change
+  // the resulting layout rather than being silently ignored.
+  const withoutOverride = formationSlots(units, 500, 500, { shape: "line", originX: 500, originY: 500 });
+  const withOverride = formationSlots(units, 500, 500, { shape: "line", originX: 500, originY: 500, headingX: 0, headingY: -1 });
+  assert.notDeepEqual(withOverride, withoutOverride, "an explicit heading produces a different layout than the origin-derived default");
+});
+
 // ---- line ---------------------------------------------------------------------
+// The leader is always units[0] — these tests put the intended leader FIRST in the array.
 
 test("line formation: leaderPos front pushes the leader ahead of the rest of the line", () => {
-  const leader = fakeUnit("L", "dreadnought", 0, 0);
+  const leader = fakeUnit("L", "skiff", 0, 0);
   const followers = [1, 2, 3, 4].map(i => fakeUnit(`f${i}`, "skiff", 0, 0));
-  const units = [...followers, leader];
+  const units = [leader, ...followers];
   const spots = formationSlots(units, 1000, 0, { shape: "line", leaderPos: "front", originX: 0, originY: 0 });
-  const leaderX = spots[units.indexOf(leader)].x;
-  const avgFollowerX = followers.reduce((s, f) => s + spots[units.indexOf(f)].x, 0) / followers.length;
+  const leaderX = spots[0].x;
+  const avgFollowerX = spots.slice(1).reduce((s, p) => s + p.x, 0) / followers.length;
   assert.ok(leaderX > avgFollowerX, "the leader sits ahead of the line toward the heading");
 });
 
 test("line formation: leaderPos back tucks the leader behind the line", () => {
-  const leader = fakeUnit("L", "dreadnought", 0, 0);
+  const leader = fakeUnit("L", "skiff", 0, 0);
   const followers = [1, 2, 3, 4].map(i => fakeUnit(`f${i}`, "skiff", 0, 0));
-  const units = [...followers, leader];
+  const units = [leader, ...followers];
   const spots = formationSlots(units, 1000, 0, { shape: "line", leaderPos: "back", originX: 0, originY: 0 });
-  const leaderX = spots[units.indexOf(leader)].x;
-  const avgFollowerX = followers.reduce((s, f) => s + spots[units.indexOf(f)].x, 0) / followers.length;
+  const leaderX = spots[0].x;
+  const avgFollowerX = spots.slice(1).reduce((s, p) => s + p.x, 0) / followers.length;
   assert.ok(leaderX < avgFollowerX, "the leader trails behind the line");
 });
 
 // ---- wedge ----------------------------------------------------------------------
 
 test("wedge formation: leaderPos front puts the leader at the tip, most forward of everyone", () => {
-  const leader = fakeUnit("L", "dreadnought", 0, 0);
+  const leader = fakeUnit("L", "skiff", 0, 0);
   const others = [1, 2, 3, 4].map(i => fakeUnit(`f${i}`, "skiff", 0, 0));
   const units = [leader, ...others];
   const spots = formationSlots(units, 1000, 0, { shape: "wedge", leaderPos: "front", originX: 0, originY: 0 });
-  const leaderX = spots[units.indexOf(leader)].x;
-  for (const o of others) assert.ok(leaderX >= spots[units.indexOf(o)].x - 1e-6, `${o.id} trails the tip`);
+  const leaderX = spots[0].x;
+  for (const p of spots.slice(1)) assert.ok(leaderX >= p.x - 1e-6, "every flank trails the tip");
 });
 
 test("wedge formation: leaderPos back shields the leader at the rear vertex, flanks leading", () => {
-  const leader = fakeUnit("L", "dreadnought", 0, 0);
+  const leader = fakeUnit("L", "skiff", 0, 0);
   const others = [1, 2, 3, 4].map(i => fakeUnit(`f${i}`, "skiff", 0, 0));
   const units = [leader, ...others];
   const spots = formationSlots(units, 1000, 0, { shape: "wedge", leaderPos: "back", originX: 0, originY: 0 });
-  const leaderX = spots[units.indexOf(leader)].x;
-  for (const o of others) assert.ok(leaderX <= spots[units.indexOf(o)].x + 1e-6, `${o.id} leads ahead of the shielded leader`);
+  const leaderX = spots[0].x;
+  for (const p of spots.slice(1)) assert.ok(leaderX <= p.x + 1e-6, "every flank leads ahead of the shielded leader");
 });
 
 // ---- circle -----------------------------------------------------------------
 
 test("circle formation: leaderPos center seats the leader at the anchor, escorted by a ring", () => {
-  const leader = fakeUnit("L", "dreadnought", 0, 0);
+  const leader = fakeUnit("L", "skiff", 0, 0);
   const others = [1, 2, 3, 4, 5].map(i => fakeUnit(`f${i}`, "skiff", 0, 0));
   const units = [leader, ...others];
   const spots = formationSlots(units, 900, 700, { shape: "circle", leaderPos: "center", originX: 0, originY: 0 });
-  const leaderSpot = spots[units.indexOf(leader)];
-  assert.ok(Math.hypot(leaderSpot.x - 900, leaderSpot.y - 700) < 0.5, "leader sits at the anchor");
-  for (const o of others) {
-    const p = spots[units.indexOf(o)];
-    assert.ok(Math.hypot(p.x - 900, p.y - 700) > 10, `${o.id} stands out on the protective ring`);
-  }
+  assert.ok(Math.hypot(spots[0].x - 900, spots[0].y - 700) < 0.5, "leader sits at the anchor");
+  for (const p of spots.slice(1)) assert.ok(Math.hypot(p.x - 900, p.y - 700) > 10, "an escort stands out on the protective ring");
 });
 
 test("circle formation: leaderPos front/back puts every unit, leader included, on the ring", () => {
-  const leader = fakeUnit("L", "dreadnought", 0, 0);
+  const leader = fakeUnit("L", "skiff", 0, 0);
   const others = [1, 2, 3].map(i => fakeUnit(`f${i}`, "skiff", 0, 0));
   const units = [leader, ...others];
   const spots = formationSlots(units, 900, 700, { shape: "circle", leaderPos: "front", originX: 0, originY: 0 });
@@ -204,24 +218,52 @@ test("formationSlots lays out a nested formation of formations — tight within 
   assert.ok(Math.abs(avgX - 1500) < 5 && Math.abs(avgY - 0) < 5, "the nested layout as a whole is still centered on the destination");
 });
 
-// ---- issueHoldFormation (engine/commands.js) ---------------------------------
+// ---- AI-owned (and owner-less) units never form a squad ----------------------
+// The leader/follow mechanic is a PLAYER selection-UX feature: the scripted AI (and any test
+// double with no owner set) always gets the plain, pre-existing per-unit spread — every unit its
+// own real order, no leader, no follow-leader, no speed cap.
 
-test("issueHoldFormation anchors the group on its own current centroid, not the map origin", () => {
-  const units = [
-    { id: "u1", type: "skiff", x: 100, y: 100, maxHp: 72, order: null },
-    { id: "u2", type: "skiff", x: 120, y: 100, maxHp: 72, order: null },
-  ];
-  issueHoldFormation(units, "grid", "front");
+test("issueMove on AI-owned units gives every unit its own real move order — no squad", () => {
+  const units = [fakeUnit("a1", "skiff", 0, 0), fakeUnit("a2", "skiff", 0, 0)].map(u => ({ ...u, owner: "ai" }));
+  issueMove(units, 900, 700);
   for (const u of units) {
-    assert.equal(u.order.type, "hold-formation");
-    assert.equal(u.order.anchorX, 110);
-    assert.equal(u.order.anchorY, 100);
-    assert.equal(u.hold, true, "a combat unit also takes the Hold stance");
+    assert.equal(u.order.type, "move");
+    assert.ok(Number.isFinite(u.order.x) && Number.isFinite(u.order.y));
   }
+  assert.equal(units[1].order.type, "move", "the second unit is NOT a follow-leader");
+  assert.equal(units.some(u => u.squadLeader), false);
+});
+
+test("issueMove on owner-less units (a bare test double) also skips the squad mechanic", () => {
+  const units = [fakeUnit("u1", "skiff", 0, 0), fakeUnit("u2", "skiff", 0, 0)];   // no owner field at all
+  issueMove(units, 900, 700);
+  units.forEach(u => assert.equal(u.order.type, "move"));
+});
+
+// ---- issueHoldFormation / the leader-follow squad (engine/commands.js) -------
+
+test("issueHoldFormation makes units[0] the leader (anchored near the group's own centroid) and everyone else a follower", () => {
+  const units = [fakePlayerUnit("u1", "skiff", 100, 100), fakePlayerUnit("u2", "skiff", 120, 100)];
+  issueHoldFormation(units, "grid", "front");
+  const [leader, follower] = units;
+  assert.equal(leader.order.type, "hold-formation");
+  // The grid shape gives the leader its own slot in the grid (not necessarily the exact
+  // centroid — see the "matches the exact legacy spacing formula" test), but it's always
+  // WITHIN the group's own footprint, close to where the two units actually are.
+  assert.ok(Math.hypot(leader.order.anchorX - 110, leader.order.anchorY - 100) < 20);
+  assert.equal(follower.order.type, "follow-leader");
+  assert.equal(follower.order.leader, leader);
+  assert.equal(follower.squadLeader, leader);
+  assert.deepEqual(leader.squadFollowers, [follower]);
+  assert.equal(leader.hold, true, "a combat leader also takes the Hold stance");
+  assert.equal(follower.hold, true, "…and so does a combat follower");
+  // Leader and follower end up at distinct points (the formation's own spacing), not stacked.
+  const followerTarget = { x: leader.order.anchorX + follower.order.offsetX, y: leader.order.anchorY + follower.order.offsetY };
+  assert.ok(Math.hypot(followerTarget.x - leader.order.anchorX, followerTarget.y - leader.order.anchorY) > 5);
 });
 
 test("issueHoldFormation gives a non-combat unit a slot but no Hold stance to set", () => {
-  const worker = { id: "u1", type: "worker", x: 0, y: 0, maxHp: 40, order: null };
+  const worker = fakePlayerUnit("u1", "worker", 0, 0);
   issueHoldFormation([worker]);
   assert.equal(worker.order.type, "hold-formation");
   assert.ok(!worker.hold);
@@ -231,18 +273,99 @@ test("issueHoldFormation on an empty selection is a safe no-op", () => {
   assert.doesNotThrow(() => issueHoldFormation([]));
 });
 
-// ---- sim/combat integration: keepFormationStation ----------------------------
+// ---- persistent leader-follow: select the leader alone, move it, others trail --
 
-test("a combat unit holding formation converges on its own anchor+offset slot and never clears the order on arrival", () => {
-  const units = [makeUnit("skiff", "player", 100, 100), makeUnit("skiff", "player", 300, 300)];
+test("a solo move on the leader alone drags its existing followers along, capped to the group's slowest speed", () => {
+  const leader = fakePlayerUnit("L", "bulkfreighter", 100, 100);   // slow (speed 32)
+  const follower = fakePlayerUnit("F", "ranger", 120, 100);        // fast (speed 115)
+  issueMove([leader, follower], 1000, 100);
+  assert.equal(leader.order.speedCap, UNITS.bulkfreighter.speed, "capped to the slowest member");
+  assert.equal(follower.order.type, "follow-leader");
+  assert.equal(follower.order.leader, leader);
+
+  // Now command the LEADER alone — the follower's order is untouched (still follow-leader,
+  // still pointing at the same live leader object), so it keeps trailing automatically.
+  issueMove([leader], 50, 100);
+  assert.equal(leader.order.type, "move");
+  assert.equal(leader.order.speedCap, UNITS.bulkfreighter.speed, "the solo command still re-derives the group's speed cap");
+  assert.equal(follower.order.type, "follow-leader", "never re-issued — it was already chasing the leader");
+  assert.equal(follower.order.leader, leader);
+});
+
+test("a follower given a DIRECT order leaves the squad — the leader's own list drops it", () => {
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  const follower = fakePlayerUnit("F", "skiff", 0, 0);
+  issueHoldFormation([leader, follower]);
+  assert.equal(follower.squadLeader, leader);
+
+  issueMove([follower], 500, 500);   // a direct command to the follower alone
+
+  assert.equal(follower.order.type, "move", "direct control wins");
+  assert.equal(follower.squadLeader, undefined, "no longer tracked as this leader's follower");
+  assert.deepEqual(leader.squadFollowers, [], "the leader's own list was trimmed to match");
+});
+
+test("issueStop on a follower releases it from the squad too", () => {
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  const follower = fakePlayerUnit("F", "skiff", 0, 0);
+  issueHoldFormation([leader, follower]);
+  issueStop([follower]);
+  assert.equal(follower.order, null);
+  assert.equal(follower.squadLeader, undefined);
+  assert.deepEqual(leader.squadFollowers, []);
+});
+
+test("redefining a leader's squad with a smaller group stops (not just unlinks) the dropped-out unit", () => {
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  const a = fakePlayerUnit("A", "skiff", 0, 0);
+  const b = fakePlayerUnit("B", "skiff", 0, 0);
+  issueHoldFormation([leader, a, b]);
+  assert.deepEqual(leader.squadFollowers, [a, b]);
+
+  issueMove([leader, a], 500, 0);   // a fresh command that only re-selects the leader + A
+
+  assert.deepEqual(leader.squadFollowers, [a], "B fell out of the squad");
+  assert.equal(b.squadLeader, undefined);
+  assert.equal(b.order, null, "B is actually stopped, not left silently chasing a leader that dropped it");
+  assert.equal(a.order.type, "follow-leader", "A is still following");
+});
+
+// ---- click-and-drag facing (engine/commands.js applyFacing) ------------------
+
+test("issueMove with an explicit heading stamps every commanded unit's facing; a plain move clears it", () => {
+  const units = [fakePlayerUnit("u1", "skiff", 0, 0), fakePlayerUnit("u2", "skiff", 0, 0)];
+  issueMove(units, 100, 0, false, { headingX: 0, headingY: 1 });   // facing straight down (+y)
+  for (const u of units) assert.ok(Math.abs(u.facing - Math.PI / 2) < 1e-6);
+
+  issueMove(units, 100, 0);   // a later plain move, no heading
+  for (const u of units) assert.ok(!Number.isFinite(u.facing), "no explicit heading clears the earlier facing");
+});
+
+test("issueAttackMove also stamps and clears facing the same way", () => {
+  const units = [fakePlayerUnit("u1", "skiff", 0, 0)];
+  issueAttackMove(units, 100, 0, false, { headingX: -1, headingY: 0 });   // facing left
+  assert.ok(Math.abs(units[0].facing - Math.PI) < 1e-6);
+  issueAttackMove(units, 100, 0);
+  assert.ok(!Number.isFinite(units[0].facing));
+});
+
+// ---- sim/combat integration: keepFormationStation / keepFollowingLeader -----
+
+test("a leader holding formation converges on its own anchor; a follower converges on leader+offset — arrival never clears either", () => {
+  const leader = makeUnit("skiff", "player", 100, 100);
+  const follower = makeUnit("skiff", "player", 300, 300);
+  const units = [leader, follower];
   const s = miniState(...units);
   issueHoldFormation(units, "line", "front");
   for (let i = 0; i < 400; i++) for (const u of units) updateCombat(s, u, 0.1);
-  for (const u of units) {
-    const tx = u.order.anchorX + u.order.offsetX, ty = u.order.anchorY + u.order.offsetY;
-    assert.ok(Math.hypot(u.x - tx, u.y - ty) < 5, `${u.id} reached its formation slot`);
-    assert.equal(u.order.type, "hold-formation", "arrival never clears a hold-formation order");
-  }
+
+  const leaderTarget = { x: leader.order.anchorX + leader.order.offsetX, y: leader.order.anchorY + leader.order.offsetY };
+  assert.ok(Math.hypot(leader.x - leaderTarget.x, leader.y - leaderTarget.y) < 5, "leader reached its own anchor");
+  assert.equal(leader.order.type, "hold-formation");
+
+  const followerTarget = { x: leader.x + follower.order.offsetX, y: leader.y + follower.order.offsetY };
+  assert.ok(Math.hypot(follower.x - followerTarget.x, follower.y - followerTarget.y) < 5, "follower reached leader+offset");
+  assert.equal(follower.order.type, "follow-leader");
 });
 
 test("a unit holding formation still fires on a threat that wanders into weapon range", () => {
@@ -268,31 +391,78 @@ test("the Hold stance keeps a formation unit from chasing a target out of weapon
   assert.ok(Math.hypot(guard.x - startX, guard.y - startY) < 2, "held ground instead of closing on an out-of-range target");
 });
 
-test("a worker (non-combat) holding formation reaches its slot via the full sim tick path", () => {
+test("a combat follower still auto-engages a threat, then resumes following", () => {
+  const leader = makeUnit("skiff", "player", 500, 500);
+  const follower = makeUnit("skiff", "player", 540, 500);
+  const units = [leader, follower];
+  const s = miniState(...units);
+  issueHoldFormation(units);
+  for (let i = 0; i < 100; i++) for (const u of units) updateCombat(s, u, 0.1);   // settle into formation
+
+  const enemy = makeUnit("skiff", "ai", follower.x + 20, follower.y);   // right on the follower
+  enemy.hp = enemy.maxHp = 100000;
+  s.units.set(enemy.id, enemy);
+  for (let i = 0; i < 80; i++) updateCombat(s, follower, 0.1);
+  assert.ok(enemy.hp < enemy.maxHp, "the follower broke to engage a threat at its post");
+  assert.equal(follower.order.type, "follow-leader", "still tracking its leader throughout");
+});
+
+test("a follower drops its order (free to be re-ordered) the moment its leader dies", () => {
+  const leader = makeUnit("skiff", "player", 500, 500);
+  const follower = makeUnit("skiff", "player", 540, 500);
+  const s = miniState(leader, follower);
+  issueHoldFormation([leader, follower]);
+  leader.hp = 0;   // the leader has died (removeEntity already dropped it from state.units in real play)
+  updateCombat(s, follower, 0.1);
+  assert.equal(follower.order, null, "no live leader to follow → free for a new order");
+});
+
+test("a worker (non-combat) leader+follower pair reaches its formation via the full sim tick path", () => {
   const s = createGameState({ planetId: "ferros", seed: 2 });
   const w1 = makeUnit("worker", "player", 500, 500);
   const w2 = makeUnit("worker", "player", 700, 500);
+  const units = [w1, w2];
   s.units.set(w1.id, w1); s.units.set(w2.id, w2);
-  issueHoldFormation([w1, w2], "line", "front");
+  issueHoldFormation(units, "line", "front");
   for (let i = 0; i < 200; i++) tick(s, 0.1);
-  for (const u of [w1, w2]) {
-    const tx = u.order.anchorX + u.order.offsetX, ty = u.order.anchorY + u.order.offsetY;
-    assert.ok(Math.hypot(u.x - tx, u.y - ty) < 10, `${u.id} reached its slot`);
-    assert.equal(u.order.type, "hold-formation");
-  }
+
+  const leaderTarget = { x: w1.order.anchorX + w1.order.offsetX, y: w1.order.anchorY + w1.order.offsetY };
+  assert.ok(Math.hypot(w1.x - leaderTarget.x, w1.y - leaderTarget.y) < 10, "leader reached its anchor");
+  const followerTarget = { x: w1.x + w2.order.offsetX, y: w1.y + w2.order.offsetY };
+  assert.ok(Math.hypot(w2.x - followerTarget.x, w2.y - followerTarget.y) < 10, "follower reached leader+offset");
 });
 
-test("a support unit (Mender) holding formation keeps station via updateSupport", () => {
+test("a support unit (Mender) leader+follower pair keeps station via updateSupport", () => {
   const s = createGameState({ planetId: "ferros", seed: 3 });
   const m1 = makeUnit("mender", "player", 500, 500);
   const m2 = makeUnit("mender", "player", 700, 500);
   s.units.set(m1.id, m1); s.units.set(m2.id, m2);
   issueHoldFormation([m1, m2], "circle", "front");
   for (let i = 0; i < 200; i++) tick(s, 0.1);
-  for (const u of [m1, m2]) {
-    const tx = u.order.anchorX + u.order.offsetX, ty = u.order.anchorY + u.order.offsetY;
-    assert.ok(Math.hypot(u.x - tx, u.y - ty) < 10, `${u.id} reached its slot`);
-  }
+  const leaderTarget = { x: m1.order.anchorX + m1.order.offsetX, y: m1.order.anchorY + m1.order.offsetY };
+  assert.ok(Math.hypot(m1.x - leaderTarget.x, m1.y - leaderTarget.y) < 10);
+  const followerTarget = { x: m1.x + m2.order.offsetX, y: m1.y + m2.order.offsetY };
+  assert.ok(Math.hypot(m2.x - followerTarget.x, m2.y - followerTarget.y) < 10);
+});
+
+test("a formation's travel speed never outruns its slowest member, via the real tick loop", () => {
+  const s = createGameState({ planetId: "ferros", seed: 5 });
+  const leader = makeUnit("bulkfreighter", "player", 500, 500);   // speed 32 — the slowest
+  // Placed ALONGSIDE the leader (perpendicular to the +x travel direction), not directly ahead
+  // of it on the path — so movement.js's lateral-avoidance sensing (same-owner neighbours AHEAD
+  // in the seek direction) never engages and curves either unit's path, keeping this a clean
+  // measurement of the speed cap alone.
+  const follower = makeUnit("ranger", "player", 500, 530);        // speed 115 — much faster
+  s.units.set(leader.id, leader); s.units.set(follower.id, follower);
+  issueMove([leader, follower], 1500, 500);
+  for (let i = 0; i < 50; i++) tick(s, 0.1);   // 5 sim seconds
+  const traveled = leader.x - 500;
+  assert.ok(traveled < UNITS.ranger.speed * 5 * 0.5,
+    `the leader (${traveled.toFixed(0)} travelled) moves far slower than the follower's own top speed would allow`);
+  // The formation's grid layout for 2 units puts the follower's slot 20 units off the leader's
+  // own — see the "matches the exact legacy spacing formula" test above (spacing 20, cols 2).
+  const gap = Math.hypot(follower.x - (leader.x + 20), follower.y - leader.y);
+  assert.ok(gap < 10, `the fast follower stays tight on the slow leader (gap ${gap.toFixed(1)}), not racing ahead and idling`);
 });
 
 // ---- persistence --------------------------------------------------------------
@@ -317,4 +487,23 @@ test("a hold-formation order survives save/load, and a tampered anchor/offset ca
   ru1.order.offsetY = Infinity;
   tick(restored, 0.1);
   assert.ok(Number.isFinite(ru1.x) && Number.isFinite(ru1.y), "position stays finite even with a garbage anchor/offset");
+});
+
+test("a follow-leader order (and squadLeader/squadFollowers) never survives save/load — no circular reference crash", () => {
+  const s = createGameState({ planetId: "ferros", seed: 6 });
+  const leader = makeUnit("skiff", "player", 500, 500);
+  const follower = makeUnit("skiff", "player", 540, 500);
+  s.units.set(leader.id, leader); s.units.set(follower.id, follower);
+  issueHoldFormation([leader, follower]);
+
+  let payload;
+  assert.doesNotThrow(() => { payload = JSON.parse(JSON.stringify(serializeGame(s))); },
+    "serializing a live squad (a circular leader<->follower reference) must not throw");
+
+  const restored = deserializeGame(payload);
+  const rLeader = [...restored.units.values()].find(u => u.id === leader.id);
+  const rFollower = [...restored.units.values()].find(u => u.id === follower.id);
+  assert.equal(rFollower.order, null, "the follow-leader order is dropped, not reconstructed");
+  assert.equal(rLeader.squadFollowers, undefined);
+  assert.equal(rFollower.squadLeader, undefined);
 });
