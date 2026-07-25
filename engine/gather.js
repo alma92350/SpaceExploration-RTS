@@ -119,7 +119,7 @@ export function updateGather(state, unit, dt) {
 // fills). AI drop-offs are the bottomless treasury as before — so AI gather routing is
 // byte-identical. Closest wins, deterministic Map order breaks ties.
 /** @param {State} state @param {string} owner @param {number} x @param {number} y @returns {Building|null} */
-function nearestGatherDrop(state, owner, x, y) {
+export function nearestGatherDrop(state, owner, x, y) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing || !isGatherDropOff(b.type)) continue;
