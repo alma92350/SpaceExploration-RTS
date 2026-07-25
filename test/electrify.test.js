@@ -19,7 +19,7 @@ test("isElectrifiable picks the non-power producers/houses, not the power econom
   for (const t of ["command", "barracks", "stardock", "habitat"]) assert.ok(isElectrifiable(t), `${t} electrifiable`);
   // …but anything already ON the power economy (grants it, runs a recipe, digs, or is a wonder) cannot,
   // nor can a plain turret / pure drop-off with nothing to boost.
-  for (const t of ["reactor", "combustor", "smelter", "plasmarig", "antimatter_gate", "turret", "refinery"])
+  for (const t of ["reactor", "combustor", "biomassreactor", "smelter", "plasmarig", "antimatter_gate", "turret", "refinery"])
     assert.ok(!isElectrifiable(t), `${t} not electrifiable`);
 });
 

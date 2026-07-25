@@ -12,11 +12,19 @@
      gatherer already makes (gather.js nearestGatherDrop), re-checked every tick of the
      walk so a nearer option that appears or frees up room mid-trip is taken immediately.
 
-   - SERVICE: a ROUND TRIP for a FACTORY — a building that both consumes inputs and
-     produces output. In one loop the worker carries a needed INPUT from the treasury to
-     the factory AND carries its finished OUTPUT back, so neither leg runs empty. Used
-     both by auto-assignment and when the player manually assigns a worker to a building
-     (`order.manual`, which makes it keep serving that one building instead of going idle).
+   - SERVICE: a ROUND TRIP for a FACTORY, or a one-way INPUT-ONLY run for a fuel-burning
+     power station (the Combustion Generator, the Biomass Reactor — def.combust). A factory
+     both consumes inputs and produces output: the worker carries a needed INPUT from the
+     treasury to it AND carries its finished OUTPUT back, so neither leg runs empty. A power
+     station only ever needs fuel hauled IN (gas/radioactives for the Combustion Generator,
+     biomass for the Biomass Reactor — any ONE of its accepted fuels, not all at once); it
+     has no output to carry back, so the trip just ends there — the SAME "no output, just
+     deliver the input" leg-skip a factory with a cleared backlog already uses. inputNeedsOf
+     below is the single place that maps EITHER kind of building to "what does it need hauled
+     in", so neededInput/assignService/updateService don't need to know which kind they're
+     looking at. Used both by auto-assignment and when the player manually assigns a worker to
+     a building (`order.manual`, which makes it keep serving that one building instead of
+     going idle).
 
    - FERRY: a worker assigned to a specific landed FREIGHTER — manually (right-click it,
      like a building — engine/commands.js issueFerryFreighter) or, for a COLLECTION-POINT
@@ -118,7 +126,11 @@ function tripCapacity(def) { return def.cargoCap ?? def.cargoHold ?? 0; }
 export function countLogistics(state) {
   for (const b of state.buildings.values()) {
     if (storeCapOf(b.type) > 0) b.haulers = 0;
-    if (recipeOf(b)) b.servers = 0;
+    // A factory (recipeOf) OR a fuel-burning power station (BUILDINGS[type].combust) both take
+    // SERVICE workers — see inputNeedsOf below — so both need this tally reset each tick too, or
+    // a power station's `servers` count would only ever climb, permanently maxing out at
+    // MAX_SERVERS after its first worker and locking out every one after.
+    if (recipeOf(b) || BUILDINGS[b.type]?.combust) b.servers = 0;
   }
   for (const u of state.units.values()) {
     if (UNITS[u.type]?.cargoHold) u.ferriers = 0;
@@ -178,20 +190,36 @@ function loadFrom(store, unit, cargoCap) {
   return true;
 }
 
-// The input commodity a factory most needs and the treasury can supply: the one with the fewest
+// What a building needs hauled IN, as a commodity→"units per batch" map — a real recipe's `in`
+// (every key but "energy", a live Power draw never hauled/stored) for a factory, or a synthesized
+// one (each accepted fuel weighted 1) for a fuel-burning power station (def.combust.fuels). Null
+// for anything that needs neither. The single place that unifies the two so neededInput/
+// assignService/updateService don't need their own factory-vs-power-station branch.
+function inputNeedsOf(building) {
+  const recipe = recipeOf(building);
+  if (recipe) return recipe.in;
+  const def = BUILDINGS[building.type];
+  return def?.combust ? Object.fromEntries(def.combust.fuels.map(f => [f, 1])) : null;
+}
+
+// The input commodity a building most needs and the treasury can supply: the one with the fewest
 // batches buffered (below the top-up target) that the owner has in stock AND that still has room
 // in its OWN slice of the larder (inputRoom is per-commodity, entities.js — so one over-supplied
-// input can never crowd out another the recipe is actually starved of). Null when it's well-stocked
-// on everything the treasury could bring, or everything it still lacks has no room left (a stale
-// state that shouldn't arise given the per-commodity split, but a safe no-op if it ever did).
-// Deterministic (recipe key order is stable).
-function neededInput(building, recipe, res) {
+// input can never crowd out another the recipe/fuel choice is actually starved of). Null when
+// it's well-stocked on everything the treasury could bring, or everything it still lacks has no
+// room left (a stale state that shouldn't arise given the per-commodity split, but a safe no-op
+// if it ever did). `needs` is inputNeedsOf's commodity→"units per batch" map — a real recipe's
+// AND (every key matters) or a power station's OR (any ONE fuel keeps it running) both fall out
+// of the same "pick whichever's neediest, one delivery at a time" loop; the two only ever differ
+// in how the RESULT is used downstream (industry.js production vs. updateCombustors' fuel burn),
+// never in how it's fetched. Deterministic (key order is stable).
+function neededInput(building, needs, res) {
   let want = null, fewest = Infinity;
-  for (const com in recipe.in) {
+  for (const com in needs) {
     if (com === "energy") continue;
     if ((res[com] || 0) <= 0) continue;
     if (inputRoom(building, com) <= 0) continue;
-    const batches = (building.input?.[com] || 0) / recipe.in[com];
+    const batches = (building.input?.[com] || 0) / needs[com];
     if (batches >= SUPPLY_BATCHES) continue;
     if (batches < fewest) { fewest = batches; want = com; }
   }
@@ -233,8 +261,11 @@ export function assignHaul(state, unit) {
 }
 
 /**
- * Give an idle worker a SERVICE round trip on the nearest own factory that needs feeding (an input
- * low & in the treasury) OR clearing (an output backlog), and isn't already served by MAX_SERVERS.
+ * Give an idle worker a SERVICE round trip on the nearest own factory OR fuel-burning power
+ * station that needs feeding (an input/fuel low & in the treasury) or, for a factory, clearing
+ * (an output backlog) — and isn't already served by MAX_SERVERS. A power station never has an
+ * output backlog of its own (storeCapOf is 0 for it — see entities.js), so needsOut is always
+ * false there; it only ever competes for a slot on needing fuel.
  * @param {State} state @param {Unit} unit
  */
 export function assignService(state, unit) {
@@ -242,9 +273,9 @@ export function assignService(state, unit) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {
     if (b.owner !== unit.owner || b.constructing) continue;
-    const recipe = recipeOf(b);
-    if (!recipe || (b.servers || 0) >= MAX_SERVERS) continue;
-    const needsIn = neededInput(b, recipe, res);   // already room-checked per-commodity (see neededInput)
+    const needs = inputNeedsOf(b);
+    if (!needs || (b.servers || 0) >= MAX_SERVERS) continue;
+    const needsIn = neededInput(b, needs, res);   // already room-checked per-commodity (see neededInput)
     const needsOut = storeTotal(b) >= storeCapOf(b.type) * ASSIGN_FRACTION;
     if (!needsIn && !needsOut) continue;
     const d = Math.hypot(b.x - unit.x, b.y - unit.y);
@@ -351,11 +382,13 @@ function bankCargo(state, unit) {
 }
 
 /**
- * Advance a SERVICE round trip on a factory: fetch a needed INPUT from the treasury, carry it in,
- * drop it, pick up the finished OUTPUT, carry it back to the treasury — then loop (a manually-assigned
- * worker keeps serving its building; an auto-assigned one goes idle and may be re-tasked). Each leg
- * that would run empty is skipped: with no input needed it goes straight for the output; with no
- * output it just delivers the input. Salvages a razed target by banking whatever it carries.
+ * Advance a SERVICE round trip on a factory OR a one-way run on a fuel-burning power station:
+ * fetch a needed INPUT (a recipe ingredient, or fuel — inputNeedsOf) from the treasury, carry it
+ * in, drop it, pick up the finished OUTPUT (if any), carry it back to the treasury — then loop (a
+ * manually-assigned worker keeps serving its building; an auto-assigned one goes idle and may be
+ * re-tasked). Each leg that would run empty is skipped: with no input needed it goes straight for
+ * the output; with no output (a power station never has one — loadFrom(b.store) is just a no-op
+ * for it) it just delivers the input. Salvages a razed target by banking whatever it carries.
  * @param {State} state @param {Unit} unit @param {number} dt
  */
 export function updateService(state, unit, dt) {
@@ -369,16 +402,16 @@ export function updateService(state, unit, dt) {
     else { unit.order = null; return; }
   }
   if (!order.phase) order.phase = "plan";
-  const recipe = b ? recipeOf(b) : null;
+  const needs = b ? inputNeedsOf(b) : null;
 
   if (order.phase === "plan") {
     if (unit.cargo && unit.cargo.qty > 0) {                                    // finish whatever's aboard first
-      const isInput = recipe && recipe.in[unit.cargo.com] && inputRoom(b, unit.cargo.com) > 0;
+      const isInput = needs && needs[unit.cargo.com] && inputRoom(b, unit.cargo.com) > 0;
       order.phase = isInput ? "toBuilding" : "toReturn";
       return;
     }
-    const wantIn = recipe ? neededInput(b, recipe, res) : null;
-    if (wantIn) { order.com = wantIn; order.phase = "toCC"; return; }          // fetch an input
+    const wantIn = needs ? neededInput(b, needs, res) : null;
+    if (wantIn) { order.com = wantIn; order.phase = "toCC"; return; }          // fetch an input/fuel
     if (b && storeTotal(b) > 0) { order.phase = "toBuilding"; return; }        // just clear the output
     if (order.manual && b) { parkNear(state, unit, b, def, dt); return; }      // assigned & nothing to do → wait by it
     unit.order = null;
@@ -398,7 +431,7 @@ export function updateService(state, unit, dt) {
 
   if (order.phase === "toBuilding") {                                          // deliver input, grab output for the return
     if (reached(unit, b)) {
-      if (unit.cargo && unit.cargo.qty > 0 && recipe && recipe.in[unit.cargo.com]) {
+      if (unit.cargo && unit.cargo.qty > 0 && needs && needs[unit.cargo.com]) {
         const give = Math.min(unit.cargo.qty, inputRoom(b, unit.cargo.com));
         if (give > 0) { b.input = b.input || {}; b.input[unit.cargo.com] = (b.input[unit.cargo.com] || 0) + give; unit.cargo.qty -= give; }
         if (unit.cargo.qty <= 1e-9) { unit.cargo.qty = 0; unit.cargo.com = null; }

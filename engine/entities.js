@@ -108,11 +108,24 @@ export const BUILDINGS = {
     cost: { ore: 70 }, buildTime: 12, sight: 110,
     // A cheap, fuel-burning alternative to the Reactor: it GRANTS less Power (energyGrants 10 vs 20)
     // over a SMALLER grid (powerRange 0.55 shrinks its efficiency zones — industry.js), and only while
-    // it's fed. It burns gas OR biomass from the treasury (combust.rate/sec, whichever the stockpile has)
-    // — so it's cheap to raise but carries an ongoing fuel bill, the mirror of the Reactor's free-but-
-    // pricey grid. Out of fuel (or paused) it grants nothing. See engine/industry.js updateCombustors.
+    // it's fed. It burns gas (Helium-3) OR radioactives (combust.rate/sec, whichever its own local
+    // fuel buffer has more of) — a real WORKER hauls the fuel in from the treasury, same as a
+    // factory's input larder (engine/haul.js SERVICE), it isn't just auto-drawn from the treasury —
+    // so it's cheap to raise but carries an ongoing fuel bill AND a logistics chore, the mirror of
+    // the Reactor's free-but-pricey grid. Out of fuel (or paused) it grants nothing. See
+    // engine/industry.js updateCombustors. Its biomass-burning sibling is the Biomass Reactor below.
     energyGrants: 10, powerRange: 0.55,
-    combust: { fuels: ["gas", "biomass"], rate: 0.6 },
+    combust: { fuels: ["gas", "radioactives"], rate: 0.6 },
+    odysseyOnly: true,
+  },
+  biomassreactor: {
+    id: "biomassreactor", name: "Biomass Reactor", hp: 300, radius: 13,
+    cost: { ore: 70 }, buildTime: 12, sight: 110,
+    // The Combustion Generator's sibling, for a claim rich in biomass instead of gas/radioactives —
+    // same cheap-but-fed deal (energyGrants/powerRange/rate all match), just a single fuel and a
+    // worker hauling it in the same way (engine/haul.js SERVICE, engine/industry.js updateCombustors).
+    energyGrants: 10, powerRange: 0.55,
+    combust: { fuels: ["biomass"], rate: 0.6 },
     odysseyOnly: true,
   },
   smelter: {
@@ -287,15 +300,17 @@ export function isElectrifiable(type) {
 
 // ---- Finite storage (Odyssey logistics) ---------------------------------------
 // A producing building banks its OUTPUT into a finite `building.store` buffer, and a
-// factory draws its INPUTS from a finite `building.input` buffer — both commodity→qty
-// maps, capped by the def. Goods aren't spendable (or consumable) until a worker moves
-// them (engine/haul.js): output is hauled to a Command Center, inputs are carried in
-// from the treasury. So storage is a real, mindful constraint, not an infinite sink.
+// factory OR a fuel-burning power station draws its INPUTS (a recipe's ingredients, or a
+// Combustion Generator's / Biomass Reactor's fuel) from a finite `building.input` buffer —
+// both commodity→qty maps, capped by the def. Goods aren't spendable (or consumable) until a
+// worker moves them (engine/haul.js): output is hauled to a Command Center, inputs are
+// carried in from the treasury. So storage is a real, mindful constraint, not an infinite sink.
 //
-// Caps: a def can pin `storeCap` / `inputCap` explicitly (the Plasma Rig pins a big
-// storeCap and has no input buffer — it burns treasury radioactives directly); any
-// building with a `recipe` (the factories) otherwise gets the shared default. Everything
-// else has no buffer (cap 0), so these helpers are no-ops for the whole skirmish roster.
+// Caps: a def can pin `storeCap` / `inputCap` explicitly (the Plasma Rig pins a big storeCap
+// and has no input buffer — it digs its own raw ore, nothing to feed it); any building with a
+// `recipe` (the factories) OR a `combust` (the fuel-burning power stations) otherwise gets the
+// shared default. Everything else has no buffer (cap 0), so these helpers are no-ops for the
+// whole skirmish roster.
 const DEFAULT_FACTORY_STORE = 80;   // a factory's output backlog before it stalls, ~tens of batches
 const DEFAULT_FACTORY_INPUT = 80;   // a factory's WHOLE input larder before it starves — split evenly
                                      // per real input commodity below, NOT one pool every commodity races for
@@ -310,12 +325,19 @@ export function storeCapOf(type) {
   return def.recipe ? DEFAULT_FACTORY_STORE : 0;
 }
 
-// The REAL (haulable) input commodities a recipe needs — every key but "energy", which is a
-// live per-tick Power draw (engine/industry.js), never a hauled/stored good. Empty for a
-// building with no recipe (or an unknown recipe id — belt-and-suspenders for stale data).
+// The REAL (haulable) input commodities a building needs hauled in — a recipe's ingredients
+// (every key but "energy", which is a live per-tick Power draw, engine/industry.js, never a
+// hauled/stored good), or a fuel-burning power station's acceptable fuels (def.combust.fuels —
+// gas/radioactives for the Combustion Generator, biomass for the Biomass Reactor; ANY ONE of
+// them keeps it running, not all at once — see haul.js inputNeedsOf/neededInput, which already
+// treats "pick whichever's neediest" the same way for both an AND-recipe and an OR-fuel-choice).
+// Empty for a building with neither (or an unknown recipe id — belt-and-suspenders for stale data).
 function realInputComs(type) {
-  const recipe = RECIPE_BY_ID[BUILDINGS[type]?.recipe];
-  return recipe ? Object.keys(recipe.in).filter(c => c !== "energy") : [];
+  const def = BUILDINGS[type];
+  const recipe = RECIPE_BY_ID[def?.recipe];
+  if (recipe) return Object.keys(recipe.in).filter(c => c !== "energy");
+  if (def?.combust) return def.combust.fuels;
+  return [];
 }
 
 // The input larder's total capacity is split EVENLY across however many real commodities the
@@ -325,11 +347,12 @@ function realInputComs(type) {
 // plenty of) can fill the WHOLE shared pool on its own, leaving zero room for whichever OTHER
 // input the recipe is actually starved of — the factory then sits stalled forever on a "Starved"
 // input it can never actually receive, since haul.js's inputRoom check (below) always reads 0.
-/** The per-commodity input-buffer capacity of a building type (factories only), or 0 if it has none. */
+/** The per-commodity input-buffer capacity of a building type (a factory OR a fuel-burning power
+ * station), or 0 if it has none. */
 export function inputCapOf(type) {
   const def = BUILDINGS[type];
   if (!def) return 0;
-  const total = def.inputCap != null ? def.inputCap : (def.recipe ? DEFAULT_FACTORY_INPUT : 0);
+  const total = def.inputCap != null ? def.inputCap : ((def.recipe || def.combust) ? DEFAULT_FACTORY_INPUT : 0);
   if (total <= 0) return 0;
   const n = realInputComs(type).length;
   return n > 0 ? total / n : total;
