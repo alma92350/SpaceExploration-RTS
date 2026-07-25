@@ -17,7 +17,10 @@ const TRACER_LIFETIME_MS = 120;
 const DEATH_LIFETIME_MS = 280;
 const PING_LIFETIME_MS = 3000;
 const FIREWORK_LIFETIME_MS = 1500;
-const EXPLOSION_LIFETIME_MS = 900;
+// Long enough for the shockwave ring (renderEffects.js) to visibly crawl
+// out to its real blast radius rather than snapping there in a couple of
+// frames — the slow travel is what sells the blast's true reach.
+const EXPLOSION_LIFETIME_MS = 2400;
 
 let tracers = [];
 let deaths = [];
@@ -40,11 +43,14 @@ export function addUnderAttackPing(x, y) {
   pings.push({ x, y, born: performance.now() });
 }
 
-// The Helium Bomb's detonation (engine/bomb.js's bombDetonated event): a shockwave ring
-// that expands out to the blast's real radius (so the VFX itself shows the player exactly
-// how far the erasure reached), not a fixed cosmetic size like the death flash above.
-export function addExplosion(x, y, radius) {
-  explosions.push({ x, y, radius, born: performance.now() });
+// The Helium Bomb's detonation (engine/bomb.js's bombDetonated event): a slow-moving
+// shockwave ring that crawls out to the blast's real radius (so the VFX itself shows the
+// player exactly how far the damage reached), not a fixed cosmetic size like the death
+// flash above. `coreRadius` is the inner "guaranteed kill" distance (BOMB_CORE_RADIUS) the
+// ring starts from, so the render side can shade the traveling front from hot (peak
+// damage, near ground zero) to cool (the tapering edge) as it goes.
+export function addExplosion(x, y, radius, coreRadius = 0) {
+  explosions.push({ x, y, radius, coreRadius, born: performance.now() });
 }
 
 // A celebratory burst show for Odyssey progress milestones (engine/galaxy.js). Screen-space,

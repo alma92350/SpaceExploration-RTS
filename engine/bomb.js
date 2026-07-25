@@ -18,9 +18,21 @@
 
    The blast radius is deliberately tied to POWER_TIERS[0] (engine/industry.js)
    — the same "on-grid" ring every Reactor/Generator projects — rather than an
-   independent magic number: the bomb erases everything inside the reach of a
+   independent magic number: the bomb's damage reaches exactly as far as a
    power station's innermost efficiency zone, so the number on the tooltip can
    never silently drift from what the power-grid UI already shows the player.
+
+   DAMAGE FALLOFF: the blast isn't a flat "erase everything inside the
+   radius" cutoff — HP loss decays with the square of distance from ground
+   zero (bombDamageAt below), same shape as a real blast's inverse-square
+   falloff. The curve is referenced against BOMB_CORE_RADIUS (1.5x the bomb's
+   own footprint) rather than the true center, since 1/d^2 diverges as d->0;
+   inside that "unitary distance" everything takes the same peak hit
+   (BOMB_MAX_DAMAGE, enough to one-shot even the toughest building in the
+   game), and it tapers off from there out to zero at BOMB_BLAST_RADIUS. So
+   ground zero is still an indiscriminate kill, but a lightly-built unit
+   caught out near the edge may only take a scratch instead of vanishing
+   outright.
 
    TERRAFORMING: a detonation doesn't just erase — it also schedules a crater
    (state.craters) at the blast center. Once CRATER_SPAWN_DELAY of sim time
@@ -45,13 +57,39 @@ import { hashStr } from "./rng.js";
 import { COM } from "../data.js";
 
 // The power station's "first circle": POWER_TIERS[0] is the innermost,
-// on-grid efficiency band every Reactor/Generator projects.
+// on-grid efficiency band every Reactor/Generator projects. Nothing this far
+// out (or beyond) takes any blast damage at all.
 export const BOMB_BLAST_RADIUS = POWER_TIERS[0].max;
 
 // How close a live enemy has to come before an ARMED bomb detonates on its
 // own — a little past the blast itself, so "I can see it" distance is
 // already too late to back out of the blast.
 export const BOMB_DETECT_RANGE = BOMB_BLAST_RADIUS + 30;
+
+// The falloff curve's "unitary distance": 1.5x the bomb unit's own radius
+// (engine/entities.js). Derived, not a separate magic number, so it can
+// never drift out of proportion to the unit it's describing. Everything at
+// or inside this distance takes the full BOMB_MAX_DAMAGE hit — an inverse-
+// square curve diverges as distance approaches zero, so it has to be capped
+// somewhere, and this is the natural "ground zero" radius to cap it at.
+export const BOMB_CORE_RADIUS = UNITS.heliumbomb.radius * 1.5;
+
+// Peak HP loss at/inside BOMB_CORE_RADIUS — comfortably past the toughest
+// building in the game (the Antimatter Gate, 1200hp) so ground zero still
+// reads as an outright kill, same as the old flat-erasure blast.
+export const BOMB_MAX_DAMAGE = 3000;
+
+// HP lost to the blast at `dist` from ground zero: flat BOMB_MAX_DAMAGE out
+// to BOMB_CORE_RADIUS, then falling off with the square of distance the rest
+// of the way to BOMB_BLAST_RADIUS (0 beyond it). A pre-baked lookup table
+// isn't worth it here — this only ever runs once per detonation, over the
+// handful of entities caught in range, never per-frame — so the curve is
+// just computed directly rather than approximated.
+export function bombDamageAt(dist) {
+  if (dist > BOMB_BLAST_RADIUS) return 0;
+  const d = Math.max(dist, BOMB_CORE_RADIUS);
+  return BOMB_MAX_DAMAGE * (BOMB_CORE_RADIUS / d) ** 2;
+}
 
 // How long (sim seconds — state.time, not wall clock) after a detonation the
 // crater takes to mature into a mineable deposit.
@@ -69,28 +107,41 @@ function isBomb(e) {
 }
 
 // Detonate `bomb` right now, unconditionally — the ONE place the blast itself
-// happens, so every trigger produces the exact same result. Erases (outright
-// removes — no salvage, no partial hp, no survivors) every unit and building
-// within BOMB_BLAST_RADIUS, ANY owner included: the bomb's own side's units
-// and buildings, and the bomb itself, are not exempt. Snapshots the caught
-// set before removing anything, so the sweep can't be thrown off by entities
-// disappearing mid-scan. One bombDetonated event drives the explosion VFX +
-// sound (boot.js/effects.js/sound.js); each erased entity still gets its own
-// entityKilled event so the ordinary death-flash plays across the whole blast.
+// happens, so every trigger produces the exact same result. Every unit and
+// building within BOMB_BLAST_RADIUS, ANY owner included (the bomb's own
+// side's units and buildings, and the bomb itself, are not exempt), takes
+// bombDamageAt(dist) HP loss and dies (outright removed — no salvage, this
+// is blast damage, not a normal kill) if that drops it to 0 or below;
+// anything too far out to be reduced to 0 just survives, scarred. Snapshots
+// the caught set with its distances before removing anything, so the sweep
+// can't be thrown off by entities disappearing mid-scan. One bombDetonated
+// event drives the explosion VFX + sound (boot.js/effects.js/sound.js); each
+// killed entity still gets its own entityKilled event so the ordinary
+// death-flash plays across the whole blast.
 export function detonateBomb(state, bomb) {
   if (!bomb || bomb.hp <= 0) return;   // already gone — e.g. two triggers fired the same tick
 
   const caught = [];
-  for (const u of state.units.values())
-    if (Math.hypot(u.x - bomb.x, u.y - bomb.y) <= BOMB_BLAST_RADIUS) caught.push(u);
-  for (const b of state.buildings.values())
-    if (Math.hypot(b.x - bomb.x, b.y - bomb.y) <= BOMB_BLAST_RADIUS) caught.push(b);
-
-  for (const e of caught) {
-    removeEntity(state, e.id);
-    state.events.push({ type: "entityKilled", x: e.x, y: e.y, owner: e.owner });
+  for (const u of state.units.values()) {
+    const dist = Math.hypot(u.x - bomb.x, u.y - bomb.y);
+    if (dist <= BOMB_BLAST_RADIUS) caught.push({ e: u, dist });
   }
-  state.events.push({ type: "bombDetonated", x: bomb.x, y: bomb.y, radius: BOMB_BLAST_RADIUS, owner: bomb.owner });
+  for (const b of state.buildings.values()) {
+    const dist = Math.hypot(b.x - bomb.x, b.y - bomb.y);
+    if (dist <= BOMB_BLAST_RADIUS) caught.push({ e: b, dist });
+  }
+
+  for (const { e, dist } of caught) {
+    e.hp -= bombDamageAt(dist);
+    if (e.hp <= 0) {
+      removeEntity(state, e.id);
+      state.events.push({ type: "entityKilled", x: e.x, y: e.y, owner: e.owner });
+    }
+  }
+  state.events.push({
+    type: "bombDetonated", x: bomb.x, y: bomb.y,
+    radius: BOMB_BLAST_RADIUS, coreRadius: BOMB_CORE_RADIUS, owner: bomb.owner,
+  });
 
   // Schedule the crater. Named off the bomb's own (globally-unique, module-global-minted)
   // id rather than a fresh counter, so it can never collide with a map-generated node's

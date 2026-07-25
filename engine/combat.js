@@ -142,8 +142,9 @@ function nearestEnemyUnitWithin(state, unit, radius) {
 // its own "turret" type), and `heavy` so a siege hit thumps deeper.
 function performAttack(state, attacker, def, target) {
   // An ARMED Helium Bomb doesn't take damage from a hit — it detonates instead,
-  // erasing everything (attacker included) within its blast radius. Checked
-  // before the normal damage/death path, which never runs for it.
+  // dealing distance-falloff blast damage to everything (attacker included)
+  // within its blast radius. Checked before the normal damage/death path,
+  // which never runs for it.
   if (detonateIfAttacked(state, target)) return true;
   target.hp -= attackDamage(state, attacker, def, target);
   state.events.push({
