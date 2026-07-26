@@ -18,10 +18,14 @@ export function drawNodes(ctx, state, view) {
     if (view && !inView(view, n.x, n.y, 20)) continue;   // off-screen deposit
     if (!isNodeDiscovered(state.fog, n)) continue;   // a hidden cache stays dark until scouted
     const r = 7 + 9 * (n.amount / n.max);
-    const extract = COM[n.com]?.extract;
-    if (extract === "forage") drawOrganicNode(ctx, n, r);
-    else if (extract === "capture") drawGasNode(ctx, n, r);
-    else drawRockyNode(ctx, n, r); // mine / exploit — ore, crystals, radioactives, ice, relics
+    if (n.wreck) {
+      drawWreckNode(ctx, n, r);
+    } else {
+      const extract = COM[n.com]?.extract;
+      if (extract === "forage") drawOrganicNode(ctx, n, r);
+      else if (extract === "capture") drawGasNode(ctx, n, r);
+      else drawRockyNode(ctx, n, r); // mine / exploit — ore, crystals, radioactives, ice, relics
+    }
 
     ctx.font = "10px sans-serif";
     ctx.textAlign = "center";
@@ -81,6 +85,47 @@ function drawOrganicNode(ctx, n, r) {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+}
+
+// Battle wreckage (engine/wreckage.js `wreck: true`) reads as jagged scrap — a sharper,
+// more irregular silhouette than a natural deposit's faceted-but-round asteroid look, in
+// a cool grey/rust palette instead of the warm gold every mined/foraged/captured deposit
+// shares — so a battlefield's mineable aftermath reads at a glance as wreckage, not an
+// ore seam that happened to be sitting there. Regardless of its actual commodity (a
+// wreck node can be any raw good, or the Phase-2 battle bonus's metals/electronics/
+// relics — none of which have a distinct `extract` shape of their own), every wreck node
+// shares this one look.
+function drawWreckNode(ctx, n, r) {
+  const pts = wreckShape(n.id).map(([ux, uy]) => [n.x + ux * r, n.y + uy * r]);
+  pathPoints(ctx, pts);
+  ctx.fillStyle = "#8a8f98";
+  ctx.globalAlpha = 0.85;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#c65a3a";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// Cached per-node silhouette, same idea as rockyShape above: computed once, reused every
+// frame. One fewer point and a wider jitter band than a rocky node's 8-point shape, so it
+// reads as jagged debris rather than a smooth asteroid facet.
+const wreckShapeCache = new Map();
+function wreckShape(id) {
+  let shape = wreckShapeCache.get(id);
+  if (!shape) {
+    const rng = seededRng(hashStr(id) ^ 0x51ed270b);
+    const rot = rng() * Math.PI * 2;
+    shape = [];
+    const points = 7;
+    for (let i = 0; i < points; i++) {
+      const a = rot + (i / points) * Math.PI * 2;
+      const jitter = 0.55 + rng() * 0.85;
+      shape.push([Math.cos(a) * jitter, Math.sin(a) * jitter]);
+    }
+    wreckShapeCache.set(id, shape);
+  }
+  return shape;
 }
 
 // Captured deposits (Helium-3 gas) read as a soft drifting cloud — nested
