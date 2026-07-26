@@ -303,9 +303,16 @@ threshold, capped at `WRECK_BONUS_CAP` (40). `value` is persisted on a pending s
 save/load mid-battle can't reset its bonus-eligibility progress. All four constants are
 tuning knobs, same as `WRECK_RETURN_FRAC` — revisit them after playtesting.
 
-**Phase 3 — Polish.** Distinct debris rendering in `renderNodes.js`, the
-`"wreckMatured"` event's sound/toast in `boot.js`, HUD messaging ("Wreckage settling in
-Ns…") if useful.
+**Phase 3 — Polish. ✅ DONE.** Wreck nodes render as jagged grey/rust debris
+(`drawWreckNode`/`wreckShape`, `renderNodes.js`) instead of the warm-gold look every
+natural deposit shares, branched on `n.wreck` ahead of the existing extract-type
+branching. The `"wreckMatured"` event gets a sound + toast in `boot.js`, mirroring
+`craterMatured`, listing every commodity the site settled into. No pending-state HUD
+countdown — matches the crater's own precedent, which has none either; the toast on
+maturity is the payoff callout, same as it is for a crater. Verified live (dev server +
+Playwright): a synthetic wreck node next to a normal one confirmed the visual
+distinction, and a fired `wreckMatured` event confirmed the toast/sound with a clean
+console.
 
 **Phase 4 — Optional follow-ups, only if playtesting calls for them:** extending
 `spawnAt` on new contributions to an ongoing site ("a raging battle grows before it

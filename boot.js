@@ -480,6 +480,16 @@ function processFrameEvents() {
         sound.playBuildingComplete(pan);
         showGalaxyToast(`${COM[ev.com]?.ico || "◆"} A ${COM[ev.com]?.name || ev.com} deposit has formed in the blast crater`, "good");
         break;
+      // Battle wreckage (engine/wreckage.js) finished settling into real deposits — one
+      // node per commodity it accumulated, so the toast lists all of them at once rather
+      // than firing once per node. Same payoff-callout reasoning as craterMatured above:
+      // easy to miss otherwise if the fight's moved on since it happened.
+      case "wreckMatured": {
+        sound.playBuildingComplete(pan);
+        const goods = (ev.coms || []).map(com => `${COM[com]?.ico || "◆"} ${COM[com]?.name || com}`).join(", ");
+        showGalaxyToast(`Battle wreckage has settled into a deposit: ${goods}`, "good");
+        break;
+      }
       case "buildingComplete":
         sound.playBuildingComplete(pan);
         break;
