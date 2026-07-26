@@ -34,9 +34,13 @@ export const game = {
   // input.js when issuing a move/attack-move/Hold-Formation order, and mutated directly by
   // hudSelection.js's formation picker buttons.
   formation: { shape: "grid", leaderPos: "front" },
-  // Whether a builder's (Worker/Engineer/Technician) Build submenu is expanded — a UI
-  // preference like `formation` above, not per-unit state, so collapsing it once keeps it
-  // collapsed across every later selection until toggled back. Starts open (unchanged
-  // behaviour) — collapsing is an opt-in way to shrink the panel, not a forced default.
-  buildMenuOpen: true,
+  // Which collapsible panel sections (the Build submenu's per-category groups, the CC/Barracks
+  // Produce lists, the Refinery/Datacenter Research lists, Market, the freighter Cargo list, the
+  // Spaceport Jump list, …) the player has manually collapsed — a UI preference like `formation`
+  // above, not per-unit/per-game state, so collapsing one keeps it collapsed across every later
+  // selection until toggled back. A key ABSENT from the set means "expanded" (starts open,
+  // unchanged behaviour) — so a new collapsible section needs zero migration code here, it just
+  // starts expanded like everything else. Keys are the stable strings passed to hudSelection.js's
+  // sectionToggle(), e.g. "build:economy", "cc:produce", "market".
+  collapsedSections: new Set(),
 };
