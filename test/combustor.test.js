@@ -54,6 +54,36 @@ test("ice coolant: banked ice halves every power station's fuel burn, same Power
   }
 });
 
+test("ice coolant is a real cost for a power station too: running fuelled drains the treasury's ice", () => {
+  const s = stub([combustor({ input: { gas: 100 } })], { ice: 1 });
+  updateCombustors(s, 0.1);
+  assert.ok(s.players.player.resources.ice < 1, "burning fuel under the discount drains banked ice");
+  assert.ok(Math.abs(s.players.player.resources.ice - (1 - 0.1 * 0.1)) < 1e-9, "drains at the flat ICE_UPKEEP_PER_SEC rate × dt");
+});
+
+test("ice coolant: a dry/paused Generator burns no fuel, so it's charged no ice upkeep either", () => {
+  const dry = stub([combustor()], { ice: 1 });   // empty larder — no gas to burn
+  updateCombustors(dry, 0.1);
+  assert.equal(dry.players.player.resources.ice, 1, "never fuelled → nothing to charge for");
+
+  const paused = stub([combustor({ paused: true, input: { gas: 100 } })], { ice: 1 });
+  updateCombustors(paused, 0.1);
+  assert.equal(paused.players.player.resources.ice, 1, "paused → no fuel burned → no ice charged");
+});
+
+test("ice coolant runs out for a power station: once ice hits zero, fuel burn reverts to full rate", () => {
+  const s = stub([combustor({ input: { gas: 100 } })], { ice: 0.06 });   // just enough for one tick's upkeep
+  const gen = [...s.buildings.values()][0];
+  updateCombustors(s, 0.6);   // one tick, still iced going in
+  assert.equal(s.players.player.resources.ice, 0, "drained to exactly zero by that tick's upkeep");
+  const burnedFirstTick = 100 - gen.input.gas;
+
+  updateCombustors(s, 0.6);   // a second, identical tick — now with no ice left
+  const burnedSecondTick = (100 - gen.input.gas) - burnedFirstTick;
+  assert.ok(Math.abs(burnedSecondTick - burnedFirstTick * 2) < 1e-9,
+    `gas burn doubles back to full rate once ice is gone (${burnedFirstTick} → ${burnedSecondTick})`);
+});
+
 test("out of fuel (or paused), a Generator grants no Power", () => {
   const dry = stub([combustor()], {});                 // empty larder — no gas
   updateCombustors(dry, 0.1);

@@ -5,7 +5,7 @@ import { storeTotal } from "../engine/entities.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
-import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult } from "../engine/industry.js";
+import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 import { deployColonyShip } from "../engine/colony.js";
 
@@ -95,6 +95,49 @@ test("ice coolant: banked ice halves the ore a Smelter burns per batch, same met
   updateProduction(iced, sm2, 0.1);
   assert.ok(near(sm1.store.metals, sm2.store.metals), "iced or not, the same batch runs at the same rate → same metals banked");
   assert.ok(near(1000 - sm1.input.ore, (1000 - sm2.input.ore) * 2), "…but the iced Smelter burned only half the ore for it");
+});
+
+test("chargeIceUpkeep drains a flat ice/sec from the treasury, clamped so it never goes negative", () => {
+  const s = stub([], { ice: 1 });
+  chargeIceUpkeep(s, "player", 1);   // 1 full second at 0.1/s
+  assert.ok(near(s.players.player.resources.ice, 0.9), "1s of upkeep drains 0.1 ice");
+  chargeIceUpkeep(s, "player", 100);   // wildly more than what's left
+  assert.equal(s.players.player.resources.ice, 0, "clamped at zero — never negative");
+});
+
+test("ice coolant is a REAL cost: a running Smelter drains the treasury's ice, not just requires it", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } })], { ice: 1 });
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(s, sm, 0.1);
+  assert.ok(s.players.player.resources.ice < 1, "running the discount drains the banked ice");
+  assert.ok(near(s.players.player.resources.ice, 1 - 0.1 * 0.1), "drains at the flat ICE_UPKEEP_PER_SEC rate × dt");
+});
+
+test("ice coolant: a factory that does nothing this tick (starved/stalled) is charged no ice upkeep", () => {
+  const starved = stub([reactor(), smelter({ input: { ore: 0 } })], { ice: 1 });   // empty larder → frac stays 0
+  const sm = [...starved.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(starved, sm, 0.1);
+  assert.equal(starved.players.player.resources.ice, 1, "no batch ran → nothing to charge for, ice untouched");
+
+  const unpowered = stub([smelter({ input: { ore: 1000 } })], { ice: 1 });   // no Reactor → throttle 0
+  const sm2 = [...unpowered.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(unpowered, sm2, 0.1);
+  assert.equal(unpowered.players.player.resources.ice, 1, "no Power → no production → no ice charged either");
+});
+
+test("ice coolant runs out: once the treasury's ice is drained to zero, the discount reverts to full-price", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } })], { ice: 0.05 });   // enough for exactly one tick's upkeep
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(s, sm, 0.5);   // one tick, still iced (ice > 0 at the start of this call)
+  assert.equal(s.players.player.resources.ice, 0, "that tick's upkeep drained it to exactly zero");
+  const oreAfterFirstTick = sm.input.ore;
+
+  updateProduction(s, sm, 0.5);   // a second, identical tick — now with NO ice banked
+  const oreBurnedSecondTick = oreAfterFirstTick - sm.input.ore;
+  const oreBurnedFirstTick = 1000 - oreAfterFirstTick;
+  assert.ok(near(oreBurnedSecondTick, oreBurnedFirstTick * 2),
+    `once ice hits zero, ore burn per identical tick doubles back to full price (${oreBurnedFirstTick} → ${oreBurnedSecondTick})`);
+  assert.equal(s.players.player.resources.ice, 0, "still zero — no ice left to charge, and none to go negative");
 });
 
 test("production is clamped to the input larder — the buffer never goes negative", () => {

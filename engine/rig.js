@@ -18,14 +18,17 @@
 
    Ice coolant (industry.js iceCoolantMult): with any ice banked in the treasury,
    both those costs are halved — the nuclear burn per dig here, and the plasma
-   arc's Power draw over in industry.js's powerDraw.
+   arc's Power draw over in industry.js's powerDraw. Running the coolant isn't
+   free either: industry.js's chargeIceUpkeep drains a little ice per tick for
+   as long as a dig actually completes, so the discount lasts only as long as
+   the ice supply does.
    ============================================================ */
 
 "use strict";
 
 import { BUILDINGS, storeTotal, storeRoom, storeCapOf } from "./entities.js";
 import { hashStr } from "./rng.js";
-import { powerThrottle, cachedPowerThrottle, planetIndustryScale, iceCoolantMult } from "./industry.js";
+import { powerThrottle, cachedPowerThrottle, planetIndustryScale, iceCoolantMult, chargeIceUpkeep } from "./industry.js";
 
 // The raw commodities a rig can strike. Which one a given rig mines — its VEIN — is chosen by WHERE
 // it's built: the SURFACE deposits nearby bias what lies below (a rig among ore fields usually
@@ -167,7 +170,8 @@ export function updatePlasmaRig(state, building, dt) {
   const throttle = cachedPowerThrottle(state, building.owner);   // short power → slower digs; owner-wide, cached for this tick (industry.js)
   if (throttle <= 0) return;
   const res = state.players[building.owner].resources;
-  const nuclearCost = rig.nuclear * iceCoolantMult(state, building.owner);   // banked ice halves the nuclear burn per dig
+  const iceMult = iceCoolantMult(state, building.owner);
+  const nuclearCost = rig.nuclear * iceMult;   // banked ice halves the nuclear burn per dig
 
   building.digProgress = (building.digProgress || 0) + (dt / rig.digTime) * planetIndustryScale(state) * throttle;
 
@@ -193,6 +197,10 @@ export function updatePlasmaRig(state, building, dt) {
     state.events.push({ type: "rigDig", com: vein, amount, tier: tier.name, x: building.x, y: building.y, owner: building.owner });
     cycles++;
   }
+  // The coolant itself costs ice while it's actively cutting the nuclear bill — charged once per
+  // tick (not per dig) the same flat rate a factory/power station pays, regardless of how many of
+  // this tick's (up to MAX_CYCLES_PER_TICK) digs completed.
+  if (cycles > 0 && iceMult < 1) chargeIceUpkeep(state, building.owner, dt);
 }
 
 /** A read-only snapshot of a rig's state for the HUD: what it mines, how rich the spot is, progress, last strike. */

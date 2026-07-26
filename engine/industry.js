@@ -47,10 +47,12 @@ const ELECTRIFY_BOOST = 0.3;        // the headline "+30% with power"
 // (engine/rig.js), and the fuel-burning power stations (Reactor / Combustion Generator / Biomass
 // Reactor, below) at half their normal appetite — half of each recipe's non-energy inputs, half
 // the Rig's nuclear burn per dig, half a power station's fuel burn, and half the grid Power a
-// factory or the Rig draws to run. A flat stockpile check, like the Rig's own nuclearOk gate — ice
-// isn't spent to grant the discount, so it's a standing bonus for as long as any is banked, not a
-// per-tick drip. Deliberately NOT read by the wonder's charge draw or by ELECTRIFY_POWER — neither
-// is "industry", so ice coolant leaves them untouched.
+// factory or the Rig draws to run. Eligibility is a flat stockpile check, like the Rig's own
+// nuclearOk gate — but running the discount is NOT free: chargeIceUpkeep below drains the treasury
+// for as long as a building keeps actually benefiting, so sustaining it across a base needs a real,
+// ongoing ice supply, not a single unit banked once and forgotten. Deliberately NOT read by the
+// wonder's charge draw or by ELECTRIFY_POWER — neither is "industry", so ice coolant leaves them
+// untouched.
 const ICE_COOLANT_MULT = 0.5;
 
 /** Whether `owner` currently has ice banked (in THIS state's treasury) to run as coolant. */
@@ -63,6 +65,25 @@ export function hasIceCoolant(state, owner) {
  * whole industrial base rather than a per-building rule to remember. */
 export function iceCoolantMult(state, owner) {
   return hasIceCoolant(state, owner) ? ICE_COOLANT_MULT : 1;
+}
+
+// ICE UPKEEP — the coolant is a real, ongoing cost, not a one-time banked freebie: whenever a
+// building actually REALIZES the discount this tick (a factory that ran a batch, a power station
+// that burned fuel, a Rig that completed a dig), it drains a small, flat ice/sec from the treasury
+// for as long as it keeps benefiting. A building that ISN'T actually benefiting this tick (starved,
+// stalled, no dig completed) is charged nothing — there's nothing to charge for. Charged straight
+// from the treasury, the same way the Rig's own nuclear cost is (not a hauled/local input), clamped
+// so it can never go negative — the instant it hits zero, hasIceCoolant reads "no coolant" on the
+// very next check, so the discount (and the charge) both switch off together.
+const ICE_UPKEEP_PER_SEC = 0.1;
+
+/** Charge dt seconds of ice upkeep against `owner`'s treasury — called only where a building has
+ * just actually used the coolant discount this tick (see updateCombustors/updateProduction below,
+ * and engine/rig.js's updatePlasmaRig). */
+export function chargeIceUpkeep(state, owner, dt) {
+  const res = state.players[owner]?.resources;
+  if (!res) return;
+  res.ice = Math.max(0, (res.ice || 0) - ICE_UPKEEP_PER_SEC * dt);
 }
 
 // PAUSED STANDBY DRAW (Odyssey) — a paused factory or Plasma Rig no longer frees its WHOLE
@@ -160,11 +181,16 @@ export function updateCombustors(state, dt) {
     const def = BUILDINGS[b.type];
     if (!def?.combust || b.constructing) continue;
     if (b.paused) { b.powered = false; continue; }
-    const need = def.combust.rate * dt * iceCoolantMult(state, b.owner);   // banked ice halves the fuel burn
+    const iceMult = iceCoolantMult(state, b.owner);
+    const need = def.combust.rate * dt * iceMult;   // banked ice halves the fuel burn
     let fuel = null, most = 0;
     for (const f of def.combust.fuels) { const have = b.input?.[f] || 0; if (have > most) { most = have; fuel = f; } }
-    if (fuel && (b.input[fuel] || 0) >= need) { b.input[fuel] -= need; b.powered = true; b.fuel = fuel; }
-    else b.powered = false;
+    if (fuel && (b.input[fuel] || 0) >= need) {
+      b.input[fuel] -= need;
+      b.powered = true;
+      b.fuel = fuel;
+      if (iceMult < 1) chargeIceUpkeep(state, b.owner, dt);   // the coolant itself costs ice while it's running
+    } else b.powered = false;
   }
 }
 
@@ -312,6 +338,7 @@ export function updateProduction(state, building, dt) {
   const outPerBatch = recipe.qty * techMult(ups, "yieldMult");
   if (outPerBatch > 0) frac = Math.min(frac, storeRoom(building) / outPerBatch);   // don't overfill the output buffer
   if (!(frac > 0)) return;
+  if (iceMult < 1) chargeIceUpkeep(state, building.owner, dt);   // the coolant itself costs ice while it's running
 
   for (const com in recipe.in) {
     if (com === "energy") continue;
