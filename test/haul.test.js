@@ -129,25 +129,25 @@ test("mid-trip re-route: a hauler already walking toward the Command Center swit
   assert.ok(Math.abs(w.x - midX) < 50, "it didn't keep marching toward the distant CC first");
 });
 
-test("auto haul/service offers go to Worker and Technician, never to Miner or Engineer", () => {
+test("auto haul/service offers go to Worker, never to a non-logistics unit", () => {
   const { s, cc, workers } = base(1);
-  for (const w of workers) s.units.delete(w.id);   // isolate: only the specialists below compete for the job
+  for (const w of workers) s.units.delete(w.id);   // isolate: only the units below compete for the job
   const rig = plantRig(s, cc, { ore: 90 });   // well past the assign threshold
   rig.paused = true;
   const spawn = (type, x, y) => { const u = makeUnit(type, "player", x, y); s.units.set(u.id, u); return u; };
-  const miner = spawn("miner", rig.x, rig.y);
-  const engineer = spawn("engineer", rig.x, rig.y);
-  const technician = spawn("technician", rig.x, rig.y);
+  const mender = spawn("mender", rig.x, rig.y);
+  const skiff = spawn("skiff", rig.x, rig.y);
+  const worker = spawn("worker", rig.x, rig.y);
 
   // A couple of ticks is enough for the per-tick idle-offer to claim the job (confirmed: it
   // lands on tick 1) — not so many that a close-by rig finishes the whole round trip and goes
   // idle again, which would give a false negative.
   for (let i = 0; i < 3; i++) tick(s, 0.1);
 
-  assert.equal(miner.order, null, "a Miner is never auto-offered a haul job");
-  assert.equal(engineer.order, null, "an Engineer is never auto-offered a haul job");
-  assert.ok(technician.order && (technician.order.type === "haul" || technician.order.type === "service"),
-    "a Technician IS auto-offered the logistics job, same as a plain Worker would be");
+  assert.equal(mender.order, null, "a Mender is never auto-offered a haul job");
+  assert.equal(skiff.order, null, "a combat unit is never auto-offered a haul job");
+  assert.ok(worker.order && (worker.order.type === "haul" || worker.order.type === "service"),
+    "a Worker IS auto-offered the logistics job");
 });
 
 test("an idle worker auto-assigns to a backed-up producer and keeps it flowing", () => {

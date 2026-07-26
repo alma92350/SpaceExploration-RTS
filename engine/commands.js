@@ -266,9 +266,9 @@ export function issueBuild(state, workerId, buildingType, x, y) {
   // path — the same hard guarantee queueProduction makes for units (production.js), so
   // the skirmish sim/AI stays byte-identical and can't be handed Odyssey content.
   if (def.odysseyOnly && !state.endless) return null;
-  // A worker specialist may only found a building in its own category (engine/entities.js
-  // canBuildCategory) — e.g. an Engineer can't found a Refinery, a Technician can't found a
-  // Habitat. Worker covers every category, so this is a no-op for the generalist fallback.
+  // A unit may only found a building whose category it's flagged for (engine/entities.js
+  // canBuildCategory) — Worker covers every category, so this only ever blocks a non-worker
+  // (e.g. a combat unit) from founding one.
   if (!canBuildCategory(worker.type, def.category)) return null;
   if (!canAfford(player.resources, def.cost)) return null;
   if (!prereqsMet(state, worker.owner, def)) return null;   // e.g. no founding a Foundry without a completed Barracks
@@ -284,8 +284,8 @@ export function issueBuild(state, workerId, buildingType, x, y) {
 // Sends more workers to help an already-founded construction site — no
 // cost (already paid when it was placed), no new building. Extra hands
 // speed the build up; see production.js's updateBuildingConstruction.
-// `buildingType` resolves the site's category so only a worker specialist eligible for
-// THAT category can be sent to help, same rule as founding it (issueBuild) in the first place.
+// `buildingType` resolves the site's category so only a unit eligible for THAT category can be
+// sent to help, same rule as founding it (issueBuild) in the first place.
 export function issueAssistBuild(units, buildingId, buildingType, queue = false) {
   const category = BUILDINGS[buildingType]?.category;
   units.forEach(u => { if (canBuildCategory(u.type, category)) dispatch(u, { type: "build", buildingId }, queue); });

@@ -90,10 +90,9 @@ export function updateProductionQueue(state, building, dt) {
     const spawn = { x: building.x + building.radius + 10, y: building.y + building.radius + 10 };
     const u = makeUnit(job.unitType, building.owner, spawn.x, spawn.y);
     // Rally-to-resource: if the rally sits on a live node and this unit can actually gather
-    // (canGatherType — Worker/Miner; NOT every unit with a cargo slot, since Engineer/Technician
-    // also get one for the builder-pick idiom but have no gatherRate/cargoCap to mine with — see
-    // gather.js's miningEfficiency, which would otherwise NaN-poison unit.cargo.qty/node.amount),
-    // it spawns already mining instead of idling at the point. Everything else — and a rally on a
+    // (canGatherType, not just cargo presence — a cargo-carrying unit with no gatherRate/cargoCap
+    // would otherwise NaN-poison unit.cargo.qty/node.amount, see gather.js's miningEfficiency), it
+    // spawns already mining instead of idling at the point. Everything else — and a rally on a
     // drained node — just walks to the rally point as before.
     const rallyNode = building.rally.nodeId
       ? (state.map.nodesById ? state.map.nodesById.get(building.rally.nodeId)

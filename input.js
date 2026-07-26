@@ -167,10 +167,8 @@ export function attachInput(canvas, state, onChange) {
       let inBox = [...state.units.values()]
         .filter(u => u.owner === "player" && u.x >= x1 && u.x <= x2 && u.y >= y1 && u.y <= y2);
       // Prioritise the army: a box that catches any fighter drops the workers, so
-      // sweeping across your base to grab your army doesn't drag the miners along
+      // sweeping across your base to grab your army doesn't drag the workers along
       // (standard RTS). A box with no fighters still selects the workers as before.
-      // role, not literal type, so this drops EVERY economy specialist (Miner/Engineer/
-      // Technician), not just literal Workers.
       if (inBox.some(u => UNITS[u.type].role === "combat"))
         inBox = inBox.filter(u => UNITS[u.type].role !== "worker");
       picks = inBox.map(u => u.id);
