@@ -347,3 +347,45 @@ export function updateProduction(state, building, dt) {
   building.store = building.store || {};
   building.store[recipe.out] = (building.store[recipe.out] || 0) + frac * outPerBatch;
 }
+
+// A glanceable "is this building actually doing its job right now?" read for any factory,
+// Plasma Rig, or fuel-burning power station — the map-level counterpart to hudSelection.js's
+// per-building status text, so a player scanning the whole base sees a paused/stalled/throttled
+// producer without opening its panel. Priority mirrors updateProduction/updatePlasmaRig/
+// updateCombustors' own gating exactly (paused → no power → starved of an input/fuel → output
+// buffer full → power-throttled), so the badge never disagrees with what's actually happening in
+// the sim. Returns null for anything else — a healthy producer, or a building that isn't one
+// (nothing to flag). `level` is one of "paused" | "bad" | "warn", for a caller to colour/pick a glyph.
+export function buildingConcern(state, b) {
+  if (b.constructing || b.recycling) return null;
+  const def = BUILDINGS[b.type];
+  if (!def) return null;
+
+  if (def.combust) {
+    if (b.paused) return { level: "paused" };
+    return b.powered ? null : { level: "bad", code: "noFuel" };
+  }
+
+  const recipe = recipeOf(b);
+  if (!recipe && !def.rig) return null;
+  if (b.paused) return { level: "paused" };
+
+  const throttle = cachedPowerThrottle(state, b.owner);
+  if (throttle <= 0) return { level: "bad", code: "noPower" };
+  const iceMult = iceCoolantMult(state, b.owner);
+
+  if (def.rig) {
+    const res = state.players[b.owner].resources;
+    if ((res.radioactives || 0) < def.rig.nuclear * iceMult) return { level: "bad", code: "noFuel" };
+    if (storeRoom(b) <= 1e-9) return { level: "bad", code: "bufferFull" };
+    return throttle < 0.995 ? { level: "warn", code: "throttled" } : null;
+  }
+
+  const input = b.input || {};
+  for (const com in recipe.in) {
+    if (com === "energy") continue;
+    if ((input[com] || 0) < recipe.in[com] * iceMult) return { level: "bad", code: "starved" };
+  }
+  if (storeRoom(b) <= 1e-6) return { level: "bad", code: "bufferFull" };
+  return throttle < 0.995 ? { level: "warn", code: "throttled" } : null;
+}

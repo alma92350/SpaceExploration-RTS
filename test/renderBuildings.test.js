@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFog, updateFog } from "../engine/fog.js";
 import { makeUnit, makeBuilding } from "../engine/state.js";
-import { drawBuildings, drawBuildingShape } from "../renderBuildings.js";
+import { drawBuildings, drawBuildingShape, drawBuildingBars } from "../renderBuildings.js";
 
 // A stub 2D context that no-ops any method the drawing code happens to call, instead of
 // hand-enumerating the canvas API — keeps this test robust to unrelated rendering changes.
@@ -75,5 +75,36 @@ test("drawBuildingShape tolerates the icon stub state (no players/time) for ever
     const stub = { units: new Map(), buildings: new Map() };   // exactly what render.js spriteIcon passes
     const b = { id: "__icon__", type: t, x: 0, y: 0, radius: 16 };   // no `electrified` key, like the real icon stub
     assert.doesNotThrow(() => drawBuildingShape(fakeCtx(), stub, b, "#5ec8ff"), t);
+  }
+});
+
+// drawBuildingBars now also stamps a paused/stalled/throttled concern badge (engine/industry.js
+// buildingConcern) next to every own producer's health bar — regression coverage that the new call
+// doesn't throw across the states buildingConcern actually branches on: paused, unpowered (no
+// Reactor at all), and a freshly-built factory/Rig that hasn't received any input/fuel yet (no
+// `input`/`store` keys set) — the most common real-game shape, and the one most likely to trip an
+// unguarded property read.
+test("drawBuildingBars does not throw for a fresh, a paused, or an unpowered factory/Rig/power station", () => {
+  const fog = createFog({ width: 800, height: 600 });
+  for (const withReactor of [true, false]) {
+    for (const paused of [true, false]) {
+      const buildings = new Map();
+      const reactorB = makeBuilding("reactor", "player", 0, 0);
+      if (withReactor) buildings.set(reactorB.id, reactorB);
+      for (const t of ["smelter", "plasmarig", "combustor"]) {
+        const b = makeBuilding(t, "player", 60, 0);
+        b.paused = paused;
+        buildings.set(b.id, b);
+      }
+      const state = {
+        buildings,
+        units: new Map(),
+        selection: [],
+        fog,
+        players: { player: { color: "#5ec8ff", upgrades: {}, resources: { radioactives: 50 } } },
+      };
+      assert.doesNotThrow(() => drawBuildingBars(fakeCtx(), state, null, new Set()),
+        `withReactor=${withReactor} paused=${paused}`);
+    }
   }
 });
