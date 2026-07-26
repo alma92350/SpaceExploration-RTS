@@ -614,16 +614,18 @@ function gridEfficiencyRow(state, b) {
 }
 
 // A "❄ Ice Coolant" status line for a selected factory / Rig / power station: banked ice
-// (engine/industry.js iceCoolantMult) halves its fuel/input burn and Power draw for as long as
-// ANY is in the treasury. Shown either way (not just when active), the same discoverability
-// gridEfficiencyRow already gives grid placement, so a player who's never banked ice learns the
-// mechanic exists instead of wondering why a rival's economy runs so much leaner.
+// (engine/industry.js iceCoolantMult) halves its fuel/input burn and Power draw for as long as ANY
+// is in the treasury — but running it isn't free, chargeIceUpkeep drains a little of that ice every
+// tick it's actually benefiting, so the discount (and this row) lasts only as long as the ice does.
+// Shown either way (not just when active), the same discoverability gridEfficiencyRow already gives
+// grid placement, so a player who's never banked ice learns the mechanic exists instead of
+// wondering why a rival's economy runs so much leaner.
 function iceCoolantRow(state, owner) {
   const active = iceCoolantMult(state, owner) < 1;
   const row = document.createElement("div");
   row.className = "sel-note " + (active ? "good" : "");
   row.textContent = active
-    ? "❄ Ice Coolant banked — half fuel/input burn, half Power draw"
+    ? "❄ Ice Coolant active — half fuel/input burn, half Power draw (draining banked ice)"
     : "No ice banked — bank some to halve fuel/input burn and Power draw";
   return row;
 }
