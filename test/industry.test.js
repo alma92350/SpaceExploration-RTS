@@ -5,7 +5,7 @@ import { storeTotal } from "../engine/entities.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
-import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS } from "../engine/industry.js";
+import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep, buildingConcern } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 import { deployColonyShip } from "../engine/colony.js";
 
@@ -26,6 +26,7 @@ function stub(buildings = [], resources = {}) {
 const reactor = (o = {}) => ({ type: "reactor", powered: true, ...o });
 const smelter = (o = {}) => ({ type: "smelter", ...o });
 const assembler = (o = {}) => ({ type: "assembler", ...o });
+const plasmarig = (o = {}) => ({ type: "plasmarig", ...o });
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
 test("powerCap sums Reactors' grants; a constructing Reactor grants nothing", () => {
@@ -41,6 +42,26 @@ test("powerDraw sums each factory's recipe energy × prodRate", () => {
   assert.equal(powerDraw(stub([smelter(), assembler()]), "player"), 7);
   assert.equal(powerDraw(stub([reactor()]), "player"), 0, "a Reactor draws nothing");
   assert.equal(powerDraw(stub([smelter({ constructing: true })]), "player"), 0, "a constructing factory draws nothing yet");
+});
+
+test("powerDraw: a Plasma Rig draws its rig.power, paused or not — paused idles at a 5% trickle", () => {
+  assert.equal(powerDraw(stub([plasmarig()]), "player"), BUILDINGS.plasmarig.rig.power, "an active Rig draws its full plasma-arc Power");
+  assert.ok(near(powerDraw(stub([plasmarig({ paused: true })]), "player"), BUILDINGS.plasmarig.rig.power * 0.05),
+    "a paused Rig frees 95% of its reserved Power, not all of it");
+  assert.equal(powerDraw(stub([plasmarig({ constructing: true })]), "player"), 0, "a constructing Rig draws nothing yet");
+});
+
+test("ice coolant: banked ice halves a factory's/Rig's Power draw (hasIceCoolant/iceCoolantMult)", () => {
+  const noIce = stub([smelter(), plasmarig()], {});
+  const withIce = stub([smelter(), plasmarig()], { ice: 5 });
+  assert.equal(hasIceCoolant(noIce, "player"), false, "no ice banked → coolant inactive");
+  assert.equal(hasIceCoolant(withIce, "player"), true, "any ice banked → coolant active");
+  assert.equal(iceCoolantMult(noIce, "player"), 1);
+  assert.equal(iceCoolantMult(withIce, "player"), 0.5);
+
+  assert.ok(near(powerDraw(withIce, "player"), powerDraw(noIce, "player") * 0.5), "ice halves the whole owner's Power draw");
+  // A dry stockpile (present but zero) still reads as "no coolant" — it's presence, not the key existing.
+  assert.equal(hasIceCoolant(stub([], { ice: 0 }), "player"), false);
 });
 
 test("powerThrottle: full with power, zero without, fractional when factories out-draw the Reactors", () => {
@@ -63,6 +84,60 @@ test("a powered Smelter refines ore from its input larder into metals in its out
   assert.ok(near(sm.input.ore, 999.6), "0.2 batches × 2 ore = 0.4 ore drawn from the larder");
   assert.ok(near(sm.store.metals, 0.4), "0.2 batches × 2 = 0.4 metals banked to the output buffer");
   assert.equal(s.players.player.resources.ore || 0, 0, "the global treasury is untouched — inputs are local now");
+});
+
+test("ice coolant: banked ice halves the ore a Smelter burns per batch, same metals out", () => {
+  const plain = stub([reactor(), smelter({ input: { ore: 1000 } })], {});
+  const iced = stub([reactor(), smelter({ input: { ore: 1000 } })], { ice: 3 });
+  const sm1 = [...plain.buildings.values()].find(b => b.type === "smelter");
+  const sm2 = [...iced.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(plain, sm1, 0.1);
+  updateProduction(iced, sm2, 0.1);
+  assert.ok(near(sm1.store.metals, sm2.store.metals), "iced or not, the same batch runs at the same rate → same metals banked");
+  assert.ok(near(1000 - sm1.input.ore, (1000 - sm2.input.ore) * 2), "…but the iced Smelter burned only half the ore for it");
+});
+
+test("chargeIceUpkeep drains a flat ice/sec from the treasury, clamped so it never goes negative", () => {
+  const s = stub([], { ice: 1 });
+  chargeIceUpkeep(s, "player", 1);   // 1 full second at 0.1/s
+  assert.ok(near(s.players.player.resources.ice, 0.9), "1s of upkeep drains 0.1 ice");
+  chargeIceUpkeep(s, "player", 100);   // wildly more than what's left
+  assert.equal(s.players.player.resources.ice, 0, "clamped at zero — never negative");
+});
+
+test("ice coolant is a REAL cost: a running Smelter drains the treasury's ice, not just requires it", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } })], { ice: 1 });
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(s, sm, 0.1);
+  assert.ok(s.players.player.resources.ice < 1, "running the discount drains the banked ice");
+  assert.ok(near(s.players.player.resources.ice, 1 - 0.1 * 0.1), "drains at the flat ICE_UPKEEP_PER_SEC rate × dt");
+});
+
+test("ice coolant: a factory that does nothing this tick (starved/stalled) is charged no ice upkeep", () => {
+  const starved = stub([reactor(), smelter({ input: { ore: 0 } })], { ice: 1 });   // empty larder → frac stays 0
+  const sm = [...starved.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(starved, sm, 0.1);
+  assert.equal(starved.players.player.resources.ice, 1, "no batch ran → nothing to charge for, ice untouched");
+
+  const unpowered = stub([smelter({ input: { ore: 1000 } })], { ice: 1 });   // no Reactor → throttle 0
+  const sm2 = [...unpowered.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(unpowered, sm2, 0.1);
+  assert.equal(unpowered.players.player.resources.ice, 1, "no Power → no production → no ice charged either");
+});
+
+test("ice coolant runs out: once the treasury's ice is drained to zero, the discount reverts to full-price", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } })], { ice: 0.05 });   // enough for exactly one tick's upkeep
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  updateProduction(s, sm, 0.5);   // one tick, still iced (ice > 0 at the start of this call)
+  assert.equal(s.players.player.resources.ice, 0, "that tick's upkeep drained it to exactly zero");
+  const oreAfterFirstTick = sm.input.ore;
+
+  updateProduction(s, sm, 0.5);   // a second, identical tick — now with NO ice banked
+  const oreBurnedSecondTick = oreAfterFirstTick - sm.input.ore;
+  const oreBurnedFirstTick = 1000 - oreAfterFirstTick;
+  assert.ok(near(oreBurnedSecondTick, oreBurnedFirstTick * 2),
+    `once ice hits zero, ore burn per identical tick doubles back to full price (${oreBurnedFirstTick} → ${oreBurnedSecondTick})`);
+  assert.equal(s.players.player.resources.ice, 0, "still zero — no ice left to charge, and none to go negative");
 });
 
 test("production is clamped to the input larder — the buffer never goes negative", () => {
@@ -90,15 +165,15 @@ test("an unpowered factory produces nothing", () => {
   assert.equal(sm.input.ore, 1000, "…and no inputs consumed");
 });
 
-test("a paused factory consumes no inputs, banks no output, and frees its Power", () => {
+test("a paused factory consumes no inputs, banks no output, and idles at a 5% Power trickle", () => {
   const s = stub([reactor(), smelter({ paused: true, input: { ore: 1000 } })], {});
   const sm = [...s.buildings.values()].find(b => b.type === "smelter");
-  assert.equal(powerDraw(s, "player"), 0, "a paused factory reserves no Power (frees the grid for others)");
+  assert.ok(near(powerDraw(s, "player"), 4 * 0.05), "a paused factory frees 95% of its reserved Power, not all of it");
   updateProduction(s, sm, 0.1);
   assert.equal(sm.input.ore, 1000, "paused → no ore consumed");
   assert.equal((sm.store && sm.store.metals) || 0, 0, "paused → no metals banked");
   sm.paused = false;                       // resume
-  assert.equal(powerDraw(s, "player"), 4, "resumed → it reserves its draw again");
+  assert.equal(powerDraw(s, "player"), 4, "resumed → it reserves its full draw again");
   updateProduction(s, sm, 0.1);
   assert.ok(sm.store.metals > 0, "resumed → it refines again");
 });
@@ -109,6 +184,83 @@ test("updateProduction is a no-op for a building with no recipe (e.g. a Command 
   assert.equal(recipeOf(cc), null, "a Command Center runs no recipe");
   updateProduction(s, cc, 0.1);
   assert.deepEqual(s.players.player.resources, { ore: 500 }, "a non-factory touches nothing");
+});
+
+// buildingConcern — the map-level "is this producer actually doing its job" read (renderBuildings.js's
+// concern badge). Priority mirrors updateProduction/updatePlasmaRig/updateCombustors exactly, so these
+// double as a cross-check that the badge can never disagree with what the sim is actually doing.
+test("buildingConcern: paused reads 'paused' before anything else, for a factory, a Rig, or a power station", () => {
+  const s = stub([reactor(), smelter({ paused: true, input: { ore: 1000 } })], {});
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  assert.deepEqual(buildingConcern(s, sm), { level: "paused" });
+
+  const rigState = stub([reactor(), plasmarig({ paused: true })], { radioactives: 100 });
+  const rig = [...rigState.buildings.values()].find(b => b.type === "plasmarig");
+  assert.deepEqual(buildingConcern(rigState, rig), { level: "paused" });
+
+  const genState = stub([{ type: "combustor", paused: true, powered: true }]);
+  assert.deepEqual(buildingConcern(genState, [...genState.buildings.values()][0]), { level: "paused" });
+});
+
+test("buildingConcern: a dead grid reads 'bad' (noPower) for a factory or a Rig", () => {
+  const s = stub([smelter({ input: { ore: 1000 } })], {});   // no Reactor
+  assert.deepEqual(buildingConcern(s, [...s.buildings.values()][0]), { level: "bad", code: "noPower" });
+
+  const rigState = stub([plasmarig()], { radioactives: 100 });
+  assert.deepEqual(buildingConcern(rigState, [...rigState.buildings.values()][0]), { level: "bad", code: "noPower" });
+});
+
+test("buildingConcern: a Power-fed factory missing its input reads 'bad' (starved)", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 0 } })], {});
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  assert.deepEqual(buildingConcern(s, sm), { level: "bad", code: "starved" });
+});
+
+test("buildingConcern: a Rig out of radioactives reads 'bad' (noFuel)", () => {
+  const s = stub([reactor(), plasmarig()], { radioactives: 0 });
+  const rig = [...s.buildings.values()].find(b => b.type === "plasmarig");
+  assert.deepEqual(buildingConcern(s, rig), { level: "bad", code: "noFuel" });
+});
+
+test("buildingConcern: a brimming output buffer reads 'bad' (bufferFull) for a factory or a Rig", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 }, store: { metals: 80 } })], {});   // 80 = default cap
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  assert.deepEqual(buildingConcern(s, sm), { level: "bad", code: "bufferFull" });
+
+  const rigState = stub([reactor(), plasmarig({ store: { ore: 120 } })], { radioactives: 100 });   // 120 = Rig's cap
+  const rig = [...rigState.buildings.values()].find(b => b.type === "plasmarig");
+  assert.deepEqual(buildingConcern(rigState, rig), { level: "bad", code: "bufferFull" });
+});
+
+test("buildingConcern: an under-supplied grid (short of dead) reads 'warn' (throttled) once fed and clear", () => {
+  const smelterDraw = 4, n = Math.ceil(BUILDINGS.reactor.energyGrants / smelterDraw) + 2;
+  const s = stub([reactor(), ...Array.from({ length: n }, () => smelter({ input: { ore: 1000 } }))]);
+  for (const sm of s.buildings.values()) {
+    if (sm.type !== "smelter") continue;
+    assert.deepEqual(buildingConcern(s, sm), { level: "warn", code: "throttled" });
+  }
+});
+
+test("buildingConcern: a fully healthy factory or Rig reads null — nothing to flag", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } })], {});
+  assert.equal(buildingConcern(s, [...s.buildings.values()].find(b => b.type === "smelter")), null);
+
+  const rigState = stub([reactor(), plasmarig()], { radioactives: 100 });
+  assert.equal(buildingConcern(rigState, [...rigState.buildings.values()].find(b => b.type === "plasmarig")), null);
+});
+
+test("buildingConcern: an unfuelled power station reads 'bad' (noFuel); a fuelled one reads null", () => {
+  const dry = stub([{ type: "combustor", powered: false }]);
+  assert.deepEqual(buildingConcern(dry, [...dry.buildings.values()][0]), { level: "bad", code: "noFuel" });
+  const lit = stub([{ type: "combustor", powered: true }]);
+  assert.equal(buildingConcern(lit, [...lit.buildings.values()][0]), null);
+});
+
+test("buildingConcern is a no-op while still constructing, and null for a non-producer building", () => {
+  const s = stub([smelter({ constructing: true, input: { ore: 1000 } })], {});
+  assert.equal(buildingConcern(s, [...s.buildings.values()][0]), null, "still going up → nothing to flag yet");
+  const cc = stub([{ type: "command" }], {});
+  assert.equal(buildingConcern(cc, [...cc.buildings.values()][0]), null, "not a producer at all");
 });
 
 test("each hop runs on its own larder: the Smelter banks metals, the Assembly Plant banks alloys", () => {

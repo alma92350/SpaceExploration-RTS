@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
-import { rigVein, locationRichness, rollTier, rigSurvey, PLASMA_VEINS, rigInfo } from "../engine/rig.js";
-import { storeTotal, storeCapOf } from "../engine/entities.js";
+import { rigVein, locationRichness, rollTier, rigSurvey, PLASMA_VEINS, rigInfo, updatePlasmaRig } from "../engine/rig.js";
+import { storeTotal, storeCapOf, BUILDINGS } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
 // A minimal endless world with a Reactor (Power for the plasma arc) and a Plasma Rig, fuelled with
@@ -23,6 +23,15 @@ function rigWorld(seed = 1, place = { x: 700, y: 500 }) {
   return { s, rig };
 }
 const entry = b => [b.id, b];
+
+// Normally updateCombustors (run by the full tick()) marks a fuelled Reactor `powered` before
+// anything reads powerCap. The ice-upkeep tests below call updatePlasmaRig directly (skipping
+// tick()) so the fixture's OWN Reactor can't sneak its own upkeep charge into what they're
+// measuring — so they need to mark it powered by hand instead.
+function powerRig({ s }) {
+  const reactor = [...s.buildings.values()].find(b => b.type === "reactor");
+  reactor.powered = true;
+}
 
 // Find a rig position (scanning a grid) whose surface-biased vein is `want`, so a test can pin the
 // mined commodity. The vein now depends on the map's nodes, so this scans within a real state.
@@ -73,6 +82,76 @@ test("digging burns radioactives (nuclear to exploit) and stalls when they run o
   const stalledCount = rig.digCount;
   for (let i = 0; i < 200; i++) tick(s, 0.1);
   assert.equal(rig.digCount, stalledCount, "with no radioactives left, the rig stalls — no further digs");
+});
+
+test("ice coolant: banked ice halves the nuclear (radioactives) burn per dig, same digging/yield", () => {
+  const plain = rigWorld(9);
+  const iced = rigWorld(9);
+  iced.s.players.player.resources.ice = 5;
+  for (let i = 0; i < 300; i++) { tick(plain.s, 0.1); tick(iced.s, 0.1); }
+  assert.ok(plain.rig.digCount > 0, "the plain rig completed some digs");
+  assert.equal(plain.rig.digCount, iced.rig.digCount, "ice doesn't change how many digs complete (same tier rolls/yield)");
+  assert.deepEqual(plain.rig.store, iced.rig.store, "…or what it dug — only the fuel bill differs");
+  const spentPlain = 2000 - plain.s.players.player.resources.radioactives;
+  const spentIced = 2000 - iced.s.players.player.resources.radioactives;
+  assert.ok(spentPlain > 0, "the plain rig burned radioactives");
+  assert.ok(Math.abs(spentPlain - spentIced * 2) < 1e-6, "the iced rig burned exactly half the radioactives for the same digging");
+});
+
+test("rigInfo.nuclearOk reflects ice's halved nuclear threshold", () => {
+  const { s, rig } = rigWorld(11);
+  const fullCost = BUILDINGS.plasmarig.rig.nuclear;
+  s.players.player.resources.radioactives = fullCost * 0.75;   // enough for the halved cost, not the full one
+  assert.equal(rigInfo(s, rig).nuclearOk, false, "without ice, short of the full nuclear cost");
+  s.players.player.resources.ice = 2;
+  assert.equal(rigInfo(s, rig).nuclearOk, true, "with ice banked, the halved cost is affordable");
+});
+
+// ---- ice coolant is a REAL cost for the Rig too: chargeIceUpkeep drains it, it isn't just required
+// ---- to be present. These call updatePlasmaRig directly (not tick()) so the fixture's OWN Reactor
+// ---- (also fuel-burning, also eligible for the discount) can't add its own upkeep charge into the mix.
+test("ice coolant is a real cost for the Rig too: a completed dig drains the treasury's ice", () => {
+  const world = rigWorld(21); const { s, rig } = world; powerRig(world);
+  rig.digProgress = 1;                 // primed to fire a dig on the very next call
+  s.players.player.resources.ice = 1;
+  updatePlasmaRig(s, rig, 0.1);
+  assert.ok(rig.digCount > 0, "a dig completed on this call");
+  assert.ok(Math.abs(s.players.player.resources.ice - (1 - 0.1 * 0.1)) < 1e-9,
+    "the completed dig drained ice at the flat ICE_UPKEEP_PER_SEC rate × dt");
+});
+
+test("ice coolant: a Rig that completes no dig this tick (still warming up, or paused) is charged no ice upkeep", () => {
+  const world = rigWorld(22); const { s, rig } = world; powerRig(world);
+  s.players.player.resources.ice = 1;
+  updatePlasmaRig(s, rig, 0.1);   // a fresh rig's digProgress starts nowhere near 1
+  assert.equal(rig.digCount || 0, 0, "no dig completed yet");
+  assert.equal(s.players.player.resources.ice, 1, "no dig → nothing to charge for, ice untouched");
+
+  rig.paused = true;
+  rig.digProgress = 1;           // primed, but paused short-circuits before any of that matters
+  updatePlasmaRig(s, rig, 0.1);
+  assert.equal(rig.digCount || 0, 0, "paused → a no-op entirely");
+  assert.equal(s.players.player.resources.ice, 1, "paused → still nothing charged");
+});
+
+test("ice coolant runs out for the Rig: once ice hits zero, the nuclear cost reverts to full price", () => {
+  const world = rigWorld(23); const { s, rig } = world; powerRig(world);
+  s.players.player.resources.ice = 0.005;   // less than one tick's upkeep (0.01) — one dig's worth of discount, no more
+  rig.digProgress = 1;
+  const radioBefore = s.players.player.resources.radioactives;
+  updatePlasmaRig(s, rig, 0.1);              // first dig: iced going in (ice > 0 at the start of the call)
+  assert.equal(rig.digCount, 1, "one dig completed");
+  assert.equal(s.players.player.resources.ice, 0, "that dig's upkeep drained the last of the ice");
+  const spentFirstDig = radioBefore - s.players.player.resources.radioactives;
+  assert.ok(Math.abs(spentFirstDig - BUILDINGS.plasmarig.rig.nuclear * 0.5) < 1e-9, "the first dig got the halved nuclear cost");
+
+  rig.digProgress = 1;                       // force a second dig
+  const radioBeforeSecond = s.players.player.resources.radioactives;
+  updatePlasmaRig(s, rig, 0.1);
+  assert.equal(rig.digCount, 2, "a second dig completed");
+  const spentSecondDig = radioBeforeSecond - s.players.player.resources.radioactives;
+  assert.ok(Math.abs(spentSecondDig - BUILDINGS.plasmarig.rig.nuclear) < 1e-9,
+    "…but now at the FULL nuclear cost — the coolant ran out, so no more discount");
 });
 
 test("richness (and so the yield odds) depends on both location and planet", () => {

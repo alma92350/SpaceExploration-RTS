@@ -15,13 +15,20 @@
    and its digs slow when power is short), and it burns radioactives per dig
    ("nuclear to exploit"). Odyssey-only: updatePlasmaRig is a no-op for any
    building without a `rig` def, so the skirmish tick is untouched.
+
+   Ice coolant (industry.js iceCoolantMult): with any ice banked in the treasury,
+   both those costs are halved — the nuclear burn per dig here, and the plasma
+   arc's Power draw over in industry.js's powerDraw. Running the coolant isn't
+   free either: industry.js's chargeIceUpkeep drains a little ice per tick for
+   as long as a dig actually completes, so the discount lasts only as long as
+   the ice supply does.
    ============================================================ */
 
 "use strict";
 
 import { BUILDINGS, storeTotal, storeRoom, storeCapOf } from "./entities.js";
 import { hashStr } from "./rng.js";
-import { powerThrottle, cachedPowerThrottle, planetIndustryScale } from "./industry.js";
+import { powerThrottle, cachedPowerThrottle, planetIndustryScale, iceCoolantMult, chargeIceUpkeep } from "./industry.js";
 
 // The raw commodities a rig can strike. Which one a given rig mines — its VEIN — is chosen by WHERE
 // it's built: the SURFACE deposits nearby bias what lies below (a rig among ore fields usually
@@ -163,6 +170,8 @@ export function updatePlasmaRig(state, building, dt) {
   const throttle = cachedPowerThrottle(state, building.owner);   // short power → slower digs; owner-wide, cached for this tick (industry.js)
   if (throttle <= 0) return;
   const res = state.players[building.owner].resources;
+  const iceMult = iceCoolantMult(state, building.owner);
+  const nuclearCost = rig.nuclear * iceMult;   // banked ice halves the nuclear burn per dig
 
   building.digProgress = (building.digProgress || 0) + (dt / rig.digTime) * planetIndustryScale(state) * throttle;
 
@@ -173,12 +182,12 @@ export function updatePlasmaRig(state, building, dt) {
   // an unlimited SINK, for either owner. Deterministic; a no-op for any building without a `rig` def.
   let cycles = 0;
   while (building.digProgress >= 1 && cycles < MAX_CYCLES_PER_TICK) {
-    if ((res.radioactives || 0) < rig.nuclear) { building.digProgress = 1; break; }   // out of nuclear → stall at the brink
+    if ((res.radioactives || 0) < nuclearCost) { building.digProgress = 1; break; }   // out of nuclear → stall at the brink
     const room = storeRoom(building);
     if (room <= 1e-9) { building.digProgress = 1; break; }   // output buffer full → stall until hauled
     const tier = rollTier(building, richness);
     const amount = Math.min(rig.base * tier.mult, room);   // top off to exactly full on the last dig (overflow spills)
-    res.radioactives -= rig.nuclear;
+    res.radioactives -= nuclearCost;
     building.digProgress -= 1;
     building.digCount = (building.digCount || 0) + 1;
     building.store = building.store || {};
@@ -188,6 +197,10 @@ export function updatePlasmaRig(state, building, dt) {
     state.events.push({ type: "rigDig", com: vein, amount, tier: tier.name, x: building.x, y: building.y, owner: building.owner });
     cycles++;
   }
+  // The coolant itself costs ice while it's actively cutting the nuclear bill — charged once per
+  // tick (not per dig) the same flat rate a factory/power station pays, regardless of how many of
+  // this tick's (up to MAX_CYCLES_PER_TICK) digs completed.
+  if (cycles > 0 && iceMult < 1) chargeIceUpkeep(state, building.owner, dt);
 }
 
 /** A read-only snapshot of a rig's state for the HUD: what it mines, how rich the spot is, progress, last strike. */
@@ -205,7 +218,7 @@ export function rigInfo(state, building) {
     progress: Math.min(1, building.digProgress || 0),
     lastTier: building.lastTier || null,
     lastYield: building.lastYield || 0,
-    nuclearOk: (res.radioactives || 0) >= def.rig.nuclear,
+    nuclearOk: (res.radioactives || 0) >= def.rig.nuclear * iceCoolantMult(state, building.owner),
     throttle: powerThrottle(state, building.owner),
     stored, storeCap: cap,
     storeFull: cap > 0 && stored >= cap - 1e-6,   // buffer full → the rig is stalled until it's hauled off

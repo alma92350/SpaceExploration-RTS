@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
-import { powerCap, powerEfficiency, onPowerGrid, updateCombustors } from "../engine/industry.js";
+import { powerCap, powerEfficiency, onPowerGrid, updateCombustors, hasIceCoolant } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 
 // A tiny stub, like industry.test.js: the power helpers read only buildings + resources.
@@ -34,6 +34,54 @@ test("a Combustion Generator grants Power only while its OWN fuel larder is fed 
   assert.equal(powerCap(s, "player"), BUILDINGS.combustor.energyGrants, "fuelled → grants its Power");
   const gen = [...s.buildings.values()][0];
   assert.ok(gen.powered && gen.input.gas < 100, "…having burned some gas from its OWN larder to do it");
+});
+
+test("ice coolant: banked ice halves every power station's fuel burn, same Power granted", () => {
+  for (const [type, fuel] of [["combustor", "gas"], ["reactor", "radioactives"], ["biomassreactor", "biomass"]]) {
+    const plain = stub([{ type, input: { [fuel]: 100 } }], {});
+    const iced = stub([{ type, input: { [fuel]: 100 } }], { ice: 4 });
+    assert.equal(hasIceCoolant(plain, "player"), false);
+    assert.equal(hasIceCoolant(iced, "player"), true);
+    updateCombustors(plain, 0.1);
+    updateCombustors(iced, 0.1);
+    const genPlain = [...plain.buildings.values()][0];
+    const genIced = [...iced.buildings.values()][0];
+    assert.ok(genPlain.powered && genIced.powered, `${type}: both stay fuelled and powered`);
+    const burnedPlain = 100 - genPlain.input[fuel];
+    const burnedIced = 100 - genIced.input[fuel];
+    assert.ok(Math.abs(burnedPlain - burnedIced * 2) < 1e-9, `${type}: iced burns half the ${fuel} for the same tick`);
+    assert.equal(powerCap(iced, "player"), BUILDINGS[type].energyGrants, `${type}: still grants its full Power despite burning less fuel`);
+  }
+});
+
+test("ice coolant is a real cost for a power station too: running fuelled drains the treasury's ice", () => {
+  const s = stub([combustor({ input: { gas: 100 } })], { ice: 1 });
+  updateCombustors(s, 0.1);
+  assert.ok(s.players.player.resources.ice < 1, "burning fuel under the discount drains banked ice");
+  assert.ok(Math.abs(s.players.player.resources.ice - (1 - 0.1 * 0.1)) < 1e-9, "drains at the flat ICE_UPKEEP_PER_SEC rate × dt");
+});
+
+test("ice coolant: a dry/paused Generator burns no fuel, so it's charged no ice upkeep either", () => {
+  const dry = stub([combustor()], { ice: 1 });   // empty larder — no gas to burn
+  updateCombustors(dry, 0.1);
+  assert.equal(dry.players.player.resources.ice, 1, "never fuelled → nothing to charge for");
+
+  const paused = stub([combustor({ paused: true, input: { gas: 100 } })], { ice: 1 });
+  updateCombustors(paused, 0.1);
+  assert.equal(paused.players.player.resources.ice, 1, "paused → no fuel burned → no ice charged");
+});
+
+test("ice coolant runs out for a power station: once ice hits zero, fuel burn reverts to full rate", () => {
+  const s = stub([combustor({ input: { gas: 100 } })], { ice: 0.06 });   // just enough for one tick's upkeep
+  const gen = [...s.buildings.values()][0];
+  updateCombustors(s, 0.6);   // one tick, still iced going in
+  assert.equal(s.players.player.resources.ice, 0, "drained to exactly zero by that tick's upkeep");
+  const burnedFirstTick = 100 - gen.input.gas;
+
+  updateCombustors(s, 0.6);   // a second, identical tick — now with no ice left
+  const burnedSecondTick = (100 - gen.input.gas) - burnedFirstTick;
+  assert.ok(Math.abs(burnedSecondTick - burnedFirstTick * 2) < 1e-9,
+    `gas burn doubles back to full rate once ice is gone (${burnedFirstTick} → ${burnedSecondTick})`);
 });
 
 test("out of fuel (or paused), a Generator grants no Power", () => {
