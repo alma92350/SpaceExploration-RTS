@@ -215,6 +215,36 @@ test("a Command Center expansion is issuable like any building: charged in full,
   assert.equal(site.constructing, true);
 });
 
+test("issueBuild founds the Market on the Odyssey path: cheap, fast, and ungated — meant to be first", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, endless: true });
+  // endless seeds a Colony Ship, not a built CC + workers (seedPlayer) — plant a Worker directly,
+  // same shortcut the industry chain tests use to skip the deploy step (test/industry.test.js).
+  const worker = makeUnit("worker", "player", 780, 480);
+  state.units.set(worker.id, worker);
+  state.players.player.resources.ore = 100;
+
+  const id = issueBuild(state, worker.id, "market", 800, 500);
+
+  assert.ok(id, "a Worker can found a Market with no prereqs, right from the start");
+  assert.equal(state.players.player.resources.ore, 100 - BUILDINGS.market.cost.ore);
+  const site = state.buildings.get(id);
+  assert.equal(site.type, "market");
+  assert.equal(site.constructing, true);
+});
+
+test("issueBuild refuses the Market on the skirmish path — trading is an Odyssey-only system", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });   // a skirmish: state.endless is falsy
+  const worker = playerWorker(state);
+  state.players.player.resources.ore = 999;   // funds in hand, so ONLY the odysseyOnly gate can reject it
+  const before = state.buildings.size;
+
+  const id = issueBuild(state, worker.id, "market", 800, 500);
+
+  assert.equal(id, null, "the Market can never be founded in a skirmish");
+  assert.equal(state.buildings.size, before);
+  assert.equal(state.players.player.resources.ore, 999, "…and charges nothing");
+});
+
 test("issueBuild pays a multi-commodity cost and refuses when the crystal half is missing", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const worker = playerWorker(state);

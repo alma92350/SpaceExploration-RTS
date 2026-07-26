@@ -96,6 +96,19 @@ export const BUILDINGS = {
     requires: ["foundry"],
     category: "infrastructure",
   },
+  market: {
+    id: "market", name: "Market", hp: 150, radius: 12,
+    cost: { ore: 40 }, buildTime: 6, sight: 90,
+    // The cheapest, fastest building on the roster — Odyssey's on-ramp into trading, and
+    // meant to be the first thing a worker raises. A finished Market opens the commodity
+    // trade panel (hudSelection.js renderMarket) — buy/sell local goods for galaxy credits
+    // (engine/market.js) — which used to sit on the Command Center; it's moved here so a
+    // destroyed/absent CC doesn't strand a colony without a market. No `produces`/`recipe`:
+    // a pure UI gate, so it stays out of the rally-point UI and updateProduction
+    // (engine/industry.js) skips it like any other non-recipe building.
+    odysseyOnly: true,
+    category: "infrastructure",
+  },
 
   /* ---- INDUSTRY (Odyssey only) — the production chain that turns raw hauls into
      refined goods worth real credits. All ore-costed (ore is guaranteed near every
