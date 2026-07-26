@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
-import { deployColonyShip, hasColonyShip, COLONY_SHIP_WORKERS } from "../engine/colony.js";
+import { deployColonyShip, hasColonyShip, COLONY_SHIP_WORKERS, packCommandCenter, PACK_COST } from "../engine/colony.js";
 import { canPlaceBuilding } from "../engine/colliders.js";
 import { queueProduction } from "../engine/production.js";
 import { checkEndlessLoss } from "../engine/victory.js";
@@ -53,6 +53,94 @@ test("deploy is deterministic — same setup mints an identical CC + colonists",
       .filter(e => e.owner === "player").map(e => `${e.type}@${Math.round(e.x)},${Math.round(e.y)}`).sort().join("|");
   };
   assert.equal(fingerprint(), fingerprint());
+});
+
+// ---- packing (the reverse: CC -> colony ship) ----
+
+test("packing a plain CC pays PACK_COST, removes the building, and spawns a colony ship in its place", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  deployColonyShip(s, playerShip(s).id);
+  const built = ccs(s, "player")[0];
+  s.players.player.resources.ore = 1000;
+  const before = s.players.player.resources.ore;
+  const { x, y } = built;
+  const shipId = packCommandCenter(s, built.id);
+  assert.ok(shipId, "packing succeeds");
+  assert.equal(s.players.player.resources.ore, before - PACK_COST.ore);
+  assert.ok(!s.buildings.get(built.id), "the CC is gone");
+  const ship = s.units.get(shipId);
+  assert.equal(ship.type, "colonyship");
+  assert.equal(ship.owner, "player");
+  assert.equal(ship.x, x); assert.equal(ship.y, y);
+});
+
+test("packing refuses a Capital, a still-constructing CC, and an unaffordable player", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  deployColonyShip(s, playerShip(s).id);
+  const cc = ccs(s, "player")[0];
+  s.players.player.resources.ore = 1000;
+
+  cc.capital = true;
+  assert.equal(packCommandCenter(s, cc.id), null, "a Capital never packs — only a smaller CC relocates");
+  cc.capital = false;
+
+  cc.constructing = true;
+  assert.equal(packCommandCenter(s, cc.id), null, "nothing to pack up mid-construction");
+  cc.constructing = false;
+
+  s.players.player.resources.ore = 0;
+  assert.equal(packCommandCenter(s, cc.id), null, "can't afford it");
+  assert.ok(s.buildings.get(cc.id), "…and the CC is untouched — a refused pack charges nothing");
+});
+
+test("packing is Odyssey-only, same guarantee issueBuild makes for odysseyOnly content", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3 });   // NOT endless -- a skirmish
+  const cc = ccs(s, "player")[0];
+  s.players.player.resources.ore = 1000;
+  assert.equal(packCommandCenter(s, cc.id), null, "a skirmish CC can't pack — colonyship is odysseyOnly");
+  assert.ok(s.buildings.get(cc.id), "the skirmish CC is untouched");
+});
+
+test("packing refunds any queued production before charging the pack cost", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  deployColonyShip(s, playerShip(s).id);
+  const cc = ccs(s, "player")[0];
+  s.players.player.resources.ore = 1000;
+  assert.ok(queueProduction(s, cc.id, "worker"), "queue a worker");
+  const afterQueue = s.players.player.resources.ore;
+  const workerCost = afterQueue !== 1000 ? 1000 - afterQueue : 0;
+  assert.ok(workerCost > 0, "queuing actually charged ore");
+
+  const shipId = packCommandCenter(s, cc.id);
+  assert.ok(shipId, "pack succeeds");
+  // The queued job's cost comes back, then PACK_COST is charged on top.
+  assert.equal(s.players.player.resources.ore, afterQueue + workerCost - PACK_COST.ore);
+});
+
+test("a packed CC's ship redeploys through the ordinary deploy flow — full round trip", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  deployColonyShip(s, playerShip(s).id);
+  const cc = ccs(s, "player")[0];
+  s.players.player.resources.ore = 1000;
+  const shipId = packCommandCenter(s, cc.id);
+  const ship = s.units.get(shipId);
+  ship.x += 300; ship.y += 300;   // "move" it to a new site
+  const newCcId = deployColonyShip(s, shipId);
+  assert.ok(newCcId, "the packed-and-moved ship redeploys just like any other colony ship");
+  const newCc = s.buildings.get(newCcId);
+  assert.equal(newCc.x, ship.x); assert.equal(newCc.y, ship.y);
+  assert.ok(!newCc.constructing, "instant, same as any deploy");
+});
+
+test("packing a player's ONLY CC still leaves them with a foothold — no tick-1 defeat", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  deployColonyShip(s, playerShip(s).id);
+  const cc = ccs(s, "player")[0];
+  s.players.player.resources.ore = 1000;
+  assert.ok(packCommandCenter(s, cc.id), "packs the player's sole base");
+  assert.equal(ccs(s, "player").length, 0, "no CC left");
+  checkEndlessLoss(s);
+  assert.equal(s.over, false, "the resulting colony ship is already the recognised foothold");
 });
 
 // ---- the foothold rule (loss + domination) ----

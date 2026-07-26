@@ -38,7 +38,7 @@ import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, space
          loadFreighter, unloadFreighter, freightUsed, freightRoom,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
-import { deployColonyShip } from "./engine/colony.js";
+import { deployColonyShip, packCommandCenter, PACK_COST } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { initiateJump } from "./boot.js";
@@ -615,9 +615,11 @@ function renderDiplomacy(state) {
 }
 
 // The Odyssey Capital control on a Command Center: this CC is already the anchored
-// Capital (a note), a Capital exists elsewhere (nothing — this one is a mobile base),
-// or no Capital yet (an "Upgrade to Capital" button). Fortifying doubles HP and anchors
-// it; only smaller CCs jump (engine/galaxy.js).
+// Capital (a note, and nothing else — it's permanent), or it's still a plain CC that can
+// EITHER fortify into the Capital (if the player doesn't have one yet elsewhere) OR pack
+// up and relocate (always available on a plain CC, even once a Capital exists elsewhere —
+// "only a smaller CC relocates"). Fortifying doubles HP and anchors it for good; packing is
+// the opposite bet — trade the building for a Colony Ship and re-found somewhere else.
 function renderCapital(state, cc) {
   if (cc.capital) {
     const row = document.createElement("div");
@@ -626,11 +628,16 @@ function renderCapital(state, cc) {
     panelEl.appendChild(row);
     return;
   }
-  if ([...state.buildings.values()].some(b => b.owner === "player" && b.capital)) return;  // one Capital already
-  panelEl.appendChild(makeButton(`◆ Upgrade to Capital (${costText(CAPITAL_UPGRADE_COST)})`,
-    () => { upgradeToCapital(state, cc); },
-    { cost: CAPITAL_UPGRADE_COST, icon: { kind: "building", type: "command" },
-      tip: `Fortify this Command Center into your anchored Capital: ×${CAPITAL_HP_MULT} HP. The Capital never jumps — only a smaller CC relocates.` }));
+  if (![...state.buildings.values()].some(b => b.owner === "player" && b.capital)) {
+    panelEl.appendChild(makeButton(`◆ Upgrade to Capital (${costText(CAPITAL_UPGRADE_COST)})`,
+      () => { upgradeToCapital(state, cc); },
+      { cost: CAPITAL_UPGRADE_COST, icon: { kind: "building", type: "command" },
+        tip: `Fortify this Command Center into your anchored Capital: ×${CAPITAL_HP_MULT} HP. The Capital never jumps — only a smaller CC relocates.` }));
+  }
+  panelEl.appendChild(makeButton(`📦 Pack Up (${costText(PACK_COST)})`,
+    () => { packCommandCenter(state, cc.id); },
+    { cost: PACK_COST, icon: { kind: "unit", type: "colonyship" },
+      tip: "Pack this Command Center back into a Colony Ship — move it to a new site and deploy it there, like your original landing. Any queued production is refunded first." }));
 }
 
 // Positional production/build hotkeys: the Nth produce/build button of the current panel is
