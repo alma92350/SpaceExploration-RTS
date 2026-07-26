@@ -13,7 +13,7 @@ import { COM, RECIPES } from "./data.js";
 import { BUILDINGS, storeCapOf, storeTotal } from "./engine/entities.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
-import { POWER_TIERS, powerThrottle } from "./engine/industry.js";
+import { POWER_TIERS, powerThrottle, buildingConcern } from "./engine/industry.js";
 import { hashStr } from "./engine/rng.js";
 import { DETAIL, facing, shade, hexA, polygonPoints, pathPoints, inView, drawHealthBar } from "./renderShared.js";
 import { drawEnemyPip } from "./renderUnits.js";
@@ -91,6 +91,49 @@ export function drawBuildingBars(ctx, state, view, selSet) {
     if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
     drawStoreBar(ctx, b);   // a producer's output-buffer gauge, under the hull
+    drawConcernBadge(ctx, state, b);   // paused / stalled / throttled flag, own producers only
+  }
+}
+
+// The paused/stalled/throttled colour legend, shared by drawConcernBadge and any HUD legend that
+// wants the exact same read the map uses. "paused" has no glyph string: the Unicode pause symbol
+// (⏸) renders as a blank tofu box in Chromium's default sans-serif (no glyph in that font), so its
+// badge is hand-drawn (two bars) instead of text — see drawConcernBadge.
+const CONCERN_STYLE = {
+  paused: { bg: "#2c3560", fg: "#aab4e0" },                // muted — a deliberate player choice, not a problem
+  bad: { bg: "#5c1f1f", fg: "#f87171", glyph: "!" },       // stalled outright — nothing is happening
+  warn: { bg: "#7a5b12", fg: "#fbbf24", glyph: "⚡" },      // running, just not at full rate
+};
+
+// A small badge at a producer's top-right corner flagging "is this actually doing its job right
+// now" (engine/industry.js buildingConcern) — paused (muted, a deliberate choice), stalled (red —
+// no Power/fuel, starved of an input, or its output buffer is brimming), or power-throttled (gold —
+// running under-rate). Own producers only: this exposes internal economic state (what's paused, what's
+// starved) that fog-of-war otherwise hides about an opponent's base, matching drawStoreBar's
+// player-only scope. Silent for anything running fine, so a healthy base stays uncluttered.
+function drawConcernBadge(ctx, state, b) {
+  if (b.owner !== "player") return;
+  const concern = buildingConcern(state, b);
+  if (!concern) return;
+  const style = CONCERN_STYLE[concern.level];
+  const r = 6.5, x = b.x + b.radius + 2, y = b.y - b.radius - 8;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = style.bg;
+  ctx.fill();
+  ctx.strokeStyle = "#05070f";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = style.fg;
+  if (style.glyph) {
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(style.glyph, x, y + 0.5);
+    ctx.textBaseline = "alphabetic";   // restore the canvas default so later text draws aren't shifted
+  } else {
+    ctx.fillRect(x - 3, y - 2.5, 2, 5);   // paused: two small bars, font-independent
+    ctx.fillRect(x + 1, y - 2.5, 2, 5);
   }
 }
 

@@ -5,7 +5,7 @@ import { storeTotal } from "../engine/entities.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
-import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep } from "../engine/industry.js";
+import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep, buildingConcern } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 import { deployColonyShip } from "../engine/colony.js";
 
@@ -184,6 +184,83 @@ test("updateProduction is a no-op for a building with no recipe (e.g. a Command 
   assert.equal(recipeOf(cc), null, "a Command Center runs no recipe");
   updateProduction(s, cc, 0.1);
   assert.deepEqual(s.players.player.resources, { ore: 500 }, "a non-factory touches nothing");
+});
+
+// buildingConcern — the map-level "is this producer actually doing its job" read (renderBuildings.js's
+// concern badge). Priority mirrors updateProduction/updatePlasmaRig/updateCombustors exactly, so these
+// double as a cross-check that the badge can never disagree with what the sim is actually doing.
+test("buildingConcern: paused reads 'paused' before anything else, for a factory, a Rig, or a power station", () => {
+  const s = stub([reactor(), smelter({ paused: true, input: { ore: 1000 } })], {});
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  assert.deepEqual(buildingConcern(s, sm), { level: "paused" });
+
+  const rigState = stub([reactor(), plasmarig({ paused: true })], { radioactives: 100 });
+  const rig = [...rigState.buildings.values()].find(b => b.type === "plasmarig");
+  assert.deepEqual(buildingConcern(rigState, rig), { level: "paused" });
+
+  const genState = stub([{ type: "combustor", paused: true, powered: true }]);
+  assert.deepEqual(buildingConcern(genState, [...genState.buildings.values()][0]), { level: "paused" });
+});
+
+test("buildingConcern: a dead grid reads 'bad' (noPower) for a factory or a Rig", () => {
+  const s = stub([smelter({ input: { ore: 1000 } })], {});   // no Reactor
+  assert.deepEqual(buildingConcern(s, [...s.buildings.values()][0]), { level: "bad", code: "noPower" });
+
+  const rigState = stub([plasmarig()], { radioactives: 100 });
+  assert.deepEqual(buildingConcern(rigState, [...rigState.buildings.values()][0]), { level: "bad", code: "noPower" });
+});
+
+test("buildingConcern: a Power-fed factory missing its input reads 'bad' (starved)", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 0 } })], {});
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  assert.deepEqual(buildingConcern(s, sm), { level: "bad", code: "starved" });
+});
+
+test("buildingConcern: a Rig out of radioactives reads 'bad' (noFuel)", () => {
+  const s = stub([reactor(), plasmarig()], { radioactives: 0 });
+  const rig = [...s.buildings.values()].find(b => b.type === "plasmarig");
+  assert.deepEqual(buildingConcern(s, rig), { level: "bad", code: "noFuel" });
+});
+
+test("buildingConcern: a brimming output buffer reads 'bad' (bufferFull) for a factory or a Rig", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 }, store: { metals: 80 } })], {});   // 80 = default cap
+  const sm = [...s.buildings.values()].find(b => b.type === "smelter");
+  assert.deepEqual(buildingConcern(s, sm), { level: "bad", code: "bufferFull" });
+
+  const rigState = stub([reactor(), plasmarig({ store: { ore: 120 } })], { radioactives: 100 });   // 120 = Rig's cap
+  const rig = [...rigState.buildings.values()].find(b => b.type === "plasmarig");
+  assert.deepEqual(buildingConcern(rigState, rig), { level: "bad", code: "bufferFull" });
+});
+
+test("buildingConcern: an under-supplied grid (short of dead) reads 'warn' (throttled) once fed and clear", () => {
+  const smelterDraw = 4, n = Math.ceil(BUILDINGS.reactor.energyGrants / smelterDraw) + 2;
+  const s = stub([reactor(), ...Array.from({ length: n }, () => smelter({ input: { ore: 1000 } }))]);
+  for (const sm of s.buildings.values()) {
+    if (sm.type !== "smelter") continue;
+    assert.deepEqual(buildingConcern(s, sm), { level: "warn", code: "throttled" });
+  }
+});
+
+test("buildingConcern: a fully healthy factory or Rig reads null — nothing to flag", () => {
+  const s = stub([reactor(), smelter({ input: { ore: 1000 } })], {});
+  assert.equal(buildingConcern(s, [...s.buildings.values()].find(b => b.type === "smelter")), null);
+
+  const rigState = stub([reactor(), plasmarig()], { radioactives: 100 });
+  assert.equal(buildingConcern(rigState, [...rigState.buildings.values()].find(b => b.type === "plasmarig")), null);
+});
+
+test("buildingConcern: an unfuelled power station reads 'bad' (noFuel); a fuelled one reads null", () => {
+  const dry = stub([{ type: "combustor", powered: false }]);
+  assert.deepEqual(buildingConcern(dry, [...dry.buildings.values()][0]), { level: "bad", code: "noFuel" });
+  const lit = stub([{ type: "combustor", powered: true }]);
+  assert.equal(buildingConcern(lit, [...lit.buildings.values()][0]), null);
+});
+
+test("buildingConcern is a no-op while still constructing, and null for a non-producer building", () => {
+  const s = stub([smelter({ constructing: true, input: { ore: 1000 } })], {});
+  assert.equal(buildingConcern(s, [...s.buildings.values()][0]), null, "still going up → nothing to flag yet");
+  const cc = stub([{ type: "command" }], {});
+  assert.equal(buildingConcern(cc, [...cc.buildings.values()][0]), null, "not a producer at all");
 });
 
 test("each hop runs on its own larder: the Smelter banks metals, the Assembly Plant banks alloys", () => {
