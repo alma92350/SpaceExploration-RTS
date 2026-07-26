@@ -304,6 +304,16 @@ test("Foundry and Arsenal are Industrial, not Military, despite gating combat te
   assert.equal(BUILDINGS.stardock.category, "military");
 });
 
+test("the Market is the cheap, ungated first Odyssey building — buildable by the Worker, not the CC", () => {
+  assert.deepEqual(BUILDINGS.market.cost, { ore: 40 });
+  assert.equal(BUILDINGS.market.category, "infrastructure");
+  assert.equal(BUILDINGS.market.odysseyOnly, true, "trading (state.market) is an Odyssey-only system");
+  assert.equal(BUILDINGS.market.requires, undefined, "no prereqs — buildable immediately, meant to be first");
+  assert.ok(!BUILDINGS.market.produces, "it trains no units — stays out of the rally-point UI");
+  assert.equal(canBuildType("worker", "market"), true, "the generalist Worker can found it");
+  assert.equal(canBuildType("mender", "market"), false);
+});
+
 test("canGatherType/canLogisticsType: only Worker gathers, only Worker runs haul/service/ferry", () => {
   assert.equal(canGatherType("worker"), true);
   assert.equal(canGatherType("mender"), false);

@@ -365,10 +365,11 @@ function renderQueueRows(building) {
   });
 }
 
-// The Odyssey trade panel, shown under the Command Center's production. One row
-// per tradeable commodity: its live sell price, and Sell/Buy buttons in fixed
-// lots. Selling banks universal credits (and nudges the local price down);
-// buying spends them (and nudges it up) — see engine/market.js.
+// The Odyssey trade panel, shown under a finished Market building (moved off the Command
+// Center so a destroyed/absent CC doesn't strand a colony without a market). One row per
+// tradeable commodity: its live sell price, and Sell/Buy buttons in fixed lots. Selling
+// banks universal credits (and nudges the local price down); buying spends them (and
+// nudges it up) — see engine/market.js.
 function renderMarket(state) {
   const coms = tradeables(state);
   // A collapsible clickable header, but keeping the market-head gold accent (its own properties
@@ -802,11 +803,15 @@ function rebuildSelectionPanel(sel) {
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
-    if (game.galaxy && state.market) renderMarket(state);   // Odyssey: trade local commodities for universal credits
     // Odyssey diplomacy: appease the neighbour with credits — shown only once the
     // stance has cooled to Neutral-or-worse (no point paying while comfortably cordial).
     if (game.galaxy && state.diplomacy && state.diplomacy.stance < 0.25) renderDiplomacy(state);
   }
+
+  const market = sel.find(e => e.kind === "building" && e.type === "market" && !e.constructing);
+  // Odyssey: trade local commodities for universal credits — its own building (not the CC),
+  // so a destroyed/absent Command Center doesn't strand a colony without a market.
+  if (market && game.galaxy && state.market) renderMarket(state);
 
   const barracks = sel.find(e => e.kind === "building" && e.type === "barracks" && !e.constructing);
   if (barracks) {
@@ -1290,13 +1295,13 @@ function rebuildSelectionPanel(sel) {
     // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
     // (the worker build-capability check), which is applied independently via canBuild.
     const GROUPS = [
-      ["Economy", ["reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
+      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
                    "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
       ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
       ["Endgame", ["antimatter_gate"]],
       ["Travel", ["spaceport"]],
     ];
-    const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
+    const alwaysShow = new Set(["market", "barracks", "foundry", "arsenal", "refinery", "turret",
                                 "habitat", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "spaceport"]);
     // What's actually SHOWN (not just category-eligible) in each mode — the header's count
     // mirrors this exactly, so "▸ Build (N)" never promises more than expanding reveals.
