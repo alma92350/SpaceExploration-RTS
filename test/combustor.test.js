@@ -70,8 +70,8 @@ test("the Biomass Reactor is the Combustion Generator's sibling — same deal, b
 
 test("a Generator's grid is SMALLER than a Reactor's (its powerRange shrinks the tiers)", () => {
   // 250px out: on a Reactor's grid that's the 'near' tier; on a Generator's tighter grid it's already 'isolated'.
-  const nearReactor = stub([reactor({ x: 0, y: 0 })]);
-  const nearGen = stub([combustor({ x: 0, y: 0, powered: true })]);   // pre-mark fuelled so it counts as a source
+  const nearReactor = stub([reactor({ x: 0, y: 0, powered: true })]);   // pre-mark fuelled so it counts as a source
+  const nearGen = stub([combustor({ x: 0, y: 0, powered: true })]);     // …same for the Generator
   const rTier = powerEfficiency(nearReactor, "player", 250, 0).name;
   const gTier = powerEfficiency(nearGen, "player", 250, 0).name;
   assert.equal(rTier, "near", "a Reactor still reaches 250px at the 'near' tier");
@@ -112,43 +112,67 @@ test("the Generator is Odyssey-only and its fuel state is deterministic + save-c
   assert.ok(deserializeGame(serializeGame(s)), "and the save round-trips");
 });
 
-// ---- Reactor pause: taking a "free" power source off the grid by hand ----------------------
-// Unlike a Generator, a Reactor has no fuel to run dry on — it grants Power unconditionally once
-// built. `paused` (the HUD's Pause/Resume toggle, same idiom as a factory/Plasma Rig/Generator) is
-// the only way to take one off the grid, e.g. to run purely on Generators (or switch back).
+// ---- the Reactor: the original power station, now burning radioactives too --------------------
+// The Reactor is no longer free once built — it burns radioactives from its own larder, same
+// mechanism as its smaller combust siblings above, just at double their rate (1.2/s vs 0.6/s),
+// matching its double energyGrants/reach. `paused` (the HUD's Pause/Resume toggle, same idiom as a
+// factory/Plasma Rig/Generator) takes it off the grid by hand without demolishing it — same as before.
+
+test("a Reactor grants Power once fed — burns radioactives from its own larder, not free anymore", () => {
+  const untouched = stub([reactor()], { radioactives: 100 });   // a full treasury, but an empty larder
+  updateCombustors(untouched, 0.1);
+  assert.equal(powerCap(untouched, "player"), 0, "no larder fuel → dead, regardless of the treasury");
+
+  const s = stub([reactor({ input: { radioactives: 100 } })], {});
+  updateCombustors(s, 0.1);
+  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "fuelled from its own larder → grants its Power");
+  const r = [...s.buildings.values()][0];
+  assert.ok(r.powered && r.input.radioactives < 100, "…having burned some radioactives to do it");
+});
 
 test("a Reactor grants Power until it's paused, then grants none — and resumes cleanly", () => {
-  const s = stub([reactor()]);
-  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "an unpaused Reactor grants its Power");
+  const s = stub([reactor({ input: { radioactives: 100 } })], {});
+  updateCombustors(s, 0.1);
+  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "an unpaused, fuelled Reactor grants its Power");
 
   const r = [...s.buildings.values()][0];
   r.paused = true;
+  updateCombustors(s, 0.1);
   assert.equal(powerCap(s, "player"), 0, "paused → off the grid, same as a dry Generator");
 
   r.paused = false;
-  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "resumed → back on the grid");
+  updateCombustors(s, 0.1);
+  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "resumed → back on the grid, still fuelled");
 });
 
 test("a paused Reactor isn't a grid source at all (no false on-grid reading, matching a dead Generator)", () => {
-  const s = stub([reactor({ x: 0, y: 0, paused: true })]);
+  const s = stub([reactor({ x: 0, y: 0, paused: true, input: { radioactives: 100 } })]);
   assert.equal(powerEfficiency(s, "player", 30, 0).name, "linked",
-    "with no ACTIVE source, a spot reads the neutral tier — not 'on-grid' off a paused Reactor");
+    "with no ACTIVE source, a spot reads the neutral tier — not 'on-grid' off a paused Reactor, even a fuelled one");
   assert.equal(onPowerGrid(s, "player", 30, 0), false);
 });
 
 test("pausing one of two Reactors leaves the other's Power on the grid", () => {
-  const s = stub([reactor({ id: "r1" }), reactor({ id: "r2", paused: true })]);
-  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "only the un-paused one counts");
+  const s = stub([reactor({ id: "r1", powered: true }), reactor({ id: "r2", paused: true })]);
+  assert.equal(powerCap(s, "player"), BUILDINGS.reactor.energyGrants, "only the un-paused, fuelled one counts");
 });
 
 test("a Reactor's pause is a real, persisted decision — it survives a save/load round-trip", () => {
   const s = createGameState({ planetId: "ferros", endless: true });
   const r = makeBuilding("reactor", "player", 600, 500);
   r.paused = true;
+  r.input = { radioactives: 100 };
   s.buildings.set(r.id, r);
 
   const b = deserializeGame(serializeGame(s));
   const loaded = [...b.buildings.values()].find(x => x.type === "reactor");
   assert.equal(loaded.paused, true, "unlike `powered`/`fuel`, a Reactor's pause isn't transient — it's a player choice");
-  assert.equal(powerCap(b, "player"), 0, "…and the loaded game still honours it");
+  assert.equal(powerCap(b, "player"), 0, "…and the loaded game still honours it — paused overrides even a full larder");
+});
+
+test("the Reactor burns radioactives at double the Combustion Generator's rate, matching its double Power", () => {
+  assert.deepEqual(BUILDINGS.reactor.combust.fuels, ["radioactives"]);
+  assert.equal(BUILDINGS.reactor.combust.rate, BUILDINGS.combustor.combust.rate * 2);
+  assert.equal(BUILDINGS.reactor.energyGrants, BUILDINGS.combustor.energyGrants * 2);
+  assert.ok(BUILDINGS.reactor.powerRange > BUILDINGS.combustor.powerRange, "and it still reaches further");
 });

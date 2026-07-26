@@ -170,9 +170,16 @@ test("haulage is deterministic: two same-seed runs bank identical treasuries", (
 
 // ---- service round trip: workers carry inputs INTO a factory and its output BACK --------
 
-// A player factory planted next to the CC, with a Reactor for Power.
+// A player factory planted next to the CC, with a Reactor for Power. This file is about the
+// factory's own haul/service logistics, not the Reactor's own fuel logistics (haul.test.js's
+// "fuel-burning power stations" section below covers that) — so the Reactor gets its own big,
+// self-sufficient larder up front rather than competing with the factory for the same workers.
+// A tick-driven test calls updateCombustors every tick (engine/industry.js), which recomputes
+// `powered` fresh off `input` each time — a one-off `powered = true` would just be overwritten
+// on the very first tick, so the larder itself (not the flag) is what has to carry it.
 function plantFactory(s, cc, type = "smelter") {
   const reactor = makeBuilding("reactor", "player", cc.x + 30, cc.y - 30);
+  reactor.input = { radioactives: 100000 };
   const f = makeBuilding(type, "player", cc.x + 55, cc.y);
   s.buildings.set(reactor.id, reactor);
   s.buildings.set(f.id, f);
@@ -340,23 +347,36 @@ test("an idle worker auto-refuels a Biomass Reactor the same way, with biomass",
   assert.equal(gen.powered, true);
 });
 
-test("countLogistics resets a power station's `servers` tally each tick, same as a factory's — so a SECOND refuel run isn't permanently blocked", () => {
+test("an idle worker auto-refuels the Reactor too — the original power station, no longer free", () => {
+  const { s, cc } = base(8);
+  const reactor = plantGenerator(s, cc, "reactor");
+  s.players.player.resources.radioactives = 200;
+  assert.equal(reactor.powered, undefined, "starts unfed, same as any other combust building now");
+
+  for (let i = 0; i < 800; i++) tick(s, 0.1);
+
+  assert.ok((reactor.input?.radioactives || 0) > 0, "a worker hauled radioactives into its larder on its own");
+  assert.equal(reactor.powered, true, "…and it's now actually granting Power");
+});
+
+test("countLogistics resets a power station's `servers` tally each tick, same as a factory's — the old bug let it only ever climb", () => {
   // Regression: countLogistics used to only reset `servers` for a recipe-having building, never
   // for a fuel-burning power station — its tally could only ever climb, hard-capping out at
-  // MAX_SERVERS after the very first worker and locking out every worker after, forever.
+  // MAX_SERVERS after the very first worker and locking out every worker after, forever, even
+  // though the SAME single worker's order is the only thing actually being tallied.
   const { s, cc, workers } = base(4);
   const gen = plantGenerator(s, cc);
-  s.players.player.resources.gas = 500;
   const w = workers[0];
-  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: gen.id, phase: "plan" };
 
-  for (let cycle = 0; cycle < 3; cycle++) {
-    countLogistics(s);
-    w.order = null;
-    assignService(s, w);
-    assert.equal(w.order?.type, "service", `cycle ${cycle}: still assignable — servers wasn't left stuck maxed-out`);
-    for (let i = 0; i < 3000 && w.order; i++) { countLogistics(s); updateService(s, w, 0.05); }
-  }
+  countLogistics(s);
+  assert.equal(gen.servers, 1, "re-tallied fresh from the one live order");
+
+  countLogistics(s);   // with the old bug (no reset for a combust building) this would climb to 2, then 3…
+  assert.equal(gen.servers, 1, "still exactly 1 the next tick — the tally doesn't just keep growing");
+
+  countLogistics(s);
+  assert.equal(gen.servers, 1, "…and the tick after that");
 });
 
 test("a Combustion Generator's fuel larder is deterministic: two same-seed runs end up identically fuelled", () => {

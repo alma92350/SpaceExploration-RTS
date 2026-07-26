@@ -20,7 +20,10 @@ function stub(buildings = [], resources = {}) {
     players: { player: { resources } },
   };
 }
-const reactor = (o = {}) => ({ type: "reactor", ...o });
+// This file is about the PRODUCTION chain, not the power/fuel mechanic (that's combustor.test.js's
+// job) — so the stub reactor defaults to already-fuelled (`powered: true`) unless a test overrides
+// it, matching how these fixtures already treat Power as a given.
+const reactor = (o = {}) => ({ type: "reactor", powered: true, ...o });
 const smelter = (o = {}) => ({ type: "smelter", ...o });
 const assembler = (o = {}) => ({ type: "assembler", ...o });
 const near = (a, b) => Math.abs(a - b) < 1e-9;
@@ -130,9 +133,12 @@ test("end-to-end: workers supply a built chain and haul its goods, and the alloy
   const s = activeState(g);
   for (const u of [...s.units.values()]) if (u.type === "colonyship") deployColonyShip(s, u.id);   // deploy start ships → CCs
   const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
-  // Plant the whole chain, completed, next to the capital.
+  // Plant the whole chain, completed, next to the capital. The Reactor gets its own big,
+  // self-sufficient fuel larder up front — this test is about the ore→metals→alloys chain, not
+  // the Reactor's own fuel logistics (haul.test.js covers that), so its labour isn't split feeding both.
   for (const [type, dx] of [["reactor", 40], ["smelter", 74], ["assembler", 108]]) {
     const b = makeBuilding(type, "player", cc.x + dx, cc.y + 40);
+    if (type === "reactor") b.input = { radioactives: 100000 };
     s.buildings.set(b.id, b);
   }
   s.players.player.resources.ore = 5000;                 // plenty of feedstock in the treasury for workers to supply
@@ -171,6 +177,7 @@ test("a high-industry world out-produces a low-industry one over identical ticks
   const mk = (planetId) => {
     const s = createGameState({ planetId, endless: true });
     const reactor = makeBuilding("reactor", "player", 600, 480);
+    reactor.powered = true;   // this loop only ever calls updateProduction directly, never updateCombustors/tick()
     const smelter = makeBuilding("smelter", "player", 660, 520);
     smelter.input = { ore: 100000 };
     s.buildings.set(reactor.id, reactor); s.buildings.set(smelter.id, smelter);

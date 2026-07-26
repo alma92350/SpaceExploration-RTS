@@ -14,6 +14,7 @@ function odysseyState(planetId = "kybernet") {
   const s = createGameState({ planetId, endless: true });
   for (const u of [...s.units.values()]) if (u.type === "colonyship") deployColonyShip(s, u.id);   // settle: CC + workers + supply
   const reactor = makeBuilding("reactor", "player", 600, 480);
+  reactor.powered = true;   // these tests call updateProduction directly, never updateCombustors/tick()
   s.buildings.set(reactor.id, reactor);
   return s;
 }

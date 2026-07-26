@@ -265,8 +265,9 @@ export function assignHaul(state, unit) {
  * Give an idle worker a SERVICE round trip on the nearest own factory OR fuel-burning power
  * station that needs feeding (an input/fuel low & in the treasury) or, for a factory, clearing
  * (an output backlog) — and isn't already served by MAX_SERVERS. A power station never has an
- * output backlog of its own (storeCapOf is 0 for it — see entities.js), so needsOut is always
- * false there; it only ever competes for a slot on needing fuel.
+ * output backlog of its own to clear (storeCapOf is 0 for it — see entities.js); needsOut requires
+ * storeCapOf > 0 explicitly so a station with nothing to bank never reads as "needs clearing" just
+ * because 0 >= 0 — it only ever competes for a slot on needing fuel.
  * @param {State} state @param {Unit} unit
  */
 export function assignService(state, unit) {
@@ -277,7 +278,7 @@ export function assignService(state, unit) {
     const needs = inputNeedsOf(b);
     if (!needs || (b.servers || 0) >= MAX_SERVERS) continue;
     const needsIn = neededInput(b, needs, res);   // already room-checked per-commodity (see neededInput)
-    const needsOut = storeTotal(b) >= storeCapOf(b.type) * ASSIGN_FRACTION;
+    const needsOut = storeCapOf(b.type) > 0 && storeTotal(b) >= storeCapOf(b.type) * ASSIGN_FRACTION;
     if (!needsIn && !needsOut) continue;
     const d = Math.hypot(b.x - unit.x, b.y - unit.y);
     if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }

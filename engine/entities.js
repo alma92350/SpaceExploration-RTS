@@ -101,17 +101,22 @@ export const BUILDINGS = {
     cost: { ore: 120 }, buildTime: 16, sight: 130,
     energyGrants: 20,   // the power that runs the factories below; short power throttles them all
     powerRange: 1,      // the reference grid reach — a consumer's efficiency tier is its distance / this (industry.js)
+    // The original power station burns radioactives too — a real fission reactor runs on fissile
+    // material, not free once built. Its own local fuel larder (entities.js inputCapOf), filled by
+    // a worker SERVICE run (engine/haul.js), same mechanism as its smaller combust siblings below —
+    // just at double their burn rate (1.2/s vs 0.6/s), matching its double energyGrants and reach.
+    // Out of fuel (or paused) it grants nothing, same as them. See engine/industry.js updateCombustors.
+    combust: { fuels: ["radioactives"], rate: 1.2 },
     odysseyOnly: true,
   },
   combustor: {
     id: "combustor", name: "Combustion Generator", hp: 300, radius: 13,
     cost: { ore: 70 }, buildTime: 12, sight: 110,
     // A cheap, fuel-burning alternative to the Reactor: it GRANTS less Power (energyGrants 10 vs 20)
-    // over a SMALLER grid (powerRange 0.55 shrinks its efficiency zones — industry.js), and only while
-    // it's fed. It burns gas (Helium-3, combust.rate/sec) from its own local fuel buffer — a real
-    // WORKER hauls it in from the treasury, same as a factory's input larder (engine/haul.js
-    // SERVICE), it isn't just auto-drawn from the treasury — so it's cheap to raise but carries an
-    // ongoing fuel bill AND a logistics chore, the mirror of the Reactor's free-but-pricey grid. Out
+    // over a SMALLER grid (powerRange 0.55 shrinks its efficiency zones — industry.js) and burns fuel
+    // at half the Reactor's rate too — cheaper to raise and run, just less of a grid. It burns gas
+    // (Helium-3) from its own local fuel buffer — a real WORKER hauls it in from the treasury, same
+    // as a factory's input larder (engine/haul.js SERVICE), same mechanism the Reactor now uses. Out
     // of fuel (or paused) it grants nothing. See engine/industry.js updateCombustors. Its
     // biomass-burning sibling is the Biomass Reactor below.
     energyGrants: 10, powerRange: 0.55,
