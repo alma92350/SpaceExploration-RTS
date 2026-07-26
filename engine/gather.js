@@ -117,12 +117,18 @@ export function updateGather(state, unit, dt) {
 // isGatherDropOff). A PLAYER's forward drop-off has a finite intake buffer, so a FULL one is
 // skipped and the gatherer reroutes to the next-nearest with room (the Command Center never
 // fills). AI drop-offs are the bottomless treasury as before — so AI gather routing is
-// byte-identical. Closest wins, deterministic Map order breaks ties.
-/** @param {State} state @param {string} owner @param {number} x @param {number} y @returns {Building|null} */
-export function nearestGatherDrop(state, owner, x, y) {
+// byte-identical. Closest wins, deterministic Map order breaks ties. `excludeId`, when given,
+// skips that one building — a HAUL job's own source is ALSO a valid drop-off (a Foundry/Refinery/
+// Arsenal is both a haul-able collection point AND a forward drop-off), so without this a worker
+// standing right on it after loading would just find itself the nearest "drop", unload straight
+// back into the pile it just took the load from, and reload — never actually leaving (engine/
+// haul.js updateHaul passes its own source id here).
+/** @param {State} state @param {string} owner @param {number} x @param {number} y @param {string} [excludeId] @returns {Building|null} */
+export function nearestGatherDrop(state, owner, x, y, excludeId) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing || !isGatherDropOff(b.type)) continue;
+    if (excludeId && b.id === excludeId) continue;
     if (owner === "player" && !BUILDINGS[b.type].isCommandCenter && storeRoom(b) <= 0) continue;   // full forward buffer → skip
     const d = Math.hypot(b.x - x, b.y - y);
     if (d < bestD) { bestD = d; best = b; }

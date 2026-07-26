@@ -349,7 +349,11 @@ export function updateHaul(state, unit, dt) {
     return;
   }
   if (order.phase === "toDrop") {
-    const drop = nearestGatherDrop(state, unit.owner, unit.x, unit.y);
+    // Exclude the producer this load just came FROM: a Foundry/Refinery/Arsenal is both a valid
+    // haul source AND a valid forward drop-off, so without this a worker standing right on it
+    // after loading would find itself the nearest "drop", unload straight back into the same
+    // pile, then reload — an infinite loop that never actually leaves (see nearestGatherDrop).
+    const drop = nearestGatherDrop(state, unit.owner, unit.x, unit.y, order.buildingId);
     if (!drop) { unit.order = null; return; }   // nowhere with room to deliver (and no CC) → hold the load, idle
     if (reached(unit, drop)) {
       depositHaul(state, unit, drop);

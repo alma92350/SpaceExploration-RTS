@@ -64,6 +64,27 @@ test("a hauler prefers a forward drop-off (Refinery/Foundry/Arsenal) over the Co
     "not one trip detoured all the way to the distant Command Center while the Refinery had room");
 });
 
+test("a hauler whose SOURCE is itself a forward drop-off (Foundry/Refinery/Arsenal) doesn't loop delivering back to itself", () => {
+  // Regression: a Foundry/Refinery/Arsenal is both a haul-able collection point (workers dump raw
+  // gathers there) AND a valid drop-off in its own right. Once a worker loads a cargo right there,
+  // it used to be the NEAREST drop-off too (distance ~0, closer than the far-off CC) — so it
+  // "delivered" straight back into the very pile it just took from, then reloaded, forever, never
+  // making any progress toward the Command Center.
+  const { s, cc, workers } = base(1);
+  const foundry = makeBuilding("foundry", "player", cc.x + 900, cc.y);
+  foundry.store = { ore: 60 };
+  s.buildings.set(foundry.id, foundry);
+  const w = workers[0];
+  w.x = foundry.x; w.y = foundry.y;
+  w.order = { type: "haul", buildingId: foundry.id };
+  const before = s.players.player.resources.ore || 0;
+
+  for (let i = 0; i < 6000 && (storeTotal(foundry) > 0 || (w.cargo && w.cargo.qty > 0)); i++) updateHaul(s, w, 0.05);
+
+  assert.equal(storeTotal(foundry), 0, "the foundry's whole buffer was hauled away instead of endlessly recycling");
+  assert.ok(near((s.players.player.resources.ore || 0) - before, 60, 1e-3), "and it actually reached the treasury");
+});
+
 test("a hauler falls back to the Command Center once the closer forward drop-off's buffer is full", () => {
   const { s, cc, workers } = base(1);
   const rig = makeBuilding("plasmarig", "player", cc.x + 900, cc.y);
