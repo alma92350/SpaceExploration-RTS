@@ -34,6 +34,7 @@ export function drawBuildingShape(ctx, state, b, color) {
   else if (b.type === "arsenal") drawArsenal(ctx, b, color);
   else if (b.type === "turret") drawTurret(ctx, state, b, color);
   else if (b.type === "habitat") drawHabitat(ctx, state, b, color);
+  else if (b.type === "market") drawMarket(ctx, b, color);
   else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
   else if (factoryGlyph(b.type)) drawFactory(ctx, state, b, color);   // Odyssey factories + reactor/datacenter/etc: stamp a function glyph
   else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
@@ -384,6 +385,62 @@ function drawHabitat(ctx, state, b, color) {
   // (engine/industry.js electrifyBoost, toggled in hudSelection.js) — a small lit dot inside the
   // dome, so a powered Habitat reads at a glance without opening its panel.
   electrifiedLight(ctx, state, b, cx, cy - w * 0.42 * 0.55, Math.max(1.8, r * 0.16));
+}
+
+// Market — an open-air trading stall: a striped, scalloped awning over a counter
+// stocked with goods, so the building that opens the commodity panel reads as a
+// bazaar at a glance, distinct from every other building's bunkers and tanks.
+function drawMarket(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 2.1, h = r * 1.5;
+  const awningTop = cy - h * 0.62, awningBot = cy - h * 0.32;
+  const counterY = cy + h * 0.04, counterH = h * 0.32;
+
+  // Support poles — full height, so the counter and awning (drawn over them below)
+  // read as resting ON the poles rather than floating.
+  ctx.strokeStyle = shade(color, -30);
+  ctx.lineWidth = Math.max(1.5, r * 0.14);
+  for (const px of [cx - w * 0.4, cx + w * 0.4]) {
+    ctx.beginPath();
+    ctx.moveTo(px, awningTop + h * 0.05);
+    ctx.lineTo(px, counterY + counterH);
+    ctx.stroke();
+  }
+
+  // Counter — the table the goods sit on.
+  ctx.fillStyle = shade(color, -18);
+  ctx.fillRect(cx - w / 2, counterY, w, counterH);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5;
+  ctx.strokeRect(cx - w / 2, counterY, w, counterH);
+
+  // Wares on the counter, in the same gold the trade panel prices credits with —
+  // standing for "everything here is for sale."
+  ctx.fillStyle = "#f2c14e";
+  for (const dx of [-w * 0.26, 0, w * 0.26]) ctx.fillRect(cx + dx - 2, counterY - 2.6, 4, 4);
+
+  // Awning — a scalloped canopy in alternating stripes, the stall's signature silhouette.
+  const teeth = 3, tw = w / teeth;
+  for (let i = 0; i < teeth; i++) {
+    const x0 = cx - w / 2 + i * tw;
+    pathPoints(ctx, [
+      [x0, awningTop], [x0 + tw, awningTop], [x0 + tw, awningBot],
+      [x0 + tw / 2, awningBot + h * 0.12], [x0, awningBot],
+    ]);
+    ctx.fillStyle = i % 2 === 0 ? color : shade(color, -18);
+    ctx.fill();
+    ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // A small trade pennant above the canopy peak — the building's one distinguishing
+  // top accent, the same idiom as the Command Center's antenna or the Barracks' dish.
+  ctx.strokeStyle = DETAIL; ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.moveTo(cx, awningTop);
+  ctx.lineTo(cx, awningTop - h * 0.3);
+  ctx.stroke();
+  pathPoints(ctx, [[cx, awningTop - h * 0.3], [cx + w * 0.22, awningTop - h * 0.2], [cx, awningTop - h * 0.1]]);
+  ctx.fillStyle = "#f2c14e";
+  ctx.fill();
 }
 
 // Foundry — the Tier-2 war-smeltery that unlocks the Lancer and Breacher: an
