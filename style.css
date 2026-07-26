@@ -373,6 +373,18 @@ body.paused::after {
 }
 .sel-group:first-child { border-top: none; padding-top: 0; margin-top: 4px; }
 
+/* Collapsible variant of .sel-group — an actual <button>, not a static divider (the Build
+   submenu toggle: a generalist Worker's full building list, or a mixed selection's union of
+   categories, can otherwise run long). Keeps the same quiet divider look (including .sel-group's
+   own border-top, restored here since a <button> needs its default border reset), just clickable. */
+.sel-collapsible {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; border-top: 1px solid var(--border);
+  font-family: inherit; cursor: pointer;
+}
+.sel-collapsible:first-child { border-top: none; }
+.sel-collapsible:hover { color: var(--accent); }
+
 .queue-row {
   display: flex;
   align-items: center;

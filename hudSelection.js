@@ -157,6 +157,9 @@ export function renderSelectionPanel() {
     // Rebuild when the formation shape/leader-position choice changes, so the picker's
     // .active button + the leader-position row (line/wedge only) actually update.
     + "|" + game.formation.shape + ":" + game.formation.leaderPos
+    // Rebuild when the Build submenu's collapsed/expanded state flips, so its button list
+    // actually appears/disappears instead of staying frozen at whatever it first rendered.
+    + "|" + game.buildMenuOpen
     + "|" + queueSignature(sel)
     // Rebuild when any button's enabled state would flip: an option crossing the
     // affordability line, or a completed building unlocking a tech option (e.g.
@@ -1202,38 +1205,50 @@ function rebuildSelectionPanel(sel) {
         () => input.startBuild(t),
         { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "building", type: t } });
     };
-    if (state.endless) {
-      // Odyssey adds the Spaceport (jump pad) and the whole industry chain. You DON'T
-      // build a Command Center here — new bases are founded by deploying a Colony Ship
-      // (build one at a CC, move it, deploy). That's ~18 buildings — a flat list is a
-      // wall — so group them by purpose. The entry tier of each group is always shown;
-      // deeper buildings REVEAL as their prereqs are met (a greyed button per locked
-      // tier would bury the menu), mirroring how the Barracks hides units you can't yet
-      // field. NOTE: these "Economy"/"Military" group labels are a pre-existing purely
-      // cosmetic UI layout grouping — unrelated to BUILDINGS[t].category (the Engineer/
-      // Technician capability split), which is applied independently via canBuild below.
-      const GROUPS = [
-        ["Economy", ["reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
-                     "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
-        ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
-        ["Endgame", ["antimatter_gate"]],
-        ["Travel", ["spaceport"]],
-      ];
-      const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
-                                  "habitat", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "spaceport"]);
-      for (const [title, types] of GROUPS) {
-        const shown = types.filter(t => canBuild(t) && (alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t])));
-        if (!shown.length) continue;
-        const head = document.createElement("div");
-        head.className = "sel-group";
-        head.textContent = title;
-        panelEl.appendChild(head);
+    // Odyssey adds the Spaceport (jump pad) and the whole industry chain. You DON'T build a
+    // Command Center here — new bases are founded by deploying a Colony Ship (build one at a
+    // CC, move it, deploy). That's ~18 buildings — a flat list is a wall — so group them by
+    // purpose. The entry tier of each group is always shown; deeper buildings REVEAL as their
+    // prereqs are met (a greyed button per locked tier would bury the menu), mirroring how the
+    // Barracks hides units you can't yet field. NOTE: these "Economy"/"Military" group labels
+    // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
+    // (the Engineer/Technician capability split), which is applied independently via canBuild.
+    const GROUPS = [
+      ["Economy", ["reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
+                   "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
+      ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
+      ["Endgame", ["antimatter_gate"]],
+      ["Travel", ["spaceport"]],
+    ];
+    const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
+                                "habitat", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "spaceport"]);
+    // What's actually SHOWN (not just category-eligible) in each mode — the header's count
+    // mirrors this exactly, so "▸ Build (N)" never promises more than expanding reveals.
+    const shownGroups = state.endless
+      ? GROUPS.map(([title, types]) => [title, types.filter(t => canBuild(t) && (alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t])))])
+          .filter(([, shown]) => shown.length)
+      : [[null, ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"].filter(canBuild)]];
+    const buildCount = shownGroups.reduce((n, [, shown]) => n + shown.length, 0);
+
+    // Collapsible: a generalist Worker (every category) or a mixed selection can offer a long
+    // wall of options — one toggle hides the whole list behind a single header, remembered
+    // across selections (game.buildMenuOpen, session.js) like the formation choice below.
+    const buildHead = document.createElement("button");
+    buildHead.className = "sel-group sel-collapsible";
+    buildHead.type = "button";
+    buildHead.textContent = `${game.buildMenuOpen ? "▾" : "▸"} Build (${buildCount})`;
+    buildHead.addEventListener("click", () => { game.buildMenuOpen = !game.buildMenuOpen; renderHUD(); });
+    panelEl.appendChild(buildHead);
+    if (game.buildMenuOpen) {
+      for (const [title, shown] of shownGroups) {
+        if (title) {
+          const head = document.createElement("div");
+          head.className = "sel-group";
+          head.textContent = title;
+          panelEl.appendChild(head);
+        }
         for (const t of shown) panelEl.appendChild(buildBtn(t));
       }
-    } else {
-      // A skirmish still allows expansion CCs, has no Spaceport, and no industry.
-      for (const t of ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"])
-        if (canBuild(t)) panelEl.appendChild(buildBtn(t));
     }
   }
 
