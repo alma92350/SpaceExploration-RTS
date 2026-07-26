@@ -4,7 +4,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult, isElectrifiable } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult, isElectrifiable, canGatherType } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { electrifyBoost } from "./industry.js";
@@ -89,15 +89,17 @@ export function updateProductionQueue(state, building, dt) {
     building.queue.shift();
     const spawn = { x: building.x + building.radius + 10, y: building.y + building.radius + 10 };
     const u = makeUnit(job.unitType, building.owner, spawn.x, spawn.y);
-    // Rally-to-resource: if the rally sits on a live node and this unit can
-    // gather (workers carry a cargo hold), it spawns already mining instead of
-    // idling at the point. Everything else — and a rally on a drained node —
-    // just walks to the rally point as before.
+    // Rally-to-resource: if the rally sits on a live node and this unit can actually gather
+    // (canGatherType — Worker/Miner; NOT every unit with a cargo slot, since Engineer/Technician
+    // also get one for the builder-pick idiom but have no gatherRate/cargoCap to mine with — see
+    // gather.js's miningEfficiency, which would otherwise NaN-poison unit.cargo.qty/node.amount),
+    // it spawns already mining instead of idling at the point. Everything else — and a rally on a
+    // drained node — just walks to the rally point as before.
     const rallyNode = building.rally.nodeId
       ? (state.map.nodesById ? state.map.nodesById.get(building.rally.nodeId)
                              : state.map.nodes.find(n => n.id === building.rally.nodeId))
       : null;
-    u.order = rallyNode && rallyNode.amount > 0 && u.cargo
+    u.order = rallyNode && rallyNode.amount > 0 && canGatherType(u.type)
       ? { type: "gather", nodeId: building.rally.nodeId }
       : { type: "move", x: building.rally.x, y: building.rally.y };
     state.units.set(u.id, u);

@@ -31,7 +31,7 @@ import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifia
 import { rigInfo } from "./engine/rig.js";
 import { lightFuse, BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE, BOMB_FUSE_DELAY } from "./engine/bomb.js";
 import { TECHS, researchTech, techMult } from "./engine/techtree.js";
-import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine } from "./engine/entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine, canBuildCategory } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, spaceportTier, upgradeSpaceport,
          SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, cargoManifest, freightCapacity,
@@ -711,7 +711,9 @@ function rebuildSelectionPanel(sel) {
     // Odyssey CC panels below, so a skirmish CC shows only Worker/Ranger.
     // Odyssey adds the Colony Ship (found a base) and the three cargo ships (haul goods on a jump —
     // gated behind the Spaceport, so they surface once you've built the jump pad).
-    const ccUnits = game.galaxy ? ["worker", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"] : ["worker", "ranger"];
+    const ccUnits = game.galaxy
+      ? ["worker", "miner", "engineer", "technician", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"]
+      : ["worker", "miner", "engineer", "technician", "ranger"];
     for (const t of ccUnits) {
       const def = UNITS[t];
       const locked = !prereqsMet(state, "player", def);
@@ -1178,8 +1180,14 @@ function rebuildSelectionPanel(sel) {
     }
   }
 
-  const worker = sel.find(e => e.kind === "unit" && e.type === "worker");
-  if (worker && !input.building) {
+  // Every selected unit that can found/assist-build ANYTHING (Worker, or a specialist —
+  // Engineer/Technician — with its own narrower buildCategories). The building list below is
+  // then filtered to whatever's in the UNION of the selection's categories, so e.g. selecting
+  // only an Engineer shows Infrastructure/Military options but hides the Industrial chain, while
+  // a mixed Worker+Technician selection shows everything either one of them could found.
+  const builders = sel.filter(e => e.kind === "unit" && UNITS[e.type]?.buildCategories?.length);
+  if (builders.length && !input.building) {
+    const canBuild = t => builders.some(b => canBuildCategory(b.type, BUILDINGS[t].category));
     const buildBtn = t => {
       const def = BUILDINGS[t];
       const locked = !prereqsMet(state, "player", def);
@@ -1194,7 +1202,9 @@ function rebuildSelectionPanel(sel) {
       // wall — so group them by purpose. The entry tier of each group is always shown;
       // deeper buildings REVEAL as their prereqs are met (a greyed button per locked
       // tier would bury the menu), mirroring how the Barracks hides units you can't yet
-      // field.
+      // field. NOTE: these "Economy"/"Military" group labels are a pre-existing purely
+      // cosmetic UI layout grouping — unrelated to BUILDINGS[t].category (the Engineer/
+      // Technician capability split), which is applied independently via canBuild below.
       const GROUPS = [
         ["Economy", ["reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
                      "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
@@ -1205,7 +1215,7 @@ function rebuildSelectionPanel(sel) {
       const alwaysShow = new Set(["barracks", "foundry", "arsenal", "refinery", "turret",
                                   "habitat", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "spaceport"]);
       for (const [title, types] of GROUPS) {
-        const shown = types.filter(t => alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t]));
+        const shown = types.filter(t => canBuild(t) && (alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t])));
         if (!shown.length) continue;
         const head = document.createElement("div");
         head.className = "sel-group";
@@ -1216,7 +1226,7 @@ function rebuildSelectionPanel(sel) {
     } else {
       // A skirmish still allows expansion CCs, has no Spaceport, and no industry.
       for (const t of ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"])
-        panelEl.appendChild(buildBtn(t));
+        if (canBuild(t)) panelEl.appendChild(buildBtn(t));
     }
   }
 

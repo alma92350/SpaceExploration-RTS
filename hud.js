@@ -15,6 +15,7 @@ import {
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
+import { UNITS } from "./engine/entities.js";
 import { powerCap, powerDraw } from "./engine/industry.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
@@ -135,7 +136,7 @@ export function renderHUD() {
     // the count in the topbar (click, or `, to jump to the next one).
     let idle = 0;
     for (const u of state.units.values()) {
-      if (u.owner === "player" && u.type === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length)) idle++;
+      if (u.owner === "player" && UNITS[u.type]?.role === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length)) idle++;
     }
     idleWorkersEl.textContent = `⚒ ${idle} idle`;
     idleWorkersEl.classList.toggle("hidden", idle === 0);

@@ -22,7 +22,7 @@ import { updateResearch } from "./techtree.js";
 import { updateWonder } from "./wonder.js";
 import { applySeparation } from "./separation.js";
 import { updateFog } from "./fog.js";
-import { UNITS } from "./entities.js";
+import { UNITS, canLogisticsType } from "./entities.js";
 import { getEntity } from "./state.js";
 import { checkWinCondition, checkEndlessLoss, checkEndlessWin } from "./victory.js";
 import { runAI } from "./ai.js";
@@ -191,10 +191,10 @@ function updateUnit(state, unit, dt) {
   const aiFreighter = def.role === "freighter" && unit.owner === "player" && unit.aiLogistics
     && !!state.players[unit.owner].upgrades[FREIGHTER_AI_TECH]
     && (state.players[unit.owner].resources.ai || 0) > 0;
-  if (!unit.order && def.role === "worker" && unit.owner === "player") {
+  if (!unit.order && canLogisticsType(unit.type) && unit.owner === "player") {
     assignFerry(state, unit);
   }
-  if (!unit.order && (def.role === "worker" || aiFreighter) && unit.owner === "player") {
+  if (!unit.order && (canLogisticsType(unit.type) || aiFreighter) && unit.owner === "player") {
     assignHaul(state, unit);
     if (!unit.order) assignService(state, unit);
     if (unit.order && aiFreighter) unit.order.aiJob = true;
