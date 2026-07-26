@@ -16,6 +16,8 @@
 
 import { makeBuilding, makeUnit, removeEntity } from "./state.js";
 import { canPlaceBuilding } from "./colliders.js";
+import { canAfford, payCost } from "./entities.js";
+import { cancelProduction } from "./production.js";
 
 // Colonists that disembark when a colony ship deploys — matches the classic opening
 // crew, and gives every founded base an immediate starter economy. A balance knob.
@@ -53,4 +55,39 @@ export function hasColonyShip(state, owner) {
   for (const u of state.units.values())
     if (u.owner === owner && u.type === "colonyship") return true;
   return false;
+}
+
+// The reverse of deployColonyShip: pack a plain (non-Capital) Command Center back into a
+// mobile Colony Ship, so it can walk to a new site and redeploy there — relocating a base on
+// the SAME world (distinct from the Spaceport's interplanetary jump, engine/galaxy.js, which
+// never moves a building at all). Cheaper than a fresh ship (COLONY_SHIP cost) since it's
+// recycling existing infrastructure, but a real cost, not free. Also atomic/instant, for the
+// same reason deploy is (see the file header): a player left holding just the resulting ship
+// is exactly the "undeployed colony ship still counts as a foothold" case hasColonyShip/
+// checkEndlessLoss already cover, so there's no transient "0 CC" loss-condition gap to guard.
+export const PACK_COST = { ore: 200 };
+
+export function packCommandCenter(state, buildingId) {
+  // Odyssey-only, the same hard guarantee issueBuild makes for every odysseyOnly building/unit
+  // (engine/commands.js): colonyship is odysseyOnly and skirmish's checkWinCondition has no
+  // hasColonyShip grace the way checkEndlessLoss does, so packing a skirmish CC would strip a
+  // player's only base with no foothold and no way to ever redeploy it (no deploy UI outside
+  // Odyssey either). Checked at the engine level, not just the HUD button's own gating.
+  if (!state.endless) return null;
+  const cc = state.buildings.get(buildingId);
+  // A Capital is permanent by design (engine/galaxy.js upgradeToCapital) — "only a smaller CC
+  // relocates." Still-constructing is refused too: nothing to pack up yet.
+  if (!cc || cc.type !== "command" || cc.constructing || cc.capital) return null;
+  const player = state.players[cc.owner];
+  if (!canAfford(player.resources, PACK_COST)) return null;
+  // Refund any queued production first — packing shouldn't silently eat resources already
+  // paid into a job that'll now never finish (cancelProduction always fully refunds).
+  while (cc.queue && cc.queue.length) cancelProduction(state, cc.id, 0);
+  payCost(player.resources, PACK_COST);
+  const { owner, x, y } = cc;
+  removeEntity(state, cc.id);
+  const ship = makeUnit("colonyship", owner, x, y);
+  state.units.set(ship.id, ship);
+  state.events.push({ type: "unitSpawned", x, y, owner });   // reuse the normal spawn sound/vfx
+  return ship.id;
 }
