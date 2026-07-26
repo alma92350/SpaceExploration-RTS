@@ -34,4 +34,9 @@ export const game = {
   // input.js when issuing a move/attack-move/Hold-Formation order, and mutated directly by
   // hudSelection.js's formation picker buttons.
   formation: { shape: "grid", leaderPos: "front" },
+  // Whether a builder's (Worker/Engineer/Technician) Build submenu is expanded — a UI
+  // preference like `formation` above, not per-unit state, so collapsing it once keeps it
+  // collapsed across every later selection until toggled back. Starts open (unchanged
+  // behaviour) — collapsing is an opt-in way to shrink the panel, not a forced default.
+  buildMenuOpen: true,
 };
