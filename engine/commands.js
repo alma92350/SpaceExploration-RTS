@@ -6,7 +6,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, canAfford, payCost, prereqsMet } from "./entities.js";
+import { BUILDINGS, UNITS, canAfford, payCost, prereqsMet, canGatherType, canLogisticsType, canBuildCategory } from "./entities.js";
 import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
 import { formationSlots } from "./formation.js";
@@ -150,7 +150,7 @@ export function issueMove(units, x, y, queue = false, formation) {
 }
 
 export function issueGather(units, nodeId, queue = false) {
-  units.forEach(u => { if (u.cargo) dispatch(u, { type: "gather", nodeId }, queue); });
+  units.forEach(u => { if (canGatherType(u.type)) dispatch(u, { type: "gather", nodeId }, queue); });
 }
 
 // Assign workers to SERVICE a building — a standing round trip that carries its inputs in and its
@@ -158,7 +158,7 @@ export function issueGather(units, nodeId, queue = false) {
 // of the auto-logistics that re-picks the nearest needy building each cycle.
 export function issueServiceBuilding(units, buildingId, queue = false) {
   units.forEach(u => {
-    if (UNITS[u.type]?.role === "worker") dispatch(u, { type: "service", buildingId, phase: "plan", manual: true }, queue);
+    if (canLogisticsType(u.type)) dispatch(u, { type: "service", buildingId, phase: "plan", manual: true }, queue);
   });
 }
 
@@ -169,7 +169,7 @@ export function issueServiceBuilding(units, buildingId, queue = false) {
 // own; see issueSetAILogistics for that separate, research-gated mode.
 export function issueFerryFreighter(units, freighterId, queue = false) {
   units.forEach(u => {
-    if (UNITS[u.type]?.role === "worker") dispatch(u, { type: "ferry", freighterId, phase: "plan", manual: true }, queue);
+    if (canLogisticsType(u.type)) dispatch(u, { type: "ferry", freighterId, phase: "plan", manual: true }, queue);
   });
 }
 
@@ -266,6 +266,10 @@ export function issueBuild(state, workerId, buildingType, x, y) {
   // path — the same hard guarantee queueProduction makes for units (production.js), so
   // the skirmish sim/AI stays byte-identical and can't be handed Odyssey content.
   if (def.odysseyOnly && !state.endless) return null;
+  // A worker specialist may only found a building in its own category (engine/entities.js
+  // canBuildCategory) — e.g. an Engineer can't found a Refinery, a Technician can't found a
+  // Habitat. Worker covers every category, so this is a no-op for the generalist fallback.
+  if (!canBuildCategory(worker.type, def.category)) return null;
   if (!canAfford(player.resources, def.cost)) return null;
   if (!prereqsMet(state, worker.owner, def)) return null;   // e.g. no founding a Foundry without a completed Barracks
   if (!canPlaceBuilding(state, buildingType, x, y)) return null;
@@ -280,8 +284,11 @@ export function issueBuild(state, workerId, buildingType, x, y) {
 // Sends more workers to help an already-founded construction site — no
 // cost (already paid when it was placed), no new building. Extra hands
 // speed the build up; see production.js's updateBuildingConstruction.
-export function issueAssistBuild(units, buildingId, queue = false) {
-  units.forEach(u => { if (u.cargo) dispatch(u, { type: "build", buildingId }, queue); });
+// `buildingType` resolves the site's category so only a worker specialist eligible for
+// THAT category can be sent to help, same rule as founding it (issueBuild) in the first place.
+export function issueAssistBuild(units, buildingId, buildingType, queue = false) {
+  const category = BUILDINGS[buildingType]?.category;
+  units.forEach(u => { if (canBuildCategory(u.type, category)) dispatch(u, { type: "build", buildingId }, queue); });
 }
 
 // Halt: drop the active order and any queued waypoints so the unit stops

@@ -10,7 +10,7 @@
 
 import { game } from "./session.js";
 import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueHoldFormation } from "./engine/commands.js";
-import { UNITS, BUILDINGS, storeCapOf } from "./engine/entities.js";
+import { UNITS, BUILDINGS, storeCapOf, canGatherType, canLogisticsType, canBuildCategory } from "./engine/entities.js";
 import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, dragCamera, pinchZoomPan } from "./camera.js";
@@ -169,8 +169,10 @@ export function attachInput(canvas, state, onChange) {
       // Prioritise the army: a box that catches any fighter drops the workers, so
       // sweeping across your base to grab your army doesn't drag the miners along
       // (standard RTS). A box with no fighters still selects the workers as before.
+      // role, not literal type, so this drops EVERY economy specialist (Miner/Engineer/
+      // Technician), not just literal Workers.
       if (inBox.some(u => UNITS[u.type].role === "combat"))
-        inBox = inBox.filter(u => u.type !== "worker");
+        inBox = inBox.filter(u => UNITS[u.type].role !== "worker");
       picks = inBox.map(u => u.id);
     }
     if (additive) {
@@ -225,8 +227,8 @@ export function attachInput(canvas, state, onChange) {
 
     const target = entityAt(p.x, p.y);
     if (target && target.owner === "player" && target.kind === "building" && target.constructing) {
-      const workers = selected.filter(u => u.cargo);
-      if (workers.length) { issueAssistBuild(workers, target.id, queue); sound.playOrder(); onChange(); }
+      const workers = selected.filter(u => canBuildCategory(u.type, BUILDINGS[target.type]?.category));
+      if (workers.length) { issueAssistBuild(workers, target.id, target.type, queue); sound.playOrder(); onChange(); }
       return;
     }
     // A completed friendly building with logistics buffers (a factory, the Rig, a forward drop-off):
@@ -234,7 +236,7 @@ export function attachInput(canvas, state, onChange) {
     // its output out (engine/haul.js), until re-ordered elsewhere.
     if (target && target.owner === "player" && target.kind === "building" && !target.constructing
         && (recipeOf(target) || storeCapOf(target.type) > 0)) {
-      const workers = selected.filter(u => UNITS[u.type].role === "worker");
+      const workers = selected.filter(u => canLogisticsType(u.type));
       if (workers.length) { issueServiceBuilding(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
     if (target && target.owner !== "player") {
@@ -248,7 +250,7 @@ export function attachInput(canvas, state, onChange) {
     // with no workers at all) falls through to the general friendly-ship escort branch below, so
     // e.g. combat ships still escort a freighter through hostile space.
     if (target && target.owner === "player" && target.kind === "unit" && UNITS[target.type]?.role === "freighter") {
-      const workers = selected.filter(u => UNITS[u.type]?.role === "worker");
+      const workers = selected.filter(u => canLogisticsType(u.type));
       if (workers.length) { issueFerryFreighter(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
     // A friendly SHIP as the target: the selection forms a protective escort ring around it and
@@ -260,7 +262,7 @@ export function attachInput(canvas, state, onChange) {
     }
     const node = nodeAt(p.x, p.y);
     if (node) {
-      const workers = selected.filter(u => u.cargo);
+      const workers = selected.filter(u => canGatherType(u.type));
       if (workers.length) { issueGather(workers, node.id, queue); sound.playOrder(); onChange(); }
       return;
     }
@@ -529,7 +531,7 @@ export function attachInput(canvas, state, onChange) {
   // gatherer on a big map is one keypress away instead of a manual hunt.
   function focusIdleWorker() {
     const idle = [...state.units.values()].filter(u =>
-      u.owner === "player" && u.type === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length));
+      u.owner === "player" && UNITS[u.type]?.role === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length));
     if (!idle.length) return;
     const w = idle[idleCycle % idle.length];
     idleCycle++;
@@ -598,7 +600,8 @@ export function attachInput(canvas, state, onChange) {
   // render.js) already shows red/green before they even click.
   function placeBuildingAt(p) {
     const buildingType = buildMode.buildingType;
-    const worker = state.selection.map(id => state.units.get(id)).find(u => u && u.cargo);
+    const worker = state.selection.map(id => state.units.get(id))
+      .find(u => u && canBuildCategory(u.type, BUILDINGS[buildingType]?.category));
     const built = worker && issueBuild(state, worker.id, buildingType, p.x, p.y);
     if (built) buildMode = null;
     else sound.playProductionBlocked();   // rejected (invalid spot, or no eligible worker) — audibly denied, not silent

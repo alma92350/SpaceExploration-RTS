@@ -1,15 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation } from "../engine/commands.js";
-import { createGameState, makeBuilding } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 
 // Selectable units carry a real `type` — issueAttack now validates it (a weaponless
 // type is filtered out so it can't NaN-poison a target), so a faithful stand-in needs
-// one. "skiff" is an armed combat unit; the cargo field keeps the gather/assist tests
-// (which filter on cargo, not type) working unchanged.
+// one. "skiff" is an armed combat unit; the cargo field is just along for the ride —
+// gather/build eligibility is capability-gated by real UNITS[type] flags now (canGatherType/
+// canBuildCategory), not by cargo presence, so a gather/build test needs a real capable
+// type — see capableDummyUnits below.
 function dummyUnits(n) {
   return Array.from({ length: n }, (_, i) => ({ id: `u${i}`, type: "skiff", order: null, cargo: { com: null, qty: 0 } }));
+}
+
+// A worker-typed stand-in: real UNITS.worker capability (canGather, every buildCategories
+// entry), for the gather/assist-build eligibility tests below.
+function capableDummyUnits(n) {
+  return Array.from({ length: n }, (_, i) => ({ id: `u${i}`, type: "worker", order: null, cargo: { com: null, qty: 0 } }));
 }
 
 function playerWorker(state) {
@@ -81,24 +89,24 @@ test("issueAttack ignores weaponless units so they can't NaN-poison a target", (
   assert.deepEqual(mender.order, { type: "attack", targetId: "enemy-1" }, "a support drone still accepts it");
 });
 
-test("issueGather only assigns cargo-capable units", () => {
-  const units = dummyUnits(2);
-  units[1].cargo = null;   // simulate a non-worker slipping into the selection
+test("issueGather only assigns gather-capable units", () => {
+  const units = capableDummyUnits(2);
+  units[1].type = "skiff";   // simulate a non-gatherer slipping into the selection
   issueGather(units, "node-1");
   assert.deepEqual(units[0].order, { type: "gather", nodeId: "node-1" });
   assert.equal(units[1].order, null);
 });
 
 test("issueAssistBuild sends every worker in the group to the same site, no formation spreading", () => {
-  const units = dummyUnits(3);
-  issueAssistBuild(units, "site-1");
+  const units = capableDummyUnits(3);
+  issueAssistBuild(units, "site-1", "barracks");
   units.forEach(u => assert.deepEqual(u.order, { type: "build", buildingId: "site-1" }));
 });
 
-test("issueAssistBuild only assigns cargo-capable (worker) units", () => {
-  const units = dummyUnits(2);
-  units[1].cargo = null;   // e.g. a skiff caught in the same selection
-  issueAssistBuild(units, "site-1");
+test("issueAssistBuild only assigns builders eligible for the target's category", () => {
+  const units = capableDummyUnits(2);
+  units[1].type = "skiff";   // e.g. a skiff caught in the same selection
+  issueAssistBuild(units, "site-1", "barracks");
   assert.deepEqual(units[0].order, { type: "build", buildingId: "site-1" });
   assert.equal(units[1].order, null);
 });
@@ -130,6 +138,27 @@ test("issueBuild gates a Foundry on a completed Barracks", () => {
   state.buildings.set(barracks.id, barracks);
   const id = issueBuild(state, worker.id, "foundry", 820, 520);
   assert.ok(id, "with a completed Barracks, the Foundry can be founded");
+});
+
+test("issueBuild is category-gated: a specialist can only found buildings in its own category", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  Object.assign(state.players.player.resources, { ore: 2000, crystals: 2000 });   // turret also costs crystals
+  const worker = playerWorker(state);
+  const barracks = makeBuilding("barracks", "player", 700, 500);   // completed, so Foundry's prereq is met
+  state.buildings.set(barracks.id, barracks);
+
+  const spawn = (type, x, y) => { const u = makeUnit(type, "player", x, y); state.units.set(u.id, u); return u; };
+  const engineer = spawn("engineer", worker.x + 20, worker.y);
+  const technician = spawn("technician", worker.x + 40, worker.y);
+  const miner = spawn("miner", worker.x + 60, worker.y);
+
+  assert.equal(issueBuild(state, engineer.id, "refinery", 900, 500), null, "Engineer can't found an Industrial building");
+  assert.equal(issueBuild(state, technician.id, "habitat", 920, 500), null, "Technician can't found an Infrastructure building");
+  assert.equal(issueBuild(state, miner.id, "turret", 940, 500), null, "Miner has no build capability at all");
+
+  assert.ok(issueBuild(state, engineer.id, "turret", 960, 500), "Engineer CAN found a Military building");
+  assert.ok(issueBuild(state, technician.id, "foundry", 1000, 500), "Technician CAN found an Industrial building");
+  assert.ok(issueBuild(state, worker.id, "habitat", 1040, 500), "Worker (the generalist) can still found anything");
 });
 
 test("issueBuild refuses when the player can't afford it: no site, no charge", () => {
@@ -243,7 +272,7 @@ test("a plain order clears any queued waypoints", () => {
 });
 
 test("queued orders are context-sensitive — a mix of move, attack, and gather in one chain", () => {
-  const [unit] = dummyUnits(1);
+  const [unit] = capableDummyUnits(1);
   issueMove([unit], 500, 400);
   issueAttack([unit], "enemy-9", true);
   issueGather([unit], "node-3", true);

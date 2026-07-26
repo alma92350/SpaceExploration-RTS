@@ -16,16 +16,18 @@ export const BUILDINGS = {
     // The starting CC is still seeded finished by state.js's seedPlayer —
     // makeBuilding without { constructing: true } spawns complete regardless
     // of buildTime. cost/buildTime only gate the issueBuild path.
-    produces: ["worker", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"],   // the Odyssey-only ones are gated by queueProduction (def.odysseyOnly)
+    produces: ["worker", "miner", "engineer", "technician", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"],   // the Odyssey-only ones are gated by queueProduction (def.odysseyOnly); technician also by its own requires:["foundry"]
     isCommandCenter: true,
     supplyGrants: 10,   // the seeded CC already houses the starting 3 workers with room to grow
     sight: 220,
+    category: "infrastructure",
   },
   barracks: {
     id: "barracks", name: "Barracks", hp: 500, radius: 20,
     cost: { ore: 150 }, buildTime: 20,
     produces: ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender", "wraith", "aegis", "colossus"],
     sight: 150,
+    category: "military",
   },
   refinery: {
     id: "refinery", name: "Refinery", hp: 400, radius: 18,
@@ -36,6 +38,7 @@ export const BUILDINGS = {
     // No `produces` — it researches upgrades instead of building units,
     // which is also what keeps it out of the rally-point UI (input.js
     // only offers that for buildings with a `produces` list).
+    category: "industrial",
   },
   turret: {
     id: "turret", name: "Sentinel Turret", hp: 350, radius: 12,
@@ -45,6 +48,7 @@ export const BUILDINGS = {
     // acquireTarget/attackDamage apply verbatim. aggroRange === range on
     // purpose — a turret can't chase, so acquiring beyond range is useless.
     attack: 20, range: 130, cooldown: 1, aggroRange: 130,
+    category: "military",
   },
   habitat: {
     id: "habitat", name: "Habitat", hp: 250, radius: 14,
@@ -54,6 +58,7 @@ export const BUILDINGS = {
     // No `produces` — like the Refinery, this keeps it out of the
     // rally-point UI and rally rendering automatically. Softest building
     // on the roster (hp 250): a legitimate raid target to choke supply.
+    category: "infrastructure",
   },
   foundry: {
     id: "foundry", name: "Foundry", hp: 450, radius: 18,
@@ -66,6 +71,10 @@ export const BUILDINGS = {
     // so the Tier-2 units stay reachable on every world (ore is guaranteed near
     // every base) rather than being walled off on a crystal-poor map.
     requires: ["barracks"],
+    // Category is "industrial" (not "military") despite gating Tier-2 combat units: it's also a
+    // forward drop-off (dropOff+storeCap above) that already needs a Technician's haul/service
+    // capability, same as the Refinery/Arsenal — see canBuildCategory's doc comment below.
+    category: "industrial",
   },
   arsenal: {
     id: "arsenal", name: "Arsenal", hp: 550, radius: 18,
@@ -76,6 +85,7 @@ export const BUILDINGS = {
     // capital unit. Also a pure gate (no `produces`), ore-only so the tech path
     // stays reachable on every world.
     requires: ["foundry"],
+    category: "industrial",   // same reasoning as the Foundry above — dropOff+storeCap, not just a tech gate
   },
   spaceport: {
     id: "spaceport", name: "Spaceport", hp: 600, radius: 22,
@@ -85,6 +95,7 @@ export const BUILDINGS = {
     // Center — plus the units staged nearby — to another world (engine/galaxy.js).
     // Gated behind the Foundry so leaving the planet is a mid-game milestone.
     requires: ["foundry"],
+    category: "infrastructure",
   },
 
   /* ---- INDUSTRY (Odyssey only) — the production chain that turns raw hauls into
@@ -108,6 +119,7 @@ export const BUILDINGS = {
     // Out of fuel (or paused) it grants nothing, same as them. See engine/industry.js updateCombustors.
     combust: { fuels: ["radioactives"], rate: 1.2 },
     odysseyOnly: true,
+    category: "industrial",
   },
   combustor: {
     id: "combustor", name: "Combustion Generator", hp: 300, radius: 13,
@@ -122,6 +134,7 @@ export const BUILDINGS = {
     energyGrants: 10, powerRange: 0.55,
     combust: { fuels: ["gas"], rate: 0.6 },
     odysseyOnly: true,
+    category: "industrial",
   },
   biomassreactor: {
     id: "biomassreactor", name: "Biomass Reactor", hp: 300, radius: 13,
@@ -132,6 +145,7 @@ export const BUILDINGS = {
     energyGrants: 10, powerRange: 0.55,
     combust: { fuels: ["biomass"], rate: 0.6 },
     odysseyOnly: true,
+    category: "industrial",
   },
   smelter: {
     id: "smelter", name: "Smelter", hp: 420, radius: 16,
@@ -139,6 +153,7 @@ export const BUILDINGS = {
     dropOff: true,               // an industrial building doubles as a resource drop-off
     recipe: "smelt", prodRate: 2, // ore + power → metals (data.js RECIPES.smelt)
     odysseyOnly: true,
+    category: "industrial",
   },
   assembler: {
     id: "assembler", name: "Assembly Plant", hp: 440, radius: 17,
@@ -152,6 +167,7 @@ export const BUILDINGS = {
     // prereqsMet resolves out of player.upgrades, exactly like a building token.
     requires: ["smelter", "metallurgy"],
     odysseyOnly: true,
+    category: "industrial",
   },
 
   /* ---- Phase 2 research + deeper industry (Odyssey only). The Datacenter hosts
@@ -165,6 +181,7 @@ export const BUILDINGS = {
     odysseyOnly: true,
     // Hosts research — no `recipe` (updateProduction ignores it) and no `produces`
     // (stays out of the rally UI). Selecting it opens the research panel (hud.js).
+    category: "infrastructure",
   },
   chipfab: {
     id: "chipfab", name: "Chip Fab", hp: 440, radius: 17,
@@ -172,6 +189,7 @@ export const BUILDINGS = {
     recipe: "chipfab", prodRate: 1.5,        // crystals + metals + power → electronics
     requires: ["smelter", "electronics"],    // needs the metals chain + Microelectronics research
     odysseyOnly: true,
+    category: "industrial",
   },
   machineworks: {
     id: "machineworks", name: "Machine Works", hp: 460, radius: 18,
@@ -179,6 +197,7 @@ export const BUILDINGS = {
     recipe: "machine", prodRate: 1,          // alloys + electronics + power → machinery
     requires: ["assembler", "chipfab", "machining"],   // the capstone: the whole chain + Precision Machining
     odysseyOnly: true,
+    category: "industrial",
   },
 
   /* ---- Phase 3: the Strategic tier + the endgame (Odyssey only). The Antimatter
@@ -191,6 +210,7 @@ export const BUILDINGS = {
     recipe: "antifab", prodRate: 0.7,        // machinery + radioactives + power → antimatter (RTS-recost recipe)
     requires: ["machineworks", "antimatter"],   // needs the full chain + Antimatter Containment research
     odysseyOnly: true,
+    category: "industrial",
   },
   aifoundry: {
     id: "aifoundry", name: "AI Foundry", hp: 460, radius: 18,
@@ -198,6 +218,7 @@ export const BUILDINGS = {
     recipe: "aifab", prodRate: 0.7,          // electronics + crystals + power → AI Cores
     requires: ["chipfab", "aicores"],
     odysseyOnly: true,
+    category: "industrial",
   },
   torpedoworks: {
     id: "torpedoworks", name: "Torpedo Works", hp: 460, radius: 18,
@@ -205,6 +226,7 @@ export const BUILDINGS = {
     recipe: "plasmafab", prodRate: 0.7,      // antimatter + alloys + radioactives + power → Plasma Torpedoes
     requires: ["antimatterforge", "aicores"],
     odysseyOnly: true,
+    category: "industrial",
   },
   plasmarig: {
     id: "plasmarig", name: "Plasma Rig", hp: 560, radius: 18,
@@ -224,6 +246,7 @@ export const BUILDINGS = {
     // (storeCap) that workers must haul to a Command Center. Full buffer → the rig stalls until
     // it's cleared — logistics, not free money. See engine/haul.js.
     storeCap: 120,
+    category: "industrial",
   },
   stardock: {
     id: "stardock", name: "Star Dock", hp: 600, radius: 22,
@@ -231,6 +254,7 @@ export const BUILDINGS = {
     produces: ["leviathan", "heliumbomb"],   // the strategic-good capital ship, and the doomsday device beside it
     requires: ["aifoundry", "torpedoworks"], // building it proves you've teched the whole Strategic tree
     odysseyOnly: true,
+    category: "military",
   },
   antimatter_gate: {
     id: "antimatter_gate", name: "Antimatter Gate", hp: 1200, radius: 28,
@@ -245,6 +269,7 @@ export const BUILDINGS = {
     // the Gate or build the fleet.
     wonder: true, feed: { ai: 0.2, antimatter: 0.3, plasmatorp: 0.1 }, chargeTime: 150,
     powerDraw: 8,   // a charging Gate loads the grid — it competes with your factories for Reactor Power
+    category: "infrastructure",
   },
 };
 
@@ -286,6 +311,34 @@ export function isDropOff(type) {
 export function isGatherDropOff(type) {
   const def = BUILDINGS[type];
   return !!(def && (def.isCommandCenter || (def.dropOff && !def.recipe)));
+}
+
+// ---- Worker specialization: which economy unit type owns which building category, end to
+// end from construction through recycling (recycling itself stays universal — see recycle.js,
+// it's the target tearing itself down, not a worker action, so it needs no gate here). Mirrors
+// isDropOff/isGatherDropOff's shape: a small pure predicate over a def flag. `UNITS[type].
+// buildCategories` lists which of BUILDINGS[type].category values that unit may found/assist-
+// build; `canGather`/`canLogistics` gate raw-resource gathering and haul/service/ferry the same
+// way. Worker keeps all three flags (every category, gather, logistics) so it stays the
+// generalist fallback with zero behavior change. Repair (Mender, role:"support") is intentionally
+// untouched by all of this — it was already its own precedent for a specialist split.
+export function canBuildCategory(unitType, category) {
+  return !!category && !!UNITS[unitType]?.buildCategories?.includes(category);
+}
+
+/** Whether `unitType` may found/assist-build `buildingType` (its BUILDINGS[type].category). */
+export function canBuildType(unitType, buildingType) {
+  return canBuildCategory(unitType, BUILDINGS[buildingType]?.category);
+}
+
+/** Whether `unitType` may be issued a gather order (mine a raw resource node). */
+export function canGatherType(unitType) {
+  return !!UNITS[unitType]?.canGather;
+}
+
+/** Whether `unitType` may be offered/issued a haul, service, or ferry job (engine/haul.js). */
+export function canLogisticsType(unitType) {
+  return !!UNITS[unitType]?.canLogistics;
 }
 
 // Whether a building type can be ELECTRIFIED (Odyssey): wired into the power grid to run 30%
@@ -514,6 +567,45 @@ export const UNITS = {
     // abandon the economy to go pick fights; a handful ganging up can drive off
     // a lone raider, but they're no substitute for real military units.
     attack: 4, range: 15, cooldown: 1.4,
+    // The generalist fallback: every category, gather, AND logistics — the exact same
+    // capability it always had. Never gated, always trainable, so the opening economy
+    // (3 seeded Workers, 300 ore) is untouched whether or not a player ever trains a specialist.
+    buildCategories: ["infrastructure", "military", "industrial"], canGather: true, canLogistics: true,
+  },
+  miner: {
+    id: "miner", name: "Miner", hp: 40, radius: 6, speed: 60,
+    cost: { ore: 40 }, altCost: { biomass: 40 }, buildTime: 7, supplyCost: 1,
+    // Gather-only specialist: no build/haul/service/ferry capability (no buildCategories, no
+    // canLogistics) — just a cheaper, faster-mining Worker. No tech gate: available turn one
+    // alongside Worker, so specializing is an option from minute one, never a requirement.
+    role: "worker", gatherRate: 13, cargoCap: 10,
+    minerSoftCap: 3, minerFalloff: 0.4,   // same curve as Worker — see canGatherType's note in gather.js
+    sight: 110,
+    attack: 4, range: 15, cooldown: 1.4,
+    canGather: true,
+  },
+  engineer: {
+    id: "engineer", name: "Engineer", hp: 40, radius: 6, speed: 60,
+    cost: { ore: 55 }, buildTime: 8, supplyCost: 1,
+    // Construction specialist for Infrastructure + Military buildings (Command Center, Habitat,
+    // Spaceport, Datacenter, Antimatter Gate; Barracks, Turret, Star Dock) — the buildings with
+    // no ongoing haul/service loop, so "construct + recycle" is its whole job. No gather/haul/
+    // service capability, and no tech gate: you need this to build your first Barracks.
+    role: "worker", sight: 110,
+    attack: 4, range: 15, cooldown: 1.4,
+    buildCategories: ["infrastructure", "military"],
+  },
+  technician: {
+    id: "technician", name: "Technician", hp: 45, radius: 6, speed: 60,
+    cost: { ore: 70 }, buildTime: 10, supplyCost: 1,
+    // Industrial specialist: construct + haul + service + ferry + recycle for the whole
+    // Refinery/Foundry/Arsenal/factory/power-station/Plasma-Rig family — the buildings that
+    // already run an ongoing haul/service loop (engine/haul.js). Gated behind Foundry, same as
+    // Mender, since running an industrial chain only matters once one exists.
+    role: "worker", cargoCap: 10, sight: 110,
+    attack: 4, range: 15, cooldown: 1.4,
+    requires: ["foundry"],
+    buildCategories: ["industrial"], canLogistics: true,
   },
   ranger: {
     id: "ranger", name: "Ranger", hp: 50, radius: 6, speed: 115,

@@ -248,6 +248,33 @@ test("rally-to-resource falls back to a plain move when the rallied node is drai
   assert.equal(worker.order.type, "move", "a drained rally node just sends the worker to the point");
 });
 
+test("rally-to-resource never spawns a non-gathering specialist into a gather order (NaN-corruption regression)", () => {
+  // Engineer/Technician get a `cargo` object too (role:"worker", same as every worker-family
+  // type), but neither has a gatherRate/cargoCap to mine with — before the canGatherType guard,
+  // rallying one onto a live node handed it a `gather` order anyway, and gather.js's
+  // `def.cargoCap - unit.cargo.qty` / `def.gatherRate * miningEfficiency(...)` (no `?.` guard)
+  // computed NaN, permanently corrupting unit.cargo.qty and node.amount.
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cc = commandCenterOf(state, "player");
+  const node = state.map.nodes.find(n => n.com === "ore" && n.amount > 0);
+  const nodeAmountBefore = node.amount;
+  cc.rally = { x: node.x, y: node.y, nodeId: node.id };
+  const idsBefore = new Set(state.units.keys());
+  state.players.player.resources.ore = 1000;
+  cc.queue.push({ unitType: "engineer", progress: 0 });
+
+  for (let t = 0; t < UNITS.engineer.buildTime + 1 && cc.queue.length; t += 0.5) {
+    updateProductionQueue(state, cc, 0.5);
+  }
+
+  const engineer = state.units.get([...state.units.keys()].find(id => !idsBefore.has(id)));
+  assert.equal(engineer.type, "engineer");
+  assert.deepEqual(engineer.order, { type: "move", x: cc.rally.x, y: cc.rally.y },
+    "a non-gatherer rallied onto a node just walks to the point, no gather order");
+  assert.equal(node.amount, nodeAmountBefore, "the node is untouched — nothing NaN-poisoned it");
+  assert.ok(!Number.isNaN(engineer.cargo?.qty ?? 0), "the engineer's cargo slot never went NaN");
+});
+
 test("updateBuildingConstruction advances hp with progress and finishes on schedule", () => {
   const state = { units: new Map(), events: [] };
   const barracks = makeBuilding("barracks", "player", 500, 500, { constructing: true });
