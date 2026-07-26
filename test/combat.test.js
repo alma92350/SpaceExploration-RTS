@@ -72,7 +72,7 @@ test("Hold stance: a holding unit fires on an in-range enemy but won't chase one
   assert.ok(near.hp < nearHp, "but it still fires on anything that comes into range");
 });
 
-test("salvage: destroying a combat unit refunds a quarter of its cost to its owner (comeback softener)", () => {
+test("a combat unit's death no longer grants an instant resource refund to its owner", () => {
   const state = createGameState({ planetId: "ferros" });
   const attacker = makeUnit("skiff", "ai", 500, 500);
   const victim = makeUnit("skiff", "player", 510, 500);
@@ -83,22 +83,21 @@ test("salvage: destroying a combat unit refunds a quarter of its cost to its own
   updateCombat(state, attacker, 0);
 
   assert.equal(state.units.has(victim.id), false, "the victim died");
-  assert.equal(state.players.player.resources.ore, before + UNITS.skiff.cost.ore * 0.25,
-    "its owner reclaims 25% of its ore cost");
+  assert.equal(state.players.player.resources.ore, before,
+    "no instant refund — it leaves minable battle wreckage instead (see test/wreckage.test.js)");
 });
 
-test("salvage is combat-only: a dead worker leaves no refund", () => {
+test("a dead worker now leaves wreckage too, unlike the old combat-only salvage refund", () => {
   const state = createGameState({ planetId: "ferros" });
   const attacker = makeUnit("skiff", "ai", 500, 500);
   const worker = makeUnit("worker", "player", 510, 500);
   state.units.set(attacker.id, attacker); state.units.set(worker.id, worker);
   worker.hp = 1; attacker.attackTimer = 0;
-  const before = state.players.player.resources.ore;
 
   updateCombat(state, attacker, 0);
 
   assert.equal(state.units.has(worker.id), false, "the worker died");
-  assert.equal(state.players.player.resources.ore, before, "but workers yield no salvage — it rewards army trades");
+  assert.equal(state.wrecks.length, 1, "workers now leave wreckage too — no longer a total loss (test/wreckage.test.js)");
 });
 
 test("kiting: a reloading Tactical ranged unit steps away from a closed-in enemy without firing", () => {

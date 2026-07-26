@@ -53,6 +53,12 @@
    planet's deposit table naturally rolled — the blast synthesizes a deposit
    that wouldn't otherwise be here, which is the whole point of paying to
    "terraform" a spot rather than just scouting for one.
+
+   WRECKAGE: separately from the crater, every unit/building the blast actually
+   kills also deposits its own battle wreckage (engine/wreckage.js), exactly
+   like an ordinary combat kill — the two stack, so a detonation leaves both
+   the bomb's synthesized crater AND ordinary wreckage from everything caught
+   in it.
    ============================================================ */
 
 "use strict";
@@ -61,6 +67,7 @@ import { UNITS } from "./entities.js";
 import { POWER_TIERS } from "./industry.js";
 import { removeEntity } from "./state.js";
 import { hashStr } from "./rng.js";
+import { depositWreckage } from "./wreckage.js";
 import { COM } from "../data.js";
 
 // The power station's "first circle": POWER_TIERS[0] is the innermost,
@@ -127,9 +134,10 @@ function isBomb(e) {
 // happens, so every trigger produces the exact same result. Every unit and
 // building within BOMB_BLAST_RADIUS, ANY owner included (the bomb's own
 // side's units and buildings, and the bomb itself, are not exempt), takes
-// bombDamageAt(dist) HP loss and dies (outright removed — no salvage, this
-// is blast damage, not a normal kill) if that drops it to 0 or below;
-// anything too far out to be reduced to 0 just survives, scarred. Snapshots
+// bombDamageAt(dist) HP loss and dies (outright removed, and — same as an
+// ordinary combat kill — deposits its own wreckage, engine/wreckage.js) if
+// that drops it to 0 or below; anything too far out to be reduced to 0 just
+// survives, scarred. Snapshots
 // the caught set with its distances before removing anything, so the sweep
 // can't be thrown off by entities disappearing mid-scan. One bombDetonated
 // event drives the explosion VFX + sound (boot.js/effects.js/sound.js); each
@@ -151,6 +159,7 @@ export function detonateBomb(state, bomb) {
   for (const { e, dist } of caught) {
     e.hp -= bombDamageAt(dist);
     if (e.hp <= 0) {
+      depositWreckage(state, e);
       removeEntity(state, e.id);
       state.events.push({ type: "entityKilled", x: e.x, y: e.y, owner: e.owner });
     }
@@ -202,8 +211,9 @@ function spawnCraterNode(state, crater) {
 // much damage the shot would have dealt — sets it off instead of chipping
 // its hp. Called from combat.js's performAttack before the normal damage/
 // death path runs. Returns whether it detonated, so the caller can
-// short-circuit (the normal hp/salvage/entityKilled bookkeeping doesn't
-// apply — detonateBomb already erased it, along with everything else caught).
+// short-circuit (the normal hp/wreckage/entityKilled bookkeeping doesn't
+// apply — detonateBomb already erased it, along with everything else caught,
+// and already deposited its wreckage itself).
 // Unlike the other two triggers, this one is instantaneous — no fuse.
 export function detonateIfAttacked(state, target) {
   if (!isBomb(target) || !target.armed) return false;
