@@ -267,69 +267,34 @@ test("a Worker can defend itself, but only weakly and without leaving its job be
   }
 });
 
-test("every BUILDINGS entry carries a valid worker-specialization category", () => {
+test("every BUILDINGS entry carries a valid build category", () => {
   const valid = new Set(["infrastructure", "military", "industrial"]);
   for (const def of Object.values(BUILDINGS)) {
     assert.ok(valid.has(def.category), `${def.id} needs a valid category, got ${def.category}`);
   }
 });
 
-test("Worker keeps every specialization capability — the generalist fallback is unchanged", () => {
+test("Worker carries every build/gather/logistics capability — the sole generalist worker unit", () => {
   assert.deepEqual(UNITS.worker.buildCategories, ["infrastructure", "military", "industrial"]);
   assert.equal(UNITS.worker.canGather, true);
   assert.equal(UNITS.worker.canLogistics, true);
   assert.ok(BUILDINGS.command.produces.includes("worker"));
 });
 
-test("Miner is a gather-only specialist: no tech gate, cheaper and faster-mining than Worker", () => {
-  assert.equal(UNITS.miner.canGather, true);
-  assert.ok(!UNITS.miner.buildCategories, "no build capability at all");
-  assert.ok(!UNITS.miner.canLogistics, "no haul/service/ferry capability");
-  assert.equal(UNITS.miner.requires, undefined, "no tech gate — available turn one, like Worker");
-  assert.ok(UNITS.miner.cost.ore < UNITS.worker.cost.ore, "cheaper than the generalist");
-  assert.ok(UNITS.miner.gatherRate > UNITS.worker.gatherRate, "the whole point is faster mining");
-  assert.equal(UNITS.miner.minerSoftCap, UNITS.worker.minerSoftCap, "same saturation curve as Worker on a shared node");
-  assert.equal(UNITS.miner.minerFalloff, UNITS.worker.minerFalloff);
-  assert.ok(BUILDINGS.command.produces.includes("miner"), "trained at the Command Center, like Worker");
-});
-
-test("Engineer builds Infrastructure + Military only: no gather, no haul/service/ferry, no tech gate", () => {
-  assert.deepEqual(UNITS.engineer.buildCategories, ["infrastructure", "military"]);
-  assert.ok(!UNITS.engineer.canGather);
-  assert.ok(!UNITS.engineer.canLogistics);
-  assert.equal(UNITS.engineer.requires, undefined, "must be available to build the first Barracks");
-  assert.ok(BUILDINGS.command.produces.includes("engineer"));
-});
-
-test("Technician owns Industrial construction + haul/service/ferry, gated behind Foundry like Mender", () => {
-  assert.deepEqual(UNITS.technician.buildCategories, ["industrial"]);
-  assert.equal(UNITS.technician.canLogistics, true);
-  assert.ok(!UNITS.technician.canGather, "operates existing buffers, doesn't mine raw nodes");
-  assert.deepEqual(UNITS.technician.requires, ["foundry"], "same gate as Mender");
-  assert.ok(UNITS.technician.cargoCap > 0, "needs real trip capacity or its haul/service/ferry jobs move nothing");
-  assert.ok(BUILDINGS.command.produces.includes("technician"), "trained at the Command Center, an economy unit");
-});
-
-test("canBuildCategory/canBuildType: Worker builds everything, specialists are scoped to their own category", () => {
+test("canBuildCategory/canBuildType: Worker builds everything, a non-worker builds nothing", () => {
   for (const cat of ["infrastructure", "military", "industrial"]) assert.equal(canBuildCategory("worker", cat), true);
-  assert.equal(canBuildCategory("engineer", "infrastructure"), true);
-  assert.equal(canBuildCategory("engineer", "military"), true);
-  assert.equal(canBuildCategory("engineer", "industrial"), false, "Engineer can't found an Industrial building");
-  assert.equal(canBuildCategory("technician", "industrial"), true);
-  assert.equal(canBuildCategory("technician", "infrastructure"), false, "Technician can't found a Habitat");
-  assert.equal(canBuildCategory("miner", "infrastructure"), false, "Miner has no build capability at all");
   assert.equal(canBuildCategory("mender", "military"), false, "Mender is repair-only, untouched by any of this");
+  assert.equal(canBuildCategory("skiff", "military"), false, "a combat unit has no build capability");
 
-  assert.equal(canBuildType("technician", "refinery"), true, "Refinery is Industrial");
-  assert.equal(canBuildType("engineer", "refinery"), false);
-  assert.equal(canBuildType("engineer", "barracks"), true, "Barracks is Military");
-  assert.equal(canBuildType("technician", "barracks"), false);
-  assert.equal(canBuildType("worker", "habitat"), true);
+  assert.equal(canBuildType("worker", "refinery"), true, "Refinery is Industrial");
+  assert.equal(canBuildType("worker", "barracks"), true, "Barracks is Military");
+  assert.equal(canBuildType("worker", "habitat"), true, "Habitat is Infrastructure");
+  assert.equal(canBuildType("mender", "habitat"), false);
 });
 
-test("Foundry and Arsenal are Industrial (Technician's), not Military, despite gating combat tech", () => {
+test("Foundry and Arsenal are Industrial, not Military, despite gating combat tech", () => {
   // Both double as forward drop-offs (dropOff+storeCap, same as Refinery) — they already
-  // participate in the haul/service logistics system, so Technician (not Engineer) must own them.
+  // participate in the haul/service logistics system, same as Refinery.
   assert.equal(BUILDINGS.foundry.category, "industrial");
   assert.equal(BUILDINGS.arsenal.category, "industrial");
   assert.equal(BUILDINGS.refinery.category, "industrial");
@@ -339,17 +304,13 @@ test("Foundry and Arsenal are Industrial (Technician's), not Military, despite g
   assert.equal(BUILDINGS.stardock.category, "military");
 });
 
-test("canGatherType/canLogisticsType: only Worker+Miner gather, only Worker+Technician run haul/service/ferry", () => {
+test("canGatherType/canLogisticsType: only Worker gathers, only Worker runs haul/service/ferry", () => {
   assert.equal(canGatherType("worker"), true);
-  assert.equal(canGatherType("miner"), true);
-  assert.equal(canGatherType("engineer"), false);
-  assert.equal(canGatherType("technician"), false);
   assert.equal(canGatherType("mender"), false);
+  assert.equal(canGatherType("skiff"), false);
   assert.equal(canLogisticsType("worker"), true);
-  assert.equal(canLogisticsType("technician"), true);
-  assert.equal(canLogisticsType("miner"), false);
-  assert.equal(canLogisticsType("engineer"), false);
   assert.equal(canLogisticsType("mender"), false);
+  assert.equal(canLogisticsType("skiff"), false);
 });
 
 test("every unit carries a supply cost, and the Command Center and Habitat are the supply grantors", () => {

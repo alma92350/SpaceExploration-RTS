@@ -16,7 +16,7 @@ export const BUILDINGS = {
     // The starting CC is still seeded finished by state.js's seedPlayer —
     // makeBuilding without { constructing: true } spawns complete regardless
     // of buildTime. cost/buildTime only gate the issueBuild path.
-    produces: ["worker", "miner", "engineer", "technician", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"],   // the Odyssey-only ones are gated by queueProduction (def.odysseyOnly); technician also by its own requires:["foundry"]
+    produces: ["worker", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"],   // the Odyssey-only ones are gated by queueProduction (def.odysseyOnly)
     isCommandCenter: true,
     supplyGrants: 10,   // the seeded CC already houses the starting 3 workers with room to grow
     sight: 220,
@@ -72,8 +72,7 @@ export const BUILDINGS = {
     // every base) rather than being walled off on a crystal-poor map.
     requires: ["barracks"],
     // Category is "industrial" (not "military") despite gating Tier-2 combat units: it's also a
-    // forward drop-off (dropOff+storeCap above) that already needs a Technician's haul/service
-    // capability, same as the Refinery/Arsenal — see canBuildCategory's doc comment below.
+    // forward drop-off (dropOff+storeCap above), same as the Refinery/Arsenal.
     category: "industrial",
   },
   arsenal: {
@@ -313,15 +312,15 @@ export function isGatherDropOff(type) {
   return !!(def && (def.isCommandCenter || (def.dropOff && !def.recipe)));
 }
 
-// ---- Worker specialization: which economy unit type owns which building category, end to
-// end from construction through recycling (recycling itself stays universal — see recycle.js,
-// it's the target tearing itself down, not a worker action, so it needs no gate here). Mirrors
-// isDropOff/isGatherDropOff's shape: a small pure predicate over a def flag. `UNITS[type].
-// buildCategories` lists which of BUILDINGS[type].category values that unit may found/assist-
-// build; `canGather`/`canLogistics` gate raw-resource gathering and haul/service/ferry the same
-// way. Worker keeps all three flags (every category, gather, logistics) so it stays the
-// generalist fallback with zero behavior change. Repair (Mender, role:"support") is intentionally
-// untouched by all of this — it was already its own precedent for a specialist split.
+// ---- Worker capability: which unit types may found/assist-build a building category, gather a
+// raw node, or run a haul/service/ferry job — end to end through recycling (recycling itself
+// stays universal, see recycle.js: it's the target tearing itself down, not a worker action, so
+// it needs no gate here). Mirrors isDropOff/isGatherDropOff's shape: a small pure predicate over a
+// def flag. `UNITS[type].buildCategories` lists which of BUILDINGS[type].category values that
+// unit may found/assist-build; `canGather`/`canLogistics` gate gathering and haul/service/ferry
+// the same way. Worker is the one generalist that carries all three (every category, gather,
+// logistics). Repair (Mender, role:"support") is intentionally untouched by all of this — it's
+// its own separate specialist, ungated by any of these three.
 export function canBuildCategory(unitType, category) {
   return !!category && !!UNITS[unitType]?.buildCategories?.includes(category);
 }
@@ -567,45 +566,9 @@ export const UNITS = {
     // abandon the economy to go pick fights; a handful ganging up can drive off
     // a lone raider, but they're no substitute for real military units.
     attack: 4, range: 15, cooldown: 1.4,
-    // The generalist fallback: every category, gather, AND logistics — the exact same
-    // capability it always had. Never gated, always trainable, so the opening economy
-    // (3 seeded Workers, 300 ore) is untouched whether or not a player ever trains a specialist.
+    // The one economy unit, and it does everything: every build category, gather, AND
+    // logistics — no specialization, no gate.
     buildCategories: ["infrastructure", "military", "industrial"], canGather: true, canLogistics: true,
-  },
-  miner: {
-    id: "miner", name: "Miner", hp: 40, radius: 6, speed: 60,
-    cost: { ore: 40 }, altCost: { biomass: 40 }, buildTime: 7, supplyCost: 1,
-    // Gather-only specialist: no build/haul/service/ferry capability (no buildCategories, no
-    // canLogistics) — just a cheaper, faster-mining Worker. No tech gate: available turn one
-    // alongside Worker, so specializing is an option from minute one, never a requirement.
-    role: "worker", gatherRate: 13, cargoCap: 10,
-    minerSoftCap: 3, minerFalloff: 0.4,   // same curve as Worker — see canGatherType's note in gather.js
-    sight: 110,
-    attack: 4, range: 15, cooldown: 1.4,
-    canGather: true,
-  },
-  engineer: {
-    id: "engineer", name: "Engineer", hp: 40, radius: 6, speed: 60,
-    cost: { ore: 55 }, buildTime: 8, supplyCost: 1,
-    // Construction specialist for Infrastructure + Military buildings (Command Center, Habitat,
-    // Spaceport, Datacenter, Antimatter Gate; Barracks, Turret, Star Dock) — the buildings with
-    // no ongoing haul/service loop, so "construct + recycle" is its whole job. No gather/haul/
-    // service capability, and no tech gate: you need this to build your first Barracks.
-    role: "worker", sight: 110,
-    attack: 4, range: 15, cooldown: 1.4,
-    buildCategories: ["infrastructure", "military"],
-  },
-  technician: {
-    id: "technician", name: "Technician", hp: 45, radius: 6, speed: 60,
-    cost: { ore: 70 }, buildTime: 10, supplyCost: 1,
-    // Industrial specialist: construct + haul + service + ferry + recycle for the whole
-    // Refinery/Foundry/Arsenal/factory/power-station/Plasma-Rig family — the buildings that
-    // already run an ongoing haul/service loop (engine/haul.js). Gated behind Foundry, same as
-    // Mender, since running an industrial chain only matters once one exists.
-    role: "worker", cargoCap: 10, sight: 110,
-    attack: 4, range: 15, cooldown: 1.4,
-    requires: ["foundry"],
-    buildCategories: ["industrial"], canLogistics: true,
   },
   ranger: {
     id: "ranger", name: "Ranger", hp: 50, radius: 6, speed: 115,

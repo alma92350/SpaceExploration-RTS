@@ -777,8 +777,8 @@ function rebuildSelectionPanel(sel) {
     // Odyssey adds the Colony Ship (found a base) and the three cargo ships (haul goods on a jump —
     // gated behind the Spaceport, so they surface once you've built the jump pad).
     const ccUnits = game.galaxy
-      ? ["worker", "miner", "engineer", "technician", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"]
-      : ["worker", "miner", "engineer", "technician", "ranger"];
+      ? ["worker", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"]
+      : ["worker", "ranger"];
     // Collapsible: 7-11 produce buttons (base + altCost variants) is the biggest cluster on the
     // CC panel — count matches what a player thinks of as "the list" (one entry per unit type),
     // not the raw altCost-doubled button count.
@@ -1267,11 +1267,10 @@ function rebuildSelectionPanel(sel) {
     }
   }
 
-  // Every selected unit that can found/assist-build ANYTHING (Worker, or a specialist —
-  // Engineer/Technician — with its own narrower buildCategories). The building list below is
-  // then filtered to whatever's in the UNION of the selection's categories, so e.g. selecting
-  // only an Engineer shows Infrastructure/Military options but hides the Industrial chain, while
-  // a mixed Worker+Technician selection shows everything either one of them could found.
+  // Every selected unit that can found/assist-build ANYTHING (Worker, the sole generalist that
+  // carries a buildCategories list). The building list below is then filtered to whatever's in
+  // the UNION of the selection's categories via canBuildCategory, same single source of truth
+  // issueBuild itself gates on.
   const builders = sel.filter(e => e.kind === "unit" && UNITS[e.type]?.buildCategories?.length);
   if (builders.length && !input.building) {
     const canBuild = t => builders.some(b => canBuildCategory(b.type, BUILDINGS[t].category));
@@ -1289,7 +1288,7 @@ function rebuildSelectionPanel(sel) {
     // prereqs are met (a greyed button per locked tier would bury the menu), mirroring how the
     // Barracks hides units you can't yet field. NOTE: these "Economy"/"Military" group labels
     // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
-    // (the Engineer/Technician capability split), which is applied independently via canBuild.
+    // (the worker build-capability check), which is applied independently via canBuild.
     const GROUPS = [
       ["Economy", ["reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
                    "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],

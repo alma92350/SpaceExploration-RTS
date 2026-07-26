@@ -140,7 +140,7 @@ test("issueBuild gates a Foundry on a completed Barracks", () => {
   assert.ok(id, "with a completed Barracks, the Foundry can be founded");
 });
 
-test("issueBuild is category-gated: a specialist can only found buildings in its own category", () => {
+test("issueBuild is category-gated: only a unit flagged for a category can found it", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   Object.assign(state.players.player.resources, { ore: 2000, crystals: 2000 });   // turret also costs crystals
   const worker = playerWorker(state);
@@ -148,17 +148,15 @@ test("issueBuild is category-gated: a specialist can only found buildings in its
   state.buildings.set(barracks.id, barracks);
 
   const spawn = (type, x, y) => { const u = makeUnit(type, "player", x, y); state.units.set(u.id, u); return u; };
-  const engineer = spawn("engineer", worker.x + 20, worker.y);
-  const technician = spawn("technician", worker.x + 40, worker.y);
-  const miner = spawn("miner", worker.x + 60, worker.y);
+  const mender = spawn("mender", worker.x + 20, worker.y);
+  const skiff = spawn("skiff", worker.x + 40, worker.y);
 
-  assert.equal(issueBuild(state, engineer.id, "refinery", 900, 500), null, "Engineer can't found an Industrial building");
-  assert.equal(issueBuild(state, technician.id, "habitat", 920, 500), null, "Technician can't found an Infrastructure building");
-  assert.equal(issueBuild(state, miner.id, "turret", 940, 500), null, "Miner has no build capability at all");
+  assert.equal(issueBuild(state, mender.id, "refinery", 900, 500), null, "Mender has no build capability at all");
+  assert.equal(issueBuild(state, skiff.id, "turret", 940, 500), null, "a combat unit has no build capability");
 
-  assert.ok(issueBuild(state, engineer.id, "turret", 960, 500), "Engineer CAN found a Military building");
-  assert.ok(issueBuild(state, technician.id, "foundry", 1000, 500), "Technician CAN found an Industrial building");
-  assert.ok(issueBuild(state, worker.id, "habitat", 1040, 500), "Worker (the generalist) can still found anything");
+  assert.ok(issueBuild(state, worker.id, "turret", 960, 500), "Worker CAN found a Military building");
+  assert.ok(issueBuild(state, worker.id, "foundry", 1000, 500), "Worker CAN found an Industrial building");
+  assert.ok(issueBuild(state, worker.id, "habitat", 1040, 500), "Worker (the generalist) can found anything");
 });
 
 test("issueBuild refuses when the player can't afford it: no site, no charge", () => {

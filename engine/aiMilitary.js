@@ -271,8 +271,6 @@ function raidTarget(state) {
   const from = state.map.bases.ai;
   let best = null, bestD = Infinity;
   for (const u of state.units.values()) {
-    // role, not literal type, so a raid also threatens the player's economy specialists
-    // (Miner/Engineer/Technician), not just literal Workers.
     if (u.owner !== "player" || UNITS[u.type]?.role !== "worker") continue;
     if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
     const d = Math.hypot(u.x - from.x, u.y - from.y);

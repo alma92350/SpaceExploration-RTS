@@ -23,9 +23,6 @@ import { DETAIL, facing, updateFacing, lerpXY, inView, drawHealthBar,
 // icon (updateFacing has no movement to read).
 export function drawUnitShape(ctx, u, def, color) {
   if (u.type === "worker") drawWorker(ctx, u, def, color);
-  else if (u.type === "miner") drawMiner(ctx, u, def, color);
-  else if (u.type === "engineer") drawEngineer(ctx, u, def, color);
-  else if (u.type === "technician") drawTechnician(ctx, u, def, color);
   else if (u.type === "ranger") drawRanger(ctx, u, def, color);
   else if (u.type === "skiff") drawSkiff(ctx, u, def, color);
   else if (u.type === "bastion") drawBastion(ctx, u, def, color);
@@ -115,81 +112,6 @@ function drawWorker(ctx, u, def, color) {
 
   ctx.beginPath();
   ctx.arc(cx, cy - r * 0.1, r * 0.3, 0, Math.PI * 2);
-  ctx.fillStyle = DETAIL;
-  ctx.fill();
-}
-
-// Miner — Worker's gather-only sibling: the same hex utility pod, but a single forward drill
-// spike stands in for Worker's twin grabber arms, so "digs, doesn't build" reads at a glance —
-// and its eye sits low, under the spike, instead of Worker's centred one.
-function drawMiner(ctx, u, def, color) {
-  const r = def.radius, cx = u.x, cy = u.y;
-  pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = shade(color, -25);
-  ctx.beginPath();
-  ctx.moveTo(cx - r * 0.32, cy - r * 0.65);
-  ctx.lineTo(cx + r * 0.32, cy - r * 0.65);
-  ctx.lineTo(cx, cy - r * 1.3);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(cx, cy + r * 0.2, r * 0.28, 0, Math.PI * 2);
-  ctx.fillStyle = DETAIL;
-  ctx.fill();
-}
-
-// Engineer — the construction specialist (Infrastructure + Military): Worker's hex pod plus a
-// single raised tool arm ending in a wrench pad, reaching out to one side rather than Worker's
-// symmetric twin grabbers — reads as "one hand building", not "two hands hauling".
-function drawEngineer(ctx, u, def, color) {
-  const r = def.radius, cx = u.x, cy = u.y;
-  pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.strokeStyle = shade(color, -25);
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(cx + r * 0.5, cy - r * 0.2);
-  ctx.lineTo(cx + r * 1.2, cy - r * 0.75);
-  ctx.stroke();
-
-  ctx.fillStyle = shade(color, -25);
-  ctx.fillRect(cx + r * 1.05, cy - r * 1.0, r * 0.4, r * 0.4);
-  ctx.strokeRect(cx + r * 1.05, cy - r * 1.0, r * 0.4, r * 0.4);
-
-  ctx.beginPath();
-  ctx.arc(cx, cy - r * 0.1, r * 0.3, 0, Math.PI * 2);
-  ctx.fillStyle = DETAIL;
-  ctx.fill();
-}
-
-// Technician — the industrial specialist: builds the factory/power-station chain AND keeps it
-// running (haul/service/ferry), so it keeps Worker's twin grabber arms — it still hauls with
-// them — but swaps the plain sensor eye for a ringed service dish, reading as "wired into the
-// grid" rather than a generic drone.
-function drawTechnician(ctx, u, def, color) {
-  const r = def.radius, cx = u.x, cy = u.y;
-  pathPoints(ctx, polygonPoints(cx, cy, r, 6, Math.PI / 6));
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = shade(color, -25);
-  ctx.fillRect(cx - r - 2.5, cy - 1.5, 2.5, 3);
-  ctx.fillRect(cx + r, cy - 1.5, 2.5, 3);
-
-  ctx.strokeStyle = DETAIL;
-  ctx.lineWidth = 1.3;
-  ctx.beginPath();
-  ctx.arc(cx, cy - r * 0.15, r * 0.34, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx, cy - r * 0.15, r * 0.13, 0, Math.PI * 2);
   ctx.fillStyle = DETAIL;
   ctx.fill();
 }
