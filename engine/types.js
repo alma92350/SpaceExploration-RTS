@@ -162,6 +162,9 @@
  * @property {boolean} [crater]   spawned by a Helium Bomb detonation (engine/bomb.js), not
  *   engine/map.js generation — needs its whole shape saved/restored, not just its amount
  *   (engine/persist.js)
+ * @property {boolean} [wreck]    spawned by battle wreckage maturing (engine/wreckage.js), not
+ *   engine/map.js generation — needs its whole shape saved/restored, same as a crater node
+ *   (engine/persist.js)
  */
 
 // ---- players / AI ---------------------------------------------------------------
@@ -264,6 +267,8 @@
  * @property {Array<Object>} events
  * @property {Array<{id:string, x:number, y:number, owner:string, spawnAt:number}>} craters
  *   pending Helium Bomb craters awaiting maturity into a real ResourceNode (engine/bomb.js)
+ * @property {Array<{id:string, x:number, y:number, n:number, goods:Object.<string,number>, spawnAt:number}>} wrecks
+ *   pending battle-wreckage sites awaiting maturity into real ResourceNodes (engine/wreckage.js)
  * @property {Object} [unitGrid]     broad-phase index, rebuilt each tick (engine/grid.js)
  * @property {Market} [market]       Odyssey per-world price book (engine/galaxy.js)
  * @property {Diplomacy} [diplomacy] Odyssey neighbour stance (engine/galaxy.js)

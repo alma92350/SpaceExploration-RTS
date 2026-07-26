@@ -14,6 +14,7 @@ import { updateScoutMode } from "./scout.js";
 import { updateRepair } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBombFuse, updateCraters } from "./bomb.js";
+import { updateWreckage } from "./wreckage.js";
 import { updateBuildingConstruction, updateProductionQueue, BUILD_REACH } from "./production.js";
 import { updateUnitRecycle, updateBuildingRecycle } from "./recycle.js";
 import { updateProduction, updateCombustors } from "./industry.js";
@@ -94,6 +95,8 @@ export function tick(state, dt) {
   // A Helium Bomb crater (engine/bomb.js) matures on its own schedule, independent of any
   // unit/building — checked once per tick against the just-advanced state.time.
   updateCraters(state);
+  // Battle wreckage (engine/wreckage.js) matures the same way, on its own schedule.
+  updateWreckage(state);
 }
 
 // Collect this tick's aura projectors (units with a guardAura, i.e. the Aegis) into a

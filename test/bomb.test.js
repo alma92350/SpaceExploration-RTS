@@ -333,7 +333,7 @@ test("right at the ragged edge of the blast radius, a fragile unit only takes a 
   assert.ok(Math.abs(state.units.get(edge.id).hp - (40 - expectedDmg)) < 1e-6);
 });
 
-test("entities killed by the blast grant no salvage — a total loss, not a normal kill", () => {
+test("a blast-killed entity leaves wreckage just like an ordinary kill — but still no INSTANT refund either way", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 5000, 5000);
   state.units.set(bomb.id, bomb);
@@ -344,7 +344,9 @@ test("entities killed by the blast grant no salvage — a total loss, not a norm
   detonateBomb(state, bomb);
 
   assert.ok(!state.units.has(skiff.id), "sanity check: it actually died");
-  assert.deepEqual(state.players.ai.resources, resourcesBefore, "no salvage was granted for the blast-killed skiff");
+  assert.deepEqual(state.players.ai.resources, resourcesBefore, "no instant refund — that mechanic is gone entirely, blast or not");
+  assert.ok(state.wrecks.some(w => Math.abs((w.goods.ore || 0) - UNITS.skiff.cost.ore * 0.8) < 1e-9),
+    "it now leaves its own minable wreckage, same as an ordinary combat kill (engine/wreckage.js)");
 });
 
 /* ---------- terraforming: the crater matures into a mineable deposit ---------- */

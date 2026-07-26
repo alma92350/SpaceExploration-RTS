@@ -268,6 +268,20 @@ function coerceInputBuffer(buf, cap) {
   return clean;
 }
 
+// Sanitize an untrusted commodity->qty bag with no shared cap to clamp against — a pending
+// wreck site's `goods` (engine/wreckage.js) isn't bounded by a building's storeCap the way
+// coerceBuffer's inputs are, so this just keeps real commodities with a positive finite qty.
+function sanitizeGoods(g) {
+  const clean = {};
+  if (!g || typeof g !== "object") return clean;
+  for (const com of Object.keys(g)) {
+    if (!COM[com]) continue;
+    const q = num(g[com], 0);
+    if (q > 0) clean[com] = q;
+  }
+  return clean;
+}
+
 // A player's economy is untrusted save data exactly like an entity's buffers above: `resources`
 // (commodity→qty) and `upgrades` (tech/upgrade id→true) both flow straight into gameplay math the
 // moment the game starts ticking — a bogus commodity key would mint a phantom treasury entry the
@@ -356,14 +370,18 @@ function serPlanet(state) {
     buildings: [...state.buildings.values()].map(({ haulers, servers, powered, fuel, menderClaims, lastYield, lastTier, ...b }) => b),
     // A map-generated node is regenerated fresh from the seed on load (generateMap), so only
     // its `amount` (the one thing that changes) needs saving. A crater node (engine/bomb.js)
-    // does NOT exist in that regeneration at all — it needs its whole shape saved, and
-    // rehydratePlanet below re-adds it after the seed regenerates everything else.
-    nodes: state.map.nodes.map(n => n.crater
-      ? { id: n.id, com: n.com, amount: n.amount, max: n.max, x: n.x, y: n.y, crater: true }
+    // or a wreck node (engine/wreckage.js) does NOT exist in that regeneration at all — it
+    // needs its whole shape saved, and rehydratePlanet below re-adds it after the seed
+    // regenerates everything else.
+    nodes: state.map.nodes.map(n => (n.crater || n.wreck)
+      ? { id: n.id, com: n.com, amount: n.amount, max: n.max, x: n.x, y: n.y, ...(n.crater ? { crater: true } : { wreck: true }) }
       : { id: n.id, amount: n.amount }),
     // Pending Helium Bomb craters not yet matured — lost without this (a save/load right
     // after a detonation would silently cancel the future deposit).
     craters: (state.craters || []).map(c => ({ id: c.id, x: c.x, y: c.y, owner: c.owner, spawnAt: c.spawnAt })),
+    // Pending battle-wreckage sites (engine/wreckage.js) not yet matured — same reasoning
+    // as craters above. No `owner`: wreckage is neutral, unlike a crater.
+    wrecks: (state.wrecks || []).map(w => ({ id: w.id, x: w.x, y: w.y, n: w.n, goods: { ...w.goods }, spawnAt: w.spawnAt })),
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],
     ai: {
@@ -427,6 +445,22 @@ function rehydratePlanet(P) {
     map.nodes.push(node);
     map.nodesById.set(node.id, node);
   }
+  // A wreck node (engine/wreckage.js) never comes back from the seed regeneration either —
+  // same reasoning and same sanitization as the crater block above, just keyed off `wreck:
+  // true` instead, and with no fixed default amount to fall back to (a wreck's size always
+  // comes from what died there, so 1 is just a safe floor for a corrupt/missing value).
+  for (const n of P.nodes) {
+    if (!n || !n.wreck || map.nodesById.has(n.id) || !COM[n.com]) continue;
+    const max = Math.max(1, num(n.max, 1));
+    const node = {
+      id: String(n.id), com: n.com, wreck: true,
+      max, amount: Math.max(0, Math.min(num(n.amount, max), max)),
+      x: Math.max(0, Math.min(num(n.x, 0), map.width)),
+      y: Math.max(0, Math.min(num(n.y, 0), map.height)),
+    };
+    map.nodes.push(node);
+    map.nodesById.set(node.id, node);
+  }
 
   const fog = createFog(map); fog.explored = Uint8Array.from(P.fog);
   const fogAI = createFog(map); fogAI.explored = Uint8Array.from(P.fogAI);
@@ -460,6 +494,19 @@ function rehydratePlanet(P) {
       y: Math.max(0, Math.min(num(c.y, 0), map.height)),
     })) : [];
 
+  // Pending battle-wreckage sites (engine/wreckage.js) not yet matured — additive, so an
+  // older save without the field just has none. No owner to validate (wreckage is neutral);
+  // a malformed entry, or one left with no valid commodities after sanitizing, is dropped
+  // rather than kept as empty garbage that would mature into nothing.
+  const wrecks = (Array.isArray(P.wrecks) ? P.wrecks
+    .filter(w => w && typeof w.id === "string")
+    .map(w => ({
+      id: w.id, spawnAt: num(w.spawnAt, 0), n: Math.max(1, Math.floor(num(w.n, 1))),
+      x: Math.max(0, Math.min(num(w.x, 0), map.width)),
+      y: Math.max(0, Math.min(num(w.y, 0), map.height)),
+      goods: sanitizeGoods(w.goods),
+    })) : []).filter(w => Object.keys(w.goods).length > 0);
+
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
     seed: P.seed, planetId: P.planetId, sizeMult, resourceMult,
@@ -487,6 +534,7 @@ function rehydratePlanet(P) {
     },
     events: [],
     craters,
+    wrecks,
   };
   for (const id of owners) updateFog(state, state.fogs[id], id);
   return state;
