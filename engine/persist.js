@@ -18,6 +18,7 @@ import { mulberry32 } from "./rng.js";
 import { createFog, updateFog } from "./fog.js";
 import { archetypeFor } from "./aiArchetypes.js";
 import { CRATER_NODE_AMOUNT } from "./bomb.js";
+import { WRECK_SPAWN_DELAY } from "./wreckage.js";
 // peekEntityId/restoreEntityId (called at ~4 sites below: gamePayload, deserializeGame,
 // galaxyPayload, deserializeGalaxy) read and overwrite `nextEntityId` in engine/state.js — a
 // SINGLE module-global counter, not per-state. Reading it (peek, on save) is safe any time, but
@@ -383,7 +384,13 @@ function serPlanet(state) {
     // as craters above. No `owner`: wreckage is neutral, unlike a crater. `value` is the
     // running battle-intensity total (engine/wreckage.js applyBattleBonus) — lost without
     // this, a save/load mid-battle would silently reset a site's bonus-material progress.
-    wrecks: (state.wrecks || []).map(w => ({ id: w.id, x: w.x, y: w.y, n: w.n, value: w.value, goods: { ...w.goods }, spawnAt: w.spawnAt })),
+    // `createdAt` anchors how far spawnAt can be extended by a later contribution
+    // (mergeIntoWreckSite) — lost without it, a reloaded raging battle could re-extend
+    // past WRECK_MAX_DELAY.
+    wrecks: (state.wrecks || []).map(w => ({
+      id: w.id, x: w.x, y: w.y, n: w.n, value: w.value, createdAt: w.createdAt,
+      goods: { ...w.goods }, spawnAt: w.spawnAt,
+    })),
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],
     ai: {
@@ -502,13 +509,23 @@ function rehydratePlanet(P) {
   // rather than kept as empty garbage that would mature into nothing.
   const wrecks = (Array.isArray(P.wrecks) ? P.wrecks
     .filter(w => w && typeof w.id === "string")
-    .map(w => ({
-      id: w.id, spawnAt: num(w.spawnAt, 0), n: Math.max(1, Math.floor(num(w.n, 1))),
-      value: Math.max(0, num(w.value, 0)),
-      x: Math.max(0, Math.min(num(w.x, 0), map.width)),
-      y: Math.max(0, Math.min(num(w.y, 0), map.height)),
-      goods: sanitizeGoods(w.goods),
-    })) : []).filter(w => Object.keys(w.goods).length > 0);
+    .map(w => {
+      const spawnAt = num(w.spawnAt, 0);
+      return {
+        id: w.id, spawnAt, n: Math.max(1, Math.floor(num(w.n, 1))),
+        value: Math.max(0, num(w.value, 0)),
+        // A save from before Phase 4 (or any tampered entry) predates `createdAt` — fall
+        // back to "one base delay before its current spawnAt", the same reconstruction a
+        // site that had never yet been extended would already satisfy, so an old save
+        // resumes with a full, correct extension budget rather than none at all. Clamped
+        // to at most `spawnAt` either way — createdAt can never sanely be later than its
+        // own site's spawn time, so a tampered future value can't grant runaway extension.
+        createdAt: Math.max(0, Math.min(Number.isFinite(w.createdAt) ? num(w.createdAt, 0) : spawnAt - WRECK_SPAWN_DELAY, spawnAt)),
+        x: Math.max(0, Math.min(num(w.x, 0), map.width)),
+        y: Math.max(0, Math.min(num(w.y, 0), map.height)),
+        goods: sanitizeGoods(w.goods),
+      };
+    }) : []).filter(w => Object.keys(w.goods).length > 0);
 
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,

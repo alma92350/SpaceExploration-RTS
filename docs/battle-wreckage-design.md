@@ -8,8 +8,8 @@ construction materials**, plus a chance of **denser, higher-tier byproducts** (m
 electronics, relics) that a fight's energy can forge on top of the raw materials that
 were actually spent.
 
-**Status: Phase 1 and Phase 2 shipped** (`engine/wreckage.js`). Phase 3 (rendering/VFX
-polish) is next; Phase 4 remains a follow-up-if-needed. This doc is the plan of record.
+**Status: all four phases shipped** (`engine/wreckage.js`). This doc is the plan of
+record; see §6 for what each phase actually delivered.
 
 ---
 
@@ -314,15 +314,31 @@ Playwright): a synthetic wreck node next to a normal one confirmed the visual
 distinction, and a fired `wreckMatured` event confirmed the toast/sound with a clean
 console.
 
-**Phase 4 — Optional follow-ups, only if playtesting calls for them:** extending
-`spawnAt` on new contributions to an ongoing site ("a raging battle grows before it
-settles"); gating the base return's commodities to the planet's own `deposits` table if
-the AI unit-mix assumption in §3 proves disruptive in practice.
+**Phase 4 — Optional follow-ups. ✅ DONE.**
+
+- **A raging battle grows before it settles.** Each new contribution to an
+  already-pending site now refreshes `spawnAt` to a fresh `WRECK_SPAWN_DELAY` from
+  right now, capped at `WRECK_MAX_DELAY` (150) total from the site's first death
+  (`createdAt`, set once and never changed) — a drawn-out fight over the same ground
+  keeps enriching the eventual deposit, but can't defer it forever.
+- **The base return is gated to what this world actually has.** `isNaturalDeposit`
+  checks whether a commodity already exists as a genuine map-generated node somewhere
+  on this world (excluding wreck/crater nodes themselves, so a slipped-through foreign
+  commodity can never "unlock" itself for later kills) before letting it into the 80%
+  base return; `value` (battle intensity, for the Phase-2 bonus) still counts
+  everything regardless. This protects `aiWorkers.js`'s "surface commodity set is
+  constant for the match" assumption flagged in §3. The battle-intensity bonus is
+  deliberately NOT gated — metals/electronics are never a natural deposit on ANY
+  world, so gating them would just delete the bonus. **Real consequence:**
+  Strategic-tier costs (`ai`, `antimatter`, `plasmatorp`) are now never recoverable
+  through the base return on any world (never a natural deposit anywhere), only ever
+  through the separate, capped bonus roll — resolving the "how generous is 80% of a
+  capital ship's strategic cost" question §4 flagged.
 
 ### Recommended order & risk
 
 `Phase 1` (medium risk — touches the shared death path for every kill in the game, so it
 needs the fullest test coverage before anything else lands) → `Phase 2` (low risk,
 additive, isolated to `wreckage.js`) → `Phase 3` (cosmetic, no sim logic) → `Phase 4`
-(only if needed). Ship and play-test Phase 1 alone first — it's the phase that changes
-how every single fight in the game pays out.
+(touches the base-return calculation again, but additive/gating only — nothing it
+removes was reachable before Phase 1 shipped). All four phases are now live.
