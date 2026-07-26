@@ -110,29 +110,29 @@ export const BUILDINGS = {
   reactor: {
     id: "reactor", name: "Reactor", hp: 400, radius: 16,
     cost: { ore: 120 }, buildTime: 16, sight: 130,
-    energyGrants: 20,   // the power that runs the factories below; short power throttles them all
+    energyGrants: 30,   // the power that runs the factories below; short power throttles them all
     powerRange: 1,      // the reference grid reach — a consumer's efficiency tier is its distance / this (industry.js)
     // The original power station burns radioactives too — a real fission reactor runs on fissile
     // material, not free once built. Its own local fuel larder (entities.js inputCapOf), filled by
     // a worker SERVICE run (engine/haul.js), same mechanism as its smaller combust siblings below —
-    // just at double their burn rate (1.2/s vs 0.6/s), matching its double energyGrants and reach.
+    // just at double their burn rate (0.12/s vs 0.06/s), matching its double energyGrants and reach.
     // Out of fuel (or paused) it grants nothing, same as them. See engine/industry.js updateCombustors.
-    combust: { fuels: ["radioactives"], rate: 1.2 },
+    combust: { fuels: ["radioactives"], rate: 0.12 },
     odysseyOnly: true,
     category: "industrial",
   },
   combustor: {
     id: "combustor", name: "Combustion Generator", hp: 300, radius: 13,
     cost: { ore: 70 }, buildTime: 12, sight: 110,
-    // A cheap, fuel-burning alternative to the Reactor: it GRANTS less Power (energyGrants 10 vs 20)
+    // A cheap, fuel-burning alternative to the Reactor: it GRANTS less Power (energyGrants 15 vs 30)
     // over a SMALLER grid (powerRange 0.55 shrinks its efficiency zones — industry.js) and burns fuel
     // at half the Reactor's rate too — cheaper to raise and run, just less of a grid. It burns gas
     // (Helium-3) from its own local fuel buffer — a real WORKER hauls it in from the treasury, same
     // as a factory's input larder (engine/haul.js SERVICE), same mechanism the Reactor now uses. Out
     // of fuel (or paused) it grants nothing. See engine/industry.js updateCombustors. Its
     // biomass-burning sibling is the Biomass Reactor below.
-    energyGrants: 10, powerRange: 0.55,
-    combust: { fuels: ["gas"], rate: 0.6 },
+    energyGrants: 15, powerRange: 0.55,
+    combust: { fuels: ["gas"], rate: 0.06 },
     odysseyOnly: true,
     category: "industrial",
   },
@@ -142,8 +142,8 @@ export const BUILDINGS = {
     // The Combustion Generator's sibling, for a claim rich in biomass instead of Helium-3 — same
     // cheap-but-fed deal (energyGrants/powerRange/rate all match), just its own single fuel and a
     // worker hauling it in the same way (engine/haul.js SERVICE, engine/industry.js updateCombustors).
-    energyGrants: 10, powerRange: 0.55,
-    combust: { fuels: ["biomass"], rate: 0.6 },
+    energyGrants: 15, powerRange: 0.55,
+    combust: { fuels: ["biomass"], rate: 0.06 },
     odysseyOnly: true,
     category: "industrial",
   },

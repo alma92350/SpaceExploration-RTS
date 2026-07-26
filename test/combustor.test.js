@@ -114,7 +114,7 @@ test("the Generator is Odyssey-only and its fuel state is deterministic + save-c
 
 // ---- the Reactor: the original power station, now burning radioactives too --------------------
 // The Reactor is no longer free once built — it burns radioactives from its own larder, same
-// mechanism as its smaller combust siblings above, just at double their rate (1.2/s vs 0.6/s),
+// mechanism as its smaller combust siblings above, just at double their rate (0.12/s vs 0.06/s),
 // matching its double energyGrants/reach. `paused` (the HUD's Pause/Resume toggle, same idiom as a
 // factory/Plasma Rig/Generator) takes it off the grid by hand without demolishing it — same as before.
 

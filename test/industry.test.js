@@ -29,8 +29,8 @@ const assembler = (o = {}) => ({ type: "assembler", ...o });
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
 test("powerCap sums Reactors' grants; a constructing Reactor grants nothing", () => {
-  assert.equal(powerCap(stub([reactor()]), "player"), 20);
-  assert.equal(powerCap(stub([reactor(), reactor()]), "player"), 40);
+  assert.equal(powerCap(stub([reactor()]), "player"), BUILDINGS.reactor.energyGrants);
+  assert.equal(powerCap(stub([reactor(), reactor()]), "player"), BUILDINGS.reactor.energyGrants * 2);
   assert.equal(powerCap(stub([reactor({ constructing: true })]), "player"), 0, "still going up → grants nothing yet");
   assert.equal(powerCap(stub([smelter()]), "player"), 0, "a factory grants no power");
 });
@@ -46,10 +46,13 @@ test("powerDraw sums each factory's recipe energy × prodRate", () => {
 test("powerThrottle: full with power, zero without, fractional when factories out-draw the Reactors", () => {
   assert.equal(powerThrottle(stub([]), "player"), 1, "no factories → nothing to throttle");
   assert.equal(powerThrottle(stub([smelter()]), "player"), 0, "a factory with no Reactor is dead");
-  assert.equal(powerThrottle(stub([reactor(), smelter()]), "player"), 1, "a 20 cap easily covers a 4 draw");
-  // reactor (20 cap) + 6 smelters (24 draw) → throttled to 20/24
-  const many = stub([reactor(), smelter(), smelter(), smelter(), smelter(), smelter(), smelter()]);
-  assert.ok(near(powerThrottle(many, "player"), 20 / 24), "over-draw throttles every factory by the same fraction");
+  assert.equal(powerThrottle(stub([reactor(), smelter()]), "player"), 1, "the Reactor's cap easily covers a single smelter's 4 draw");
+  // Enough smelters (each drawing 4 — see the powerDraw test above) to out-draw one Reactor's
+  // cap, whatever that cap is currently tuned to — reactor cap + N smelters' draw, throttled to cap/draw.
+  const smelterDraw = 4, n = Math.ceil(BUILDINGS.reactor.energyGrants / smelterDraw) + 2;
+  const many = stub([reactor(), ...Array.from({ length: n }, () => smelter())]);
+  assert.ok(near(powerThrottle(many, "player"), BUILDINGS.reactor.energyGrants / (n * smelterDraw)),
+    "over-draw throttles every factory by the same fraction");
 });
 
 test("a powered Smelter refines ore from its input larder into metals in its output buffer", () => {
@@ -212,9 +215,11 @@ test("a factory far from its Reactor draws MORE grid capacity for the same job",
   assert.ok(near(powerDraw(onGrid, "player"), 4), "on-grid Smelter draws its base 4");
   assert.ok(near(powerDraw(isolated, "player"), 4 * 2.3), "an isolated Smelter draws 2.3× — transmission loss");
 
-  // On a tight grid (one Reactor's 20 cap, five Smelters) the same five factories run at
-  // full speed when clustered on-grid (5×4 = 20) but throttle when isolated (5×9.2 = 46).
-  const five = (spot) => stub([reactor({ x: 0, y: 0 }), ...Array.from({ length: 5 }, () => smelter(spot))]);
+  // On a tight grid (one Reactor's cap, N Smelters chosen to just fit it clustered) the same N
+  // factories run at full speed clustered on-grid but throttle when isolated (transmission loss
+  // inflates their draw 2.3×) — whatever the Reactor's cap is currently tuned to.
+  const n = Math.max(1, Math.floor(BUILDINGS.reactor.energyGrants / 4));
+  const five = (spot) => stub([reactor({ x: 0, y: 0 }), ...Array.from({ length: n }, () => smelter(spot))]);
   assert.equal(powerThrottle(five({ x: 0, y: 100 }), "player"), 1, "clustered on-grid → the grid just covers them");
   assert.ok(powerThrottle(five({ x: 600, y: 0 }), "player") < 0.5, "isolated → their inflated draw starves the grid");
 });
