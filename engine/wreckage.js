@@ -49,6 +49,31 @@
    here instead of a flat, unrelated roll. Deterministic and capped (see
    WRECK_BONUS_FRAC/WRECK_BONUS_CAP), so a big battle is a meaningfully better
    payoff without turning wreckage into a way to skip the refining chain.
+
+   A RAGING BATTLE GROWS BEFORE IT SETTLES: unlike a Helium Bomb crater's fixed
+   timer, a new contribution to an ALREADY-PENDING site refreshes its spawnAt to
+   a fresh WRECK_SPAWN_DELAY from right now — capped at WRECK_MAX_DELAY total
+   from the site's first death (site.createdAt), so a drawn-out fight over the
+   same ground keeps enriching the eventual deposit instead of maturing mid-fight,
+   but can't defer it forever.
+
+   THE BASE RETURN IS GATED TO WHAT THIS WORLD ACTUALLY HAS: a raw unit's cost
+   commodity only reappears in the 80% base return (see isNaturalDeposit) if it's
+   already a genuine map-generated deposit somewhere on THIS world — a natural
+   cluster, a guaranteed build-critical seam, home ore, or an undiscovered cache;
+   never a wreck or crater node, which would otherwise let one lucky slip-through
+   "unlock" a wholly foreign commodity for every kill after it. This protects
+   aiWorkers.js's "the surface commodity set is constant for the match" assumption:
+   wreckage can enrich a world's OWN goods, never import ones it never had. The
+   battle-intensity bonus above is deliberately NOT gated by this — metals and
+   electronics are never a natural surface deposit on ANY world, so gating them
+   the same way would just delete the bonus outright; forging them out of nothing
+   is the whole point, same as the crater's own unrelated commodity roll. One
+   real consequence: Strategic-tier costs (ai, antimatter, plasmatorp) are never
+   natural deposits anywhere, so they're now NEVER recoverable through the base
+   return on any world, only ever through the (separate, capped) bonus roll —
+   resolving the "how generous is 80% of a capital ship's strategic cost" balance
+   question this doc flagged back in Phase 1/2.
    ============================================================ */
 
 "use strict";
@@ -70,6 +95,11 @@ export const WRECK_MERGE_RADIUS = 140;
 // crater's 60s (CRATER_SPAWN_DELAY, engine/bomb.js) — an ordinary battle is a far more
 // frequent, smaller-scale event than a doomsday device going off.
 export const WRECK_SPAWN_DELAY = 45;
+
+// The most a site's maturation can ever be deferred past its FIRST death, no matter how
+// many more contributions keep refreshing it (see mergeIntoWreckSite) — a raging fight
+// over the same ground grows the eventual deposit, but can't hold it open forever.
+export const WRECK_MAX_DELAY = 150;
 
 // Cosmetic spread of a matured site's per-commodity nodes around its centroid, so a
 // 2-3 commodity wreck reads as a small debris field instead of stacked identical-position
@@ -111,9 +141,10 @@ function nearestWreckSite(wrecks, x, y) {
 }
 
 // Merge `entity`'s recovered goods (already scaled by WRECK_RETURN_FRAC) into the nearest
-// qualifying pending site — folding its position into the site's running centroid and
-// adding `value` (the entity's FULL, un-scaled cost total) to the site's battle-intensity
-// running total — or open a new one at its position.
+// qualifying pending site — folding its position into the site's running centroid, adding
+// `value` (the entity's FULL, un-scaled cost total) to the site's battle-intensity running
+// total, and refreshing its spawnAt (a raging battle grows before it settles, capped at
+// WRECK_MAX_DELAY total from the site's first death) — or open a new one at its position.
 function mergeIntoWreckSite(state, entity, goods, value) {
   const wrecks = state.wrecks || (state.wrecks = []);
   const site = nearestWreckSite(wrecks, entity.x, entity.y);
@@ -123,6 +154,7 @@ function mergeIntoWreckSite(state, entity, goods, value) {
     site.n += 1;
     site.value += value;
     for (const com of Object.keys(goods)) site.goods[com] = (site.goods[com] || 0) + goods[com];
+    site.spawnAt = Math.min(state.time + WRECK_SPAWN_DELAY, site.createdAt + WRECK_MAX_DELAY);
     return;
   }
   // Namespaced off the first contributing entity's own (globally-unique) id — the same
@@ -131,8 +163,21 @@ function mergeIntoWreckSite(state, entity, goods, value) {
   // more deaths merge into this site later.
   wrecks.push({
     id: `wreck-${entity.id}`, x: entity.x, y: entity.y, n: 1,
-    goods: { ...goods }, value, spawnAt: state.time + WRECK_SPAWN_DELAY,
+    goods: { ...goods }, value, createdAt: state.time, spawnAt: state.time + WRECK_SPAWN_DELAY,
   });
+}
+
+// True if `com` already exists as a genuinely map-generated deposit somewhere on THIS
+// world (a natural cluster, a guaranteed build-critical seam, home ore, or an
+// undiscovered cache — anything engine/map.js itself placed at generation time) — as
+// opposed to only existing because a wreck or crater synthesized it out of nowhere.
+// Excluding wreck/crater nodes from the check is what keeps this gate from being
+// self-defeating: one lucky foreign commodity that slipped through (or a crater's own
+// unrelated roll) must never "unlock" that commodity for every kill after it. Gates the
+// BASE return only (see depositWreckage) — the battle-intensity bonus deliberately
+// ignores this (see the header comment).
+function isNaturalDeposit(state, com) {
+  return state.map.nodes.some(n => n.com === com && !n.wreck && !n.crater);
 }
 
 // Call from every death path (engine/combat.js's performAttack, engine/bomb.js's
@@ -146,11 +191,20 @@ export function depositWreckage(state, entity) {
   const goods = {};
   let value = 0;
   for (const [com, qty] of Object.entries(def.cost)) {
+    // `value` (battle intensity, for the bonus roll) counts everything that was spent,
+    // regardless of whether it's reclaimable here — a fight's scale isn't this world's
+    // business. The actual reclaimable `goods` are gated to what THIS world naturally has.
     value += qty;
+    if (!isNaturalDeposit(state, com)) continue;
     const amt = qty * WRECK_RETURN_FRAC;
     if (amt > 0) goods[com] = amt;
   }
-  if (!Object.keys(goods).length) return;
+  // A no-cost entity (e.g. the scenario-only Freighter, cost: {}) has nothing to
+  // contribute at all. One whose ENTIRE cost is foreign to this world (goods empty)
+  // still merges in — its value still counts toward a nearby site's battle intensity,
+  // and a big enough fight can still leave a bonus-only deposit (applyBattleBonus) even
+  // when nothing about the death itself was locally reclaimable.
+  if (value <= 0) return;
   mergeIntoWreckSite(state, entity, goods, value);
 }
 

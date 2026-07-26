@@ -7,7 +7,7 @@ import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { detonateBomb } from "../engine/bomb.js";
 import {
   depositWreckage, updateWreckage,
-  WRECK_RETURN_FRAC, WRECK_MERGE_RADIUS, WRECK_SPAWN_DELAY,
+  WRECK_RETURN_FRAC, WRECK_MERGE_RADIUS, WRECK_SPAWN_DELAY, WRECK_MAX_DELAY,
   WRECK_BONUS_COMMODITIES, WRECK_BONUS_THRESHOLD, WRECK_BONUS_FRAC, WRECK_BONUS_CAP,
 } from "../engine/wreckage.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
@@ -65,6 +65,74 @@ test("a no-cost entity (the scenario-only Freighter) deposits nothing", () => {
   assert.equal(state.wrecks.length, 0);
 });
 
+/* ---------- gating the base return to what this world actually has ---------- */
+
+test("a commodity foreign to this world is excluded from the base return", () => {
+  const state = createGameState({ planetId: "ferros" });   // deposits: ore, crystals, radioactives -- no gas
+  const wraith = makeUnit("wraith", "player", 1000, 1000);   // cost: { ore: 120, gas: 60 }
+  state.units.set(wraith.id, wraith);
+
+  depositWreckage(state, wraith);
+
+  const site = state.wrecks[0];
+  assert.ok(Math.abs(site.goods.ore - UNITS.wraith.cost.ore * WRECK_RETURN_FRAC) < 1e-9, "ore is native to ferros");
+  assert.ok(!site.goods.gas, "gas is foreign to ferros -- excluded from the base return");
+  assert.ok(Math.abs(site.value - (UNITS.wraith.cost.ore + UNITS.wraith.cost.gas)) < 1e-9,
+    "but the FULL cost (including the foreign gas) still counts toward battle intensity");
+});
+
+test("a commodity that IS naturally deposited on this world still comes through the base return in full", () => {
+  const state = createGameState({ planetId: "vesper" });   // deposits: ore, crystals, gas
+  const wraith = makeUnit("wraith", "player", 1000, 1000);
+  state.units.set(wraith.id, wraith);
+
+  depositWreckage(state, wraith);
+
+  const site = state.wrecks[0];
+  assert.ok(Math.abs(site.goods.gas - UNITS.wraith.cost.gas * WRECK_RETURN_FRAC) < 1e-9, "gas is native to vesper -- recovered in full");
+});
+
+test("Strategic-tier costs (AI Cores, Plasma Torpedoes) are never recoverable through the base return on any world", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const leviathan = makeUnit("leviathan", "player", 1000, 1000);   // cost: { ore: 300, ai: 3, plasmatorp: 4 }
+  state.units.set(leviathan.id, leviathan);
+
+  depositWreckage(state, leviathan);
+
+  const site = state.wrecks[0];
+  assert.ok(Math.abs(site.goods.ore - UNITS.leviathan.cost.ore * WRECK_RETURN_FRAC) < 1e-9);
+  assert.ok(!site.goods.ai, "AI Cores are manufactured, never a natural surface deposit");
+  assert.ok(!site.goods.plasmatorp, "Plasma Torpedoes are manufactured, never a natural surface deposit");
+});
+
+test("an entity whose ENTIRE cost is foreign still opens/merges a site -- its value counts, even with nothing reclaimable", () => {
+  const state = createGameState({ planetId: "ferros" });   // no gas, no antimatter, no plasmatorp anywhere on this world
+  const bomb = makeUnit("heliumbomb", "player", 1000, 1000);   // cost: { gas: 150, antimatter: 3, plasmatorp: 3 } -- all foreign
+  state.units.set(bomb.id, bomb);
+
+  depositWreckage(state, bomb);
+
+  assert.equal(state.wrecks.length, 1, "it still opens a site");
+  assert.deepEqual(state.wrecks[0].goods, {}, "but with nothing reclaimable");
+  const bombCostTotal = Object.values(UNITS.heliumbomb.cost).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(state.wrecks[0].value - bombCostTotal) < 1e-9, "its value still counts toward battle intensity");
+});
+
+test("the gate isn't self-defeating: an existing wreck node of a foreign commodity doesn't 'unlock' it for later kills", () => {
+  const state = createGameState({ planetId: "ferros" });
+  // Directly seed a wreck node of a commodity ferros doesn't naturally deposit, simulating
+  // an already-matured site elsewhere on the map -- isNaturalDeposit must ignore it.
+  const foreignWreck = { id: "wreck-earlier-gas", com: "gas", amount: 10, max: 10, x: 50, y: 50, wreck: true };
+  state.map.nodes.push(foreignWreck);
+  state.map.nodesById.set(foreignWreck.id, foreignWreck);
+
+  const wraith = makeUnit("wraith", "player", 2000, 2000);
+  state.units.set(wraith.id, wraith);
+  depositWreckage(state, wraith);
+
+  assert.ok(!state.wrecks[0].goods.gas, "an existing WRECK node of that commodity still doesn't count as a natural deposit");
+});
+
 /* ---------- consolidation: nearby deaths pool into one site ---------- */
 
 test("two deaths within WRECK_MERGE_RADIUS consolidate into one site", () => {
@@ -98,8 +166,8 @@ test("two deaths farther apart than WRECK_MERGE_RADIUS open separate sites", () 
 test("a death equidistant between two pending sites merges into the lower-id one, deterministically", () => {
   const state = createGameState({ planetId: "ferros" });
   state.wrecks = [
-    { id: "wreck-zzz", x: 900, y: 1000, n: 1, goods: { ore: 10 }, spawnAt: state.time + WRECK_SPAWN_DELAY },
-    { id: "wreck-aaa", x: 1100, y: 1000, n: 1, goods: { ore: 10 }, spawnAt: state.time + WRECK_SPAWN_DELAY },
+    { id: "wreck-zzz", x: 900, y: 1000, n: 1, goods: { ore: 10 }, value: 10, createdAt: state.time, spawnAt: state.time + WRECK_SPAWN_DELAY },
+    { id: "wreck-aaa", x: 1100, y: 1000, n: 1, goods: { ore: 10 }, value: 10, createdAt: state.time, spawnAt: state.time + WRECK_SPAWN_DELAY },
   ];
   const dying = makeUnit("worker", "player", 1000, 1000);   // exactly 100 from each site
   state.units.set(dying.id, dying);
@@ -110,6 +178,60 @@ test("a death equidistant between two pending sites merges into the lower-id one
   const aaa = state.wrecks.find(w => w.id === "wreck-aaa");
   assert.equal(aaa.n, 2, "the lower id wins an exact distance tie");
   assert.equal(zzz.n, 1, "the other site is untouched");
+});
+
+/* ---------- a raging battle grows before it settles (spawnAt extension) ---------- */
+
+test("a new contribution to an existing site extends its spawnAt", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const w1 = makeUnit("worker", "player", 1000, 1000);
+  state.units.set(w1.id, w1);
+  depositWreckage(state, w1);
+  const firstSpawnAt = state.wrecks[0].spawnAt;
+
+  state.time += 20;   // well before the first spawnAt
+  const w2 = makeUnit("worker", "player", 1010, 1000);
+  state.units.set(w2.id, w2);
+  depositWreckage(state, w2);
+
+  assert.equal(state.wrecks.length, 1, "still one consolidated site");
+  assert.ok(state.wrecks[0].spawnAt > firstSpawnAt, "the second death pushed maturation further out");
+  assert.equal(state.wrecks[0].spawnAt, state.time + WRECK_SPAWN_DELAY, "refreshed to a full delay from the second death");
+});
+
+test("createdAt is set once at a site's first death and never changes on later merges", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const w1 = makeUnit("worker", "player", 1000, 1000);
+  state.units.set(w1.id, w1);
+  depositWreckage(state, w1);
+  const createdAt = state.wrecks[0].createdAt;
+  assert.equal(createdAt, state.time);
+
+  state.time += 10;
+  const w2 = makeUnit("worker", "player", 1000, 1000);
+  state.units.set(w2.id, w2);
+  depositWreckage(state, w2);
+
+  assert.equal(state.wrecks[0].createdAt, createdAt, "createdAt is immutable once the site exists");
+});
+
+test("repeated contributions can't defer maturation past WRECK_MAX_DELAY from the first death", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const first = makeUnit("worker", "player", 1000, 1000);
+  state.units.set(first.id, first);
+  depositWreckage(state, first);
+  const createdAt = state.wrecks[0].createdAt;
+
+  // Keep contributing, always well within WRECK_SPAWN_DELAY of the last extension, for
+  // long enough that an unbounded refresh would push spawnAt far past WRECK_MAX_DELAY.
+  for (let i = 0; i < 20; i++) {
+    state.time += WRECK_SPAWN_DELAY - 1;
+    const next = makeUnit("worker", "player", 1000, 1000);
+    state.units.set(next.id, next);
+    depositWreckage(state, next);
+  }
+
+  assert.equal(state.wrecks[0].spawnAt, createdAt + WRECK_MAX_DELAY, "capped, regardless of how many more contributions arrive");
 });
 
 /* ---------- maturation: a pending site becomes real, mineable nodes ---------- */
@@ -294,7 +416,7 @@ test("an ordinary combat kill deposits wreckage through the real death path", ()
 });
 
 test("a Helium Bomb blast kill also deposits wreckage, stacking with the bomb's own crater", () => {
-  const state = createGameState({ planetId: "ferros" });
+  const state = createGameState({ planetId: "ferros" });   // ferros deposits ore/crystals/radioactives — no gas
   const bomb = makeUnit("heliumbomb", "player", 6000, 6000);
   state.units.set(bomb.id, bomb);
   const victim = makeUnit("worker", "ai", 6005, 6000);   // well within the blast core
@@ -306,7 +428,11 @@ test("a Helium Bomb blast kill also deposits wreckage, stacking with the bomb's 
   assert.equal(state.craters.length, 1, "the bomb's own crater is still scheduled");
   assert.equal(state.wrecks.length, 1, "the victim's (and the bomb's own) wreckage is ALSO scheduled now");
   assert.ok(Math.abs(state.wrecks[0].goods.ore - UNITS.worker.cost.ore * WRECK_RETURN_FRAC) < 1e-9, "the worker's own wreckage");
-  assert.ok(Math.abs(state.wrecks[0].goods.gas - UNITS.heliumbomb.cost.gas * WRECK_RETURN_FRAC) < 1e-9, "the bomb's own wreckage merged into the same site");
+  assert.ok(!state.wrecks[0].goods.gas, "the bomb's own gas cost is gated out of the base return — ferros has no natural gas deposit");
+  const bombCostTotal = Object.values(UNITS.heliumbomb.cost).reduce((a, b) => a + b, 0);
+  const expectedValue = UNITS.worker.cost.ore + bombCostTotal;
+  assert.ok(Math.abs(state.wrecks[0].value - expectedValue) < 1e-9,
+    "the bomb's own value still counts toward battle intensity even though none of its cost was reclaimable here");
 });
 
 test("a full tick() loop matures wreckage on schedule — the real integration path", () => {
@@ -360,6 +486,35 @@ test("a pending site's battle-intensity value survives save/load", () => {
   assert.equal(loaded.wrecks[0].value, expectedValue);
 });
 
+test("a pending site's createdAt survives save/load", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const worker = makeUnit("worker", "player", 800, 800);
+  state.units.set(worker.id, worker);
+  depositWreckage(state, worker);
+  const expectedCreatedAt = state.wrecks[0].createdAt;
+
+  const loaded = deserializeGame(serializeGame(state));
+
+  assert.equal(loaded.wrecks[0].createdAt, expectedCreatedAt);
+});
+
+test("a pending site missing createdAt (a pre-Phase-4 save) still gets a sane fallback and matures correctly", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const worker = makeUnit("worker", "player", 800, 800);
+  state.units.set(worker.id, worker);
+  depositWreckage(state, worker);
+  const siteId = state.wrecks[0].id;
+  const save = serializeGame(state);
+  delete save.wrecks[0].createdAt;   // simulate an older, pre-Phase-4 save format
+
+  const loaded = deserializeGame(save);
+
+  assert.ok(Number.isFinite(loaded.wrecks[0].createdAt), "a sane fallback is reconstructed, not left undefined/NaN");
+  loaded.time = loaded.wrecks[0].spawnAt;
+  updateWreckage(loaded);
+  assert.ok(loaded.map.nodesById.has(`${siteId}-ore`), "matures correctly despite the missing field");
+});
+
 test("a MATURED wreck node survives save/load — it isn't part of the seed-regenerated map", () => {
   const state = createGameState({ planetId: "ferros" });
   const worker = makeUnit("worker", "player", 800, 800);
@@ -403,7 +558,10 @@ test("a tampered/malformed wrecks save is dropped gracefully rather than crashin
 
   save.wrecks.push({ id: "wreck-evil", x: 100, y: 100, n: 1, goods: { "not-a-real-commodity": 999 }, spawnAt: 10 });   // no valid commodity left
   save.wrecks.push("not even an object");
-  save.wrecks.push({ id: "wreck-huge", x: 1e12, y: -1e12, n: "lots", value: -999, goods: { ore: 50 }, spawnAt: "soon" });   // garbage coords/n/value/time
+  save.wrecks.push({
+    id: "wreck-huge", x: 1e12, y: -1e12, n: "lots", value: -999, createdAt: 1e12,
+    goods: { ore: 50 }, spawnAt: "soon",   // garbage coords/n/value/createdAt/time
+  });
 
   const loaded = deserializeGame(save);
   assert.ok(!loaded.wrecks.some(w => w.id === "wreck-evil"), "an entry with no valid commodities after sanitizing is dropped entirely");
@@ -414,6 +572,8 @@ test("a tampered/malformed wrecks save is dropped gracefully rather than crashin
   assert.ok(Number.isFinite(huge.spawnAt), "non-numeric spawnAt coerced to a finite number");
   assert.ok(Number.isFinite(huge.n) && huge.n >= 1, "non-numeric n coerced to a sane floor");
   assert.ok(Number.isFinite(huge.value) && huge.value >= 0, "a negative value is clamped to 0, not left to poison the bonus roll");
+  assert.ok(Number.isFinite(huge.createdAt) && huge.createdAt <= huge.spawnAt,
+    "an implausibly future createdAt is clamped to at most this site's own spawnAt, not left to grant runaway extension");
 });
 
 test("a tampered wreck NODE (not the pending list) is sanitized on load — bogus commodity dropped", () => {

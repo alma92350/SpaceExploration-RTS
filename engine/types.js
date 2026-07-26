@@ -267,9 +267,10 @@
  * @property {Array<Object>} events
  * @property {Array<{id:string, x:number, y:number, owner:string, spawnAt:number}>} craters
  *   pending Helium Bomb craters awaiting maturity into a real ResourceNode (engine/bomb.js)
- * @property {Array<{id:string, x:number, y:number, n:number, value:number, goods:Object.<string,number>, spawnAt:number}>} wrecks
+ * @property {Array<{id:string, x:number, y:number, n:number, value:number, createdAt:number, goods:Object.<string,number>, spawnAt:number}>} wrecks
  *   pending battle-wreckage sites awaiting maturity into real ResourceNodes (engine/wreckage.js);
- *   `value` is the running, un-scaled battle-intensity total that gates a bonus-material roll
+ *   `value` is the running, un-scaled battle-intensity total that gates a bonus-material roll;
+ *   `createdAt` anchors how far a later contribution may extend `spawnAt` (capped at WRECK_MAX_DELAY)
  * @property {Object} [unitGrid]     broad-phase index, rebuilt each tick (engine/grid.js)
  * @property {Market} [market]       Odyssey per-world price book (engine/galaxy.js)
  * @property {Diplomacy} [diplomacy] Odyssey neighbour stance (engine/galaxy.js)
