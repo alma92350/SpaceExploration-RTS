@@ -12,7 +12,7 @@ import { mulberry32 } from "./_helpers.js";
 // built state (used to scan for a spot whose surface-biased vein is a specific commodity).
 function rigWorld(seed = 1, place = { x: 700, y: 500 }) {
   const s = createGameState({ planetId: "ferros", seed, rng: mulberry32(seed), endless: true });
-  const reactor = makeBuilding("reactor", "player", 600, 500);   // energyGrants 20 > rig draw 16 → full speed
+  const reactor = makeBuilding("reactor", "player", 600, 500);   // energyGrants 30 > rig draw 16 → full speed
   reactor.input = { radioactives: 100000 };   // this file is about the rig, not the Reactor's own fuel logistics —
                                                // no workers exist in this fixture to haul any in, so it's pre-fuelled
   s.buildings.set(...entry(reactor));
