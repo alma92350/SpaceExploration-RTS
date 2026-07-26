@@ -42,6 +42,37 @@ import { techMult } from "./techtree.js";
 export const ELECTRIFY_POWER = 4;   // grid draw per electrified building (grid-efficiency scaled, like a factory)
 const ELECTRIFY_BOOST = 0.3;        // the headline "+30% with power"
 
+// ICE COOLANT (Odyssey) — banked ice works as a coolant for the whole industrial base: an owner
+// with ANY ice in this world's treasury runs every recipe-based factory, the Plasma Rig
+// (engine/rig.js), and the fuel-burning power stations (Reactor / Combustion Generator / Biomass
+// Reactor, below) at half their normal appetite — half of each recipe's non-energy inputs, half
+// the Rig's nuclear burn per dig, half a power station's fuel burn, and half the grid Power a
+// factory or the Rig draws to run. A flat stockpile check, like the Rig's own nuclearOk gate — ice
+// isn't spent to grant the discount, so it's a standing bonus for as long as any is banked, not a
+// per-tick drip. Deliberately NOT read by the wonder's charge draw or by ELECTRIFY_POWER — neither
+// is "industry", so ice coolant leaves them untouched.
+const ICE_COOLANT_MULT = 0.5;
+
+/** Whether `owner` currently has ice banked (in THIS state's treasury) to run as coolant. */
+export function hasIceCoolant(state, owner) {
+  return (state.players[owner]?.resources?.ice || 0) > 0;
+}
+
+/** ICE_COOLANT_MULT with ice banked, else 1 — the one multiplier every fuel/input burn and Power
+ * draw below applies, so "keep some ice banked" reads as a single flat efficiency bonus across the
+ * whole industrial base rather than a per-building rule to remember. */
+export function iceCoolantMult(state, owner) {
+  return hasIceCoolant(state, owner) ? ICE_COOLANT_MULT : 1;
+}
+
+// PAUSED STANDBY DRAW (Odyssey) — a paused factory or Plasma Rig no longer frees its WHOLE
+// reserved Power when parked: it idles at a small standby trickle instead, the same way real
+// hardware left in standby still sips power. Applied only inside powerDraw's recipe/rig branches
+// below — a paused power STATION (Reactor/Generator/Biomass Reactor) has no draw of its own to
+// trickle (it only ever GRANTS Power, and already grants none while paused — see sourceActive), so
+// it's untouched by this constant.
+const PAUSED_POWER_FRACTION = 0.05;
+
 // A world's `industry` rating (data.js PLANETS, 1..10) scales how fast its
 // factories run — the RATE twin of techtree.js researchTimeScale (which scales
 // research TIME). Same clamp band [0.5, 2], pivot 5 → 1.0×, so an industrial world
@@ -129,7 +160,7 @@ export function updateCombustors(state, dt) {
     const def = BUILDINGS[b.type];
     if (!def?.combust || b.constructing) continue;
     if (b.paused) { b.powered = false; continue; }
-    const need = def.combust.rate * dt;
+    const need = def.combust.rate * dt * iceCoolantMult(state, b.owner);   // banked ice halves the fuel burn
     let fuel = null, most = 0;
     for (const f of def.combust.fuels) { const have = b.input?.[f] || 0; if (have > most) { most = have; fuel = f; } }
     if (fuel && (b.input[fuel] || 0) >= need) { b.input[fuel] -= need; b.powered = true; b.fuel = fuel; }
@@ -167,19 +198,23 @@ export function powerCap(state, owner) {
 // so where you place it — not just that you power it — moves the gauge.
 export function powerDraw(state, owner) {
   let draw = 0;
+  const iceMult = iceCoolantMult(state, owner);   // banked ice halves a recipe's/Rig's Power draw too
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing) continue;
     const def = BUILDINGS[b.type];
     const r = def?.recipe ? RECIPE_BY_ID[def.recipe] : null;
     const eff = powerEfficiency(state, owner, b.x, b.y).mult;   // ≥1: distance-to-Reactor line loss
-    if (r && !b.paused) draw += (r.in.energy || 0) * (def.prodRate || 1) * eff;   // a paused factory frees its reserved Power
+    // A paused factory no longer frees its WHOLE reserved Power — it idles at a
+    // PAUSED_POWER_FRACTION standby trickle instead (see that constant's note above).
+    if (r) draw += (r.in.energy || 0) * (def.prodRate || 1) * eff * iceMult * (b.paused ? PAUSED_POWER_FRACTION : 1);
     // A wonder still charging loads the grid too, so the Antimatter Gate competes
     // with the factories for Reactor Power (engine/wonder.js) — making the finale a
     // real "feed the factories vs charge the Gate" call, and Fusion Containment worth it.
     else if (def?.wonder && (b.charge || 0) < 1) draw += (def.powerDraw || 0) * eff;
     // A Plasma Rig's arc is a heavy draw too (engine/rig.js) — so it competes with the factories
-    // for Power and its digs slow when the grid is short. A paused rig frees its reserved Power.
-    else if (def?.rig && !b.paused) draw += (def.rig.power || 0) * eff;
+    // for Power and its digs slow when the grid is short. Paused, it idles at the same standby
+    // trickle a paused factory does, rather than freeing its whole reserved Power.
+    else if (def?.rig) draw += (def.rig.power || 0) * eff * iceMult * (b.paused ? PAUSED_POWER_FRACTION : 1);
     // An electrified non-power building (Odyssey) adds its own modest, grid-scaled load — the
     // upgrade's running cost, so wiring up the whole base actually competes for Reactor Power.
     else if (b.electrified && isElectrifiable(b.type)) draw += ELECTRIFY_POWER * eff;
@@ -249,11 +284,12 @@ export function updateProduction(state, building, dt) {
   if (building.constructing) return;
   const recipe = recipeOf(building);
   if (!recipe) return;
-  if (building.paused) return;   // player-paused to conserve its inputs — banks nothing, draws nothing (see hud.js)
+  if (building.paused) return;   // player-paused to conserve its inputs — banks nothing, consumes nothing (its grid Power draw drops to a trickle instead — see powerDraw)
   const throttle = cachedPowerThrottle(state, building.owner);   // owner-wide — same number every factory reads this tick
   if (throttle <= 0) return;
   const ups = state.players[building.owner].upgrades;
   const input = building.input || (building.input = {});
+  const iceMult = iceCoolantMult(state, building.owner);   // banked ice halves every non-energy input's cost per batch
 
   // BOTH sides run the SAME finite-buffer model. A factory draws its inputs from its LOCAL input
   // larder (building.input, filled by worker supply runs — engine/haul.js) and banks its output into
@@ -270,7 +306,7 @@ export function updateProduction(state, building, dt) {
     * planetIndustryScale(state) * throttle * dt;
   for (const com in recipe.in) {
     if (com === "energy") continue;
-    frac = Math.min(frac, (input[com] || 0) / recipe.in[com]);   // only what's in the larder
+    frac = Math.min(frac, (input[com] || 0) / (recipe.in[com] * iceMult));   // only what's in the larder
   }
   // Heavy Alloys (techtree.js `heavyalloys`) lifts output per batch — same inputs, more out.
   const outPerBatch = recipe.qty * techMult(ups, "yieldMult");
@@ -279,7 +315,7 @@ export function updateProduction(state, building, dt) {
 
   for (const com in recipe.in) {
     if (com === "energy") continue;
-    input[com] = (input[com] || 0) - frac * recipe.in[com];
+    input[com] = (input[com] || 0) - frac * recipe.in[com] * iceMult;
   }
   building.store = building.store || {};
   building.store[recipe.out] = (building.store[recipe.out] || 0) + frac * outPerBatch;

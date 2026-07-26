@@ -4,7 +4,7 @@ import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { rigVein, locationRichness, rollTier, rigSurvey, PLASMA_VEINS, rigInfo } from "../engine/rig.js";
-import { storeTotal, storeCapOf } from "../engine/entities.js";
+import { storeTotal, storeCapOf, BUILDINGS } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
 // A minimal endless world with a Reactor (Power for the plasma arc) and a Plasma Rig, fuelled with
@@ -73,6 +73,29 @@ test("digging burns radioactives (nuclear to exploit) and stalls when they run o
   const stalledCount = rig.digCount;
   for (let i = 0; i < 200; i++) tick(s, 0.1);
   assert.equal(rig.digCount, stalledCount, "with no radioactives left, the rig stalls — no further digs");
+});
+
+test("ice coolant: banked ice halves the nuclear (radioactives) burn per dig, same digging/yield", () => {
+  const plain = rigWorld(9);
+  const iced = rigWorld(9);
+  iced.s.players.player.resources.ice = 5;
+  for (let i = 0; i < 300; i++) { tick(plain.s, 0.1); tick(iced.s, 0.1); }
+  assert.ok(plain.rig.digCount > 0, "the plain rig completed some digs");
+  assert.equal(plain.rig.digCount, iced.rig.digCount, "ice doesn't change how many digs complete (same tier rolls/yield)");
+  assert.deepEqual(plain.rig.store, iced.rig.store, "…or what it dug — only the fuel bill differs");
+  const spentPlain = 2000 - plain.s.players.player.resources.radioactives;
+  const spentIced = 2000 - iced.s.players.player.resources.radioactives;
+  assert.ok(spentPlain > 0, "the plain rig burned radioactives");
+  assert.ok(Math.abs(spentPlain - spentIced * 2) < 1e-6, "the iced rig burned exactly half the radioactives for the same digging");
+});
+
+test("rigInfo.nuclearOk reflects ice's halved nuclear threshold", () => {
+  const { s, rig } = rigWorld(11);
+  const fullCost = BUILDINGS.plasmarig.rig.nuclear;
+  s.players.player.resources.radioactives = fullCost * 0.75;   // enough for the halved cost, not the full one
+  assert.equal(rigInfo(s, rig).nuclearOk, false, "without ice, short of the full nuclear cost");
+  s.players.player.resources.ice = 2;
+  assert.equal(rigInfo(s, rig).nuclearOk, true, "with ice banked, the halved cost is affordable");
 });
 
 test("richness (and so the yield odds) depends on both location and planet", () => {
