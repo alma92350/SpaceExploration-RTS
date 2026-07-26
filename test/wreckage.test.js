@@ -8,6 +8,7 @@ import { detonateBomb } from "../engine/bomb.js";
 import {
   depositWreckage, updateWreckage,
   WRECK_RETURN_FRAC, WRECK_MERGE_RADIUS, WRECK_SPAWN_DELAY,
+  WRECK_BONUS_COMMODITIES, WRECK_BONUS_THRESHOLD, WRECK_BONUS_FRAC, WRECK_BONUS_CAP,
 } from "../engine/wreckage.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 
@@ -191,6 +192,91 @@ test("a worker can actually mine a matured wreck node", () => {
   assert.ok(node.amount < startAmount || miner.cargo.qty > 0, "the worker actually extracted from the wreck deposit");
 });
 
+/* ---------- battle-intensity bonus materials ---------- */
+
+test("no battle bonus rolls when a site's value stays below WRECK_BONUS_THRESHOLD", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const worker = makeUnit("worker", "player", 1000, 1000);   // cost value 50 — well under threshold
+  state.units.set(worker.id, worker);
+  depositWreckage(state, worker);
+  const siteId = state.wrecks[0].id;
+
+  state.time += WRECK_SPAWN_DELAY;
+  updateWreckage(state);
+
+  for (const com of WRECK_BONUS_COMMODITIES) {
+    assert.ok(!state.map.nodesById.has(`${siteId}-${com}`), `no bonus ${com} node should exist`);
+  }
+});
+
+test("a battle bonus rolls once a site's value clears WRECK_BONUS_THRESHOLD, sized off the excess", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const excess = 50;
+  state.wrecks = [{
+    id: "wreck-big-battle", x: 2000, y: 2000, n: 5,
+    goods: { ore: 100 }, value: WRECK_BONUS_THRESHOLD + excess,
+    spawnAt: state.time,
+  }];
+
+  updateWreckage(state);
+
+  const bonusNodes = WRECK_BONUS_COMMODITIES
+    .map(com => state.map.nodesById.get(`wreck-big-battle-${com}`))
+    .filter(Boolean);
+  assert.equal(bonusNodes.length, 1, "exactly one bonus commodity node should appear");
+  assert.ok(Math.abs(bonusNodes[0].amount - excess * WRECK_BONUS_FRAC) < 1e-9, "sized off the excess above threshold");
+});
+
+test("the battle bonus is capped at WRECK_BONUS_CAP regardless of how far value exceeds the threshold", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.wrecks = [{
+    id: "wreck-huge-battle", x: 2000, y: 2000, n: 20,
+    goods: { ore: 100 }, value: WRECK_BONUS_THRESHOLD + 100000,   // way past any reasonable cap
+    spawnAt: state.time,
+  }];
+
+  updateWreckage(state);
+
+  const bonusNodes = WRECK_BONUS_COMMODITIES
+    .map(com => state.map.nodesById.get(`wreck-huge-battle-${com}`))
+    .filter(Boolean);
+  assert.equal(bonusNodes.length, 1);
+  assert.equal(bonusNodes[0].amount, WRECK_BONUS_CAP);
+});
+
+test("the battle bonus commodity choice is deterministic — same site id, same commodity every run", () => {
+  const runOnce = () => {
+    const state = createGameState({ planetId: "ferros" });
+    state.wrecks = [{
+      id: "wreck-fixed-battle", x: 2000, y: 2000, n: 3,
+      goods: { ore: 100 }, value: WRECK_BONUS_THRESHOLD + 50,
+      spawnAt: state.time,
+    }];
+    updateWreckage(state);
+    return WRECK_BONUS_COMMODITIES.find(com => state.map.nodesById.has(`wreck-fixed-battle-${com}`));
+  };
+  assert.equal(runOnce(), runOnce());
+});
+
+test("a single big enough kill clears the bonus threshold through the real deposit -> mature pipeline", () => {
+  const state = createGameState({ planetId: "ferros" });
+  // A Dreadnought's own value (240 ore + 100 radioactives = 340) already clears
+  // WRECK_BONUS_THRESHOLD (300) on its own — no synthetic state.wrecks construction needed.
+  const dread = makeUnit("dreadnought", "player", 3000, 3000);
+  state.units.set(dread.id, dread);
+  depositWreckage(state, dread);
+  const site = state.wrecks[0];
+  assert.ok(site.value >= WRECK_BONUS_THRESHOLD, "sanity check: a single Dreadnought's value clears the threshold");
+
+  state.time += WRECK_SPAWN_DELAY;
+  updateWreckage(state);
+
+  const bonusNodes = WRECK_BONUS_COMMODITIES
+    .map(com => state.map.nodesById.get(`${site.id}-${com}`))
+    .filter(Boolean);
+  assert.equal(bonusNodes.length, 1, "the bonus rolled through the real deposit -> mature pipeline");
+});
+
 /* ---------- integration: the real death paths, not just direct calls ---------- */
 
 test("an ordinary combat kill deposits wreckage through the real death path", () => {
@@ -262,6 +348,18 @@ test("a PENDING wreck site survives save/load and still matures on schedule afte
   assert.ok(loaded.map.nodesById.has(`${siteId}-ore`), "still matures correctly after a load");
 });
 
+test("a pending site's battle-intensity value survives save/load", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const dread = makeUnit("dreadnought", "player", 800, 800);
+  state.units.set(dread.id, dread);
+  depositWreckage(state, dread);
+  const expectedValue = state.wrecks[0].value;
+
+  const loaded = deserializeGame(serializeGame(state));
+
+  assert.equal(loaded.wrecks[0].value, expectedValue);
+});
+
 test("a MATURED wreck node survives save/load — it isn't part of the seed-regenerated map", () => {
   const state = createGameState({ planetId: "ferros" });
   const worker = makeUnit("worker", "player", 800, 800);
@@ -305,7 +403,7 @@ test("a tampered/malformed wrecks save is dropped gracefully rather than crashin
 
   save.wrecks.push({ id: "wreck-evil", x: 100, y: 100, n: 1, goods: { "not-a-real-commodity": 999 }, spawnAt: 10 });   // no valid commodity left
   save.wrecks.push("not even an object");
-  save.wrecks.push({ id: "wreck-huge", x: 1e12, y: -1e12, n: "lots", goods: { ore: 50 }, spawnAt: "soon" });   // garbage coords/n/time
+  save.wrecks.push({ id: "wreck-huge", x: 1e12, y: -1e12, n: "lots", value: -999, goods: { ore: 50 }, spawnAt: "soon" });   // garbage coords/n/value/time
 
   const loaded = deserializeGame(save);
   assert.ok(!loaded.wrecks.some(w => w.id === "wreck-evil"), "an entry with no valid commodities after sanitizing is dropped entirely");
@@ -315,6 +413,7 @@ test("a tampered/malformed wrecks save is dropped gracefully rather than crashin
   assert.ok(Number.isFinite(huge.y) && huge.y >= 0 && huge.y <= loaded.map.height, "y clamped onto the map");
   assert.ok(Number.isFinite(huge.spawnAt), "non-numeric spawnAt coerced to a finite number");
   assert.ok(Number.isFinite(huge.n) && huge.n >= 1, "non-numeric n coerced to a sane floor");
+  assert.ok(Number.isFinite(huge.value) && huge.value >= 0, "a negative value is clamped to 0, not left to poison the bonus roll");
 });
 
 test("a tampered wreck NODE (not the pending list) is sanitized on load — bogus commodity dropped", () => {

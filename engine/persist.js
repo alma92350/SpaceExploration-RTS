@@ -380,8 +380,10 @@ function serPlanet(state) {
     // after a detonation would silently cancel the future deposit).
     craters: (state.craters || []).map(c => ({ id: c.id, x: c.x, y: c.y, owner: c.owner, spawnAt: c.spawnAt })),
     // Pending battle-wreckage sites (engine/wreckage.js) not yet matured — same reasoning
-    // as craters above. No `owner`: wreckage is neutral, unlike a crater.
-    wrecks: (state.wrecks || []).map(w => ({ id: w.id, x: w.x, y: w.y, n: w.n, goods: { ...w.goods }, spawnAt: w.spawnAt })),
+    // as craters above. No `owner`: wreckage is neutral, unlike a crater. `value` is the
+    // running battle-intensity total (engine/wreckage.js applyBattleBonus) — lost without
+    // this, a save/load mid-battle would silently reset a site's bonus-material progress.
+    wrecks: (state.wrecks || []).map(w => ({ id: w.id, x: w.x, y: w.y, n: w.n, value: w.value, goods: { ...w.goods }, spawnAt: w.spawnAt })),
     fog: [...state.fog.explored],
     fogAI: [...state.fogAI.explored],
     ai: {
@@ -502,6 +504,7 @@ function rehydratePlanet(P) {
     .filter(w => w && typeof w.id === "string")
     .map(w => ({
       id: w.id, spawnAt: num(w.spawnAt, 0), n: Math.max(1, Math.floor(num(w.n, 1))),
+      value: Math.max(0, num(w.value, 0)),
       x: Math.max(0, Math.min(num(w.x, 0), map.width)),
       y: Math.max(0, Math.min(num(w.y, 0), map.height)),
       goods: sanitizeGoods(w.goods),

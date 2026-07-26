@@ -8,8 +8,8 @@ construction materials**, plus a chance of **denser, higher-tier byproducts** (m
 electronics, relics) that a fight's energy can forge on top of the raw materials that
 were actually spent.
 
-**Status: design only — nothing in this doc is implemented yet.** This is the plan of
-record for a dedicated implementation pass.
+**Status: Phase 1 and Phase 2 shipped** (`engine/wreckage.js`). Phase 3 (rendering/VFX
+polish) is next; Phase 4 remains a follow-up-if-needed. This doc is the plan of record.
 
 ---
 
@@ -285,15 +285,23 @@ grant no salvage — a total loss" case, plus the stale doc-comments in `bomb.js
 
 ## 6. Phased plan
 
-**Phase 1 — Core wreckage engine. Proposed, not yet built.**
-`engine/wreckage.js` (pending sites, merge-on-death, maturation → nodes); wire into
-`combat.js`'s death branch (replacing `grantSalvage`) and `bomb.js`'s kill loop; delete
-`SALVAGE_FRAC`/`grantSalvage`; `sim.js` tick wiring; `persist.js` save/load (generalizing
-the crater-handling blocks to also cover `wreck: true`); base test suite + updates to the
-now-stale existing tests. No bonus materials yet — just the 80% base return.
+**Phase 1 — Core wreckage engine. ✅ DONE.**
+`engine/wreckage.js` (pending sites, merge-on-death, maturation → nodes); wired into
+`combat.js`'s death branch (replacing `grantSalvage`) and `bomb.js`'s kill loop; deleted
+`SALVAGE_FRAC`/`grantSalvage`; `sim.js` tick wiring; `persist.js` save/load (extended the
+crater-handling blocks to also cover `wreck: true`); 19-case test suite + updates to the
+formerly-salvage tests in `test/combat.test.js`/`test/bomb.test.js`. No bonus materials —
+just the 80% base return per §2.3.
 
-**Phase 2 — Denser bonus materials.** The battle-intensity threshold/roll (§2.4), its own
-tests, tuning `WRECK_BONUS_*` constants.
+**Phase 2 — Denser bonus materials. ✅ DONE.**
+`applyBattleBonus` (§2.4) tracks each site's running `value` (the un-scaled sum of every
+contributing death's own cost) alongside its goods, and once `value` clears
+`WRECK_BONUS_THRESHOLD` (300 — a lone Dreadnought's 340 already clears it, a lone Worker's
+50 doesn't) it deterministically forges one commodity from `WRECK_BONUS_COMMODITIES`
+(`metals`/`electronics`/`relics`) sized at `WRECK_BONUS_FRAC` (0.15) of the excess above
+threshold, capped at `WRECK_BONUS_CAP` (40). `value` is persisted on a pending site so a
+save/load mid-battle can't reset its bonus-eligibility progress. All four constants are
+tuning knobs, same as `WRECK_RETURN_FRAC` — revisit them after playtesting.
 
 **Phase 3 — Polish.** Distinct debris rendering in `renderNodes.js`, the
 `"wreckMatured"` event's sound/toast in `boot.js`, HUD messaging ("Wreckage settling in

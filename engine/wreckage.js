@@ -36,6 +36,19 @@
    unit, worker, or building dying any way at all leaves the same wreckage. A
    Helium-Bomb-blast kill leaves wreckage too now, stacking with the bomb's own
    separate crater.
+
+   BATTLE-INTENSITY BONUS: separately from the 80% base return, a site that
+   accumulates enough destroyed value (site.value — the running, un-scaled sum
+   of every contributing death's own cost, tracked alongside goods) also forges
+   a modest amount of ONE higher-tier commodity (metals, electronics, or
+   relics — see applyBattleBonus) once it clears WRECK_BONUS_THRESHOLD. A
+   wrecked hull already IS metal and its avionics already ARE electronics, so a
+   big enough fight exposes some of that directly — the same "the blast
+   synthesizes something that wouldn't otherwise be here" idea the crater's own
+   commodity roll already uses, just proportional to what actually happened
+   here instead of a flat, unrelated roll. Deterministic and capped (see
+   WRECK_BONUS_FRAC/WRECK_BONUS_CAP), so a big battle is a meaningfully better
+   payoff without turning wreckage into a way to skip the refining chain.
    ============================================================ */
 
 "use strict";
@@ -64,6 +77,26 @@ export const WRECK_SPAWN_DELAY = 45;
 const WRECK_NODE_SPREAD_MIN = 18;
 const WRECK_NODE_SPREAD_MAX = 40;
 
+// Every commodity a battle-intensity bonus can turn up — higher-tier goods a raw unit's
+// own cost never pays in, so wreckage is the only way to reclaim them from a fight
+// directly rather than through the refining chain. `relics` needs no such justification
+// (it's already Raw-tier, same as the crater's own CRATER_COMMODITIES pool).
+export const WRECK_BONUS_COMMODITIES = ["metals", "electronics", "relics"];
+
+// A site's accumulated (un-scaled) `value` has to clear this before any bonus rolls at
+// all — roughly "a couple of mid-tier units" (a lone Dreadnought's 340 already clears it;
+// a lone Worker's 50 or Skiff's 100 doesn't), so an ordinary single casualty typically
+// doesn't trigger it but a real, multi-kill engagement usually does.
+export const WRECK_BONUS_THRESHOLD = 300;
+
+// Share of the value ABOVE the threshold that becomes bonus commodity quantity.
+export const WRECK_BONUS_FRAC = 0.15;
+
+// Ceiling on one site's bonus commodity, regardless of how much value it accumulated —
+// still requires workers + time + holding the ground to actually mine out, but keeps even
+// a huge battle's windfall bounded.
+export const WRECK_BONUS_CAP = 40;
+
 // The nearest pending wreck site to (x,y) within WRECK_MERGE_RADIUS, or null if none
 // qualifies. Ties (an equal-distance pair, e.g. two sites opened the same tick) resolve
 // to the lower id, so the result never depends on state.wrecks' array order.
@@ -78,15 +111,17 @@ function nearestWreckSite(wrecks, x, y) {
 }
 
 // Merge `entity`'s recovered goods (already scaled by WRECK_RETURN_FRAC) into the nearest
-// qualifying pending site — folding its position into the site's running centroid — or
-// open a new one at its position.
-function mergeIntoWreckSite(state, entity, goods) {
+// qualifying pending site — folding its position into the site's running centroid and
+// adding `value` (the entity's FULL, un-scaled cost total) to the site's battle-intensity
+// running total — or open a new one at its position.
+function mergeIntoWreckSite(state, entity, goods, value) {
   const wrecks = state.wrecks || (state.wrecks = []);
   const site = nearestWreckSite(wrecks, entity.x, entity.y);
   if (site) {
     site.x = (site.x * site.n + entity.x) / (site.n + 1);
     site.y = (site.y * site.n + entity.y) / (site.n + 1);
     site.n += 1;
+    site.value += value;
     for (const com of Object.keys(goods)) site.goods[com] = (site.goods[com] || 0) + goods[com];
     return;
   }
@@ -96,7 +131,7 @@ function mergeIntoWreckSite(state, entity, goods) {
   // more deaths merge into this site later.
   wrecks.push({
     id: `wreck-${entity.id}`, x: entity.x, y: entity.y, n: 1,
-    goods: { ...goods }, spawnAt: state.time + WRECK_SPAWN_DELAY,
+    goods: { ...goods }, value, spawnAt: state.time + WRECK_SPAWN_DELAY,
   });
 }
 
@@ -109,12 +144,14 @@ export function depositWreckage(state, entity) {
   const def = (entity.kind === "building" ? BUILDINGS : UNITS)[entity.type];
   if (!def || !def.cost) return;
   const goods = {};
+  let value = 0;
   for (const [com, qty] of Object.entries(def.cost)) {
+    value += qty;
     const amt = qty * WRECK_RETURN_FRAC;
     if (amt > 0) goods[com] = amt;
   }
   if (!Object.keys(goods).length) return;
-  mergeIntoWreckSite(state, entity, goods);
+  mergeIntoWreckSite(state, entity, goods, value);
 }
 
 // Per-tick check (engine/sim.js, once per tick — not per-entity): matures every pending
@@ -129,13 +166,29 @@ export function updateWreckage(state) {
   for (const site of ready) spawnWreckNodes(state, site);
 }
 
+// A battle-intensity bonus: once a site's accumulated (un-scaled) value clears
+// WRECK_BONUS_THRESHOLD, the energy released also forges a modest amount of ONE
+// higher-tier commodity that a raw unit's own cost never pays in (see
+// WRECK_BONUS_COMMODITIES) — capped so even a huge battle's windfall stays bounded.
+// Deterministic (hashStr off the site's own id, same technique the crater's own
+// commodity roll uses — no engine randomness). Mutates site.goods in place; a no-op
+// below the threshold. Called once, right before a site's goods become real nodes.
+function applyBattleBonus(site) {
+  if (site.value < WRECK_BONUS_THRESHOLD) return;
+  const com = WRECK_BONUS_COMMODITIES[hashStr(site.id) % WRECK_BONUS_COMMODITIES.length];
+  const amount = Math.min(WRECK_BONUS_FRAC * (site.value - WRECK_BONUS_THRESHOLD), WRECK_BONUS_CAP);
+  if (amount > 0) site.goods[com] = (site.goods[com] || 0) + amount;
+}
+
 // Turn one matured site into one plain ResourceNode (engine/types.js) PER commodity it
-// accumulated — indistinguishable to gather.js/rendering/fog from anything engine/map.js
-// generated, except for the `wreck: true` tag persist.js uses to know it needs full
-// serialization (see engine/bomb.js's identical `crater` tag). Each node is offset from
-// the site's centroid by a small deterministic jitter so a multi-commodity wreck reads as
-// a small debris field rather than stacked identical-position nodes.
+// accumulated (including any battle bonus just rolled) — indistinguishable to
+// gather.js/rendering/fog from anything engine/map.js generated, except for the `wreck:
+// true` tag persist.js uses to know it needs full serialization (see engine/bomb.js's
+// identical `crater` tag). Each node is offset from the site's centroid by a small
+// deterministic jitter so a multi-commodity wreck reads as a small debris field rather
+// than stacked identical-position nodes.
 function spawnWreckNodes(state, site) {
+  applyBattleBonus(site);
   const coms = Object.keys(site.goods).filter(com => site.goods[com] > 0);
   if (!coms.length) return;
   const spawned = [];
