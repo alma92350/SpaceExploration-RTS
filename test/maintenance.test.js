@@ -32,7 +32,7 @@ test("a skirmish building does NOT decay — the byte-identical short game is un
 test("a Mender heals faster on the powered grid than off it (recharges from stations)", () => {
   const healed = (onGrid) => {
     const s = createGameState({ planetId: "ferros", endless: true });
-    if (onGrid) { const r = makeBuilding("reactor", "player", 500, 500); s.buildings.set(r.id, r); }
+    if (onGrid) { const r = makeBuilding("reactor", "player", 500, 500); r.input = { radioactives: 1000 }; s.buildings.set(r.id, r); }
     const m = makeUnit("mender", "player", 500, 500); s.units.set(m.id, m);
     const hurt = makeUnit("ranger", "player", 506, 500); hurt.hp = 10; s.units.set(hurt.id, hurt);
     for (let i = 0; i < 20; i++) tick(s, 0.1);          // 2s
@@ -45,7 +45,7 @@ test("a Mender heals faster on the powered grid than off it (recharges from stat
 
 test("no ping-pong: once its building is topped up, the auto-repair Mender settles instead of oscillating", () => {
   const s = createGameState({ planetId: "ferros", endless: true });
-  const r = makeBuilding("reactor", "player", 600, 500); s.buildings.set(r.id, r);   // power the grid
+  const r = makeBuilding("reactor", "player", 600, 500); r.input = { radioactives: 1000 }; s.buildings.set(r.id, r);   // power the grid
   const dmg = makeBuilding("turret", "player", 624, 500); dmg.hp = dmg.maxHp * 0.5;   // one worn building
   s.buildings.set(dmg.id, dmg);
   const m = makeUnit("mender", "player", 624, 500); m.autoRepair = true; s.units.set(m.id, m);

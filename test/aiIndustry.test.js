@@ -40,7 +40,7 @@ test("an AI Smelter with no workers to supply it produces nothing — real logis
 
 test("an AI factory runs off its finite buffers exactly like the player's (filled larder → store, not treasury)", () => {
   const s = seeded("ferros");
-  const r = makeBuilding("reactor", "ai", 500, 500); s.buildings.set(r.id, r);
+  const r = makeBuilding("reactor", "ai", 500, 500); r.powered = true; s.buildings.set(r.id, r);
   const sm = makeBuilding("smelter", "ai", 520, 500); s.buildings.set(sm.id, sm);
   sm.input = { ore: 40 };   // as if a worker had delivered ore to the larder
   for (let i = 0; i < 50; i++) updateProduction(s, sm, 0.1);
@@ -59,7 +59,7 @@ test("an AI factory with no Reactor produces nothing — the power throttle stil
 
 test("a PLAYER factory still runs off its buffers, not the treasury (haulage path unchanged)", () => {
   const s = seeded("ferros");
-  const r = makeBuilding("reactor", "player", 500, 500); s.buildings.set(r.id, r);
+  const r = makeBuilding("reactor", "player", 500, 500); r.powered = true; s.buildings.set(r.id, r);
   const sm = makeBuilding("smelter", "player", 520, 500); s.buildings.set(sm.id, sm);
   s.players.player.resources.ore = 100;   // in the treasury, but NOT in the factory's input larder
   for (let i = 0; i < 50; i++) updateProduction(s, sm, 0.1);
@@ -74,7 +74,7 @@ test("a PLAYER factory still runs off its buffers, not the treasury (haulage pat
 
 test("an AI Plasma Rig fills a finite buffer that stalls until hauled — no free treasury", () => {
   const s = seeded("ferros");
-  const r = makeBuilding("reactor", "ai", 500, 500); s.buildings.set(r.id, r);
+  const r = makeBuilding("reactor", "ai", 500, 500); r.powered = true; s.buildings.set(r.id, r);
   const rig = makeBuilding("plasmarig", "ai", 520, 500); s.buildings.set(rig.id, rig);
   s.players.ai.resources.radioactives = 100;   // nuclear to exploit
   const treasuryBefore = { ...s.players.ai.resources };

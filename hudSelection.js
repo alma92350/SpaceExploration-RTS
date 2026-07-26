@@ -242,8 +242,8 @@ export function renderSelectionPanel() {
           && storeCapOf(e.type) > 0 && !BUILDINGS[e.type].recipe && !BUILDINGS[e.type].isCommandCenter);
         return d ? Math.round((storeTotal(d) / (storeCapOf(d.type) || 1)) * 10) : "";
       })()
-    // Rebuild a selected fuel-burning power station's (Combustion Generator / Biomass Reactor)
-    // status when its power state flips, OR its fuel larder level changes enough to matter — a
+    // Rebuild a selected fuel-burning power station's (Reactor / Combustion Generator / Biomass
+    // Reactor) status when its power state flips, OR its fuel larder level changes enough to matter — a
     // worker topping it up should surface live, same quantized-buffer idiom as the factory Larder
     // signature elsewhere (rebuild on a change of ~4 units, not literally every drop delivered).
     + "|" + (() => {
@@ -251,11 +251,6 @@ export function renderSelectionPanel() {
         if (!gen) return "";
         const fuels = BUILDINGS[gen.type].combust.fuels.map(f => Math.round((gen.input?.[f] || 0) / 4)).join(",");
         return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}`;
-      })()
-    // Rebuild a selected Reactor's status when its Pause/Resume toggle flips.
-    + "|" + (() => {
-        const reactor = sel.find(e => e.kind === "building" && e.type === "reactor" && !e.constructing);
-        return reactor ? `${!!reactor.paused}` : "";
       })()
     // Rebuild the Mender panel when its auto-repair toggle or on-grid power state flips.
     + "|" + (() => {
@@ -944,33 +939,13 @@ function rebuildSelectionPanel(sel) {
       { tip: rig.paused ? "Restart the plasma arc" : "Stop drawing Power and burning radioactives until resumed" }));
   }
 
-  // Reactor (Odyssey): grants Power to the grid rather than running a recipe, so
-  // it has no factory panel — say what it feeds and why it matters. Pausable (engine/industry.js
-  // sourceActive) the same way a Combustion Generator is, so a player can take a Reactor off the
-  // grid by hand — e.g. to run purely on Generators — without demolishing it.
-  const reactor = sel.find(e => e.kind === "building" && e.type === "reactor" && !e.constructing);
-  if (reactor) {
-    const row = document.createElement("div");
-    row.className = "sel-note " + (reactor.paused ? "bad" : "good");
-    row.textContent = reactor.paused
-      ? `Paused — off the grid (⚡${BUILDINGS.reactor.energyGrants || 0} when running)`
-      : `Grants ⚡${BUILDINGS.reactor.energyGrants || 0} Power`;
-    panelEl.appendChild(row);
-    const note = document.createElement("p");
-    note.className = "hint";
-    note.textContent = "Powers your factories. If total draw outruns Power, every factory throttles — build more Reactors (or research Fusion Containment).";
-    panelEl.appendChild(note);
-    panelEl.appendChild(makeButton(reactor.paused ? "▶ Resume reactor" : "⏸ Pause reactor",
-      () => { reactor.paused = !reactor.paused; },
-      { tip: reactor.paused ? "Bring it back online, feeding the grid again"
-                             : "Take it off the grid until resumed — e.g. to switch over to a Combustion Generator" }));
-  }
-
-  // A fuel-burning power station (Odyssey) — the Combustion Generator (gas) or the
-  // Biomass Reactor (biomass) — cheap Power over a small grid, but it burns its OWN local fuel
-  // larder, kept fed by a worker SERVICE run (engine/haul.js), not drawn straight from the
-  // treasury: say how much it grants, how full each accepted fuel's slice of the larder is,
-  // whether it's actually fed right now, and let the player pause it to stop the fuel bill.
+  // A fuel-burning power station (Odyssey) — the Reactor (radioactives), the Combustion Generator
+  // (gas), or the Biomass Reactor (biomass) — grants Power to the grid rather than running a
+  // recipe, so it has no factory panel of its own; instead it burns its OWN local fuel larder,
+  // kept fed by a worker SERVICE run (engine/haul.js), not drawn straight from the treasury. Say
+  // how much it grants, how full each accepted fuel's slice of the larder is, whether it's
+  // actually fed right now, and let the player pause it (engine/industry.js sourceActive) to stop
+  // the fuel bill without demolishing it.
   const gen = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.combust && !e.constructing);
   if (gen) {
     const def = BUILDINGS[gen.type];
@@ -989,12 +964,12 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(larderRow);
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = `Cheap Power on a tight grid — half a Reactor's reach. Burns ${def.combust.rate}/s of `
-      + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's, or pause it.`;
+    note.textContent = `Powers your factories over its own grid — if total draw outruns your Power, every factory throttles. Burns ${def.combust.rate}/s of `
+      + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's input, or pause it.`;
     panelEl.appendChild(note);
-    panelEl.appendChild(makeButton(gen.paused ? "▶ Resume generator" : "⏸ Pause generator",
+    panelEl.appendChild(makeButton(gen.paused ? "▶ Resume" : "⏸ Pause",
       () => { gen.paused = !gen.paused; },
-      { tip: gen.paused ? "Restart it (resumes burning fuel)" : "Stop it drawing fuel until resumed" }));
+      { tip: gen.paused ? "Bring it back online, feeding the grid again" : "Take it off the grid until resumed, without demolishing it" }));
   }
 
   // Forward drop-off (Refinery / Foundry / Arsenal): a finite INTAKE buffer gatherers bank

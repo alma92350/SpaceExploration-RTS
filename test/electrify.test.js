@@ -10,6 +10,7 @@ import { isElectrifiable } from "../engine/entities.js";
 function poweredBase() {
   const s = createGameState({ planetId: "ferros", endless: true });
   const r = makeBuilding("reactor", "player", 500, 500);   // grants ⚡20, on-grid
+  r.powered = true;   // this file is about electrification, not the Reactor's own fuel logistics — pre-fuel it
   s.buildings.set(r.id, r);
   return s;
 }
