@@ -157,9 +157,12 @@ export function renderSelectionPanel() {
     // Rebuild when the formation shape/leader-position choice changes, so the picker's
     // .active button + the leader-position row (line/wedge only) actually update.
     + "|" + game.formation.shape + ":" + game.formation.leaderPos
-    // Rebuild when the Build submenu's collapsed/expanded state flips, so its button list
-    // actually appears/disappears instead of staying frozen at whatever it first rendered.
-    + "|" + game.buildMenuOpen
+    // Rebuild when ANY collapsible section (the Build submenu's per-group toggles, CC/Barracks
+    // Produce, Refinery/Datacenter Research, Market, the freighter Cargo list, the Spaceport Jump
+    // list, …) flips collapsed/expanded, so its button list actually appears/disappears instead of
+    // staying frozen at whatever it first rendered. One shared Set covers every section — sorted
+    // so the signature is deterministic regardless of click order (Set iteration order isn't).
+    + "|" + [...game.collapsedSections].sort().join(",")
     + "|" + queueSignature(sel)
     // Rebuild when any button's enabled state would flip: an option crossing the
     // affordability line, or a completed building unlocking a tech option (e.g.
@@ -366,13 +369,24 @@ function renderQueueRows(building) {
 // lots. Selling banks universal credits (and nudges the local price down);
 // buying spends them (and nudges it up) — see engine/market.js.
 function renderMarket(state) {
-  const head = document.createElement("div");
-  head.className = "market-head";
-  head.textContent = "Market — trade local goods for credits";
+  const coms = tradeables(state);
+  // A collapsible clickable header, but keeping the market-head gold accent (its own properties
+  // don't overlap with sel-collapsible's button-chrome reset/hover, so both classes compose
+  // cleanly) — up to 23 commodities is the single largest cluster in the whole CC panel.
+  const collapsed = game.collapsedSections.has("market");
+  const head = document.createElement("button");
+  head.className = "market-head sel-collapsible";
+  head.type = "button";
+  head.textContent = `${collapsed ? "▸" : "▾"} Market — trade local goods for credits (${coms.length})`;
+  head.addEventListener("click", () => {
+    if (collapsed) game.collapsedSections.delete("market"); else game.collapsedSections.add("market");
+    renderHUD();
+  });
   panelEl.appendChild(head);
+  if (collapsed) return;
 
   const res = state.players.player.resources;
-  for (const com of tradeables(state)) {
+  for (const com of coms) {
     const row = document.createElement("div");
     row.className = "market-row";
 
@@ -464,36 +478,39 @@ function renderFreight(state, f) {
   panelEl.appendChild(bulk);
 
   // One row per commodity that's either aboard already or sitting in this world's stockpile: load
-  // all of it that fits, or unload all that's aboard, in one tap each.
+  // all of it that fits, or unload all that's aboard, in one tap each. Collapsible — up to ~22
+  // commodities is the single biggest list in the whole panel system.
   const coms = loadableComs(state, f);
-  for (const com of coms) {
-    const meta = COM[com];
-    const aboard = Math.floor(f.freight[com] || 0), stock = Math.floor(res[com] || 0);
-    const row = document.createElement("div");
-    row.className = "market-row";
-    const label = document.createElement("span");
-    label.className = "market-com";
-    label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} · ${aboard} aboard`;
-    row.appendChild(label);
+  if (sectionToggle("freighter:cargo", "Cargo", coms.length)) {
+    for (const com of coms) {
+      const meta = COM[com];
+      const aboard = Math.floor(f.freight[com] || 0), stock = Math.floor(res[com] || 0);
+      const row = document.createElement("div");
+      row.className = "market-row";
+      const label = document.createElement("span");
+      label.className = "market-com";
+      label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} · ${aboard} aboard`;
+      row.appendChild(label);
 
-    const loadBtn = document.createElement("button");
-    loadBtn.className = "market-btn" + (stock < 1 || room <= 0 ? " disabled" : "");
-    loadBtn.textContent = "Load";
-    loadBtn.title = `Load ${meta?.name || com} onto the ${UNITS[f.type].name} (as much as fits)`;
-    loadBtn.addEventListener("click", () => {
-      if (loadFreighter(state, f.id, com, freightRoom(f)) > 0) renderHUD(); else sound.playProductionBlocked();
-    });
-    row.appendChild(loadBtn);
+      const loadBtn = document.createElement("button");
+      loadBtn.className = "market-btn" + (stock < 1 || room <= 0 ? " disabled" : "");
+      loadBtn.textContent = "Load";
+      loadBtn.title = `Load ${meta?.name || com} onto the ${UNITS[f.type].name} (as much as fits)`;
+      loadBtn.addEventListener("click", () => {
+        if (loadFreighter(state, f.id, com, freightRoom(f)) > 0) renderHUD(); else sound.playProductionBlocked();
+      });
+      row.appendChild(loadBtn);
 
-    const unBtn = document.createElement("button");
-    unBtn.className = "market-btn" + (aboard < 1 ? " disabled" : "");
-    unBtn.textContent = "Unload";
-    unBtn.title = `Unload ${meta?.name || com} back onto this world`;
-    unBtn.addEventListener("click", () => {
-      if (unloadFreighter(state, f.id, com, f.freight[com] || 0) > 0) renderHUD(); else sound.playProductionBlocked();
-    });
-    row.appendChild(unBtn);
-    panelEl.appendChild(row);
+      const unBtn = document.createElement("button");
+      unBtn.className = "market-btn" + (aboard < 1 ? " disabled" : "");
+      unBtn.textContent = "Unload";
+      unBtn.title = `Unload ${meta?.name || com} back onto this world`;
+      unBtn.addEventListener("click", () => {
+        if (unloadFreighter(state, f.id, com, f.freight[com] || 0) > 0) renderHUD(); else sound.playProductionBlocked();
+      });
+      row.appendChild(unBtn);
+      panelEl.appendChild(row);
+    }
   }
 }
 
@@ -659,6 +676,26 @@ function prodButton(label, run, opts) {
   return btn;
 }
 
+// Shared collapsible-section header: a quiet clickable divider (▾ expanded / ▸ collapsed) that
+// remembers its own open/closed state on game.collapsedSections (session.js) — a Set of collapsed
+// section keys, so any number of independent sections can each fold without session.js growing a
+// dedicated boolean per section. Appends the header button to panelEl and returns whether the
+// section is currently expanded, so a call site wraps whatever it'd otherwise render
+// unconditionally in `if (sectionToggle(key, label, count)) { ...buttons... }`.
+function sectionToggle(key, label, count) {
+  const collapsed = game.collapsedSections.has(key);
+  const head = document.createElement("button");
+  head.className = "sel-group sel-collapsible";
+  head.type = "button";
+  head.textContent = `${collapsed ? "▸" : "▾"} ${label} (${count})`;
+  head.addEventListener("click", () => {
+    if (collapsed) game.collapsedSections.delete(key); else game.collapsedSections.add(key);
+    renderHUD();
+  });
+  panelEl.appendChild(head);
+  return !collapsed;
+}
+
 function rebuildSelectionPanel(sel) {
   const { state, input } = game;
   panelEl.innerHTML = "";
@@ -724,19 +761,25 @@ function rebuildSelectionPanel(sel) {
     const ccUnits = game.galaxy
       ? ["worker", "miner", "engineer", "technician", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"]
       : ["worker", "miner", "engineer", "technician", "ranger"];
-    for (const t of ccUnits) {
-      const def = UNITS[t];
-      const locked = !prereqsMet(state, "player", def);
-      panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
-        () => queueProduction(state, cc.id, t),
-        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
-      // A unit with an alternative price (the Worker, buildable on biomass instead of ore) gets a
-      // second button paying that cost — so a biomass-rich, ore-poor claim can still grow its labour.
-      if (def.altCost) {
-        panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.altCost)})`,
-          () => queueProduction(state, cc.id, t, true),
-          { cost: def.altCost, tip: `${def.name} paid in ${costText(def.altCost)} instead of ore`, locked,
-            lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+    // Collapsible: 7-11 produce buttons (base + altCost variants) is the biggest cluster on the
+    // CC panel — count matches what a player thinks of as "the list" (one entry per unit type),
+    // not the raw altCost-doubled button count.
+    const ccCount = ccUnits.reduce((n, t) => n + (UNITS[t].altCost ? 2 : 1), 0);
+    if (sectionToggle("cc:produce", "Produce", ccCount)) {
+      for (const t of ccUnits) {
+        const def = UNITS[t];
+        const locked = !prereqsMet(state, "player", def);
+        panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
+          () => queueProduction(state, cc.id, t),
+          { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+        // A unit with an alternative price (the Worker, buildable on biomass instead of ore) gets a
+        // second button paying that cost — so a biomass-rich, ore-poor claim can still grow its labour.
+        if (def.altCost) {
+          panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.altCost)})`,
+            () => queueProduction(state, cc.id, t, true),
+            { cost: def.altCost, tip: `${def.name} paid in ${costText(def.altCost)} instead of ore`, locked,
+              lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+        }
       }
     }
     if (cc.queue.length) renderQueueRows(cc);
@@ -754,13 +797,15 @@ function rebuildSelectionPanel(sel) {
     // deposits none of its commodity, instead of showing a forever-greyed button.
     const onMap = new Set(state.map.nodes.map(n => n.com));
     const buildable = t => Object.keys(UNITS[t].cost).every(c => onMap.has(c));
-    for (const t of ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender", "wraith", "aegis", "colossus"]) {
-      if (!buildable(t)) continue;
-      const def = UNITS[t];
-      const locked = !prereqsMet(state, "player", def);
-      panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
-        () => queueProduction(state, barracks.id, t),
-        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+    const trainable = ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender", "wraith", "aegis", "colossus"].filter(buildable);
+    if (sectionToggle("barracks:produce", "Produce", trainable.length)) {
+      for (const t of trainable) {
+        const def = UNITS[t];
+        const locked = !prereqsMet(state, "player", def);
+        panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
+          () => queueProduction(state, barracks.id, t),
+          { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+      }
     }
     if (barracks.queue.length) renderQueueRows(barracks);
   }
@@ -770,23 +815,25 @@ function rebuildSelectionPanel(sel) {
     const upgrades = state.players.player.upgrades;
     const chosen = committedDoctrine(state, "player");   // null until the first research commits a doctrine
     const label = { assault: "Assault", bulwark: "Bulwark", logistics: "Logistics" };
-    Object.values(UPGRADES).forEach(u => {
-      if (upgrades[u.id]) {
-        const row = document.createElement("div");
-        row.className = "sel-row";
-        row.textContent = `${u.ico ? u.ico + " " : ""}${u.name} (${label[u.doctrine]}) — researched`;
-        panelEl.appendChild(row);
-        return;
-      }
-      const doctrineLocked = chosen && chosen !== u.doctrine;
-      const tierLocked = !prereqsMet(state, "player", u);
-      const locked = doctrineLocked || tierLocked;
-      const lockTip = doctrineLocked ? `Locked — committed to the ${label[chosen]} doctrine`
-        : tierLocked ? `Requires ${UPGRADES[(u.requires || [])[0]]?.name || "its Tier 1"}` : null;
-      panelEl.appendChild(makeButton(`Research ${u.name} · ${label[u.doctrine]} (${costText(u.cost)})`,
-        () => researchUpgrade(state, refinery.id, u.id),
-        { cost: u.cost, tip: u.desc, locked, lockTip, icon: u.ico ? { emoji: u.ico } : null }));
-    });
+    if (sectionToggle("refinery:research", "Research", Object.keys(UPGRADES).length)) {
+      Object.values(UPGRADES).forEach(u => {
+        if (upgrades[u.id]) {
+          const row = document.createElement("div");
+          row.className = "sel-row";
+          row.textContent = `${u.ico ? u.ico + " " : ""}${u.name} (${label[u.doctrine]}) — researched`;
+          panelEl.appendChild(row);
+          return;
+        }
+        const doctrineLocked = chosen && chosen !== u.doctrine;
+        const tierLocked = !prereqsMet(state, "player", u);
+        const locked = doctrineLocked || tierLocked;
+        const lockTip = doctrineLocked ? `Locked — committed to the ${label[chosen]} doctrine`
+          : tierLocked ? `Requires ${UPGRADES[(u.requires || [])[0]]?.name || "its Tier 1"}` : null;
+        panelEl.appendChild(makeButton(`Research ${u.name} · ${label[u.doctrine]} (${costText(u.cost)})`,
+          () => researchUpgrade(state, refinery.id, u.id),
+          { cost: u.cost, tip: u.desc, locked, lockTip, icon: u.ico ? { emoji: u.ico } : null }));
+      });
+    }
   }
 
   // Datacenter (Odyssey): the industrial tech tree. Researches one node at a time,
@@ -803,21 +850,25 @@ function rebuildSelectionPanel(sel) {
       row.textContent = researchRowText(queue);
       panelEl.appendChild(row);
     }
-    Object.values(TECHS).forEach(t => {
-      if (upgrades[t.id]) {
-        const row = document.createElement("div");
-        row.className = "sel-row";
-        row.textContent = `${t.ico ? t.ico + " " : ""}${t.name} — researched`;
-        panelEl.appendChild(row);
-        return;
-      }
-      if (queued.has(t.id)) return;   // already lined up — reflected in the header's "+N queued"
-      // Available if every prereq is researched, a completed building, or queued ahead.
-      const ready = (t.requires || []).every(r => queued.has(r) || prereqsMet(state, "player", { requires: [r] }));
-      panelEl.appendChild(makeButton(`Research ${t.name} (${costText(t.cost)})`,
-        () => researchTech(state, datacenter.id, t.id),
-        { cost: t.cost, tip: t.desc, locked: !ready, lockTip: !ready ? lockTipFor(t) : null, icon: t.ico ? { emoji: t.ico } : null }));
-    });
+    // Already-queued nodes are dropped here (reflected in the progress row's "+N queued" above,
+    // not repeated below), so the collapsible count matches exactly what the list itself shows.
+    const visibleTechs = Object.values(TECHS).filter(t => !queued.has(t.id));
+    if (sectionToggle("datacenter:research", "Research", visibleTechs.length)) {
+      visibleTechs.forEach(t => {
+        if (upgrades[t.id]) {
+          const row = document.createElement("div");
+          row.className = "sel-row";
+          row.textContent = `${t.ico ? t.ico + " " : ""}${t.name} — researched`;
+          panelEl.appendChild(row);
+          return;
+        }
+        // Available if every prereq is researched, a completed building, or queued ahead.
+        const ready = (t.requires || []).every(r => queued.has(r) || prereqsMet(state, "player", { requires: [r] }));
+        panelEl.appendChild(makeButton(`Research ${t.name} (${costText(t.cost)})`,
+          () => researchTech(state, datacenter.id, t.id),
+          { cost: t.cost, tip: t.desc, locked: !ready, lockTip: !ready ? lockTipFor(t) : null, icon: t.ico ? { emoji: t.ico } : null }));
+      });
+    }
   }
 
   // Star Dock (Odyssey): trains the Leviathan capital ship. Its own panel (not the
@@ -1103,18 +1154,20 @@ function rebuildSelectionPanel(sel) {
         ? `Cargo hold (${cargoTotal}/${capacity}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — hauled to sell at the destination.`
         : `Cargo hold (0/${capacity}): empty — manufacture metals/alloys/electronics/machinery to fill your cargo ships.`;
     panelEl.appendChild(cargoInfo);
-    for (const w of game.galaxy.worlds) {
-      if (w === game.galaxy.activeId) continue;
-      const name = planetName(w);
-      const owned = game.galaxy.planets.has(w);   // a world you already hold → free to return
-      const cost = jumpCost(game.galaxy, w);
-      const afford = game.galaxy.credits >= cost;
-      panelEl.appendChild(makeButton(`Jump ▸ ${name}${owned ? " · your colony" : ` · ◈${cost}`}`,
-        () => initiateJump(w),
-        { tip: owned ? "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
-                     : "Settle new ground: carry the staged expedition here. Bring a Colony Ship to found a base.",
-          locked: !afford,
-          lockTip: `Need ◈${cost} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
+    const jumpWorlds = game.galaxy.worlds.filter(w => w !== game.galaxy.activeId);
+    if (sectionToggle("spaceport:jump", "Jump", jumpWorlds.length)) {
+      for (const w of jumpWorlds) {
+        const name = planetName(w);
+        const owned = game.galaxy.planets.has(w);   // a world you already hold → free to return
+        const cost = jumpCost(game.galaxy, w);
+        const afford = game.galaxy.credits >= cost;
+        panelEl.appendChild(makeButton(`Jump ▸ ${name}${owned ? " · your colony" : ` · ◈${cost}`}`,
+          () => initiateJump(w),
+          { tip: owned ? "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+                       : "Settle new ground: carry the staged expedition here. Bring a Colony Ship to found a base.",
+            locked: !afford,
+            lockTip: `Need ◈${cost} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
+      }
     }
   }
 
@@ -1228,25 +1281,17 @@ function rebuildSelectionPanel(sel) {
       ? GROUPS.map(([title, types]) => [title, types.filter(t => canBuild(t) && (alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t])))])
           .filter(([, shown]) => shown.length)
       : [[null, ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"].filter(canBuild)]];
-    const buildCount = shownGroups.reduce((n, [, shown]) => n + shown.length, 0);
-
-    // Collapsible: a generalist Worker (every category) or a mixed selection can offer a long
-    // wall of options — one toggle hides the whole list behind a single header, remembered
-    // across selections (game.buildMenuOpen, session.js) like the formation choice below.
-    const buildHead = document.createElement("button");
-    buildHead.className = "sel-group sel-collapsible";
-    buildHead.type = "button";
-    buildHead.textContent = `${game.buildMenuOpen ? "▾" : "▸"} Build (${buildCount})`;
-    buildHead.addEventListener("click", () => { game.buildMenuOpen = !game.buildMenuOpen; renderHUD(); });
-    panelEl.appendChild(buildHead);
-    if (game.buildMenuOpen) {
-      for (const [title, shown] of shownGroups) {
-        if (title) {
-          const head = document.createElement("div");
-          head.className = "sel-group";
-          head.textContent = title;
-          panelEl.appendChild(head);
-        }
+    // Collapsible PER GROUP: a generalist Worker (every category) or a mixed selection can offer
+    // a long wall of options, and different players care about different groups — Economy vs
+    // Military fold independently (game.collapsedSections, session.js), remembered across
+    // selections like the formation choice below. Skirmish's single flat list (title === null,
+    // shownGroups above) has no sub-groups to split, so it falls through to one flat "Build"
+    // toggle instead — same shape, same helper, no special-casing needed. Collapsing a group
+    // shifts which building the Z/C/V/B/N hotkeys map to (prodButton claims them positionally by
+    // render order) — pre-existing behaviour, now scoped per group instead of per whole submenu.
+    for (const [title, shown] of shownGroups) {
+      const key = title ? `build:${title.toLowerCase()}` : "build:all";
+      if (sectionToggle(key, title || "Build", shown.length)) {
         for (const t of shown) panelEl.appendChild(buildBtn(t));
       }
     }
