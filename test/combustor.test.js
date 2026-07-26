@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
-import { powerCap, powerEfficiency, onPowerGrid, updateCombustors } from "../engine/industry.js";
+import { powerCap, powerEfficiency, onPowerGrid, updateCombustors, hasIceCoolant } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 
 // A tiny stub, like industry.test.js: the power helpers read only buildings + resources.
@@ -34,6 +34,24 @@ test("a Combustion Generator grants Power only while its OWN fuel larder is fed 
   assert.equal(powerCap(s, "player"), BUILDINGS.combustor.energyGrants, "fuelled → grants its Power");
   const gen = [...s.buildings.values()][0];
   assert.ok(gen.powered && gen.input.gas < 100, "…having burned some gas from its OWN larder to do it");
+});
+
+test("ice coolant: banked ice halves every power station's fuel burn, same Power granted", () => {
+  for (const [type, fuel] of [["combustor", "gas"], ["reactor", "radioactives"], ["biomassreactor", "biomass"]]) {
+    const plain = stub([{ type, input: { [fuel]: 100 } }], {});
+    const iced = stub([{ type, input: { [fuel]: 100 } }], { ice: 4 });
+    assert.equal(hasIceCoolant(plain, "player"), false);
+    assert.equal(hasIceCoolant(iced, "player"), true);
+    updateCombustors(plain, 0.1);
+    updateCombustors(iced, 0.1);
+    const genPlain = [...plain.buildings.values()][0];
+    const genIced = [...iced.buildings.values()][0];
+    assert.ok(genPlain.powered && genIced.powered, `${type}: both stay fuelled and powered`);
+    const burnedPlain = 100 - genPlain.input[fuel];
+    const burnedIced = 100 - genIced.input[fuel];
+    assert.ok(Math.abs(burnedPlain - burnedIced * 2) < 1e-9, `${type}: iced burns half the ${fuel} for the same tick`);
+    assert.equal(powerCap(iced, "player"), BUILDINGS[type].energyGrants, `${type}: still grants its full Power despite burning less fuel`);
+  }
 });
 
 test("out of fuel (or paused), a Generator grants no Power", () => {

@@ -26,7 +26,7 @@ import { issueSetAILogistics, issueSetCollectPoint, issueRecycle, issueCancelRec
 import { canRecycle, recycleFrac, recycleValue } from "./engine/recycle.js";
 import { FREIGHTER_AI_TECH, aiUpkeepRate } from "./engine/haul.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER } from "./engine/industry.js";
+import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER, iceCoolantMult } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
 import { lightFuse, BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE, BOMB_FUSE_DELAY } from "./engine/bomb.js";
@@ -127,10 +127,11 @@ function factorySignature(sel) {
   const f = sel.find(e => e.kind === "building" && recipeOf(e) && !e.constructing);
   if (!f) return "";
   // Include the grid-efficiency tier (rebuilds the "Grid: …" line when a Reactor is built/razed
-  // nearby) and the input/output buffer levels (so the larder + output lines stay live as workers
-  // carry goods in and out), quantised so it doesn't rebuild every frame.
+  // nearby), the input/output buffer levels (so the larder + output lines stay live as workers
+  // carry goods in and out, quantised so it doesn't rebuild every frame), and whether ice coolant
+  // is banked (so the Ice Coolant row flips the instant the treasury's ice crosses zero either way).
   return factoryStatus(state, f, recipeOf(f)).cls + ":" + powerEfficiency(state, f.owner, f.x, f.y).name
-    + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4);
+    + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4) + ":" + (iceCoolantMult(state, f.owner) < 1);
 }
 
 export function renderSelectionPanel() {
@@ -240,7 +241,7 @@ export function renderSelectionPanel() {
         const rig = game.galaxy && sel.find(e => e.kind === "building" && BUILDINGS[e.type].rig && !e.constructing);
         if (!rig) return "";
         const info = rigInfo(state, rig);
-        return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}:${powerEfficiency(state, rig.owner, rig.x, rig.y).name}:${info.storeFull}:${Math.round((info.stored / (info.storeCap || 1)) * 10)}`;
+        return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}:${powerEfficiency(state, rig.owner, rig.x, rig.y).name}:${info.storeFull}:${Math.round((info.stored / (info.storeCap || 1)) * 10)}:${iceCoolantMult(state, rig.owner) < 1}`;
       })()
     // Rebuild a selected forward drop-off's intake line as gatherers fill it and workers clear it.
     + "|" + (() => {
@@ -256,7 +257,7 @@ export function renderSelectionPanel() {
         const gen = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.combust && !e.constructing);
         if (!gen) return "";
         const fuels = BUILDINGS[gen.type].combust.fuels.map(f => Math.round((gen.input?.[f] || 0) / 4)).join(",");
-        return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}`;
+        return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}:${iceCoolantMult(state, gen.owner) < 1}`;
       })()
     // Rebuild the Mender panel when its auto-repair toggle or on-grid power state flips.
     + "|" + (() => {
@@ -612,6 +613,21 @@ function gridEfficiencyRow(state, b) {
   return row;
 }
 
+// A "❄ Ice Coolant" status line for a selected factory / Rig / power station: banked ice
+// (engine/industry.js iceCoolantMult) halves its fuel/input burn and Power draw for as long as
+// ANY is in the treasury. Shown either way (not just when active), the same discoverability
+// gridEfficiencyRow already gives grid placement, so a player who's never banked ice learns the
+// mechanic exists instead of wondering why a rival's economy runs so much leaner.
+function iceCoolantRow(state, owner) {
+  const active = iceCoolantMult(state, owner) < 1;
+  const row = document.createElement("div");
+  row.className = "sel-note " + (active ? "good" : "");
+  row.textContent = active
+    ? "❄ Ice Coolant banked — half fuel/input burn, half Power draw"
+    : "No ice banked — bank some to halve fuel/input burn and Power draw";
+  return row;
+}
+
 // The Odyssey diplomacy panel, under the Command Center's market: pay universal
 // credits to appease the neighbour for a while (engine/diplomacy.js offerTribute).
 // The cost escalates per tribute and the truce decays, so it's a stopgap — buy time
@@ -951,13 +967,15 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(outBuf);
 
     panelEl.appendChild(gridEfficiencyRow(state, factory));
+    panelEl.appendChild(iceCoolantRow(state, factory.owner));
 
-    // Pause toggle: stop this factory drawing down its inputs (and Power) — the way to
-    // keep a hungry Smelter from eating all your ore, or to free the grid for the Gate.
+    // Pause toggle: stop this factory drawing down its inputs — the way to keep a hungry
+    // Smelter from eating all your ore, or to free most of the grid for the Gate (a paused
+    // factory still idles at a 5% Power trickle rather than freeing its whole reserved draw).
     panelEl.appendChild(makeButton(factory.paused ? "▶ Resume production" : "⏸ Pause production",
       () => { factory.paused = !factory.paused; },
       { tip: factory.paused ? "Resume converting inputs into goods"
-                            : "Stop consuming inputs — banks and draws nothing until resumed" }));
+                            : "Stop consuming inputs — banks nothing and idles its Power draw down to a 5% trickle until resumed" }));
   }
 
   // Plasma Rig (Odyssey): deep-core extraction. Say what it mines, how rich the seam is, its dig
@@ -996,10 +1014,12 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(stRow);
 
     panelEl.appendChild(gridEfficiencyRow(state, rig));
+    panelEl.appendChild(iceCoolantRow(state, rig.owner));
 
     panelEl.appendChild(makeButton(rig.paused ? "▶ Resume digging" : "⏸ Pause digging",
       () => { rig.paused = !rig.paused; },
-      { tip: rig.paused ? "Restart the plasma arc" : "Stop drawing Power and burning radioactives until resumed" }));
+      { tip: rig.paused ? "Restart the plasma arc"
+                        : "Stop burning radioactives and idle the plasma arc's Power draw down to a 5% trickle until resumed" }));
   }
 
   // A fuel-burning power station (Odyssey) — the Reactor (radioactives), the Combustion Generator
@@ -1027,9 +1047,11 @@ function rebuildSelectionPanel(sel) {
     panelEl.appendChild(larderRow);
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = `Powers your factories over its own grid — if total draw outruns your Power, every factory throttles. Burns ${def.combust.rate}/s of `
+    const burnRate = def.combust.rate * iceCoolantMult(state, gen.owner);   // banked ice halves the live burn rate
+    note.textContent = `Powers your factories over its own grid — if total draw outruns your Power, every factory throttles. Burns ${burnRate.toFixed(2)}/s of `
       + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's input, or pause it.`;
     panelEl.appendChild(note);
+    panelEl.appendChild(iceCoolantRow(state, gen.owner));
     panelEl.appendChild(makeButton(gen.paused ? "▶ Resume" : "⏸ Pause",
       () => { gen.paused = !gen.paused; },
       { tip: gen.paused ? "Bring it back online, feeding the grid again" : "Take it off the grid until resumed, without demolishing it" }));
