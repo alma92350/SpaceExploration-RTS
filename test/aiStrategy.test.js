@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
+import { tick } from "../engine/sim.js";
 import { mulberry32 } from "../engine/rng.js";
 import { STRATEGIES, strategyFor } from "../engine/aiStrategy.js";
 import { createDiplomacy, updateDiplomacy } from "../engine/diplomacy.js";
@@ -170,19 +171,39 @@ test("...but resumes production immediately once it's actually attacked (war foo
 
 test("Economic never volunteers an attack from army size alone, however large the standing army", () => {
   const state = createGameState({ planetId: "ferros", aiStrategy: "economic" });
-  state.time = 50;   // nowhere near the (7x-stretched) desperation timeout
+  state.time = 50;
   homeSkiffs(state, 20);   // far past the archetype's own armyAttackSize (9)
   runAI(state, THINK_INTERVAL);
   const attacking = [...state.units.values()].some(u => u.owner === "ai" && u.order?.type === "attack-move");
   assert.ok(!attacking, "a big standing army alone never triggers Economic's offense");
 });
 
-test("...but an all-turtle mirror match still resolves eventually via the stretched desperation timeout", () => {
+// Regression test for a real player report: an Economic AI "raided" a player who had built
+// nothing but a scout, purely because enough real time had passed — the OLD design still threw
+// an all-in wave off a stretched-but-finite desperation timeout even under neverInitiates. There
+// is no timeout any more for this strategy: it must mean "never attacks unprovoked" literally, on
+// any elapsed time, not just "not for a good while".
+test("Economic still never attacks even long past where the old desperation timeout used to fire", () => {
   const state = createGameState({ planetId: "ferros", aiStrategy: "economic" });
-  state.time = state.ai.archetype.attackTimeout * 7 + 1;   // past attackTimeoutMult's 7x-stretched clock
-  const [u] = homeSkiffs(state, 1);
+  state.time = state.ai.archetype.attackTimeout * 20;   // comfortably past the old 7x-stretched clock
+  homeSkiffs(state, 1);
   runAI(state, THINK_INTERVAL);
-  assert.equal(u.order?.type, "attack-move", "even Economic eventually forces the issue rather than stalling the match forever");
+  const attacking = [...state.units.values()].some(u => u.owner === "ai" && u.order?.type === "attack-move");
+  assert.ok(!attacking, "no amount of elapsed time alone triggers Economic's offense");
+});
+
+// The safety net a never-initiates strategy actually relies on: not a forced combat commit, but
+// victory.js's pre-existing score-based match time limit — a mutual-turtle skirmish (an Economic
+// AI facing a genuinely passive player, matching sim.test.js's own convention) still terminates.
+test("an all-turtle mirror match (Economic AI, fully passive player) resolves by score at the match time limit, not combat", () => {
+  const state = createGameState({ planetId: "ferros", aiStrategy: "economic" });
+  const dt = 1;
+  for (let i = 0; i < 2401 && !state.over; i++) tick(state, dt);
+  assert.ok(state.over, "the match still terminates without either side ever fighting");
+  assert.ok(["player", "ai"].includes(state.winner));
+  // Neither Command Center fell to combat — this was decided by score, not conquest.
+  const hasCC = owner => [...state.buildings.values()].some(b => b.owner === owner && b.type === "command");
+  assert.ok(hasCC("player") && hasCC("ai"), "both bases are still standing — the finish was the score tiebreak, not a raze");
 });
 
 test("Economic never launches an Odyssey offensive wave off hostility alone, even fully hostile", () => {
