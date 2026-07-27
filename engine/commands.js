@@ -367,9 +367,26 @@ export function issueHold(units) {
 // scout.js). Only scout-role units accept it, so issuing it to a mixed selection
 // simply skips everything that isn't a Ranger. Clears any queued waypoints, like
 // a plain command — the mode is persistent, not something to stack behind.
+//
+// A Ranger that was leading a formation ALSO releases its whole squad here, stopped rather than
+// left dangling: scout mode sends it off on an open-ended, whole-map route with no fixed
+// destination, so followers left on their stale follow-leader order would otherwise trail it
+// (at their own, slower pace) for as long as it keeps scouting — the formation dragged along
+// behind a unit no longer acting as its leader, instead of cleanly breaking off. setSquadLeader
+// alone doesn't cover this: it only clears what THIS unit follows, not who follows it (see the
+// file header) — same "stop the ones dropped out" precedent as dispatchFormation's own
+// squad-redefinition above.
 export function issueScout(units) {
   units.forEach(u => {
-    if (UNITS[u.type] && UNITS[u.type].role === "scout") { setSquadLeader(u, null); u.order = { type: "scout" }; u.orderQueue = []; }
+    if (UNITS[u.type] && UNITS[u.type].role === "scout") {
+      setSquadLeader(u, null);
+      if (u.squadFollowers && u.squadFollowers.length) {
+        for (const f of u.squadFollowers) { setSquadLeader(f, null); f.order = null; f.orderQueue = []; }
+        u.squadFollowers = [];
+      }
+      u.order = { type: "scout" };
+      u.orderQueue = [];
+    }
   });
 }
 

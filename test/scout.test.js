@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit } from "../engine/state.js";
 import { updateScoutMode } from "../engine/scout.js";
-import { issueScout } from "../engine/commands.js";
+import { issueScout, issueHoldFormation } from "../engine/commands.js";
+import { UNITS } from "../engine/entities.js";
 import { nearestUnexploredPoint } from "../engine/fog.js";
 
 function playerRanger(state) {
@@ -57,4 +58,40 @@ test("issueScout only puts scout-role units into scout mode, leaving others alon
 
   assert.equal(ranger.order.type, "scout", "the Ranger enters scout mode");
   assert.equal(worker.order.type, "gather", "the Worker is untouched — it's not a scout unit");
+});
+
+// ---- scout mode breaks cleanly away from a formation it was leading -----------
+
+test("issueScout on a formation LEADER releases its followers instead of leaving them to chase it forever", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const ranger = playerRanger(state);
+  const follower = makeUnit("worker", "player", ranger.x + 20, ranger.y);
+  state.units.set(follower.id, follower);
+  issueHoldFormation([ranger, follower]);   // ranger (units[0]) becomes the squad leader
+  assert.deepEqual(ranger.squadFollowers, [follower]);
+  assert.equal(follower.squadLeader, ranger);
+  assert.equal(follower.order.type, "follow-leader");
+
+  issueScout([ranger, follower]);
+
+  assert.equal(ranger.order.type, "scout");
+  assert.deepEqual(ranger.squadFollowers, [], "the old squad is released, not left dangling on the ex-leader");
+  assert.equal(follower.squadLeader, undefined, "the follower is unlinked from its old leader");
+  assert.equal(follower.order, null, "and actually stopped, not left silently chasing a Ranger now roaming the whole map");
+});
+
+test("a Ranger's own scout speed is never capped to a slower formation it just led", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const ranger = playerRanger(state);
+  const follower = makeUnit("worker", "player", ranger.x + 20, ranger.y);   // far slower than the Ranger
+  state.units.set(follower.id, follower);
+  issueHoldFormation([ranger, follower]);
+
+  issueScout([ranger, follower]);
+  assert.ok(!Number.isFinite(ranger.order.speedCap), "the scout order carries no speed cap at all");
+
+  const x0 = ranger.x, y0 = ranger.y;
+  for (let i = 0; i < 10; i++) updateScoutMode(state, ranger, 0.1);   // 1 sim second
+  const traveled = Math.hypot(ranger.x - x0, ranger.y - y0);
+  assert.ok(traveled > UNITS.worker.speed, `the Ranger (${traveled.toFixed(0)} travelled) outpaces the slow formation it left behind, not capped to its ${UNITS.worker.speed} speed`);
 });
