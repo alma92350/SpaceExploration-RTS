@@ -52,13 +52,20 @@ function setSquadLeader(unit, leader) {
   unit.squadLeader = leader || undefined;
 }
 
-// The slowest unit's own speed across `units` — a formation leader's travel pace is capped to
-// this (order.speedCap, read by engine/movement.js's orderedSpeed) so a fast leader can't outrun
-// the group it's leading. Returns undefined (leave the order uncapped) when there's nothing to
-// cap to, e.g. an empty follower list.
+// A formation leader trails a little BELOW its slowest member's own top speed — an exact tie
+// would leave a straggler (knocked off its slot by avoidance steering, a longer way around an
+// obstacle, still catching up from a fresh spawn, …) with no way to ever close the gap and
+// reform, since it can never out-pace a leader moving at its own maximum. This slack gives it
+// the room to actually catch up.
+const FORMATION_PACE = 0.95;
+
+// The slowest unit's own speed across `units`, trimmed by FORMATION_PACE — a formation leader's
+// travel pace is capped to this (order.speedCap, read by engine/movement.js's orderedSpeed) so a
+// fast leader can't outrun the group it's leading. Returns undefined (leave the order uncapped)
+// when there's nothing to cap to, e.g. an empty follower list.
 function groupSpeedCap(units) {
   const speed = units.reduce((m, u) => Math.min(m, UNITS[u.type]?.speed ?? Infinity), Infinity);
-  return Number.isFinite(speed) ? speed : undefined;
+  return Number.isFinite(speed) ? speed * FORMATION_PACE : undefined;
 }
 
 // The shared machinery behind issueMove/issueAttackMove/issueHoldFormation: lay the group out
