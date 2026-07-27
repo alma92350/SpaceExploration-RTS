@@ -88,6 +88,50 @@ test("a player-assigned home base (unit.homeCC) overrides the usual nearest-CC g
   assert.equal(worker.order.buildingId, farA.id, "the assigned home base wins over both raw proximity and the usual nearest-CC guess");
 });
 
+test("a valid home-base assignment is a HARD boundary — an empty home zone stays idle instead of poaching another base's job", () => {
+  const { s, ccA, worker } = twoBases();
+  worker.homeCC = ccA.id;   // explicitly assigned to CC-A, whose zone has nothing backed up
+
+  // The only backlog on the whole map sits in CC-B's zone — reachable, and exactly what the
+  // DEFAULT (no override) nearest-CC guess would fall back to, but NOT what an explicit
+  // assignment should ever reach into.
+  const nearB = makeBuilding("plasmarig", "player", 650, 0);
+  nearB.store = { ore: 60 };
+  s.buildings.set(nearB.id, nearB);
+
+  assignHaul(s, worker);
+
+  assert.equal(worker.order, null, "an explicit home-base assignment never commutes to another base's territory on its own");
+});
+
+test("reassigning to a different Command Center immediately redraws the hard boundary", () => {
+  const { s, ccB, worker } = twoBases();
+  worker.homeCC = ccB.id;   // now assigned to CC-B instead
+
+  const nearB = makeBuilding("plasmarig", "player", 650, 0);   // in CC-B's zone
+  nearB.store = { ore: 60 };
+  s.buildings.set(nearB.id, nearB);
+
+  assignHaul(s, worker);
+
+  assert.equal(worker.order.buildingId, nearB.id, "reassigning the home base immediately opens up its zone's jobs");
+});
+
+test("clearing the home-base override (homeCC = null) restores the default distance-based guess", () => {
+  const { s, ccA, worker } = twoBases();
+  worker.homeCC = ccA.id;
+  const nearB = makeBuilding("plasmarig", "player", 650, 0);
+  nearB.store = { ore: 60 };
+  s.buildings.set(nearB.id, nearB);
+  assignHaul(s, worker);
+  assert.equal(worker.order, null, "still pinned to CC-A's empty zone");
+
+  worker.homeCC = null;   // player clears the assignment ("assign to nothing")
+  assignHaul(s, worker);
+
+  assert.equal(worker.order.buildingId, nearB.id, "with no override, the default nearest-CC guess (and its global fallback) applies again");
+});
+
 test("a stale home-base override (its Command Center gone) is ignored, falling back to the nearest-CC guess", () => {
   const { s, worker } = twoBases();
   worker.homeCC = "some-destroyed-cc-id";

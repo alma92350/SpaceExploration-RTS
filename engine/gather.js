@@ -173,15 +173,24 @@ export function nearestCommandCenter(state, owner, x, y) {
 // Mender/freighter stays loyal to, not just raw distance. A stale override (its CC destroyed, or
 // never valid) is ignored and this falls straight back to the distance guess — self-healing, same
 // "never cache, recompute from state" shape as everything else here.
+//
+// The two cases behave differently once the home zone comes up EMPTY, by design:
+//   - No override (or a stale one): the distance guess is just a heuristic, not a commitment, so an
+//     empty home zone still widens to the whole empire — today's plain global search, a last resort.
+//   - A VALID explicit override: the player deliberately assigned this base, so it's a hard
+//     boundary, not a suggestion. An empty zone returns null (no job) rather than reaching into
+//     another base's territory — the unit just waits for its OWN zone to need something, until the
+//     player reassigns it to a different Command Center or clears the override outright.
 /** @param {State} state @param {string} owner @param {number} x @param {number} y
  *  @param {(inZone: ((ex:number, ey:number) => boolean)|null) => *} scan @param {string} [homeId]
  *  @returns {*} */
 export function zoneFirst(state, owner, x, y, scan, homeId) {
-  let home = homeId ? state.buildings.get(homeId) : null;
-  if (!home || home.owner !== owner || home.constructing || !BUILDINGS[home.type]?.isCommandCenter) {
-    home = nearestCommandCenter(state, owner, x, y);
-  }
+  const overrideCC = homeId ? state.buildings.get(homeId) : null;
+  const pinned = !!(overrideCC && overrideCC.owner === owner && !overrideCC.constructing && BUILDINGS[overrideCC.type]?.isCommandCenter);
+  const home = pinned ? overrideCC : nearestCommandCenter(state, owner, x, y);
   if (!home) return scan(null);
   const inZone = (ex, ey) => nearestCommandCenter(state, owner, ex, ey) === home;
-  return scan(inZone) ?? scan(null);
+  const result = scan(inZone);
+  if (result != null) return result;
+  return pinned ? null : scan(null);
 }

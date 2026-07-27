@@ -282,6 +282,24 @@ Closes the two items Phase E deliberately left for later.
   `pickRepairTarget` (`repair.js`, so both the worker repair job AND the Mender's own `autoRepairRoam`
   honor it). HUD: a selected unit with a home base shows a "🏠 Home base assigned" note and a Clear
   button; a selected Command Center shows how many units call it home.
+- **Refinement — an explicit assignment is a HARD boundary, not just a tie-break.** The first cut of
+  `zoneFirst` fell back to a global search whenever the (overridden or guessed) home zone came up
+  empty, no matter which way `home` was picked. That's right for the DEFAULT distance guess (a mere
+  heuristic — widen the search rather than sit idle) but wrong once the player has deliberately
+  assigned a base: a hauler pinned to Command Center A should keep cycling through WHATEVER other
+  jobs A's own zone has to offer, and simply wait when it has none — never reach into Command Center
+  B's territory on its own. `zoneFirst` now tracks whether `home` came from a valid override or the
+  distance guess, and only widens to the whole empire in the latter case; a pinned unit with an empty
+  zone gets `null` (no job, stays idle) until the player reassigns it to a different CC (right-click
+  it — `issueSetHomeBase` overwrites the old assignment) or clears it outright (the HUD's "Clear home
+  base" button, or setting `homeCC = null` — "assign to nothing"). This is also exactly why a
+  building-level manual assignment (`issueServiceBuilding`/`issueRepair`/`issueFerryFreighter`,
+  `order.manual`) was left untouched: it was ALREADY a hard, single-target lock (the worker loops on
+  that one building/freighter forever once done, never auto-reassigned) — the contrast is
+  intentional. A CC assignment is a *territory* (flexible among whatever's inside it); a building
+  assignment is a *target* (one specific thing, no substitutes). Tests: `test/zones.test.js` (a
+  pinned empty zone stays idle rather than poaching; reassigning to a different CC immediately
+  redraws the boundary; clearing the override restores the old lenient default).
 - **A worker can now repair a wounded mobile UNIT, not just a building.** `pickRepairTarget` already
   supported `includeUnits`; `assignRepair` now leaves it at the default (true) instead of forcing
   buildings-only, so a worker's auto-assigned or manually-issued (`issueRepair`, renamed from
