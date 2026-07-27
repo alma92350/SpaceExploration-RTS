@@ -97,6 +97,14 @@ function rightClick(canvas, window, clientX, clientY, ctrlKey = false) {
   window.dispatchEvent(ev("mouseup", { button: 2, clientX, clientY, ctrlKey }));
 }
 
+// A left-click (selection) is the button-0 equivalent: mousedown on the canvas arms a
+// selection box at that point, mouseup on window (same point, no drag) resolves it via
+// applyBoxSelection's tiny-box/point-pick branch.
+function leftClick(canvas, window, clientX, clientY, ctrlKey = false) {
+  canvas.dispatchEvent(ev("mousedown", { button: 0, clientX, clientY }));
+  window.dispatchEvent(ev("mouseup", { button: 0, clientX, clientY, ctrlKey }));
+}
+
 // ============================================================================
 // Bug 1 — alt-tab camera drift: a backgrounded tab doesn't reliably get a keyup, so a
 // pan key held at the moment of alt-tab must not stay "held" forever. A window blur is
@@ -296,4 +304,62 @@ test("dblclick with neither mode active still does the normal select-all-of-type
 
   assert.deepEqual([...state.selection].sort(), [a.id, b.id].sort(),
     "with no build/attack-move mode active, dblclick still grabs every same-type unit on screen");
+});
+
+// ============================================================================
+// Ctrl+click promotes an already-selected unit to leader (selection[0] — the formation leader,
+// see engine/formation.js pickLeader) instead of the Set-union no-op it used to be.
+// ============================================================================
+
+test("ctrl+clicking a unit already in the selection promotes it to the front (leader)", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  const c = makeUnit("skiff", "player", 900, 500);
+  [a, b, c].forEach(u => state.units.set(u.id, u));
+  state.selection = [a.id, b.id, c.id];
+
+  const { clientX, clientY } = clientFor(controller, c.x, c.y);
+  leftClick(canvas, window, clientX, clientY, true);   // ctrl+click c, already selected
+
+  assert.deepEqual(state.selection, [c.id, a.id, b.id], "c is promoted to the front; a/b keep their relative order");
+});
+
+test("ctrl+clicking a not-yet-selected unit still just appends (existing behaviour, unchanged)", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  state.units.set(a.id, a); state.units.set(b.id, b);
+  state.selection = [a.id];
+
+  const { clientX, clientY } = clientFor(controller, b.x, b.y);
+  leftClick(canvas, window, clientX, clientY, true);   // ctrl+click b, not yet selected
+
+  assert.deepEqual(state.selection, [a.id, b.id], "b is appended after the existing leader, a stays first");
+});
+
+test("ctrl+clicking the unit that's already the leader is a harmless no-op", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  state.units.set(a.id, a); state.units.set(b.id, b);
+  state.selection = [a.id, b.id];
+
+  const { clientX, clientY } = clientFor(controller, a.x, a.y);
+  leftClick(canvas, window, clientX, clientY, true);   // ctrl+click a, already the leader
+
+  assert.deepEqual(state.selection, [a.id, b.id], "already the leader — selection order is unchanged");
+});
+
+test("a plain (non-ctrl) click on an already-selected unit still resets the selection to just it", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  state.units.set(a.id, a); state.units.set(b.id, b);
+  state.selection = [a.id, b.id];
+
+  const { clientX, clientY } = clientFor(controller, b.x, b.y);
+  leftClick(canvas, window, clientX, clientY, false);   // plain click on b, no ctrl
+
+  assert.deepEqual(state.selection, [b.id], "a plain click always replaces the selection — promotion is a ctrl-only gesture");
 });

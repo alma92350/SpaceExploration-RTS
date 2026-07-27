@@ -155,6 +155,11 @@ export function attachInput(canvas, state, onChange) {
 
   // Resolve a world-space selection box (a tiny box is a point-pick) into the new
   // selection, additively when asked. Returns the ids picked.
+  //
+  // Additively re-picking a single unit that's ALREADY in the selection promotes it to the
+  // front instead of no-op'ing there — i.e. makes it the formation leader (engine/formation.js
+  // pickLeader is always selection[0]) without having to clear the selection and rebuild it
+  // around that unit from scratch. Ctrl+clicking any one squadmate is enough to hand it the lead.
   function applyBoxSelection(box, additive) {
     const dx = Math.abs(box.x2 - box.x1), dy = Math.abs(box.y2 - box.y1);
     let picks;
@@ -174,7 +179,12 @@ export function attachInput(canvas, state, onChange) {
       picks = inBox.map(u => u.id);
     }
     if (additive) {
-      if (picks.length) state.selection = [...new Set([...state.selection, ...picks])];
+      if (picks.length === 1 && state.selection.includes(picks[0])) {
+        const [id] = picks;
+        state.selection = [id, ...state.selection.filter(sid => sid !== id)];
+      } else if (picks.length) {
+        state.selection = [...new Set([...state.selection, ...picks])];
+      }
     } else {
       state.selection = picks;
     }
