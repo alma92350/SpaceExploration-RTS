@@ -55,7 +55,7 @@
  * @property {number} [offsetX]   hold-formation/follow-leader: this unit's fixed offset from the anchor/leader (engine/formation.js)
  * @property {number} [offsetY]
  * @property {Unit} [leader]      follow-leader: the formation leader this unit is chasing (engine/movement.js keepFollowingLeader) — a live object reference, NEVER persisted (engine/persist.js drops a follow-leader order entirely on save)
- * @property {number} [speedCap]  move/attack-move/hold-formation: a formation leader's travel speed, capped to its slowest member (engine/movement.js orderedSpeed)
+ * @property {number} [speedCap]  move/attack-move/hold-formation/scout: a formation leader's travel speed, capped to its slowest member (engine/movement.js orderedSpeed)
  */
 
 /**

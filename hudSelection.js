@@ -1473,7 +1473,7 @@ function rebuildSelectionPanel(sel) {
   const hasRanger = sel.some(e => e.kind === "unit" && UNITS[e.type].role === "scout");
   if (hasRanger) {
     panelEl.appendChild(makeButton("Scout Mode ( E )", () => input.scoutSelected(),
-      { tip: "Auto-explore: the Ranger ranges toward the nearest unexplored ground on its own" }));
+      { tip: "Auto-explore: the Ranger ranges toward the nearest unexplored ground — leading its formation at the group's pace if it has one, on its own otherwise" }));
   }
 
   const touch = isTouchMode();

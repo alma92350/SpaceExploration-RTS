@@ -52,6 +52,15 @@ function setSquadLeader(unit, leader) {
   unit.squadLeader = leader || undefined;
 }
 
+// The slowest unit's own speed across `units` — a formation leader's travel pace is capped to
+// this (order.speedCap, read by engine/movement.js's orderedSpeed) so a fast leader can't outrun
+// the group it's leading. Returns undefined (leave the order uncapped) when there's nothing to
+// cap to, e.g. an empty follower list.
+function groupSpeedCap(units) {
+  const speed = units.reduce((m, u) => Math.min(m, UNITS[u.type]?.speed ?? Infinity), Infinity);
+  return Number.isFinite(speed) ? speed : undefined;
+}
+
 // The shared machinery behind issueMove/issueAttackMove/issueHoldFormation: lay the group out
 // in `formation`'s shape, give the LEADER (units[0] — see engine/formation.js) its own real
 // order via `makeLeaderOrder(point)`, and give every OTHER unit a persistent "follow-leader"
@@ -88,8 +97,8 @@ function dispatchFormation(units, x, y, formation, queue, makeLeaderOrder) {
     const order = makeLeaderOrder({ x, y });
     if (leader.squadFollowers && leader.squadFollowers.length) {
       leader.squadFollowers = leader.squadFollowers.filter(f => f.hp > 0);
-      const groupSpeed = [leader, ...leader.squadFollowers].reduce((m, u) => Math.min(m, UNITS[u.type]?.speed ?? Infinity), Infinity);
-      if (Number.isFinite(groupSpeed)) order.speedCap = groupSpeed;
+      const cap = groupSpeedCap([leader, ...leader.squadFollowers]);
+      if (cap !== undefined) order.speedCap = cap;
     }
     dispatch(leader, order, queue);
     return;
@@ -109,9 +118,9 @@ function dispatchFormation(units, x, y, formation, queue, makeLeaderOrder) {
   }
   leader.squadFollowers = newFollowers;
 
-  const groupSpeed = units.reduce((m, u) => Math.min(m, UNITS[u.type]?.speed ?? Infinity), Infinity);
   const leaderOrder = makeLeaderOrder(leaderSpot);
-  if (Number.isFinite(groupSpeed)) leaderOrder.speedCap = groupSpeed;
+  const cap = groupSpeedCap(units);
+  if (cap !== undefined) leaderOrder.speedCap = cap;
   dispatch(leader, leaderOrder, queue);
 
   for (let i = 1; i < units.length; i++) {
@@ -368,23 +377,25 @@ export function issueHold(units) {
 // simply skips everything that isn't a Ranger. Clears any queued waypoints, like
 // a plain command — the mode is persistent, not something to stack behind.
 //
-// A Ranger that was leading a formation ALSO releases its whole squad here, stopped rather than
-// left dangling: scout mode sends it off on an open-ended, whole-map route with no fixed
-// destination, so followers left on their stale follow-leader order would otherwise trail it
-// (at their own, slower pace) for as long as it keeps scouting — the formation dragged along
-// behind a unit no longer acting as its leader, instead of cleanly breaking off. setSquadLeader
-// alone doesn't cover this: it only clears what THIS unit follows, not who follows it (see the
-// file header) — same "stop the ones dropped out" precedent as dispatchFormation's own
-// squad-redefinition above.
+// A Ranger LEADING a formation keeps leading it here rather than abandoning it: its followers
+// are left exactly as they are, still chasing it on their existing follow-leader order (the same
+// "a new leader order never touches the followers' own orders" rule dispatchFormation's solo-move
+// branch already relies on), and the scout order itself is capped to the group's speed
+// (order.speedCap — the same group-minimum a move/attack-move/hold-formation leader gets, see
+// groupSpeedCap/dispatchFormation above) so it doesn't outrun its own escorts — a protective scout
+// leading the pack into the fog at ITS pace, not a lone unit racing off alone. A solo Ranger (no
+// squadFollowers) scouts at its own full speed exactly as before — nothing to keep pace with.
 export function issueScout(units) {
   units.forEach(u => {
     if (UNITS[u.type] && UNITS[u.type].role === "scout") {
       setSquadLeader(u, null);
+      const order = { type: "scout" };
       if (u.squadFollowers && u.squadFollowers.length) {
-        for (const f of u.squadFollowers) { setSquadLeader(f, null); f.order = null; f.orderQueue = []; }
-        u.squadFollowers = [];
+        u.squadFollowers = u.squadFollowers.filter(f => f.hp > 0);
+        const cap = groupSpeedCap([u, ...u.squadFollowers]);
+        if (cap !== undefined) order.speedCap = cap;
       }
-      u.order = { type: "scout" };
+      u.order = order;
       u.orderQueue = [];
     }
   });
