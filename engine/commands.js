@@ -173,6 +173,18 @@ export function issueFerryFreighter(units, freighterId, queue = false) {
   });
 }
 
+// Assign workers to REPAIR a damaged own building — a standing job that keeps patching it at
+// WORKER_REPAIR_RATE hp/sec (engine/repair.js updateRepairJob) until it's fully healed, then waits
+// there for it to take damage again, the same auto-vs-manual split issueServiceBuilding uses. ANY
+// completed building qualifies (a turret, a Habitat, the Command Center itself) — not just a
+// logistics-buffered one — this is a worker literally patching the hull, unrelated to hauling
+// its goods.
+export function issueRepairBuilding(units, buildingId, queue = false) {
+  units.forEach(u => {
+    if (canLogisticsType(u.type)) dispatch(u, { type: "repair", buildingId, phase: "toSite", manual: true }, queue);
+  });
+}
+
 // Toggle a freighter's AI-LOGISTICS mode: put to work in the local haul/service chain like a
 // worker (engine/sim.js updateUnit), but at its own far larger cargo capacity, burning AI Cores
 // from the treasury while active (engine/haul.js payAIUpkeep). Turning it OFF always works (stand

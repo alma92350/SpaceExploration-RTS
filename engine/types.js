@@ -145,6 +145,7 @@
  * @property {boolean} [powered]      transient: a Combustion Generator is fed & granting Power this tick (engine/industry.js)
  * @property {string} [fuel]          transient: which fuel the Generator burned this tick (HUD)
  * @property {number} [menderClaims]  transient: auto-repair Menders committed to this building this tick (engine/sim.js)
+ * @property {number} [repairers]     transient: workers already assigned to REPAIR this building this tick (engine/repair.js countRepairJobs) — stripped on serialize
  * @property {{progress:number, time:number}} [recycling]  an in-progress player Recycle (engine/commands.js issueRecycle) — persisted; progress 0..1, removes the building and refunds part of its cost at 1 (engine/recycle.js updateBuildingRecycle); the building stays fully functional until then
  */
 

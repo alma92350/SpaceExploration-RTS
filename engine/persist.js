@@ -363,12 +363,13 @@ function serPlanet(state) {
     // a UNIT, not a building.
     units: [...state.units.values()].map(({ _gi, repairTargetId, squadLeader, squadFollowers, ferriers, ...u }) =>
       u.order && u.order.type === "follow-leader" ? { ...u, order: null } : u),
-    // `haulers`/`servers` (logistics tallies, engine/haul.js), `powered`/`fuel` (Generator fuel
-    // state, engine/industry.js), `menderClaims` (auto-repair Mender tally, engine/sim.js) and
-    // `lastYield`/`lastTier` (a Plasma Rig's last-strike HUD readout, engine/rig.js — regenerated on
-    // the next dig) are all transient — stamped fresh each tick like a unit's `_gi` grid index — so
-    // strip them from saves. (digProgress/digCount are the rig's REAL persisted dig state, kept.)
-    buildings: [...state.buildings.values()].map(({ haulers, servers, powered, fuel, menderClaims, lastYield, lastTier, ...b }) => b),
+    // `haulers`/`servers` (logistics tallies, engine/haul.js), `repairers` (worker repair-job
+    // tally, engine/repair.js countRepairJobs), `powered`/`fuel` (Generator fuel state, engine/
+    // industry.js), `menderClaims` (auto-repair Mender tally, engine/sim.js) and `lastYield`/
+    // `lastTier` (a Plasma Rig's last-strike HUD readout, engine/rig.js — regenerated on the next
+    // dig) are all transient — stamped fresh each tick like a unit's `_gi` grid index — so strip
+    // them from saves. (digProgress/digCount are the rig's REAL persisted dig state, kept.)
+    buildings: [...state.buildings.values()].map(({ haulers, servers, repairers, powered, fuel, menderClaims, lastYield, lastTier, ...b }) => b),
     // A map-generated node is regenerated fresh from the seed on load (generateMap), so only
     // its `amount` (the one thing that changes) needs saving. A crater node (engine/bomb.js)
     // or a wreck node (engine/wreckage.js) does NOT exist in that regeneration at all — it

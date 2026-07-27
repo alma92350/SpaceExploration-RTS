@@ -9,7 +9,7 @@
 "use strict";
 
 import { game } from "./session.js";
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueHoldFormation } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueRepairBuilding, issueHoldFormation } from "./engine/commands.js";
 import { UNITS, BUILDINGS, storeCapOf, canGatherType, canLogisticsType, canBuildCategory } from "./engine/entities.js";
 import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
@@ -236,6 +236,15 @@ export function attachInput(canvas, state, onChange) {
         && (recipeOf(target) || storeCapOf(target.type) > 0)) {
       const workers = selected.filter(u => canLogisticsType(u.type));
       if (workers.length) { issueServiceBuilding(workers, target.id, queue); sound.playOrder(); onChange(); return; }
+    }
+    // A completed friendly building below full HP, and not already claimed by the logistics-service
+    // branch above (a damaged factory keeps its existing "service" behaviour): selected workers
+    // patch it up instead — a turret, a Habitat, the Command Center itself, whatever soaked damage
+    // or Odyssey wear (engine/commands.js issueRepairBuilding).
+    if (target && target.owner === "player" && target.kind === "building" && !target.constructing
+        && target.hp < target.maxHp) {
+      const workers = selected.filter(u => canLogisticsType(u.type));
+      if (workers.length) { issueRepairBuilding(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
     if (target && target.owner !== "player") {
       const attackers = selected.filter(u => UNITS[u.type].attack);

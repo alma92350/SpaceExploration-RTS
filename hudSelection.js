@@ -770,6 +770,19 @@ function rebuildSelectionPanel(sel) {
     });
   }
 
+  // A damaged, completed building: say so plainly, and whether a worker's already patching it
+  // (engine/repair.js updateRepairJob/countRepairJobs) — the same "needs a hauler" style stall
+  // note a factory/rig gets below, generalized to any structure, not just a logistics buffer.
+  sel.filter(e => e.kind === "building" && !e.constructing && e.hp < e.maxHp).forEach(b => {
+    const repairing = (b.repairers || 0) > 0;
+    const row = document.createElement("div");
+    row.className = "sel-note " + (repairing ? "warn" : "bad");
+    row.textContent = repairing
+      ? `Damaged — ${b.repairers} worker${b.repairers > 1 ? "s" : ""} repairing`
+      : "Damaged — right-click with a worker selected to repair";
+    panelEl.appendChild(row);
+  });
+
   const cc = sel.find(e => e.kind === "building" && e.type === "command" && !e.constructing);
   if (cc) {
     // Odyssey: the CC also builds Colony Ships — the mobile seed you deploy to found a

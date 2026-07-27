@@ -11,7 +11,7 @@ import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
 import { updateHaul, assignHaul, updateService, assignService, updateFerry, assignFerry, assignShuttle, updateFreighterShuttle, countLogistics, payAIUpkeep, FREIGHTER_AI_TECH } from "./haul.js";
 import { updateScoutMode } from "./scout.js";
-import { updateRepair } from "./repair.js";
+import { updateRepair, pickRepairTarget, assignRepair, updateRepairJob, countRepairJobs, HEALED } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBombFuse, updateCraters } from "./bomb.js";
 import { updateWreckage } from "./wreckage.js";
@@ -56,6 +56,10 @@ export function tick(state, dt) {
   // Per-building count of auto-repair Menders already committed to it, frozen before any Mender
   // re-targets below — so they SPREAD OUT (one per building) instead of all piling on the worst one.
   countMenderTargets(state);
+  // Per-building count of workers already assigned to REPAIR it this tick, frozen before any idle
+  // worker claims a fresh repair job below — the ≤MAX_REPAIRERS cap (engine/repair.js), same shape
+  // as countLogistics above. A no-op wherever nothing is damaged.
+  countRepairJobs(state);
   // Aura projectors (Aegis) for this tick, read by combat.js attackDamage. Collected
   // once here (a tiny list — the units are Tier-3 and rare) so a landed hit costs O(anvils)
   // not O(units); positions are frozen at tick start like the grid above (deterministic).
@@ -202,6 +206,14 @@ function updateUnit(state, unit, dt) {
     if (!unit.order) assignService(state, unit);
     if (unit.order && aiFreighter) unit.order.aiJob = true;
   }
+  // Still nothing to do: a worker (not a freighter — patching a hull isn't a cargo run) offers
+  // itself to REPAIR the own damaged building most in need, zone-first like haul/service (engine/
+  // repair.js assignRepair). Checked last so an economy job always outranks a repair, matching the
+  // ferry > haul > service priority above — a stalled factory needs labour more urgently than a
+  // building that's merely below full HP.
+  if (!unit.order && canLogisticsType(unit.type) && unit.owner === "player") {
+    assignRepair(state, unit);
+  }
 
   if (!unit.order) return;
 
@@ -232,6 +244,9 @@ function updateUnit(state, unit, dt) {
       break;
     case "ferry":
       updateFerry(state, unit, dt);
+      break;
+    case "repair":
+      updateRepairJob(state, unit, dt);
       break;
     case "shuttle":
       updateFreighterShuttle(state, unit, dt);
@@ -343,11 +358,12 @@ function countMenderTargets(state) {
 // An auto-repair Mender roams to the friendly that needs it MOST. Hysteresis kills the ping-pong:
 // it only gets ATTRACTED to something worn past NEEDS_REPAIR, and once it commits it STAYS on that
 // target until it's topped past HEALED — so a full building nicked by a hair of wear can't yank the
-// drone back and forth. Priority is most-worn-first (lowest HP fraction), distance breaks ties. And
-// a BUILDING already claimed by another auto-repair Mender is skipped, so the drones spread out one
-// per building instead of dogpiling the worst one. Deterministic; drone parks when nothing qualifies.
-const NEEDS_REPAIR = 0.85;   // only chase a friendly once it's dropped below this share of max HP
-const HEALED = 0.985;        // …and keep servicing it until it's back above this — the release point
+// drone back and forth. Picking a NEW target (engine/repair.js pickRepairTarget) is zone-first (a
+// damaged building/unit in the Mender's own Command Center zone wins over a nearer one belonging
+// to another base — engine/gather.js zoneFirst) and, within a zone, most-worn-first, distance
+// breaking ties. A BUILDING already claimed by another auto-repair Mender is skipped, so the drones
+// spread out one per building instead of dogpiling the worst one. Deterministic; drone parks when
+// nothing qualifies.
 function autoRepairRoam(state, mender, def, dt) {
   const range = def.repairRange || 100;
   const ownFriendly = e => e && e.owner === mender.owner && e.hp > 0 && !e.constructing;
@@ -359,18 +375,11 @@ function autoRepairRoam(state, mender, def, dt) {
     : null;
   if (!(ownFriendly(target) && target !== mender && target.hp < target.maxHp * HEALED)) target = null;
 
-  if (!target) {   // pick the MOST worn eligible friendly below the attract threshold
-    let bestFrac = NEEDS_REPAIR, bestD = Infinity;
-    const consider = e => {
-      if (!ownFriendly(e) || e === mender) return;
-      if (e.kind === "building" && (e.menderClaims || 0) >= 1) return;   // one Mender per building
-      const frac = e.hp / e.maxHp;
-      if (frac >= NEEDS_REPAIR) return;
-      const d = Math.hypot(e.x - mender.x, e.y - mender.y);
-      if (frac < bestFrac - 1e-9 || (Math.abs(frac - bestFrac) <= 1e-9 && d < bestD)) { bestFrac = frac; bestD = d; target = e; }
-    };
-    for (const b of state.buildings.values()) consider(b);
-    for (const u of state.units.values()) consider(u);
+  if (!target) {   // pick the MOST worn eligible friendly below the attract threshold, own zone first
+    target = pickRepairTarget(state, mender.owner, mender.x, mender.y, {
+      exclude: mender,
+      isClaimed: e => e.kind === "building" && (e.menderClaims || 0) >= 1,   // one Mender per building
+    });
     if (target && target.kind === "building") target.menderClaims = (target.menderClaims || 0) + 1;   // claim it for the rest of this tick
   }
 
