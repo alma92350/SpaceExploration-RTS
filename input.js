@@ -9,7 +9,7 @@
 "use strict";
 
 import { game } from "./session.js";
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueHoldFormation } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueRepair, issueSetHomeBase, issueHoldFormation } from "./engine/commands.js";
 import { UNITS, BUILDINGS, storeCapOf, canGatherType, canLogisticsType, canBuildCategory } from "./engine/entities.js";
 import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
@@ -237,6 +237,25 @@ export function attachInput(canvas, state, onChange) {
       const workers = selected.filter(u => canLogisticsType(u.type));
       if (workers.length) { issueServiceBuilding(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
+    // A completed friendly building below full HP, and not already claimed by the logistics-service
+    // branch above (a damaged factory keeps its existing "service" behaviour): selected workers
+    // patch it up instead — a turret, a Habitat, the Command Center itself, whatever soaked damage
+    // or Odyssey wear (engine/commands.js issueRepair).
+    if (target && target.owner === "player" && target.kind === "building" && !target.constructing
+        && target.hp < target.maxHp) {
+      const workers = selected.filter(u => canLogisticsType(u.type));
+      if (workers.length) { issueRepair(workers, target.id, queue); sound.playOrder(); onChange(); return; }
+    }
+    // A completed, undamaged (or damage-repair-less) friendly Command Center: selected eligible units
+    // (workers, Menders, freighters) are pinned to it as their assigned HOME BASE (engine/commands.js
+    // issueSetHomeBase) — an explicit override for zoneFirst's usual nearest-CC guess, so the player
+    // decides which base's territory a unit's logistics/repair jobs stay loyal to. Passive: it never
+    // interrupts whatever the unit is currently doing.
+    if (target && target.owner === "player" && target.kind === "building" && target.type === "command"
+        && !target.constructing) {
+      const eligible = selected.filter(u => canLogisticsType(u.type) || UNITS[u.type]?.role === "support" || UNITS[u.type]?.role === "freighter");
+      if (eligible.length) { issueSetHomeBase(eligible, target.id); sound.playOrder(); onChange(); return; }
+    }
     if (target && target.owner !== "player") {
       const attackers = selected.filter(u => UNITS[u.type].attack);
       if (attackers.length) { issueAttack(attackers, target.id, queue); sound.playOrder(); onChange(); }
@@ -250,6 +269,13 @@ export function attachInput(canvas, state, onChange) {
     if (target && target.owner === "player" && target.kind === "unit" && UNITS[target.type]?.role === "freighter") {
       const workers = selected.filter(u => canLogisticsType(u.type));
       if (workers.length) { issueFerryFreighter(workers, target.id, queue); sound.playOrder(); onChange(); return; }
+    }
+    // A damaged friendly UNIT as the target (not claimed by the ferry branch above — a freighter
+    // needing ferried always wins that click): selected workers patch it up directly instead of
+    // escorting it (engine/commands.js issueRepair) — the same worker repair job a building gets.
+    if (target && target.owner === "player" && target.kind === "unit" && target.hp < target.maxHp) {
+      const workers = selected.filter(u => canLogisticsType(u.type) && u.id !== target.id);
+      if (workers.length) { issueRepair(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
     // A friendly SHIP as the target: the selection forms a protective escort ring around it and
     // follows it wherever it's ordered (engine/commands.js issueEscort). The target itself is

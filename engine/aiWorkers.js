@@ -11,6 +11,7 @@
 
 import { BUILDINGS, UNITS, UPGRADES, prereqsMet } from "./entities.js";
 import { assignService, assignHaul, countLogistics } from "./haul.js";
+import { assignRepair, countRepairJobs } from "./repair.js";
 import { isNodeDiscovered } from "./fog.js";
 
 const SATURATION_STEER = 250;     // distance-equivalent penalty per worker a node is over the soft cap
@@ -26,23 +27,27 @@ const SPENDABLE = (() => {
 })();
 
 // Give a BOUNDED share of the AI's idle workers real logistics jobs — servicing factories (carry
-// inputs in, outputs out) and hauling pure producers (the Plasma Rig) to a Command Center — reusing
-// the exact owner-generic machinery the player's workers use (engine/haul.js). Capped at HALF the
-// worker pool so gathering never starves: a factory with no raws mined is no better off than one with
-// no servers, so the AI must keep miners on the field too. Deterministic — countLogistics freezes the
-// committed slots first, then assignService/assignHaul claim the nearest free slot (ties by id).
-// Odyssey-only (industry is odysseyOnly); the player's own auto-haul path (engine/sim.js) is untouched.
+// inputs in, outputs out), hauling pure producers (the Plasma Rig) to a Command Center, and
+// repairing a damaged own building — reusing the exact owner-generic, zone-first machinery the
+// player's workers use (engine/haul.js, engine/repair.js). Capped at HALF the worker pool so
+// gathering never starves: a factory with no raws mined is no better off than one with no servers,
+// so the AI must keep miners on the field too. Deterministic — countLogistics/countRepairJobs
+// freeze the committed slots first, then assignService/assignHaul/assignRepair claim the nearest
+// free slot in the AI's own Command Center zone first (ties by id). Odyssey-only (industry is
+// odysseyOnly); the player's own auto-haul path (engine/sim.js) is untouched.
 export function assignAiLogistics(state, workers) {
   if (!workers.length) return;
-  countLogistics(state);   // fresh committed haul/service tallies before we claim any new slots this cycle
+  countLogistics(state);     // fresh committed haul/service tallies before we claim any new slots this cycle
+  countRepairJobs(state);    // …and repair tallies too
   let budget = Math.floor(workers.length / 2)
-    - workers.filter(w => w.order && (w.order.type === "service" || w.order.type === "haul")).length;
+    - workers.filter(w => w.order && (w.order.type === "service" || w.order.type === "haul" || w.order.type === "repair")).length;
   if (budget <= 0) return;
   for (const w of workers) {
     if (budget <= 0) break;
     if (w.order) continue;
-    assignService(state, w);            // sets w.order to a factory service round-trip if one needs it
-    if (!w.order) assignHaul(state, w); // …else haul a backed-up pure producer (the rig)
+    assignService(state, w);              // sets w.order to a factory service round-trip if one needs it
+    if (!w.order) assignHaul(state, w);   // …else haul a backed-up pure producer (the rig)
+    if (!w.order) assignRepair(state, w); // …else patch a damaged own building
     if (w.order) budget--;
   }
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation } from "../engine/commands.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation, issueRepair, issueSetHomeBase } from "../engine/commands.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 
@@ -340,4 +340,33 @@ test("issueHold sets the stance on combat units only; a move order or Stop clear
   combat.hold = true;
   issueStop([combat]);
   assert.equal(combat.hold, false, "Stop cancels Hold too");
+});
+
+test("issueRepair sends only logistics-capable units to patch a target, manually and standing", () => {
+  const units = capableDummyUnits(2);
+  units[1].type = "skiff";   // e.g. a combat unit caught in the same selection
+  issueRepair(units, "target-1");
+  assert.deepEqual(units[0].order, { type: "repair", targetId: "target-1", phase: "toSite", manual: true });
+  assert.equal(units[1].order, null, "a non-worker never gets a repair order");
+});
+
+test("issueSetHomeBase pins eligible units (worker/support/freighter) to a Command Center, ignoring the rest", () => {
+  const worker = { id: "u1", type: "worker", order: null };
+  const mender = { id: "u2", type: "mender", order: null };
+  const hauler = { id: "u3", type: "hauler", order: null };
+  const skiff = { id: "u4", type: "skiff", order: null };
+
+  issueSetHomeBase([worker, mender, hauler, skiff], "cc-1");
+
+  assert.equal(worker.homeCC, "cc-1");
+  assert.equal(mender.homeCC, "cc-1", "a Mender consults a home zone too (autoRepairRoam)");
+  assert.equal(hauler.homeCC, "cc-1", "a freighter running AI-logistics consults it as well");
+  assert.equal(skiff.homeCC, undefined, "a combat unit never consults a home zone, so it's left untouched");
+});
+
+test("issueSetHomeBase is passive — it never touches a unit's current order", () => {
+  const worker = { id: "u1", type: "worker", order: { type: "gather", nodeId: "n1" } };
+  issueSetHomeBase([worker], "cc-2");
+  assert.equal(worker.homeCC, "cc-2");
+  assert.deepEqual(worker.order, { type: "gather", nodeId: "n1" }, "whatever it was doing keeps running");
 });

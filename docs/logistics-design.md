@@ -219,17 +219,103 @@ Revisits item 10 above: a landed freighter (`hauler`/`heavyhauler`/`bulkfreighte
 
 ---
 
+**Phase E — Command Center zone affinity + a worker REPAIR job. ✅ DONE.**
+Revisits a gap the original four phases didn't cover: on a multi-base empire, every "nearest"
+job-pick above (`nearestBacklogProducer`, `assignService`'s factory scan, `assignFerry`'s
+freighter scan) searched the WHOLE empire from the idle worker's current position with no notion
+of "which base do I belong to." Once a busy base's own ≤2-per-target caps (`MAX_HAULERS`/
+`MAX_SERVERS`) filled up, its surplus idle labour got "poached" by whichever OTHER base's job
+happened to be nearest in that flat global search — a routine long, arbitrary cross-map commute,
+not just an occasional loan. The same gap existed in the auto-repair Mender's roam target pick
+(`engine/sim.js autoRepairRoam`), which also scanned globally by worn-first/distance with no
+zone awareness.
+
+- **Zone affinity (`engine/gather.js zoneFirst`).** A building/unit's "zone" is simply whichever
+  of its owner's Command Centers sits nearest to it — computed on demand, never stored/cached, so
+  founding or losing a CC instantly redraws every boundary with nothing to invalidate. `zoneFirst`
+  runs a caller-supplied scan TWICE: first restricted to the searcher's own zone, and only if that
+  comes back empty, once more with no restriction — today's plain global search, now a last
+  resort instead of the routine case. A one-CC game (nearly every skirmish, and Odyssey before a
+  player expands) has exactly one zone, so behaviour there is byte-identical to before this
+  existed — verified by a dedicated test alongside the cross-zone ones.
+  `nearestBacklogProducer`/`assignService`/`assignFerry` (`engine/haul.js`) and the Mender's
+  `autoRepairRoam` (`engine/sim.js`, via the new `pickRepairTarget` below) all adopt it.
+- **A worker REPAIR job (`engine/repair.js`).** Buildings could only be healed passively by a
+  Mender in range, or by an `autoRepair` Mender roaming to the worst-off one — nothing stationed
+  labour there when no Mender was around, even though Odyssey structures wear down on their own
+  (`updateDecay`). A generalist worker can now be assigned a `repair` order — auto (idle workers
+  offer themselves the same zone-first way haul/service already do, after ferry/haul/service in
+  priority) or manual (right-click a damaged own building with workers selected,
+  `issueRepairBuilding` — any completed building qualifies, not just a logistics-buffered one). It
+  walks to the building and patches it at a flat `WORKER_REPAIR_RATE` (free, like a Mender's heal —
+  time, not resources), capped at `MAX_REPAIRERS` per building so labour spreads out, same shape as
+  the haul/service caps. Buildings only — a Mender already covers wounded mobile units, and a
+  stationary "post a request to the nearest CC" model fits a fixed structure, not a unit that
+  might have moved by the time labour arrives; that's a deliberate v1 scope line, not an oversight.
+  `pickRepairTarget` (zone-first, worst-hp-fraction-first, the shared `NEEDS_REPAIR`/`HEALED`
+  hysteresis thresholds) is exported so the Mender's own roam target-pick reuses the exact same
+  selection logic instead of a second copy.
+- **AI-safe and deterministic by the same construction as Phases A-D:** zone affinity and the
+  repair job are pure functions of state (id-tiebroken, no wall clock), and the Odyssey AI's own
+  worker logistics (`engine/aiWorkers.js assignAiLogistics`, endless-only) picks up both the zone
+  affinity and the new repair job for free by calling the same `engine/haul.js`/`engine/repair.js`
+  functions the player's workers use — its skirmish behaviour is untouched (`assignAiLogistics` is
+  never invoked outside Odyssey). Tests: `test/zones.test.js` (cross-base zone preference for
+  haul/service/ferry, plus the single-CC byte-identical case) and `test/repairJob.test.js`
+  (auto/manual assignment, the repair cap, and zone preference).
+
+**Phase F — home-base override + repairing mobile units too. ✅ DONE.**
+Closes the two items Phase E deliberately left for later.
+
+- **A player-assigned home base (`unit.homeCC`, `engine/commands.js issueSetHomeBase`).** Zone-first
+  (Phase E) still GUESSED a unit's home zone from raw nearest-CC distance — usually right, but the
+  player had no way to override it. Right-clicking a completed own Command Center with eligible
+  units selected (worker, Mender, or a freighter — anything that ever consults a zone) now pins
+  `unit.homeCC` to it; `engine/gather.js zoneFirst` takes an optional `homeId` and, when it resolves
+  to a live owned CC, uses it INSTEAD of the distance guess — the player decides which base's
+  territory a unit's jobs stay loyal to, not just proximity (directly answering "the player would
+  be in charge of where sufficient resources are, per area"). It's passive: setting it never
+  interrupts whatever order the unit is already running, only what its NEXT idle job search
+  prefers. A stale override (its CC destroyed, or never valid) is ignored, falling straight back to
+  the distance guess — self-healing, nothing to clean up. Threaded through every zone-first call
+  site: `nearestBacklogProducer`/`assignService`/`assignFerry`/`updateFerry`'s replan (`haul.js`),
+  `pickRepairTarget` (`repair.js`, so both the worker repair job AND the Mender's own `autoRepairRoam`
+  honor it). HUD: a selected unit with a home base shows a "🏠 Home base assigned" note and a Clear
+  button; a selected Command Center shows how many units call it home.
+- **A worker can now repair a wounded mobile UNIT, not just a building.** `pickRepairTarget` already
+  supported `includeUnits`; `assignRepair` now leaves it at the default (true) instead of forcing
+  buildings-only, so a worker's auto-assigned or manually-issued (`issueRepair`, renamed from
+  `issueRepairBuilding` — now takes either a building or unit id) repair job can chase and patch a
+  hurt Ranger/Bastion/etc. the same way it patches a turret — walking toward the target's LIVE
+  position each tick, the same idiom the Mender's own roam already uses for a moving target. The
+  order's `buildingId` field became a generic `targetId` (resolved via `state.js getEntity`, building
+  OR unit) to match. A worker still never repairs itself (`exclude: unit`). This doesn't replace the
+  Mender — a Mender still heals passively/for free in an AoE and can roam on its own — it just means
+  a damaged unit isn't stranded with nothing to do about it when no Mender is nearby.
+- Tests: `test/zones.test.js` (a home-base override wins over both raw proximity and the usual
+  nearest-CC guess; a stale override falls back gracefully), `test/repairJob.test.js` (a wounded
+  unit is now a valid auto-assigned AND chased-and-healed target; a worker never targets itself),
+  and `test/commands.test.js` (`issueSetHomeBase`'s role gating and its passivity; `issueRepair`'s
+  gating). Same AI-safety/determinism shape as every phase above — no wall clock, no unseeded
+  randomness, skirmish AI untouched.
+
 ## Outcome
 
-All four phases shipped. Storage is finite end-to-end — collection (forward drop-offs),
+All six phases shipped. Storage is finite end-to-end — collection (forward drop-offs),
 production output (rig + factories), and factory inputs — and workers move every good
 between them (gather → drop-off → haul → CC → supply → factory → haul → CC). A landed
 freighter now sits IN that chain too — a physical collection point workers can ferry to
 directly, or (once teched) a large-capacity autonomous hauler in its own right, paid for
 in AI Cores while it runs. Logistics is a standing demand on labour (and, for an automated
 fleet, on AI Cores) to the end of the game, with the Command Center as the one bottomless
-warehouse. Energy stays a placement decision (grid efficiency), no workers. Everything
-player-only and deterministic; the AI and skirmish replays are byte-identical.
+warehouse. On a multi-base empire, every job (haul, service, ferry, repair) is discovered
+zone-first — and the player can pin a unit's home base outright, overriding the distance
+guess — so labour stays loyal to its own base instead of routinely commuting across the map.
+A worker can now actively repair a damaged building OR a wounded mobile unit, not just a
+passing Mender. Energy stays a placement decision (grid efficiency), no workers. Everything
+player-only (or, for zone affinity and repair, ALSO extended to the Odyssey AI's own logistics
+workers, by construction never the skirmish AI) and deterministic; the AI and skirmish replays
+are byte-identical.
 
 ### 2.5 Recommended order & risk
 

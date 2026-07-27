@@ -63,13 +63,23 @@
    Deterministic and DOM-free: nearest-target picks are distance-then-id, the per-tick
    job tallies are frozen before assignment, no wall clock or unseeded randomness. Player-
    only — the AI builds no producers/factories/freighters, so its replay is byte-identical.
+
+   ZONE AFFINITY: on a multi-base empire, every "nearest" pick above (nearestBacklogProducer,
+   assignService's factory scan, assignFerry's freighter scan) is ZONE-FIRST (engine/gather.js
+   zoneFirst) — a candidate in the searcher's OWN Command Center zone wins even over a nearer one
+   belonging to another base, and only once the home zone has nothing to offer does the search
+   widen to the whole empire. Without this, once a busy base's own ≤2-per-target caps filled up,
+   its idle labour would routinely get "poached" by whichever OTHER base's job happened to be
+   nearest in a flat global search — a long, arbitrary cross-map commute every time, not just the
+   rare last-resort loan this now makes it. A single-CC game (any skirmish, or Odyssey before a
+   player expands) has exactly one zone, so this is byte-identical to the old plain search there.
    ============================================================ */
 
 "use strict";
 
 import { stepToward } from "./movement.js";
 import { UNITS, BUILDINGS, storeTotal, storeCapOf, storeRoom, inputRoom, freightUsed, freightRoom } from "./entities.js";
-import { nearestCommandCenter, nearestGatherDrop } from "./gather.js";
+import { nearestCommandCenter, nearestGatherDrop, zoneFirst } from "./gather.js";
 import { recipeOf } from "./industry.js";
 
 const REACH = 30;                 // how close a worker must get to load/unload (matches gather.js DROP_REACH)
@@ -233,20 +243,27 @@ function neededInput(building, needs, res) {
 // fresh worker off other work for a trivial backlog) and a FERRY worker's "plan" phase (which
 // passes 0: a worker already dedicated to a freighter, with nothing else to do, should pick up
 // ANY backlog rather than abandon a producer the moment its buffer dips under the "worth starting"
-// bar). Deterministic: nearest by distance, ties broken by id.
-/** @param {State} state @param {string} owner @param {number} x @param {number} y @param {number} [minFraction] @returns {Building|null} */
-function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTION) {
-  let best = null, bestD = Infinity;
-  for (const b of state.buildings.values()) {
-    if (b.owner !== owner || b.constructing || recipeOf(b)) continue;   // factories are serviced, not hauled
-    const cap = storeCapOf(b.type);
-    const total = storeTotal(b);
-    if (cap <= 0 || total <= 0 || total < cap * minFraction) continue;   // total<=0: a minFraction of 0 must still require SOME backlog
-    if ((b.haulers || 0) >= MAX_HAULERS) continue;
-    const d = Math.hypot(b.x - x, b.y - y);
-    if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
-  }
-  return best;
+// bar). Zone-first (engine/gather.js zoneFirst): a producer in the SEARCHER's own Command Center
+// zone wins even over a nearer one belonging to another base, so a multi-base empire's haulers stay
+// loyal to their own base and only "commute" to another one once their own has nothing queued.
+// Deterministic: nearest by distance, ties broken by id.
+/** @param {State} state @param {string} owner @param {number} x @param {number} y @param {number} [minFraction] @param {string} [homeId] @returns {Building|null} */
+function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTION, homeId) {
+  const scanFor = (inZone) => {
+    let best = null, bestD = Infinity;
+    for (const b of state.buildings.values()) {
+      if (b.owner !== owner || b.constructing || recipeOf(b)) continue;   // factories are serviced, not hauled
+      const cap = storeCapOf(b.type);
+      const total = storeTotal(b);
+      if (cap <= 0 || total <= 0 || total < cap * minFraction) continue;   // total<=0: a minFraction of 0 must still require SOME backlog
+      if ((b.haulers || 0) >= MAX_HAULERS) continue;
+      if (inZone && !inZone(b.x, b.y)) continue;
+      const d = Math.hypot(b.x - x, b.y - y);
+      if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
+    }
+    return best;
+  };
+  return zoneFirst(state, owner, x, y, scanFor, homeId);
 }
 
 /**
@@ -255,7 +272,7 @@ function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTIO
  * @param {State} state @param {Unit} unit
  */
 export function assignHaul(state, unit) {
-  const best = nearestBacklogProducer(state, unit.owner, unit.x, unit.y);
+  const best = nearestBacklogProducer(state, unit.owner, unit.x, unit.y, undefined, unit.homeCC);
   if (!best) return;
   best.haulers = (best.haulers || 0) + 1;
   unit.order = { type: "haul", buildingId: best.id, phase: "toSource" };
@@ -272,17 +289,25 @@ export function assignHaul(state, unit) {
  */
 export function assignService(state, unit) {
   const res = state.players[unit.owner].resources;
-  let best = null, bestD = Infinity;
-  for (const b of state.buildings.values()) {
-    if (b.owner !== unit.owner || b.constructing) continue;
-    const needs = inputNeedsOf(b);
-    if (!needs || (b.servers || 0) >= MAX_SERVERS) continue;
-    const needsIn = neededInput(b, needs, res);   // already room-checked per-commodity (see neededInput)
-    const needsOut = storeCapOf(b.type) > 0 && storeTotal(b) >= storeCapOf(b.type) * ASSIGN_FRACTION;
-    if (!needsIn && !needsOut) continue;
-    const d = Math.hypot(b.x - unit.x, b.y - unit.y);
-    if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
-  }
+  const scanFor = (inZone) => {
+    let best = null, bestD = Infinity;
+    for (const b of state.buildings.values()) {
+      if (b.owner !== unit.owner || b.constructing) continue;
+      const needs = inputNeedsOf(b);
+      if (!needs || (b.servers || 0) >= MAX_SERVERS) continue;
+      const needsIn = neededInput(b, needs, res);   // already room-checked per-commodity (see neededInput)
+      const needsOut = storeCapOf(b.type) > 0 && storeTotal(b) >= storeCapOf(b.type) * ASSIGN_FRACTION;
+      if (!needsIn && !needsOut) continue;
+      if (inZone && !inZone(b.x, b.y)) continue;
+      const d = Math.hypot(b.x - unit.x, b.y - unit.y);
+      if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
+    }
+    return best;
+  };
+  // Zone-first (engine/gather.js zoneFirst): a factory in the worker's own CC zone wins over a
+  // nearer one belonging to another base — see nearestBacklogProducer above for why. Honors a
+  // player-assigned home base (unit.homeCC) over the usual nearest-CC guess.
+  const best = zoneFirst(state, unit.owner, unit.x, unit.y, scanFor, unit.homeCC);
   if (!best) return;
   best.servers = (best.servers || 0) + 1;
   unit.order = { type: "service", buildingId: best.id, phase: "plan" };
@@ -302,14 +327,20 @@ export function assignService(state, unit) {
  * @param {State} state @param {Unit} unit
  */
 export function assignFerry(state, unit) {
-  let best = null, bestD = Infinity;
-  for (const f of state.units.values()) {
-    if (f.owner !== unit.owner || !f.collectPoint || !UNITS[f.type]?.cargoHold) continue;
-    if (freightRoom(f) <= 0) continue;
-    if ((f.ferriers || 0) >= MAX_HAULERS) continue;
-    const d = Math.hypot(f.x - unit.x, f.y - unit.y);
-    if (d < bestD || (d === bestD && best && f.id < best.id)) { bestD = d; best = f; }
-  }
+  const scanFor = (inZone) => {
+    let best = null, bestD = Infinity;
+    for (const f of state.units.values()) {
+      if (f.owner !== unit.owner || !f.collectPoint || !UNITS[f.type]?.cargoHold) continue;
+      if (freightRoom(f) <= 0) continue;
+      if ((f.ferriers || 0) >= MAX_HAULERS) continue;
+      if (inZone && !inZone(f.x, f.y)) continue;
+      const d = Math.hypot(f.x - unit.x, f.y - unit.y);
+      if (d < bestD || (d === bestD && best && f.id < best.id)) { bestD = d; best = f; }
+    }
+    return best;
+  };
+  // Zone-first, same reasoning as nearestBacklogProducer above (and honors unit.homeCC).
+  const best = zoneFirst(state, unit.owner, unit.x, unit.y, scanFor, unit.homeCC);
   if (!best) return;
   const src = nearestBacklogProducer(state, unit.owner, best.x, best.y);
   if (!src) return;   // nothing worth bringing it yet
@@ -500,7 +531,7 @@ export function updateFerry(state, unit, dt) {
       return;
     }
     if (f && freightRoom(f) > 0) {
-      const src = nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0);
+      const src = nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0, unit.homeCC);
       if (src) { src.haulers = (src.haulers || 0) + 1; order.buildingId = src.id; order.phase = "toSource"; return; }
     }
     // A collection-point freighter drives its own hold home once full (assignShuttle) — a ferry

@@ -149,3 +149,39 @@ export function nearestCommandCenter(state, owner, x, y) {
   }
   return best;
 }
+
+// A Command Center's "zone" is simply whichever of an owner's CCs sits nearest to a point — no
+// stored/cached assignment, so founding or losing a CC instantly redraws every boundary on the
+// very next call, with nothing to invalidate. `zoneFirst` runs a caller-supplied scan TWICE: once
+// restricted to the searcher's OWN zone (candidates whose nearest CC matches the searcher's), and —
+// only if that comes back empty — once more with no restriction at all, today's plain global
+// search. This is how haulers/servers/ferriers (engine/haul.js) and the auto-repair Mender/worker
+// repair job (engine/repair.js) all stay loyal to their own base first and only "commute" to
+// another one when their own genuinely has nothing queued — the fix for a multi-base empire
+// where a saturated home base used to send idle labour on long, arbitrary cross-map treks the
+// instant its own ≤2-per-target caps filled up.
+//
+// A one-CC game (nearly every test, and most real matches before a player expands) has exactly one
+// zone, so the FIRST pass's candidate set is identical to the plain global one — `scan(inZone)` and
+// `scan(null)` return the exact same answer, and behaviour is byte-identical to before this existed.
+// `scan(inZone)` receives either a same-zone predicate `(x,y) => boolean` or `null` (no restriction);
+// it does its own candidate loop/tie-break and returns its best match or null either way.
+//
+// `homeId`, when given, is a PLAYER-ASSIGNED override (`unit.homeCC`, engine/commands.js
+// issueSetHomeBase — a right-click on a Command Center with eligible units selected) that wins over
+// the usual "nearest CC by distance" guess: the player decides which base's territory a worker/
+// Mender/freighter stays loyal to, not just raw distance. A stale override (its CC destroyed, or
+// never valid) is ignored and this falls straight back to the distance guess — self-healing, same
+// "never cache, recompute from state" shape as everything else here.
+/** @param {State} state @param {string} owner @param {number} x @param {number} y
+ *  @param {(inZone: ((ex:number, ey:number) => boolean)|null) => *} scan @param {string} [homeId]
+ *  @returns {*} */
+export function zoneFirst(state, owner, x, y, scan, homeId) {
+  let home = homeId ? state.buildings.get(homeId) : null;
+  if (!home || home.owner !== owner || home.constructing || !BUILDINGS[home.type]?.isCommandCenter) {
+    home = nearestCommandCenter(state, owner, x, y);
+  }
+  if (!home) return scan(null);
+  const inZone = (ex, ey) => nearestCommandCenter(state, owner, ex, ey) === home;
+  return scan(inZone) ?? scan(null);
+}
