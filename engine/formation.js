@@ -42,10 +42,11 @@
    engages when the selection already calls for it.
 
    Spacing is derived from the group's own hull sizes (spacingFor), not a
-   flat constant, EXCEPT the plain single-group "grid" path, which keeps the
-   exact historical flat spacing (GRID_SPACING) so the untouched default —
-   no shape chosen, one blob of units — stays byte-identical to the old
-   formationSpots this module replaces (see test/commands.test.js).
+   flat constant, EXCEPT the plain single-group "grid" path, which uses the
+   flat GRID_SPACING instead — historically the exact legacy formationSpots
+   constant this module replaces (see test/commands.test.js), now scaled by
+   COARSENESS like every other shape's spacing (units sat too close together
+   at the original 1x spacing).
    ============================================================ */
 
 "use strict";
@@ -55,8 +56,9 @@ import { UNITS } from "./entities.js";
 export const FORMATION_SHAPES = ["grid", "line", "wedge", "circle"];
 export const LEADER_POSITIONS = ["front", "back", "center"];
 
-const GRID_SPACING = 20;        // unchanged from the legacy formationSpots (engine/commands.js)
-const SPACING_PAD = 8;          // clearance beyond 2x the largest hull's radius
+const COARSENESS = 1.15;        // overall formation spacing multiplier — units sat too close at 1x
+const GRID_SPACING = 20 * COARSENESS;   // legacy formationSpots (engine/commands.js) flat spacing, scaled
+const SPACING_PAD = 8;          // clearance beyond 2x the largest hull's radius, before COARSENESS
 const CLUSTER_RADIUS = 150;     // units within this of each other (transitively) count as one army
 const NEST_GAP_MULT = 2.4;      // outer (formation-of-formations) spacing, as a multiple of a cluster's own footprint
 
@@ -91,7 +93,7 @@ export function pickLeader(units) {
 function spacingFor(units) {
   let maxR = 0;
   for (const u of units) maxR = Math.max(maxR, radiusOf(u));
-  return maxR * 2 + SPACING_PAD;
+  return (maxR * 2 + SPACING_PAD) * COARSENESS;
 }
 
 // Partition a selection into spatial sub-armies: any two units within CLUSTER_RADIUS of each

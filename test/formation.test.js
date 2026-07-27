@@ -61,13 +61,13 @@ test("clusterUnits keeps the cluster containing units[0] first, so it stays the 
   assert.equal(clusters[0][0].id, "L0", "units[0]'s cluster is clusters[0]");
 });
 
-// ---- formationSlots: the default (grid, single cluster) path stays legacy-exact ----
+// ---- formationSlots: the default (grid, single cluster) path uses the flat, scaled spacing ----
 
-test("formationSlots grid (no shape chosen) matches the exact legacy spacing formula", () => {
+test("formationSlots grid (no shape chosen) matches the flat GRID_SPACING formula (legacy 20, +15% coarser)", () => {
   const units = [0, 1, 2, 3].map(i => fakeUnit(`u${i}`, "skiff", 0, 0));   // co-located -> one cluster
   const spots = formationSlots(units, 900, 700);
   assert.deepEqual(spots, [
-    { x: 890, y: 690 }, { x: 910, y: 690 }, { x: 890, y: 710 }, { x: 910, y: 710 },
+    { x: 888.5, y: 688.5 }, { x: 911.5, y: 688.5 }, { x: 888.5, y: 711.5 }, { x: 911.5, y: 711.5 },
   ]);
 });
 
@@ -459,9 +459,9 @@ test("a formation's travel speed never outruns its slowest member, via the real 
   const traveled = leader.x - 500;
   assert.ok(traveled < UNITS.ranger.speed * 5 * 0.5,
     `the leader (${traveled.toFixed(0)} travelled) moves far slower than the follower's own top speed would allow`);
-  // The formation's grid layout for 2 units puts the follower's slot 20 units off the leader's
-  // own — see the "matches the exact legacy spacing formula" test above (spacing 20, cols 2).
-  const gap = Math.hypot(follower.x - (leader.x + 20), follower.y - leader.y);
+  // The formation's grid layout for 2 units puts the follower's slot 23 units off the leader's
+  // own — see the "matches the flat GRID_SPACING formula" test above (spacing 23, cols 2).
+  const gap = Math.hypot(follower.x - (leader.x + 23), follower.y - leader.y);
   assert.ok(gap < 10, `the fast follower stays tight on the slow leader (gap ${gap.toFixed(1)}), not racing ahead and idling`);
 });
 
