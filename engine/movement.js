@@ -102,13 +102,15 @@ export function keepFollowingLeader(state, unit, speed, dt) {
 }
 
 // A formation's overall pace is capped to its SLOWEST member (order.speedCap, stamped by
-// engine/commands.js's dispatchFormation) so a fast leader can't outrun the group it's
-// supposedly leading — without this, followers (who each move at their OWN top speed toward the
-// leader's live position) would perpetually lag behind while the leader is in motion, stretching
-// the shape out instead of holding it. Followers never need this themselves: every follower's own
-// speed is, by construction, at least the group minimum, so they can always keep pace with a
-// leader that's capped to it. Identity (returns `speed` unchanged) for any order without a cap —
-// every order type except move/attack-move/hold-formation, and those two before this feature.
+// engine/commands.js's dispatchFormation and groupSpeedCap) so a fast leader can't outrun the
+// group it's supposedly leading — without this, followers (who each move at their OWN top speed
+// toward the leader's live position) would perpetually lag behind while the leader is in motion,
+// stretching the shape out instead of holding it. A Ranger leading a formation into scout mode
+// (engine/commands.js issueScout, engine/scout.js) gets the same cap for the same reason — a
+// protective scout, not a lone unit outrunning its own escort. Followers never need this
+// themselves: every follower's own speed is, by construction, at least the group minimum, so they
+// can always keep pace with a leader that's capped to it. Identity (returns `speed` unchanged)
+// for any order without a cap.
 /** @param {number} speed @param {Order} order @returns {number} */
 export function orderedSpeed(speed, order) {
   return Number.isFinite(order?.speedCap) ? Math.min(speed, order.speedCap) : speed;

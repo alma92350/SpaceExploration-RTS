@@ -15,11 +15,16 @@
    single destination), so it keeps exploring until the player re-orders the
    unit (a move/attack/stop replaces it). Deterministic throughout — the
    target comes from a row-major fog scan, no rng — so it's safe in the sim.
+
+   A Ranger LEADING a formation (engine/commands.js issueScout) picks the same frontier targets
+   but travels at the group's pace (order.speedCap) rather than its own full speed, so its
+   escorts — still on their ordinary follow-leader order — can keep up: a protective scout
+   leading the pack into the fog, not a lone unit racing off alone.
    ============================================================ */
 
 "use strict";
 
-import { stepToward } from "./movement.js";
+import { stepToward, orderedSpeed } from "./movement.js";
 import { UNITS } from "./entities.js";
 import { nearestUnexploredPoint, isExploredAt } from "./fog.js";
 
@@ -53,5 +58,5 @@ export function updateScoutMode(state, unit, dt) {
       order.explore = false;
     }
   }
-  stepToward(state, unit, order.tx, order.ty, def.speed, dt);
+  stepToward(state, unit, order.tx, order.ty, orderedSpeed(def.speed, order), dt);
 }
