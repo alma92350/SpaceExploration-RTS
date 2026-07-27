@@ -21,6 +21,7 @@
 import { chargingPlayerWonder } from "./wonder.js";
 import { BUILDINGS } from "./entities.js";
 import { TECHS } from "./techtree.js";
+import { strategyFor } from "./aiStrategy.js";
 
 // Above this stance the neighbour holds its fire (peace); at or below it, war.
 export const PEACE_THRESHOLD = -0.15;
@@ -129,10 +130,19 @@ export function updateDiplomacy(state, dt) {
   // sours it faster, so a "Warlord World" neighbour turns hostile sooner than a patient one —
   // the temperament the world advertises. Defaults (no overlay / bare test state) leave the
   // stock constants exactly as before.
+  //
+  // The player-picked STRATEGY (engine/aiStrategy.js) composes on top of that, multiplicatively —
+  // the same relationship the archetype's own odyssey overlay already has with its skirmish base.
+  // An Aggressive strategy shrinks grace and sharpens grievance further, on ANY archetype/world,
+  // not just a Rusher's; "default" carries no override (`|| 1`), so this is a no-op until a match
+  // actually opts into a strategy.
   const od = state.ai.archetype && state.ai.archetype.odyssey;
-  const grace = GRACE_TIME * ((od && od.graceMult) || 1);
-  const grievance = GRIEVANCE_PER_KILL * ((od && od.grievanceMult) || 1);
-  const creep = CREEP_RATE * ((od && od.grievanceMult) || 1);
+  const st = strategyFor(state);
+  const graceMult = ((od && od.graceMult) || 1) * (st.graceMult || 1);
+  const grievanceMult = ((od && od.grievanceMult) || 1) * (st.grievanceMult || 1);
+  const grace = GRACE_TIME * graceMult;
+  const grievance = GRIEVANCE_PER_KILL * grievanceMult;
+  const creep = CREEP_RATE * grievanceMult;
 
   let cur = 0, max = 0;
   for (const n of state.map.nodes) { cur += n.amount; max += n.max; }

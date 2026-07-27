@@ -29,14 +29,24 @@
    handed; every Tier 4 field is read with a use-site default so a legacy
    profile that predates them still runs.
 
+   Layered on top of the archetype is state.ai.strategy (engine/aiStrategy.js) — a
+   player-picked overlay (setup.js "AI Strategy"), orthogonal to which planet/
+   archetype it's facing: Aggressive presses the attack earlier and forces the
+   issue in Odyssey; Economic keeps a minimal standing army until it's actually
+   attacked, then surges; Force Parity continuously matches whatever it's seen of
+   the enemy's army. "default" (unset) reproduces today's pure archetype-driven
+   play byte-for-byte — every multiplier defaults to 1 and every flag to falsy.
+
    This file is the ORCHESTRATOR: runAI runs the think-cycle and threads one
    world snapshot (aiContext) through the decision phases, which live in cohesive
    sibling modules so no single file is a 1000-line god object —
-     • aiCommon.js   — the APM action budget + reserve-aware affordability + builder pick
-     • aiWorkers.js  — idle-worker logistics/gather steering + the unit-mix filters
-     • aiMilitary.js — defend/attack waves, focus-fire, the scout, target/mix picks
-     • aiEconomy.js  — base build-out, expansion, tech gates, production, research
-     • aiIndustry.js — the Odyssey factory chain / power / capital path / rig
+     • aiCommon.js     — the APM action budget + reserve-aware affordability + builder pick
+     • aiStrategy.js   — the player-picked strategy table (Aggressive/Economic/Force Parity)
+     • aiWorkers.js    — idle-worker logistics/gather steering + the unit-mix filters
+     • aiMilitary.js   — defend/attack waves, focus-fire, the scout, target/mix picks
+     • aiEconomy.js    — base build-out, expansion, tech gates, production, research
+     • aiIndustry.js   — the Odyssey factory chain / power / capital path / rig
+     • aiSuperweapon.js — arms/delivers a built Helium Bomb
    The phase order in runAI is load-bearing (shared action budget + ore reserves),
    so it stays here where the whole sequence reads top-to-bottom.
    ============================================================ */
@@ -50,6 +60,8 @@ import { assignIdleWorkers } from "./aiWorkers.js";
 import { updateScout, aiMilitary, applyFocusFire, visibleThreatsNearHome } from "./aiMilitary.js";
 import { aiFoundOrSurvive, aiExpand, aiBaseAndTech, aiProduceAndFortify, aiResearch } from "./aiEconomy.js";
 import { aiIndustry } from "./aiIndustry.js";
+import { aiSuperweapon } from "./aiSuperweapon.js";
+import { strategyFor } from "./aiStrategy.js";
 
 const THINK_INTERVAL = 1.5;
 
@@ -75,6 +87,7 @@ export function runAI(state, dt) {
   aiResearch(state, ctx);          // one doctrine upgrade per think cycle
   aiIndustry(state, ctx);          // Odyssey: power the base + electrify it (deeper phases: the factory chain)
   aiMilitary(state, ctx);          // defend a pressed base, else muster and commit the next wave
+  aiSuperweapon(state, ctx);       // Odyssey: arm/deliver a built Helium Bomb (engine/aiSuperweapon.js)
 
   // TACTICAL micro (opt-in via aiMicro): concentrate the army's fire on one target so kills land
   // faster and incoming damage drops sooner — layered on top of the wave logic above without
@@ -91,20 +104,34 @@ function aiContext(state) {
   const archetype = state.ai.archetype;
   const arch = field => (state.diplomacy && archetype.odyssey && archetype.odyssey[field] != null)
     ? archetype.odyssey[field] : archetype[field];
+  const strategy = strategyFor(state);
   const buildings = playerBuildings(state, "ai");
+  const threats = visibleThreatsNearHome(state);
+  // WAR FOOTING (engine/aiStrategy.js Economic strategy): the instant the AI can SEE
+  // combat units pressing its base, timestamp it — then for warFootingTime seconds
+  // afterward, aiEconomy's standing-army throttle treats the AI as "recently attacked"
+  // and lifts its cap, so being attacked is what turns a minimal economy into a real
+  // production push. Updated here (not left to a later phase) so it's consistent for
+  // every phase reading ctx.warFooting this same cycle. A strategy without
+  // warFootingTime (every strategy but Economic) reads warFooting as permanently false.
+  if (threats.length > 0) state.ai.lastThreatAt = state.time;
+  const warFooting = !!strategy.warFootingTime
+    && state.ai.lastThreatAt != null
+    && (state.time - state.ai.lastThreatAt) < strategy.warFootingTime;
   return {
-    archetype, arch,
+    archetype, arch, strategy, warFooting,
     ai: state.players.ai,
     workers: playerUnits(state, "ai").filter(u => u.type === "worker"),
     army: playerUnits(state, "ai").filter(u => UNITS[u.type].role === "combat"),
     rangers: playerUnits(state, "ai").filter(u => u.type === "ranger"),
+    bombs: playerUnits(state, "ai").filter(u => u.type === "heliumbomb"),
     buildings,
     cc: buildings.find(b => b.type === "command" && !b.constructing),
     colonyShip: state.endless ? (playerUnits(state, "ai").find(u => u.type === "colonyship") || null) : null,
     barracks: buildings.find(b => b.type === "barracks"),
     refinery: buildings.find(b => b.type === "refinery"),
     allBarracks: buildings.filter(b => b.type === "barracks"),
-    threats: visibleThreatsNearHome(state),
+    threats,
     oreReserve: 0, foundryReserve: 0, refineryReserve: 0,
   };
 }

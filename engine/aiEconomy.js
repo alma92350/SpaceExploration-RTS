@@ -20,7 +20,7 @@ import { playerUnits } from "./state.js";
 import { deployColonyShip } from "./colony.js";
 import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
 import { affordableOnSurface, aiDoctrine } from "./aiWorkers.js";
-import { pickNextUnitType } from "./aiMilitary.js";
+import { pickNextUnitType, visibleEnemyForceCount } from "./aiMilitary.js";
 
 const HOME_RADIUS = 420;          // nodes this close to an AI CC count as "home" economy
 const CLAIM_RADIUS = 260;         // a cluster with any CC this close is already claimed
@@ -136,14 +136,16 @@ export function aiExpand(state, ctx) {
 // Core base build-out + the tech gates: more workers, a Habitat before the supply cap bites, the first Barracks, the Foundry (Tier-2 gate) and Arsenal (Tier-3 gate), and one Mender (Tactical). Sets ctx.foundryReserve / ctx.refineryReserve for the production phase.
 /** @param {State} state @param {AiContext} ctx */
 export function aiBaseAndTech(state, ctx) {
-  const { cc, workers, ai, buildings, barracks, refinery, allBarracks, archetype, arch } = ctx;
+  const { cc, workers, ai, buildings, barracks, refinery, allBarracks, archetype, arch, strategy } = ctx;
   // The worker target GROWS with the AI's industry: every factory and Plasma Rig it runs needs workers
   // to supply and clear it (engine/haul.js assignAiLogistics), on top of the base gather crew — so the
   // AI builds the LABOUR its economy needs, the same investment the player makes. Odyssey only (the
   // industry that drives it is odysseyOnly); a skirmish keeps the archetype's flat workerTarget.
+  // strategy.workerTargetMult (engine/aiStrategy.js Economic) leans further into economy still; 1 (a
+  // no-op) for every other strategy, so this is unchanged until a match opts into one.
   const industryCount = state.endless
     ? buildings.filter(b => !b.constructing && (recipeOf(b) || BUILDINGS[b.type].rig)).length : 0;
-  const workerTarget = arch("workerTarget") + industryCount * 2;   // ~MAX_SERVERS worth of haulers per factory/rig
+  const workerTarget = arch("workerTarget") * (strategy.workerTargetMult || 1) + industryCount * 2;   // ~MAX_SERVERS worth of haulers per factory/rig
   if (cc && workers.length < workerTarget && cc.queue.length === 0 && canAct(state)) {
     if (queueProduction(state, cc.id, "worker")) spend(state);
   }
@@ -236,10 +238,30 @@ export function aiBaseAndTech(state, ctx) {
   }
 }
 
+// The standing-army production cap for this think cycle — Infinity (no cap, today's behavior)
+// unless the strategy defines one (engine/aiStrategy.js). Economic keeps a small fixed cap that
+// lifts sharply for a while after the AI is actually attacked (ctx.warFooting, engine/ai.js);
+// Force Parity instead tracks whatever the AI has actually SEEN of the enemy's combat strength
+// (fog-limited, like every other reactive AI read — engine/aiMilitary.js visibleEnemyForceCount),
+// aiming a bit above parity with a floor for a not-yet-scouted enemy. Read once per cycle against
+// ctx.army.length, a fixed snapshot — an acceptable per-cycle approximation, same spirit as the
+// rest of this AI's think-cycle decisions.
+function standingArmyCap(state, ctx) {
+  const { strategy } = ctx;
+  if (strategy.matchEnemyForce) {
+    const enemy = visibleEnemyForceCount(state);
+    return Math.max(strategy.matchFloor || 0, Math.round(enemy * (strategy.matchBuffer || 1)));
+  }
+  if (strategy.standingArmyCap != null) {
+    return ctx.warFooting ? strategy.standingArmyCap * (strategy.warFootingMult || 1) : strategy.standingArmyCap;
+  }
+  return Infinity;
+}
+
 // The shared unit-production cycle across every idle Barracks (Foundry/Refinery reserves held back), Sentinel Turrets along the approach lane, a second Barracks, and the research Refinery plus forward drop-off Refineries out at far seams.
 /** @param {State} state @param {AiContext} ctx */
 export function aiProduceAndFortify(state, ctx) {
-  const { allBarracks, ai, archetype, cc, barracks, workers, buildings } = ctx;
+  const { allBarracks, ai, archetype, strategy, cc, barracks, workers, buildings, army } = ctx;
   // One shared production cycle across every completed Barracks: consecutive
   // barracks pick up consecutive mix entries, so two of them drain the same
   // sequence twice as fast rather than each running its own. Map insertion
@@ -248,24 +270,34 @@ export function aiProduceAndFortify(state, ctx) {
   // NOT gated by the expansion reserve — the army keeps growing while the AI
   // banks for a CC out of its infrastructure budget, never freezing on a poor
   // world.
-  for (const b of allBarracks) {
-    if (b.constructing || b.queue.length > 0) continue;
-    if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
-    const nextType = pickNextUnitType(state, archetype);
-    if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, ctx.foundryReserve + ctx.refineryReserve)) continue;   // hold back ore while banking the Foundry / Refinery
-    if (queueProduction(state, b.id, nextType)) {
-      spend(state);
-      state.ai.unitsBuilt = (state.ai.unitsBuilt || 0) + 1;
+  //
+  // Gated by the strategy's standing-army cap (standingArmyCap above) — Infinity for every
+  // archetype-driven match today, so this `if` is a no-op until a match opts into Economic or
+  // Force Parity. At/above the cap, the ore that would have bought another combat unit is left
+  // for the economy/industry phases instead — the whole point of a "minimal defense" strategy.
+  if (army.length < standingArmyCap(state, ctx)) {
+    for (const b of allBarracks) {
+      if (b.constructing || b.queue.length > 0) continue;
+      if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
+      const nextType = pickNextUnitType(state, archetype);
+      if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, ctx.foundryReserve + ctx.refineryReserve)) continue;   // hold back ore while banking the Foundry / Refinery
+      if (queueProduction(state, b.id, nextType)) {
+        spend(state);
+        state.ai.unitsBuilt = (state.ai.unitsBuilt || 0) + 1;
+      }
     }
   }
 
   // Sentinel Turrets straddling the approach lane between the CC and mid-map,
   // alternating sides and stepping outward as they multiply. Crystals-funded,
   // so it's outside the ore expansion reserve; inert on crystal-less worlds
-  // (canAfford simply never passes there — accepted flavor).
+  // (canAfford simply never passes there — accepted flavor). turretCountMult
+  // (Economic — aiStrategy.js) trims even this passive defense to match "minimal";
+  // 1 (a no-op) for every other strategy.
   if (cc && barracks && workers.length > 0) {
     const turrets = buildings.filter(b => b.type === "turret");
-    if (turrets.length < (archetype.turretCount || 0) && canAfford(ai.resources, BUILDINGS.turret.cost)) {
+    const turretCap = Math.round((archetype.turretCount || 0) * (strategy.turretCountMult || 1));
+    if (turrets.length < turretCap && canAfford(ai.resources, BUILDINGS.turret.cost)) {
       const mx = state.map.width / 2, my = state.map.height / 2;
       const len = Math.hypot(mx - cc.x, my - cc.y) || 1;
       const dx = (mx - cc.x) / len, dy = (my - cc.y) / len;   // the approach vector
