@@ -50,7 +50,7 @@ function planetSeed(seed, planetId) {
 // randomly-chosen starting world) plus the meta-fields (credits, activeId, the
 // world roster) the later phases grow into.
 export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
-  resourceMult = 1, playerFaction = "frontier", aiApm, aiMicro } = {}) {
+  resourceMult = 1, playerFaction = "frontier", aiApm, aiMicro, aiStrategy } = {}) {
   seed = seed >>> 0;
   const pick = mulberry32(seed);
   const startId = ODYSSEY_WORLDS[Math.floor(pick() * ODYSSEY_WORLDS.length)];
@@ -61,7 +61,7 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     activeId: startId,          // the world the player is currently on
     worlds: ODYSSEY_WORLDS.slice(),
     planets: new Map(),         // planetId -> engine game state
-    settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro },
+    settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro, aiStrategy },
     tick: 0,                    // integer galaxy-tick counter (drives the background-world schedule)
     time: 0,                    // galaxy-wide sim clock (seconds) — monotonic across jumps; keys the relief cooldown
     entitySeq: 0,               // fresh-id counter for entities relocated across worlds by a jump
@@ -132,7 +132,7 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   const aiFaction = archetypeFor(planetId).faction || "neutral";
   const state = createGameState({
     planetId, seed, rng: mulberry32(seed),
-    aiApm: s.aiApm, aiMicro: s.aiMicro, sizeMult: s.sizeMult, resourceMult: s.resourceMult,
+    aiApm: s.aiApm, aiMicro: s.aiMicro, aiStrategy: s.aiStrategy, sizeMult: s.sizeMult, resourceMult: s.resourceMult,
     playerFaction: s.playerFaction, aiFaction, endless: true,
   });
   if (unsettled) {

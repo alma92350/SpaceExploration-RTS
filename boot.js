@@ -108,7 +108,7 @@ export function startGame(planetId) {
   // (aiArchetypes.js), so the opponent's identity is part of the world's character.
   const aiFaction = archetypeFor(planetId).faction || "neutral";
   const fresh = createGameState({ planetId, seed, rng: mulberry32(seed),
-    aiApm: diff.aiApm, aiMicro: diff.aiMicro, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
+    aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy: setup.aiStrategy, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
     playerFaction: setup.faction, aiFaction });
   bootState(fresh, { intro: true });
 }
@@ -146,7 +146,7 @@ export function startOdyssey() {
   const diff = difficultyDials(setup.difficulty);
   bootGalaxy(createGalaxy({
     seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
-    playerFaction: setup.faction, aiApm: diff.aiApm, aiMicro: diff.aiMicro,
+    playerFaction: setup.faction, aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy: setup.aiStrategy,
   }), { intro: true });
 }
 

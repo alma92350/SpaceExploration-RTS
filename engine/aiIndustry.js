@@ -39,7 +39,7 @@ const RESEARCH_ORDER = ["metallurgy", "reactors", "electronics", "automation", "
 /** @param {State} state @param {AiContext} ctx */
 export function aiIndustry(state, ctx) {
   if (!state.endless) return;   // Odyssey only — a skirmish never builds industry
-  const { cc, barracks, workers, ai, buildings, archetype } = ctx;
+  const { cc, barracks, workers, ai, buildings, archetype, strategy, army, bombs } = ctx;
   if (!cc || !barracks || barracks.constructing || workers.length === 0) return;
 
   const reactors = buildings.filter(b => b.type === "reactor");
@@ -67,9 +67,12 @@ export function aiIndustry(state, ctx) {
   }
 
   // Deeper industry (factory chain + research) is a PATIENT developer's game — the same signal as
-  // the Refinery (Economist/Balanced build it; a Rusher does not). A Rusher stops at power+electrify.
-  // The chain needs the grid, so wait for the Reactor before starting it.
-  if (!archetype.wantsRefinery || !hasReactor) return;
+  // the Refinery (Economist/Balanced build it; a Rusher does not). A Rusher stops at power+electrify —
+  // UNLESS the player-picked strategy overrides it: Economic (aiStrategy.js wantsIndustryAlways) climbs
+  // the deep chain regardless of archetype, since pure economy means using every economic capability
+  // in the game, even paired with a Rusher/Balanced world that wouldn't normally bother. The chain
+  // needs the grid, so wait for the Reactor before starting it either way.
+  if (!(archetype.wantsRefinery || strategy.wantsIndustryAlways) || !hasReactor) return;
 
   // FACTORY CHAIN: raise the next chain building whose prereqs (its earlier factory + its research
   // node) are met and that the AI doesn't already have, one per think cycle, reserve-aware. Spread
@@ -111,6 +114,21 @@ export function aiIndustry(state, ctx) {
       && supplyUsed(state, "ai") + (UNITS.leviathan.supplyCost || 0) <= supplyCap(state, "ai")
       && canAfford(ai.resources, UNITS.leviathan.cost)) {
     if (queueProduction(state, stardock.id, "leviathan")) spend(state);
+  }
+
+  // HELIUM BOMB: the doomsday device beside the Leviathan at the same Star Dock (entities.js
+  // stardock.produces) — at most one, and only once a Leviathan is already up or training, so it
+  // never crowds out the capital-ship investment above. Every strategy gets a use for it (see
+  // engine/aiSuperweapon.js: a built bomb becomes a home-defense trap the instant the AI is
+  // attacked); Aggressive strategy also walks it into the enemy's lines. Reserve-aware like every
+  // other Star Dock spend; gas is the one NEW cost commodity it needs beyond what a Leviathan-
+  // capable base already produces, so it simply never completes on a gas-less world (accepted,
+  // same graceful degradation as every other specialty-commodity unit on the roster).
+  const hasLeviathan = army.some(u => u.type === "leviathan") || (stardock && stardock.queue.some(j => j.unitType === "leviathan"));
+  if (stardock && stardock.queue.length === 0 && bombs.length === 0 && hasLeviathan && canAct(state)
+      && supplyUsed(state, "ai") + (UNITS.heliumbomb.supplyCost || 0) <= supplyCap(state, "ai")
+      && canAfford(ai.resources, UNITS.heliumbomb.cost)) {
+    if (queueProduction(state, stardock.id, "heliumbomb")) spend(state);
   }
 
   // PLASMA RIG: an unlimited ore source for the late game, once the AI has the AI Foundry (its pilot)

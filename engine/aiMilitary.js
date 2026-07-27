@@ -73,9 +73,18 @@ export function aiMilitary(state, ctx) {
 // muster and commit the next one. Two regimes split on state.diplomacy: SKIRMISH musters
 // armyAttackSize (throwing everything on the desperation timeout — the resolves-to-a-winner path);
 // ODYSSEY paces escalating probes by hostility. Always keeps a home guard unless it's a timeout commit.
+//
+// The archetype's own attackTimeout/armyAttackSize/garrison are scaled by the player-picked
+// STRATEGY (engine/aiStrategy.js) before any of the logic below reads them — attackTimeout/
+// armyAttackSize/garrison stay archetype fields (unmodified), effAttackTimeout/effArmyAttackSize/
+// effGarrison are what this function actually uses. A "default" strategy's multipliers are all
+// 1 (`|| 1` below), so this is a no-op until a match actually opts into one.
 /** @param {State} state @param {AiContext} ctx @param {Unit[]} nonScout */
 function aiOffense(state, ctx, nonScout) {
-  const { buildings, archetype } = ctx;
+  const { buildings, archetype, strategy } = ctx;
+  const effAttackTimeout = archetype.attackTimeout * (strategy.attackTimeoutMult || 1);
+  const effArmyAttackSize = archetype.armyAttackSize * (strategy.armyAttackSizeMult || 1);
+  const effGarrison = Math.round((archetype.garrison || 0) * (strategy.garrisonMult != null ? strategy.garrisonMult : 1));
     // OFFENSE. "Home" army is whatever hasn't already been sent off to attack —
     // a freshly produced or still-idle unit has order null/'move' (its walk to
     // the rally point), while a committed one is mid attack-move (see combat.js).
@@ -103,7 +112,7 @@ function aiOffense(state, ctx, nonScout) {
       }
     }
 
-    const nextAttackAt = state.ai.nextAttackAt ?? archetype.attackTimeout;
+    const nextAttackAt = state.ai.nextAttackAt ?? effAttackTimeout;
     const timedOut = state.time >= nextAttackAt;
 
     // Build this cycle's strike force. Two regimes, split on whether this world has
@@ -115,21 +124,29 @@ function aiOffense(state, ctx, nonScout) {
     //    once wary it probes on a cadence with a small slice; as the stance sinks
     //    toward fully hostile the muster, the committed fraction and the cadence all
     //    climb, so a banked army bleeds out in escalating waves — never one doomstack.
+    //
+    // strategy.neverInitiates (Economic / Force-Parity — aiStrategy.js) guards the
+    // VOLUNTARY commit in both regimes: the skirmish threshold check just below, and
+    // the whole Odyssey hostility-muster block (which has no timeout to preserve —
+    // Odyssey never requires combat to resolve a world). It does NOT guard the
+    // skirmish `timedOut` desperation commit, so an all-turtle mirror match still
+    // ends in combat eventually instead of leaning solely on the score-based time
+    // limit — just on effAttackTimeout's much-stretched clock instead of the usual one.
     let strike = [], desperate = false;
     if (cc) {
       if (!state.diplomacy) {
-        const readyToAttack = homeArmy.length > 0 && (homeArmy.length >= archetype.armyAttackSize || timedOut);
-        if (readyToAttack) {
-          strike = withoutHomeGuard(homeArmy, cc, timedOut ? 0 : (archetype.garrison || 0));
+        const readyToAttack = timedOut || (!strategy.neverInitiates && homeArmy.length >= effArmyAttackSize);
+        if (homeArmy.length > 0 && readyToAttack) {
+          strike = withoutHomeGuard(homeArmy, cc, timedOut ? 0 : effGarrison);
           desperate = timedOut;
         }
-      } else {
+      } else if (!strategy.neverInitiates) {
         const h = hostility(state);
         const pm = (archetype.odyssey && archetype.odyssey.probeMin) || PROBE_MIN;   // archetype's Odyssey probe floor (Rusher 5 > Economist 4 > default 3)
-        const muster = Math.max(pm, Math.round(archetype.armyAttackSize * h));
+        const muster = Math.max(pm, Math.round(effArmyAttackSize * h));
         const waveReady = state.time >= (state.ai.nextWaveAt ?? 0);
         if (h > 0 && waveReady && homeArmy.length >= muster) {
-          const available = withoutHomeGuard(homeArmy, cc, archetype.garrison || 0);   // always hold the home guard
+          const available = withoutHomeGuard(homeArmy, cc, effGarrison);   // always hold the home guard
           const commit = Math.min(available.length, Math.max(pm, Math.round(available.length * h)));
           strike = available.slice(available.length - commit);   // send the forward-most; the rest reinforce
         }
@@ -156,9 +173,9 @@ function aiOffense(state, ctx, nonScout) {
       // Odyssey paces the NEXT probe by hostility on its own timer — sparse when
       // merely wary, tight when hostile — so the skirmish clock is never touched.
       if (state.diplomacy) {
-        state.ai.nextWaveAt = state.time + archetype.attackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state));
+        state.ai.nextWaveAt = state.time + effAttackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state));
       } else {
-        state.ai.nextAttackAt = state.time + archetype.attackTimeout;
+        state.ai.nextAttackAt = state.time + effAttackTimeout;
       }
       // Reset the retreat baseline to the whole committed force (survivors of a
       // prior wave plus this reinforcement) so a topped-up wave doesn't read as
@@ -203,6 +220,18 @@ function* visibleEnemyCombatUnits(state) {
   }
 }
 
+// How many enemy (player-owned) combat units the AI can currently SEE, full stop — the
+// "Force Parity" strategy's read of the enemy's strength (engine/aiStrategy.js matchEnemyForce,
+// consumed by engine/aiEconomy.js's standing-army throttle). Deliberately the same fog-limited
+// intel as everything else the AI reacts to (counterToPlayerArmy, visibleThreatsNearHome): an
+// enemy army massed somewhere the AI has never scouted doesn't count until it's actually seen,
+// so "matching" is an honest reaction to known strength, not omniscient mirroring.
+export function visibleEnemyForceCount(state) {
+  let n = 0;
+  for (const _ of visibleEnemyCombatUnits(state)) n++;
+  return n;
+}
+
 // Player combat units the AI can currently SEE within `radius` of (x, y) — the
 // live opposition at a fight. Zero against an undefended base, which is what
 // makes the retreat safe for the resolves-to-a-winner guarantee.
@@ -214,7 +243,7 @@ function visibleEnemyCombatNear(state, x, y, radius) {
   return n;
 }
 
-const DEFEND_RADIUS = 340;   // enemy combat units this close to an AI building trigger a recall
+export const DEFEND_RADIUS = 340;   // enemy combat units this close to an AI building trigger a recall
 
 // Enemy combat units the AI can currently SEE (its own fog) sitting within
 // DEFEND_RADIUS of any building it owns. A lone scouting worker doesn't count —
@@ -279,7 +308,7 @@ function raidTarget(state) {
   return best ? { x: best.x, y: best.y } : null;
 }
 
-function chooseAttackTarget(state, cc) {
+export function chooseAttackTarget(state, cc) {
   const from = cc || { x: state.map.bases.ai.x, y: state.map.bases.ai.y };
   const seen = e => e.owner === "player" && isVisibleAt(state.fogAI, e.x, e.y);
   const seenBuildings = [...state.buildings.values()].filter(seen);

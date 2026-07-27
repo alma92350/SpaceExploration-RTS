@@ -12,6 +12,7 @@ import { mapSelectEl } from "./dom.js";
 import { PLANETS } from "./data.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
+import { STRATEGIES } from "./engine/aiStrategy.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame, hasOdysseySave, loadOdyssey } from "./saveload.js";
 import { APP_VERSION } from "./version.js";
@@ -55,7 +56,20 @@ const FACTION_OPTIONS = PLAYABLE_FACTIONS.map(id => ({
   label: FACTIONS[id].short, mult: id,
   note: { frontier: "faster · sees farther", miners: "richer · builds faster", syndicate: "hits harder · lean economy" }[id],
 }));
-export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontier", sizeMult: 1, resourceMult: 1, seed: null };
+// AI Strategy — orthogonal to the opponent's archetype/doctrine (which the world/planet card
+// picks): whether and when it voluntarily attacks (engine/aiStrategy.js). Order matches STRATEGIES'
+// own key order so "Adaptive" (today's pure archetype-driven play) stays the first/default pick.
+// Unlike difficulty (which fans out into two separate aiApm/aiMicro dials via boot.js's
+// difficultyDials), a strategy key IS already the value createGameState/createGalaxy want, so
+// boot.js just forwards setup.aiStrategy straight through — no lookup table needed. Applies to
+// both Skirmish and Odyssey (setup.js renderSetupPanel's `economy` gate, below).
+export const STRATEGY_OPTIONS = [
+  { label: "Adaptive", mult: "default", note: "plays true to its archetype" },
+  { label: "Aggressive", mult: "aggressive", note: "attacks earlier, presses first" },
+  { label: "Economic", mult: "economic", note: "turtles, then rearms if hit" },
+  { label: "Force Parity", mult: "matching", note: "mirrors your army size" },
+];
+export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontier", aiStrategy: "default", sizeMult: 1, resourceMult: 1, seed: null };
 
 // The game modes the splash toggles between.
 const MODES = [
@@ -167,6 +181,22 @@ function renderSetupPanel(mode) {
     panel.appendChild(facRow);
     panel.appendChild(facHint);
     renderFactionHint();
+
+    // AI Strategy: how the OPPONENT plays, independent of which world/archetype it is —
+    // Adaptive (today's behavior), Aggressive, Economic, or Force Parity (engine/aiStrategy.js).
+    const stratHint = document.createElement("p");
+    stratHint.className = "setup-hint";
+    const renderStratHint = () => { stratHint.textContent = STRATEGIES[setup.aiStrategy].desc; };
+
+    const stratRow = document.createElement("div");
+    stratRow.className = "setup-row";
+    const stratLabel = document.createElement("span");
+    stratLabel.className = "setup-label";
+    stratLabel.textContent = "AI Strategy";
+    stratRow.append(stratLabel, optionGroup(setup.aiStrategy, STRATEGY_OPTIONS, key => { setup.aiStrategy = key; renderStratHint(); }));
+    panel.appendChild(stratRow);
+    panel.appendChild(stratHint);
+    renderStratHint();
   }
 
   // Map size shapes both a skirmish and a scenario — a bigger map is a longer

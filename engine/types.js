@@ -71,6 +71,32 @@
  * @property {Object} [odyssey]
  */
 
+/**
+ * A player-picked AI strategy (engine/aiStrategy.js) — orthogonal to the Archetype, an
+ * aggression overlay rather than a flavor one. Loosely typed, like Archetype: only the
+ * fields the sim actually reads are pinned, and every one is optional (STRATEGIES.default
+ * has none set at all).
+ * @typedef {Object} Strategy
+ * @property {string} [name]
+ * @property {string} [desc]
+ * @property {number} [attackTimeoutMult]
+ * @property {number} [armyAttackSizeMult]
+ * @property {number} [garrisonMult]
+ * @property {number} [turretCountMult]
+ * @property {number} [workerTargetMult]
+ * @property {number} [graceMult]              Odyssey diplomacy grace window (engine/diplomacy.js)
+ * @property {number} [grievanceMult]          Odyssey diplomacy grievance/creep (engine/diplomacy.js)
+ * @property {boolean} [neverInitiates]        never volunteers a wave off army size / hostility
+ * @property {number} [standingArmyCap]        Economic's minimal peacetime army-production cap
+ * @property {number} [warFootingMult]         cap multiplier while ctx.warFooting is true
+ * @property {number} [warFootingTime]         seconds a seen threat keeps warFooting active
+ * @property {boolean} [matchEnemyForce]       Force Parity: track the enemy's seen strength instead of a fixed cap
+ * @property {number} [matchBuffer]
+ * @property {number} [matchFloor]
+ * @property {boolean} [wantsIndustryAlways]   climbs the deep factory chain regardless of archetype.wantsRefinery
+ * @property {boolean} [useBombOffensively]    walks a built Helium Bomb to the attack target instead of leaving it home
+ */
+
 // ---- entities -------------------------------------------------------------------
 
 /**
@@ -292,10 +318,13 @@
  * @typedef {Object} AiContext
  * @property {Archetype} archetype
  * @property {(field: string) => *} arch   reads the archetype field, letting its Odyssey overlay win
+ * @property {Strategy} strategy   the player-picked AI strategy (engine/aiStrategy.js strategyFor)
+ * @property {boolean} warFooting   true while a strategy with warFootingTime has seen a threat recently (engine/ai.js)
  * @property {Player} ai
  * @property {Unit[]} workers
  * @property {Unit[]} army
  * @property {Unit[]} rangers
+ * @property {Unit[]} bombs   this side's Helium Bomb unit(s), if any (engine/aiSuperweapon.js)
  * @property {Building[]} buildings
  * @property {Building|undefined} cc
  * @property {Unit|null} colonyShip
@@ -319,6 +348,7 @@
  * @property {string} playerFaction
  * @property {number} [aiApm]
  * @property {boolean} [aiMicro]
+ * @property {string} [aiStrategy]
  */
 
 /**

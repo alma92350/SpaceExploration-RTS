@@ -400,6 +400,14 @@ function serPlanet(state) {
     ai: {
       aiThink: state.ai.think ?? 0, aiScoutId: state.ai.scoutId ?? null,
       aiApm: state.ai.apm ?? null, aiMicro: !!state.ai.micro,
+      // The player-picked AI strategy (engine/aiStrategy.js) — persisted the same redundant-per-planet
+      // way aiApm/aiMicro already are (not re-derived like the archetype, since it's not a function of
+      // planetId), so an old save without the field defaults to "default" (byte-identical to today).
+      aiStrategy: state.ai.strategy || "default",
+      // Sim-time of the last seen threat near home (drives Economic's war-footing window,
+      // engine/ai.js). Additive + nullish-defaulted, so an old save without it loads as "no recent
+      // threat" — the safe, conservative default (a freshly reloaded game reads as being at peace).
+      aiLastThreatAt: state.ai.lastThreatAt ?? null,
       aiActionBudget: state.ai.actionBudget ?? 0,
       aiAttackForce: state.ai.attackForce ?? 0, aiAttackDesperate: !!state.ai.attackDesperate,
       aiNextAttackAt: state.ai.nextAttackAt ?? null, aiUnitsBuilt: state.ai.unitsBuilt ?? 0,
@@ -548,6 +556,8 @@ function rehydratePlanet(P) {
     ai: {
       scoutId: P.ai.aiScoutId, think: P.ai.aiThink,
       apm: P.ai.aiApm, micro: P.ai.aiMicro,
+      strategy: P.ai.aiStrategy || "default",
+      lastThreatAt: P.ai.aiLastThreatAt ?? null,
       actionBudget: P.ai.aiActionBudget,
       attackForce: P.ai.aiAttackForce, attackDesperate: P.ai.aiAttackDesperate,
       nextAttackAt: P.ai.aiNextAttackAt, unitsBuilt: P.ai.aiUnitsBuilt,
