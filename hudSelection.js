@@ -1374,7 +1374,7 @@ function rebuildSelectionPanel(sel) {
 
     const leaderHint = document.createElement("p");
     leaderHint.className = "hint";
-    leaderHint.textContent = "The first unit you selected leads — the rest follow it, even on a later solo move.";
+    leaderHint.textContent = "The first unit you selected leads — the rest follow it, even on a later solo move. Ctrl+click a unit already in the selection to promote it to leader instead.";
     panelEl.appendChild(leaderHint);
 
     const shapeRow = document.createElement("div");

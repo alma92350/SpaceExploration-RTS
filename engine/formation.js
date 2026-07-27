@@ -21,12 +21,15 @@
    The "leader" is whichever unit is FIRST in the `units` array — i.e.
    whichever unit the player selected first and added the rest to (the
    normal box-select-additive selection order preserves this: an existing
-   selection is kept first, newly-added picks are appended after — see
-   input.js's applyBoxSelection). Deliberately NOT a stat-based pick (e.g.
-   highest maxHp): the player chooses their leader by building the
-   selection around it, the same unit engine/commands.js then keeps giving
-   its own real order to while everyone else follows it (issueHoldFormation
-   / follow-leader — see commands.js and movement.js).
+   selection is kept first, newly-added picks are appended after — UNLESS
+   the pick is a single unit already in the selection, which instead
+   promotes it to the front, letting the player hand the lead to an
+   arbitrary squad member after the fact — see input.js's
+   applyBoxSelection). Deliberately NOT a stat-based pick (e.g. highest
+   maxHp): the player chooses their leader by building the selection
+   around it, the same unit engine/commands.js then keeps giving its own
+   real order to while everyone else follows it (issueHoldFormation /
+   follow-leader — see commands.js and movement.js).
 
    NESTED formations: a selection that's ALREADY spread into distinct spatial
    clusters (e.g. two armies on opposite sides of the map, box-selected
