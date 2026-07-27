@@ -68,14 +68,15 @@ export const STRATEGIES = {
     // gone this long.
     warFootingMult: 5,
     warFootingTime: 75,
-    // OFFENSE: never volunteers into a fight on its own (neverInitiates guards
-    // both the skirmish threshold-commit and the Odyssey hostility-muster in
-    // aiMilitary.js) — it only ever fights defensively. attackTimeoutMult still
-    // stretches the skirmish desperation-timeout (the one commit neverInitiates
-    // does NOT suppress) far out, so an all-turtle mirror match still resolves
-    // eventually rather than relying solely on the score-based time limit.
+    // OFFENSE: never volunteers into a fight on its own, PERIOD — neverInitiates
+    // (engine/aiMilitary.js aiOffense) blocks every voluntary commit, including
+    // the skirmish desperation timeout: a strategy whose whole point is "doesn't
+    // attack unprovoked" has to mean that literally, or a genuinely passive
+    // player eventually eats an unexplained all-in wave purely because enough
+    // time passed. A mutual-turtle skirmish still resolves — victory.js's
+    // score-based DEFAULT_MATCH_TIME_LIMIT (40 minutes) settles it without
+    // requiring combat from either side. It only ever fights defensively.
     neverInitiates: true,
-    attackTimeoutMult: 7,
     // A lighter static defense to match "minimal" (still real — cheap and
     // passive, unlike the standing army above).
     turretCountMult: 0.6,
@@ -98,9 +99,9 @@ export const STRATEGIES = {
     matchBuffer: 1.15,
     matchFloor: 3,
     // OFFENSE: purely reactive, like Economic — parity is a deterrent/defense
-    // plan, not a wind-up to attack. Same long desperation-timeout safety net.
+    // plan, not a wind-up to attack, and neverInitiates means that literally,
+    // with no timeout escape hatch (see the Economic entry above for why).
     neverInitiates: true,
-    attackTimeoutMult: 7,
   },
 };
 

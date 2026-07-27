@@ -125,17 +125,21 @@ function aiOffense(state, ctx, nonScout) {
     //    toward fully hostile the muster, the committed fraction and the cadence all
     //    climb, so a banked army bleeds out in escalating waves — never one doomstack.
     //
-    // strategy.neverInitiates (Economic / Force-Parity — aiStrategy.js) guards the
-    // VOLUNTARY commit in both regimes: the skirmish threshold check just below, and
-    // the whole Odyssey hostility-muster block (which has no timeout to preserve —
-    // Odyssey never requires combat to resolve a world). It does NOT guard the
-    // skirmish `timedOut` desperation commit, so an all-turtle mirror match still
-    // ends in combat eventually instead of leaning solely on the score-based time
-    // limit — just on effAttackTimeout's much-stretched clock instead of the usual one.
+    // strategy.neverInitiates (Economic / Force-Parity — aiStrategy.js) guards EVERY
+    // voluntary commit, INCLUDING the skirmish desperation timeout: a strategy whose
+    // whole point is "never attacks unprovoked" must mean that literally, or a genuinely
+    // passive player still eventually eats an unexplained all-in wave — which is exactly
+    // the bug this guards against (a real player report: an Economic AI "raided" a player
+    // who'd built nothing but a scout, purely because enough time had passed). The
+    // resolves-to-a-winner guarantee still holds for a mutual-turtle skirmish: victory.js's
+    // score-based DEFAULT_MATCH_TIME_LIMIT (40 minutes) settles it without requiring combat
+    // — see the "score, not combat" test in test/aiStrategy.test.js. Odyssey never needed a
+    // timeout here at all (a world doesn't require combat to resolve), so this is the one
+    // regime where the guard is new.
     let strike = [], desperate = false;
     if (cc) {
       if (!state.diplomacy) {
-        const readyToAttack = timedOut || (!strategy.neverInitiates && homeArmy.length >= effArmyAttackSize);
+        const readyToAttack = !strategy.neverInitiates && (timedOut || homeArmy.length >= effArmyAttackSize);
         if (homeArmy.length > 0 && readyToAttack) {
           strike = withoutHomeGuard(homeArmy, cc, timedOut ? 0 : effGarrison);
           desperate = timedOut;
