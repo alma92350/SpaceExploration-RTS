@@ -247,8 +247,8 @@ function neededInput(building, needs, res) {
 // zone wins even over a nearer one belonging to another base, so a multi-base empire's haulers stay
 // loyal to their own base and only "commute" to another one once their own has nothing queued.
 // Deterministic: nearest by distance, ties broken by id.
-/** @param {State} state @param {string} owner @param {number} x @param {number} y @param {number} [minFraction] @returns {Building|null} */
-function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTION) {
+/** @param {State} state @param {string} owner @param {number} x @param {number} y @param {number} [minFraction] @param {string} [homeId] @returns {Building|null} */
+function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTION, homeId) {
   const scanFor = (inZone) => {
     let best = null, bestD = Infinity;
     for (const b of state.buildings.values()) {
@@ -263,7 +263,7 @@ function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTIO
     }
     return best;
   };
-  return zoneFirst(state, owner, x, y, scanFor);
+  return zoneFirst(state, owner, x, y, scanFor, homeId);
 }
 
 /**
@@ -272,7 +272,7 @@ function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTIO
  * @param {State} state @param {Unit} unit
  */
 export function assignHaul(state, unit) {
-  const best = nearestBacklogProducer(state, unit.owner, unit.x, unit.y);
+  const best = nearestBacklogProducer(state, unit.owner, unit.x, unit.y, undefined, unit.homeCC);
   if (!best) return;
   best.haulers = (best.haulers || 0) + 1;
   unit.order = { type: "haul", buildingId: best.id, phase: "toSource" };
@@ -305,8 +305,9 @@ export function assignService(state, unit) {
     return best;
   };
   // Zone-first (engine/gather.js zoneFirst): a factory in the worker's own CC zone wins over a
-  // nearer one belonging to another base — see nearestBacklogProducer above for why.
-  const best = zoneFirst(state, unit.owner, unit.x, unit.y, scanFor);
+  // nearer one belonging to another base — see nearestBacklogProducer above for why. Honors a
+  // player-assigned home base (unit.homeCC) over the usual nearest-CC guess.
+  const best = zoneFirst(state, unit.owner, unit.x, unit.y, scanFor, unit.homeCC);
   if (!best) return;
   best.servers = (best.servers || 0) + 1;
   unit.order = { type: "service", buildingId: best.id, phase: "plan" };
@@ -338,8 +339,8 @@ export function assignFerry(state, unit) {
     }
     return best;
   };
-  // Zone-first, same reasoning as nearestBacklogProducer above.
-  const best = zoneFirst(state, unit.owner, unit.x, unit.y, scanFor);
+  // Zone-first, same reasoning as nearestBacklogProducer above (and honors unit.homeCC).
+  const best = zoneFirst(state, unit.owner, unit.x, unit.y, scanFor, unit.homeCC);
   if (!best) return;
   const src = nearestBacklogProducer(state, unit.owner, best.x, best.y);
   if (!src) return;   // nothing worth bringing it yet
@@ -530,7 +531,7 @@ export function updateFerry(state, unit, dt) {
       return;
     }
     if (f && freightRoom(f) > 0) {
-      const src = nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0);
+      const src = nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0, unit.homeCC);
       if (src) { src.haulers = (src.haulers || 0) + 1; order.buildingId = src.id; order.phase = "toSource"; return; }
     }
     // A collection-point freighter drives its own hold home once full (assignShuttle) — a ferry

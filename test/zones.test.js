@@ -71,6 +71,35 @@ test("assignFerry prefers a collection-point freighter in the worker's own zone 
   assert.equal(worker.order.freighterId, farA.id, "it ferries the own-zone freighter, not the nearer cross-zone one");
 });
 
+test("a player-assigned home base (unit.homeCC) overrides the usual nearest-CC guess, even against raw proximity", () => {
+  const { s, ccA, worker } = twoBases();
+  worker.x = 900; worker.y = 0;      // now physically much closer to CC-B (100 away) than CC-A (900 away)
+  worker.homeCC = ccA.id;            // but explicitly assigned home base is CC-A
+
+  const farA = makeBuilding("plasmarig", "player", -500, 0);    // zone A, far from the worker
+  farA.store = { ore: 60 };
+  s.buildings.set(farA.id, farA);
+  const nearB = makeBuilding("plasmarig", "player", 950, 0);    // zone B, right next to the worker — the trap
+  nearB.store = { ore: 60 };
+  s.buildings.set(nearB.id, nearB);
+
+  assignHaul(s, worker);
+
+  assert.equal(worker.order.buildingId, farA.id, "the assigned home base wins over both raw proximity and the usual nearest-CC guess");
+});
+
+test("a stale home-base override (its Command Center gone) is ignored, falling back to the nearest-CC guess", () => {
+  const { s, worker } = twoBases();
+  worker.homeCC = "some-destroyed-cc-id";
+  const near = makeBuilding("plasmarig", "player", 350, 0);
+  near.store = { ore: 60 };
+  s.buildings.set(near.id, near);
+
+  assignHaul(s, worker);
+
+  assert.equal(worker.order.buildingId, near.id, "an invalid override doesn't dead-end the search — it just falls back");
+});
+
 test("with only ONE Command Center, zone-first degenerates to the plain nearest search (unchanged behaviour)", () => {
   const s = createGameState({ planetId: "ferros" });
   const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");

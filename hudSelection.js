@@ -767,24 +767,47 @@ function rebuildSelectionPanel(sel) {
       row.className = "sel-row sel-row-summary";
       row.textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
       panelEl.appendChild(row);
+
+      // Damaged (a completed building) or wounded (a unit): say so plainly, and whether a worker's
+      // already patching it (engine/repair.js updateRepairJob/countRepairJobs) — the same "needs a
+      // hauler" style stall note a factory/rig gets below, generalized to any structure or unit.
+      if (!e.constructing && e.hp > 0 && e.hp < e.maxHp) {
+        const repairing = (e.repairers || 0) > 0;
+        const what = e.kind === "building" ? "Damaged" : "Wounded";
+        const note = document.createElement("div");
+        note.className = "sel-note " + (repairing ? "warn" : "bad");
+        note.textContent = repairing
+          ? `${what} — ${e.repairers} worker${e.repairers > 1 ? "s" : ""} repairing`
+          : `${what} — right-click with a worker selected to repair`;
+        panelEl.appendChild(note);
+      }
+      // A player-assigned home base (engine/commands.js issueSetHomeBase): this unit prefers that
+      // Command Center's zone over the usual nearest-CC guess for its haul/service/ferry/repair
+      // job search (engine/gather.js zoneFirst) — right-click a DIFFERENT Command Center to move
+      // it, or the "Clear" button to fall back to plain nearest-distance.
+      if (e.kind === "unit" && e.homeCC) {
+        const home = state.buildings.get(e.homeCC);
+        const note = document.createElement("div");
+        note.className = "sel-note " + (home ? "good" : "");
+        note.textContent = home ? "🏠 Home base assigned — jobs stay loyal to it first" : "🏠 Home base assigned (that Command Center is gone — using nearest-distance for now)";
+        panelEl.appendChild(note);
+        if (home) panelEl.appendChild(makeButton("Clear home base", () => { e.homeCC = null; }, { tip: "Go back to picking jobs by plain nearest-distance" }));
+      }
     });
   }
 
-  // A damaged, completed building: say so plainly, and whether a worker's already patching it
-  // (engine/repair.js updateRepairJob/countRepairJobs) — the same "needs a hauler" style stall
-  // note a factory/rig gets below, generalized to any structure, not just a logistics buffer.
-  sel.filter(e => e.kind === "building" && !e.constructing && e.hp < e.maxHp).forEach(b => {
-    const repairing = (b.repairers || 0) > 0;
-    const row = document.createElement("div");
-    row.className = "sel-note " + (repairing ? "warn" : "bad");
-    row.textContent = repairing
-      ? `Damaged — ${b.repairers} worker${b.repairers > 1 ? "s" : ""} repairing`
-      : "Damaged — right-click with a worker selected to repair";
-    panelEl.appendChild(row);
-  });
-
   const cc = sel.find(e => e.kind === "building" && e.type === "command" && !e.constructing);
   if (cc) {
+    // How many units are explicitly pinned to THIS Command Center as their home base
+    // (engine/commands.js issueSetHomeBase) — right-click this CC with eligible units selected to
+    // add more; right-click a DIFFERENT one to move them there instead.
+    const homedHere = [...state.units.values()].filter(u => u.owner === "player" && u.homeCC === cc.id).length;
+    if (homedHere > 0) {
+      const homeRow = document.createElement("div");
+      homeRow.className = "sel-note good";
+      homeRow.textContent = `🏠 ${homedHere} unit${homedHere > 1 ? "s" : ""} call this home — their jobs stay loyal to it first`;
+      panelEl.appendChild(homeRow);
+    }
     // Odyssey: the CC also builds Colony Ships — the mobile seed you deploy to found a
     // new base (no more building a CC directly). Gated on game.galaxy like the sibling
     // Odyssey CC panels below, so a skirmish CC shows only Worker/Ranger.

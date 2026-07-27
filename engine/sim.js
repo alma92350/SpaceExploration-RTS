@@ -379,6 +379,7 @@ function autoRepairRoam(state, mender, def, dt) {
     target = pickRepairTarget(state, mender.owner, mender.x, mender.y, {
       exclude: mender,
       isClaimed: e => e.kind === "building" && (e.menderClaims || 0) >= 1,   // one Mender per building
+      homeId: mender.homeCC,
     });
     if (target && target.kind === "building") target.menderClaims = (target.menderClaims || 0) + 1;   // claim it for the rest of this tick
   }

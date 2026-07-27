@@ -101,6 +101,8 @@
  * @property {boolean} [collectPoint]  a freighter toggled into collection-point mode (engine/commands.js issueSetCollectPoint) — full hold triggers a SHUTTLE run to the nearest Command Center and back to `anchor` (engine/haul.js assignShuttle/updateFreighterShuttle); no research needed
  * @property {{x:number, y:number}} [anchor]  a collection-point freighter's home spot, stamped when the mode is switched on — a shuttle run returns here (engine/haul.js updateFreighterShuttle)
  * @property {number} [ferriers]  transient per-tick count of workers ferrying this freighter, manual or auto-assigned (engine/haul.js countLogistics/assignFerry) — stripped on serialize
+ * @property {number} [repairers]  transient per-tick count of workers assigned to repair THIS unit (it's a valid repair-job target too), engine/repair.js countRepairJobs — stripped on serialize
+ * @property {string|null} [homeCC]  a player-assigned home Command Center id (engine/commands.js issueSetHomeBase) — overrides zoneFirst's usual nearest-CC guess for this unit's haul/service/ferry/repair job search (engine/gather.js zoneFirst); persisted; a stale reference to a destroyed CC is harmless, ignored and falls back to nearest-CC
  * @property {{progress:number, time:number}} [recycling]  an in-progress player Recycle (engine/commands.js issueRecycle) — persisted; progress 0..1, removes the unit and refunds part of its cost at 1 (engine/recycle.js updateUnitRecycle)
  * @property {boolean} [armed]  a Helium Bomb set to detonate on attack/enemy presence/command (engine/bomb.js)
  * @property {number} [fuseUntil]  the state.time an ARMED Helium Bomb's lit fuse detonates at — set by lightFuse, absent while unlit (engine/bomb.js)

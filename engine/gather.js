@@ -166,10 +166,21 @@ export function nearestCommandCenter(state, owner, x, y) {
 // `scan(null)` return the exact same answer, and behaviour is byte-identical to before this existed.
 // `scan(inZone)` receives either a same-zone predicate `(x,y) => boolean` or `null` (no restriction);
 // it does its own candidate loop/tie-break and returns its best match or null either way.
+//
+// `homeId`, when given, is a PLAYER-ASSIGNED override (`unit.homeCC`, engine/commands.js
+// issueSetHomeBase — a right-click on a Command Center with eligible units selected) that wins over
+// the usual "nearest CC by distance" guess: the player decides which base's territory a worker/
+// Mender/freighter stays loyal to, not just raw distance. A stale override (its CC destroyed, or
+// never valid) is ignored and this falls straight back to the distance guess — self-healing, same
+// "never cache, recompute from state" shape as everything else here.
 /** @param {State} state @param {string} owner @param {number} x @param {number} y
- *  @param {(inZone: ((ex:number, ey:number) => boolean)|null) => *} scan @returns {*} */
-export function zoneFirst(state, owner, x, y, scan) {
-  const home = nearestCommandCenter(state, owner, x, y);
+ *  @param {(inZone: ((ex:number, ey:number) => boolean)|null) => *} scan @param {string} [homeId]
+ *  @returns {*} */
+export function zoneFirst(state, owner, x, y, scan, homeId) {
+  let home = homeId ? state.buildings.get(homeId) : null;
+  if (!home || home.owner !== owner || home.constructing || !BUILDINGS[home.type]?.isCommandCenter) {
+    home = nearestCommandCenter(state, owner, x, y);
+  }
   if (!home) return scan(null);
   const inZone = (ex, ey) => nearestCommandCenter(state, owner, ex, ey) === home;
   return scan(inZone) ?? scan(null);

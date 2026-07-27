@@ -22,6 +22,7 @@ import { queryNeighbors } from "./grid.js";
 import { onPowerGrid } from "./industry.js";
 import { stepToward } from "./movement.js";
 import { zoneFirst } from "./gather.js";
+import { getEntity } from "./state.js";
 
 const OFFGRID_HEAL = 0.3;   // an Odyssey Mender off the powered grid limps on reserves at this fraction
 
@@ -36,17 +37,19 @@ export const HEALED = 0.985;        // …and keep servicing it until it's back 
  * Pick the friendly most in need of repair for a repairer standing at (x,y) — preferring one in
  * the REPAIRER's OWN Command Center zone first (engine/gather.js zoneFirst), and only widening to
  * the whole empire once its own zone has nothing eligible. Within a pass, priority is most-worn-
- * first (lowest hp fraction), distance breaks ties — shared shape for the auto-repair Mender
- * (which also considers wounded UNITS) and the worker repair job below (buildings only — see
- * assignRepair). `isClaimed` lets each caller enforce its OWN per-target cap (Mender: one
- * auto-repair drone per building; a worker: MAX_REPAIRERS) without this needing to know which kind
- * of caller it is; `exclude` keeps a mender from ever picking itself.
+ * first (lowest hp fraction), distance breaks ties — shared shape for the auto-repair Mender and
+ * the worker repair job below (both can now target either a building or a wounded mobile unit).
+ * `isClaimed` lets each caller enforce its OWN per-target cap (Mender: one auto-repair drone per
+ * building; a worker: MAX_REPAIRERS) without this needing to know which kind of caller it is;
+ * `exclude` keeps a repairer from ever picking itself. `homeId`, when given, is a player-assigned
+ * home-base override (engine/commands.js issueSetHomeBase) that wins over the usual nearest-CC
+ * guess — see engine/gather.js zoneFirst.
  * @param {State} state @param {string} owner @param {number} x @param {number} y
- * @param {{includeUnits?: boolean, isClaimed?: (e:*) => boolean, exclude?: *, threshold?: number}} [opts]
+ * @param {{includeUnits?: boolean, isClaimed?: (e:*) => boolean, exclude?: *, threshold?: number, homeId?: string}} [opts]
  * @returns {Building|Unit|null}
  */
 export function pickRepairTarget(state, owner, x, y, opts = {}) {
-  const { includeUnits = true, isClaimed = () => false, exclude = null, threshold = NEEDS_REPAIR } = opts;
+  const { includeUnits = true, isClaimed = () => false, exclude = null, threshold = NEEDS_REPAIR, homeId } = opts;
   const scanFor = (inZone) => {
     let best = null, bestFrac = threshold, bestD = Infinity;
     const consider = (e) => {
@@ -63,70 +66,73 @@ export function pickRepairTarget(state, owner, x, y, opts = {}) {
     if (includeUnits) for (const u of state.units.values()) consider(u);
     return best;
   };
-  return zoneFirst(state, owner, x, y, scanFor);
+  return zoneFirst(state, owner, x, y, scanFor, homeId);
 }
 
-// ---- Worker REPAIR job: a generalist worker patching its own base's structures — the buildings-
-// only counterpart to the Mender's roam above, discovered/dispatched the SAME zone-first way as a
-// haul/service job (engine/haul.js), so it competes for the same idle labour pool and stays loyal
-// to its own base first. Free, like a Mender's heal — a worker spends time, not resources.
-const MAX_REPAIRERS = 2;        // workers auto-assigned to repair the same building, so labour spreads
+// ---- Worker REPAIR job: a generalist worker patching its own base's structures AND wounded mobile
+// units, discovered/dispatched the SAME zone-first way as a haul/service job (engine/haul.js), so it
+// competes for the same idle labour pool and stays loyal to its own base first. Free, like a
+// Mender's heal — a worker spends time, not resources.
+const MAX_REPAIRERS = 2;        // workers auto-assigned to repair the same target, so labour spreads
 const REPAIR_REACH = 24;        // matches production.js's BUILD_REACH — a worker patches on-site, like construction
 const WORKER_REPAIR_RATE = 4;   // hp/sec a lone worker patches at — gentler than a Mender's dedicated 6
 
 /**
- * Per-building tally of workers already assigned to repair it THIS TICK — frozen before any new
- * assignment (same "count first, then assign" shape as engine/haul.js countLogistics) so the
- * ≤MAX_REPAIRERS cap reads the same regardless of Map iteration order. Transient (stripped on
- * serialize, engine/persist.js).
+ * Per-target (building OR unit) tally of workers already assigned to repair it THIS TICK — frozen
+ * before any new assignment (same "count first, then assign" shape as engine/haul.js
+ * countLogistics) so the ≤MAX_REPAIRERS cap reads the same regardless of Map iteration order.
+ * Transient (stripped on serialize, engine/persist.js).
  * @param {State} state
  */
 export function countRepairJobs(state) {
   for (const b of state.buildings.values()) b.repairers = 0;
+  for (const u of state.units.values()) u.repairers = 0;
   for (const u of state.units.values()) {
     const o = u.order;
-    if (o && o.type === "repair" && o.buildingId) {
-      const b = state.buildings.get(o.buildingId);
-      if (b) b.repairers = (b.repairers || 0) + 1;
+    if (o && o.type === "repair" && o.targetId) {
+      const t = getEntity(state, o.targetId);
+      if (t) t.repairers = (t.repairers || 0) + 1;
     }
   }
 }
 
 /**
- * Give an idle worker a REPAIR job on the own building most in need (buildings only — a Mender
- * already covers wounded mobile units; see the entities.js canLogistics doc comment on why repair
- * is otherwise ungated). Claims a slot for the tick.
+ * Give an idle worker a REPAIR job on the own building or wounded mobile unit most in need
+ * (zone-first, honoring a player-assigned home base — unit.homeCC). Claims a slot for the tick.
  * @param {State} state @param {Unit} unit
  */
 export function assignRepair(state, unit) {
   const best = pickRepairTarget(state, unit.owner, unit.x, unit.y, {
-    includeUnits: false,
-    isClaimed: (b) => (b.repairers || 0) >= MAX_REPAIRERS,
+    exclude: unit,   // a worker doesn't repair itself
+    isClaimed: (e) => (e.repairers || 0) >= MAX_REPAIRERS,
+    homeId: unit.homeCC,
   });
   if (!best) return;
   best.repairers = (best.repairers || 0) + 1;
-  unit.order = { type: "repair", buildingId: best.id, phase: "toSite" };
+  unit.order = { type: "repair", targetId: best.id, phase: "toSite" };
 }
 
 /**
- * Advance a REPAIR job: walk to the damaged building and patch it at WORKER_REPAIR_RATE hp/sec
- * once in reach. An auto-assigned worker frees up the instant it's topped off; a manually-assigned
- * one (`order.manual`, engine/commands.js issueRepairBuilding) stays parked there instead, ready the
- * moment it takes damage again — same auto-vs-manual split haul/service already use. Salvages
- * gracefully if the target is razed or still under construction (nothing to mend yet).
+ * Advance a REPAIR job: walk to the damaged building or wounded unit and patch it at
+ * WORKER_REPAIR_RATE hp/sec once in reach — a mobile target just keeps getting chased, the same
+ * "walk toward its live position" idiom the auto-repair Mender's roam already uses. An
+ * auto-assigned worker frees up the instant it's topped off; a manually-assigned one (`order.manual`,
+ * engine/commands.js issueRepair) stays parked there instead, ready the moment it takes damage
+ * again — same auto-vs-manual split haul/service already use. Salvages gracefully if the target is
+ * gone/dead or (a building) still under construction (nothing to mend yet).
  * @param {State} state @param {Unit} unit @param {number} dt
  */
 export function updateRepairJob(state, unit, dt) {
   const def = UNITS[unit.type];
   const order = unit.order;
-  const b = order.buildingId ? state.buildings.get(order.buildingId) : null;
-  if (!b || b.constructing) { unit.order = null; return; }
-  if (Math.hypot(b.x - unit.x, b.y - unit.y) > REPAIR_REACH) {
-    stepToward(state, unit, b.x, b.y, def.speed, dt);
+  const target = order.targetId ? getEntity(state, order.targetId) : null;
+  if (!target || target.hp <= 0 || target.constructing) { unit.order = null; return; }
+  if (Math.hypot(target.x - unit.x, target.y - unit.y) > REPAIR_REACH) {
+    stepToward(state, unit, target.x, target.y, def.speed, dt);
     return;
   }
-  b.hp = Math.min(b.maxHp, b.hp + WORKER_REPAIR_RATE * dt);
-  if (b.hp >= b.maxHp && !order.manual) unit.order = null;
+  target.hp = Math.min(target.maxHp, target.hp + WORKER_REPAIR_RATE * dt);
+  if (target.hp >= target.maxHp && !order.manual) unit.order = null;
 }
 
 // A Mender recharges from power stations: on an Odyssey world it heals at full rate only while it's

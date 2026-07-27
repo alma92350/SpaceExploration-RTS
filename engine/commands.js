@@ -173,15 +173,31 @@ export function issueFerryFreighter(units, freighterId, queue = false) {
   });
 }
 
-// Assign workers to REPAIR a damaged own building — a standing job that keeps patching it at
-// WORKER_REPAIR_RATE hp/sec (engine/repair.js updateRepairJob) until it's fully healed, then waits
-// there for it to take damage again, the same auto-vs-manual split issueServiceBuilding uses. ANY
-// completed building qualifies (a turret, a Habitat, the Command Center itself) — not just a
-// logistics-buffered one — this is a worker literally patching the hull, unrelated to hauling
-// its goods.
-export function issueRepairBuilding(units, buildingId, queue = false) {
+// Assign workers to REPAIR a damaged own building OR wounded own unit — a standing job that keeps
+// patching the target at WORKER_REPAIR_RATE hp/sec (engine/repair.js updateRepairJob) until it's
+// fully healed, then waits there for it to take damage again, the same auto-vs-manual split
+// issueServiceBuilding uses. ANY completed building qualifies (a turret, a Habitat, the Command
+// Center itself) — not just a logistics-buffered one — and any mobile unit too; this is a worker
+// literally patching the hull, unrelated to hauling its goods.
+export function issueRepair(units, targetId, queue = false) {
   units.forEach(u => {
-    if (canLogisticsType(u.type)) dispatch(u, { type: "repair", buildingId, phase: "toSite", manual: true }, queue);
+    if (canLogisticsType(u.type)) dispatch(u, { type: "repair", targetId, phase: "toSite", manual: true }, queue);
+  });
+}
+
+// Pin `units`' assigned home Command Center — an explicit player override for zoneFirst's usual
+// "nearest CC by distance" guess (engine/gather.js), so the player decides which base's territory a
+// worker/Mender/freighter's job search, ferry-target pick, and repair-roam all stay loyal to instead
+// of pure distance ("Player is in charge of where sufficient resources are, per area"). Passive: it
+// never touches whatever order the unit is already running — it only changes what the NEXT idle job
+// search prefers. Silently no-ops any unit type that never consults a home zone (a combat unit, a
+// scout) so a mixed selection right-clicking a Command Center still does the right thing for the
+// units that actually care.
+export function issueSetHomeBase(units, ccId) {
+  units.forEach(u => {
+    if (canLogisticsType(u.type) || UNITS[u.type]?.role === "support" || UNITS[u.type]?.role === "freighter") {
+      u.homeCC = ccId;
+    }
   });
 }
 

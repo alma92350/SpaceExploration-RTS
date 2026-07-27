@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { assignRepair, updateRepairJob, NEEDS_REPAIR } from "../engine/repair.js";
-import { issueRepairBuilding } from "../engine/commands.js";
+import { issueRepair } from "../engine/commands.js";
 
 function base() {
   const s = createGameState({ planetId: "ferros" });
@@ -21,7 +21,7 @@ test("assignRepair sends an idle worker to a damaged own building below the NEED
 
   assert.ok(worker.order, "the worker took a job");
   assert.equal(worker.order.type, "repair");
-  assert.equal(worker.order.buildingId, turret.id);
+  assert.equal(worker.order.targetId, turret.id);
 });
 
 test("a building only lightly scratched (still above NEEDS_REPAIR) is left alone by auto-assignment", () => {
@@ -47,7 +47,7 @@ test("a building still under construction is never targeted — it has no battle
   assert.equal(worker.order, null, "a construction site is left to its builder");
 });
 
-test("a damaged UNIT is never targeted by a worker's repair job — that's the Mender's job", () => {
+test("a worker's repair job can also target a wounded mobile UNIT, not just a building", () => {
   const { s, cc, worker } = base();
   worker.x = cc.x; worker.y = cc.y;
   const hurtRanger = makeUnit("ranger", "player", cc.x + 20, cc.y);
@@ -56,7 +56,32 @@ test("a damaged UNIT is never targeted by a worker's repair job — that's the M
 
   assignRepair(s, worker);
 
-  assert.equal(worker.order, null, "workers only patch buildings, not mobile units");
+  assert.ok(worker.order, "the worker took a job");
+  assert.equal(worker.order.targetId, hurtRanger.id, "a wounded unit is a valid repair target too");
+});
+
+test("a worker never assigns itself as its own repair target", () => {
+  const { s, cc, worker } = base();
+  worker.x = cc.x; worker.y = cc.y;
+  worker.hp = 5;   // the worker itself is badly hurt
+
+  assignRepair(s, worker);
+
+  assert.equal(worker.order, null, "no other damaged friendly exists, and it won't repair itself");
+});
+
+test("updateRepairJob chases and heals a wounded mobile unit target the same way it patches a building", () => {
+  const { s, cc, worker } = base();
+  const hurt = makeUnit("ranger", "player", cc.x + 200, cc.y);
+  hurt.hp = 10;
+  s.units.set(hurt.id, hurt);
+  worker.x = cc.x; worker.y = cc.y;
+  worker.order = { type: "repair", targetId: hurt.id, phase: "toSite" };
+
+  for (let i = 0; i < 4000 && hurt.hp < hurt.maxHp; i++) updateRepairJob(s, worker, 0.05);
+
+  assert.equal(hurt.hp, hurt.maxHp, "the wounded unit was fully patched");
+  assert.equal(worker.order, null, "an auto-assigned worker frees up once the job is done");
 });
 
 test("updateRepairJob walks to the building, patches it up over time, and auto-frees the worker once full", () => {
@@ -64,7 +89,7 @@ test("updateRepairJob walks to the building, patches it up over time, and auto-f
   const turret = makeBuilding("turret", "player", cc.x + 300, cc.y, { hp: 50 });
   s.buildings.set(turret.id, turret);
   worker.x = cc.x; worker.y = cc.y;
-  worker.order = { type: "repair", buildingId: turret.id, phase: "toSite" };
+  worker.order = { type: "repair", targetId: turret.id, phase: "toSite" };
 
   for (let i = 0; i < 4000 && turret.hp < turret.maxHp; i++) updateRepairJob(s, worker, 0.05);
 
@@ -77,14 +102,14 @@ test("a manually-assigned repair worker parks by a now-full building instead of 
   const turret = makeBuilding("turret", "player", cc.x + 20, cc.y, { hp: 50 });
   s.buildings.set(turret.id, turret);
   worker.x = turret.x; worker.y = turret.y;
-  issueRepairBuilding([worker], turret.id);
+  issueRepair([worker], turret.id);
   assert.equal(worker.order.manual, true);
 
   for (let i = 0; i < 4000 && turret.hp < turret.maxHp; i++) updateRepairJob(s, worker, 0.05);
 
   assert.equal(turret.hp, turret.maxHp, "fully healed");
   assert.ok(worker.order, "a manually-assigned worker stays put, ready for the next ding");
-  assert.equal(worker.order.buildingId, turret.id);
+  assert.equal(worker.order.targetId, turret.id);
 });
 
 test("MAX_REPAIRERS caps auto-assignment at 2 workers per building — a 3rd idle worker with nothing else to fix stays idle", () => {
@@ -99,8 +124,8 @@ test("MAX_REPAIRERS caps auto-assignment at 2 workers per building — a 3rd idl
   assignRepair(s, workers[1]);
   assignRepair(s, workers[2]);
 
-  assert.equal(workers[0].order.buildingId, turret.id);
-  assert.equal(workers[1].order.buildingId, turret.id);
+  assert.equal(workers[0].order.targetId, turret.id);
+  assert.equal(workers[1].order.targetId, turret.id);
   assert.equal(workers[2].order, null, "the cap holds — no third worker piles onto the same building");
   assert.equal(turret.repairers, 2);
 });
@@ -121,5 +146,5 @@ test("assignRepair prefers a damaged building in the worker's own Command Center
 
   assignRepair(s, worker);
 
-  assert.equal(worker.order.buildingId, farA.id, "it patches the own-zone turret, not the nearer cross-zone one");
+  assert.equal(worker.order.targetId, farA.id, "it patches the own-zone turret, not the nearer cross-zone one");
 });
