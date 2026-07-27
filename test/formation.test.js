@@ -279,7 +279,7 @@ test("a solo move on the leader alone drags its existing followers along, capped
   const leader = fakePlayerUnit("L", "bulkfreighter", 100, 100);   // slow (speed 32)
   const follower = fakePlayerUnit("F", "ranger", 120, 100);        // fast (speed 115)
   issueMove([leader, follower], 1000, 100);
-  assert.equal(leader.order.speedCap, UNITS.bulkfreighter.speed, "capped to the slowest member");
+  assert.equal(leader.order.speedCap, UNITS.bulkfreighter.speed * 0.95, "capped to 95% of the slowest member's speed, leaving it room to catch up");
   assert.equal(follower.order.type, "follow-leader");
   assert.equal(follower.order.leader, leader);
 
@@ -287,7 +287,7 @@ test("a solo move on the leader alone drags its existing followers along, capped
   // still pointing at the same live leader object), so it keeps trailing automatically.
   issueMove([leader], 50, 100);
   assert.equal(leader.order.type, "move");
-  assert.equal(leader.order.speedCap, UNITS.bulkfreighter.speed, "the solo command still re-derives the group's speed cap");
+  assert.equal(leader.order.speedCap, UNITS.bulkfreighter.speed * 0.95, "the solo command still re-derives the group's speed cap");
   assert.equal(follower.order.type, "follow-leader", "never re-issued — it was already chasing the leader");
   assert.equal(follower.order.leader, leader);
 });

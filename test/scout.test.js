@@ -88,8 +88,8 @@ test("a Ranger leading a formation scouts at the formation's pace, not its own t
   issueHoldFormation([ranger, follower]);
 
   issueScout([ranger, follower]);
-  assert.equal(ranger.order.speedCap, UNITS.worker.speed,
-    "capped to the slowest member, same as a move/attack-move/hold-formation leader");
+  assert.equal(ranger.order.speedCap, UNITS.worker.speed * 0.95,
+    "capped to 95% of the slowest member's speed, same as a move/attack-move/hold-formation leader");
 
   const x0 = ranger.x, y0 = ranger.y;
   for (let i = 0; i < 10; i++) updateScoutMode(state, ranger, 0.1);   // 1 sim second
