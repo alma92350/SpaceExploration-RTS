@@ -106,6 +106,53 @@ test("odyssey probes are spaced by a cadence, not launched every tick", () => {
   assert.ok(attacking(army) > first, "a fresh probe launches once the cadence elapses");
 });
 
+// ---- P1 review gap: the exact hostility-cadence formula (engine/aiMilitary.js) ----
+//
+// nextWaveAt = state.time + effAttackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state)) —
+// the cadence ITSELF tightens with hostility (sparse when merely wary, tight when hostile), not
+// just the muster/committed-fraction the tests around this one already cover. The cadence test
+// just above only ever exercises a single stance (-0.2), so the tightening was never actually
+// forced to differ between two readings. Pin the real formula (WAVE_CADENCE_FRAC mirrors
+// aiMilitary.js's own unexported 0.3 constant, confirmed by reading the source) against two
+// otherwise-identical armies that differ only in how hostile the neighbour is.
+const WAVE_CADENCE_FRAC = 0.3;
+
+function waveWorld(stance, time) {
+  const s = createGameState({ planetId: "korrath" });   // Rusher: garrison 0, so nothing held back complicates the muster math
+  s.ai.archetype = { ...s.ai.archetype, armyAttackSize: 10, attackTimeout: 100, garrison: 0, odyssey: undefined };
+  s.diplomacy = { stance, depletion: 0 };
+  s.time = time;
+  const army = [];
+  for (let i = 0; i < 14; i++) {
+    const u = makeUnit("skiff", "ai", s.map.bases.ai.x, s.map.bases.ai.y);
+    s.units.set(u.id, u); army.push(u);
+  }
+  return { s, army };
+}
+
+test("the Odyssey wave cadence tightens with hostility: nextWaveAt lands sooner the more hostile the neighbour, per the exact formula", () => {
+  const TIME = 500;
+  const { s: less, army: armyLess } = waveWorld(-0.5, TIME);   // h ≈ 0.412 — the same mid stance as the hostility() test above
+  const { s: more, army: armyMore } = waveWorld(-1, TIME);     // h = 1 — fully hostile
+
+  runAI(less, THINK);
+  runAI(more, THINK);
+  assert.ok(attacking(armyLess) > 0 && attacking(armyMore) > 0, "sanity: both neighbours actually commit a wave this think cycle");
+
+  const hLess = hostility(less), hMore = hostility(more);
+  assert.ok(hLess > 0 && hLess < 1 && hMore === 1, "sanity: a genuine partial reading vs. fully hostile");
+  const effAttackTimeout = 100;   // this fixture's attackTimeout; strategy "default" multiplier is 1 (a no-op)
+  const expectedLess = TIME + effAttackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hLess);
+  const expectedMore = TIME + effAttackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hMore);
+
+  assert.ok(Math.abs(less.ai.nextWaveAt - expectedLess) < 1e-9,
+    `nextWaveAt matches the exact cadence formula at the less-hostile stance (got ${less.ai.nextWaveAt}, expected ${expectedLess})`);
+  assert.ok(Math.abs(more.ai.nextWaveAt - expectedMore) < 1e-9,
+    `nextWaveAt matches the exact cadence formula at the fully-hostile stance (got ${more.ai.nextWaveAt}, expected ${expectedMore})`);
+  assert.ok(more.ai.nextWaveAt < less.ai.nextWaveAt,
+    "the fully-hostile neighbour's next wave is scheduled SOONER than the merely-wary one's");
+});
+
 test("the AI still attacks when there is no diplomacy (a plain skirmish)", () => {
   const state = createGameState({ planetId: "ferros" });
   state.time = state.ai.archetype.attackTimeout + 1;
