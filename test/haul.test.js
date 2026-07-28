@@ -210,6 +210,53 @@ test("haulage is deterministic: two same-seed runs bank identical treasuries", (
   assert.deepEqual(run(), run());
 });
 
+// ---- loadFrom tie-break: alphabetical, not insertion order (determinism) --------
+
+// loadFrom (haul.js — the private helper both updateHaul's "loading" phase and updateFerry's
+// pickup phase route through) walks Object.keys(store).sort() and keeps the first commodity whose
+// quantity is STRICTLY greater than the running max — so on an exact tie between two commodities,
+// the alphabetically-first name wins, deterministically, every run. No other fixture in this file
+// ever leaves a store/hold with two commodities sitting at the exact same quantity, so that
+// tiebreak itself has never actually been exercised. It matters because the engine's core guarantee
+// is "same seed → byte-identical replay": if the `.sort()` were ever dropped (or weakened to a
+// non-strict `>=`), which commodity loads first would instead depend on JS's own object-key
+// insertion order (or flip to a last-alphabetically pick) — an order-dependent choice on a real,
+// non-test code path that a byte-identical-replay guarantee can't tolerate.
+test("loadFrom's tie-break picks the alphabetically-first commodity on an exact quantity tie, not insertion order", () => {
+  const { s, cc, workers } = base(1);
+  // Insertion order is deliberately "ore" THEN "crystals" — the reverse of alphabetical — so an
+  // implementation that (mistakenly) relied on Object.keys' insertion order instead of a real
+  // .sort() would pick "ore" here. Only an actual alphabetical sort picks "crystals" (c < o).
+  const rig = plantRig(s, cc, { ore: 40, crystals: 40 });
+  rig.paused = true;   // don't dig — isolate the load pick from any gather-driven quantity drift
+  const w = workers[0];
+  w.x = rig.x; w.y = rig.y;
+  w.order = { type: "haul", buildingId: rig.id };
+
+  updateHaul(s, w, 0.05);   // toSource → loading (the worker already stands on the rig)
+  updateHaul(s, w, 0.05);   // loading → loadFrom actually picks and loads a commodity
+
+  assert.equal(w.cargo.com, "crystals", "the alphabetically-first commodity wins the tie, regardless of insertion order");
+});
+
+test("loadFrom's tie-break is truly alphabetical, not just a first-vs-second fluke — a three-way tie still picks the earliest letter", () => {
+  const { s, cc, workers } = base(1);
+  // Insertion order is "radioactives, alloys, crystals" — alphabetically alloys < crystals <
+  // radioactives, so only a real sort picks "alloys" first here; insertion order would pick
+  // "radioactives" (inserted first), and a flipped (last-alphabetically) tiebreak would pick
+  // "radioactives" too — so this fixture pins down "alphabetical, first" specifically.
+  const rig = plantRig(s, cc, { radioactives: 25, alloys: 25, crystals: 25 });
+  rig.paused = true;
+  const w = workers[0];
+  w.x = rig.x; w.y = rig.y;
+  w.order = { type: "haul", buildingId: rig.id };
+
+  updateHaul(s, w, 0.05);   // toSource → loading
+  updateHaul(s, w, 0.05);   // loading → loadFrom picks a commodity
+
+  assert.equal(w.cargo.com, "alloys", "the earliest letter of a three-way tie wins — confirms it's alphabetical, not insertion-order or last-wins");
+});
+
 // ---- service round trip: workers carry inputs INTO a factory and its output BACK --------
 
 // A player factory planted next to the CC, with a Reactor for Power. This file is about the
@@ -261,10 +308,17 @@ test("a service worker also carries the finished OUTPUT back on the return trip 
 // ---- multi-input recipes: one oversupplied input must never crowd out room for another --------
 
 test("inputCapOf splits the larder evenly across a recipe's real (non-energy) input commodities", () => {
-  const single = inputCapOf("smelter");     // recipe "smelt": ore + energy — one real input
-  const dual = inputCapOf("chipfab");       // recipe "chipfab": crystals + metals + energy — two real inputs
+  const single = inputCapOf("smelter");       // recipe "smelt": ore + energy — one real input
+  const dual = inputCapOf("chipfab");         // recipe "chipfab": crystals + metals + energy — two real inputs
+  // Torpedo Works (recipe "plasmafab": antimatter + alloys + radioactives + energy) is the game's
+  // ONLY 3-real-input recipe — every other test/fixture only ever proves the split formula at
+  // n=1 or n=2. That matters more than it looks: a bug that hardcoded the divisor to 2 instead of
+  // using the real commodity count would slip past the n=2 case above completely unnoticed (40 is
+  // 80/2 either way) and only show up here, at n=3, where 80/2 (=40) and 80/3 (=26.67) disagree.
+  const triple = inputCapOf("torpedoworks");
   assert.ok(near(single, 80, 1e-6), "a single-input factory keeps the whole 80 to itself");
   assert.ok(near(dual, 40, 1e-6), "a two-input factory splits it 40/40 — its own guaranteed slice each");
+  assert.ok(near(triple, 80 / 3, 1e-6), "a three-input factory splits it three even ways too — the formula holds past n=2");
 });
 
 test("a Chip Fab starved of crystals can still receive them even with its metals larder already topped up", () => {
