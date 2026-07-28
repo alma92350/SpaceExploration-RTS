@@ -415,3 +415,97 @@ test("a legitimately-saved multi-commodity input larder round-trips exactly (ide
   assert.equal(loaded.input.metals, 30);
   assert.equal(loaded.input.crystals, 12);
 });
+
+/* ---------- P1 review gap-closers: facing coercion, unrecognised save.planets id, skirmish-path sanitizeSave ---------- */
+
+test("a non-finite facing is deleted on load (never coerced to a fallback number); a numeric-but-stringy one is coerced", () => {
+  const save = freshSkirmishSave(71);
+  const units = save.units.filter(u => u.owner === "player");
+  assert.ok(units.length >= 2, "the fixture has at least two player units to tamper with");
+  const [u1, u2] = units;
+  // A literal JS NaN/Infinity can't survive deserializeGame's OWN internal round-trip
+  // (`JSON.parse(JSON.stringify(input))`, engine/persist.js) unscathed: JSON.stringify turns any
+  // non-finite number into the JSON literal `null` (JSON syntax has no NaN/Infinity token at all),
+  // so by the time cleanEntity sees it, e.facing is `null` — and num(null, NaN) is 0, not NaN
+  // (Number(null) === 0 is a genuine JS quirk, and 0 IS finite) — so it's COERCED to 0, not
+  // deleted. Verified this empirically against the real code before asserting anything here (a
+  // raw-NaN-through-deserializeGame test would silently assert the wrong thing). The shape a real
+  // hand-edited save FILE actually takes — since JSON syntax has no NaN/Infinity literal either —
+  // is a STRING that isn't a real number, which is what genuinely hits the delete branch below.
+  u1.facing = "not-a-number";
+  u2.facing = "NaN";                                    // spelled out as text — JSON has no NaN token either
+
+  const st = deserializeGame(save);
+  const cu1 = st.units.get(u1.id), cu2 = st.units.get(u2.id);
+  assert.ok(!("facing" in cu1), "a non-numeric-string facing is deleted entirely, not coerced to some fallback number");
+  assert.ok(!("facing" in cu2), "...same for the text 'NaN'");
+
+  // A valid-but-stringy facing (the realistic "went through one too many JSON.stringify passes"
+  // corruption) IS coerced to the real number, not dropped.
+  const save2 = freshSkirmishSave(72);
+  const u3 = save2.units.find(u => u.owner === "player");
+  u3.facing = "1.57";
+  const st2 = deserializeGame(save2);
+  const cu3 = st2.units.get(u3.id);
+  assert.equal(typeof cu3.facing, "number", "a numeric-but-stringy facing is coerced to a real number");
+  assert.ok(Math.abs(cu3.facing - 1.57) < 1e-9, "...to the correct value");
+  assert.ok(Number.isFinite(Math.cos(cu3.facing)) && Number.isFinite(Math.sin(cu3.facing)),
+    "the coerced facing feeds Math.cos/Math.sin (renderShared.js's orientation math) without going NaN");
+
+  // Nothing in engine/sim.js's tick() reads `facing` at all (confirmed by reading the engine — it's
+  // a pure render-side hint, renderShared.js's updateFacing, itself already guarded by
+  // Number.isFinite), so there's no facing-derived NaN a tick could smoke out; the direct field
+  // assertions above ARE the check. Still confirm the loaded games just tick cleanly, the same
+  // baseline every other hardening test in this file asserts after a hostile-field load.
+  assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) tick(st, 0.1); }, "the loaded game (deleted facing) ticks cleanly");
+  assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) tick(st2, 0.1); }, "the loaded game (coerced facing) ticks cleanly");
+  assert.ok(!("facing" in st.units.get(u1.id)), "facing is still absent after ticking — nothing re-adds or NaNs it in");
+});
+
+test("an unrecognised planetId inside save.planets is skipped cleanly on galaxy load — never added, no other planet affected", () => {
+  const g = createGalaxy({ seed: 81 });
+  const save = JSON.parse(JSON.stringify(serializeGalaxy(g)));
+  // Corrupt a NON-active planet's payload — corrupting the active one instead would legitimately
+  // trip the separate "no active planet" guard already covered above (a different code path: the
+  // planet is simply missing from the save, not present-but-misnamed the way it is here).
+  const victim = save.planets.find(p => p.planetId !== save.activeId);
+  const orphanedRealId = victim.planetId;
+  const otherRealIds = save.planets.map(p => p.planetId).filter(id => id !== orphanedRealId);
+  victim.planetId = "<script>alert(1)</script>";        // garbage/hostile id — same spirit as the worlds-roster XSS test above
+
+  const g2 = deserializeGalaxy(save);
+
+  assert.ok(!g2.planets.has("<script>alert(1)</script>"), "the garbage planetId itself never becomes a planets key");
+  assert.ok(!g2.planets.has(orphanedRealId), "the real world whose payload was clobbered is skipped too — nothing in the save names it correctly any more");
+  assert.equal(g2.planets.size, save.planets.length - 1, "exactly the one corrupted entry was skipped — no collateral damage");
+  for (const id of otherRealIds) {
+    const st = g2.planets.get(id);
+    assert.ok(st, `every OTHER legitimate planet (${id}) still deserialized`);
+    assert.equal(st.planetId, id, "...rehydrated under its correct planetId");
+    assert.ok(st.map && Number.isFinite(st.map.width) && st.map.width > 0, "...with a real generated map");
+  }
+  assert.ok(g2.planets.has(g2.activeId), "the active planet — untouched by the corruption — still loads");
+  assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) stepGalaxy(g2, 0.1); }, "the loaded galaxy ticks cleanly with one world silently dropped");
+});
+
+test("a prototype-pollution payload is rejected on the SKIRMISH load path too, not just deserializeGalaxy", () => {
+  const save = freshSkirmishSave(91);
+  // JSON.parse (unlike a normal object literal or property assignment) turns a `"__proto__"` key
+  // into a REAL own data property instead of tripping the special accessor that would otherwise
+  // just repoint the object's actual prototype — see sanitizeSave's own comment in
+  // engine/persist.js. Graft it onto an otherwise-real, already-valid save (JSON text, then
+  // reparsed) the same way a hand-edited save FILE would actually carry it, rather than testing
+  // with a bespoke minimal object the way test/sanitize.test.js's unit-level tests do.
+  const hostileText = JSON.stringify(save).replace(/^\{/, '{"__proto__":{"polluted":true},');
+  const evil = JSON.parse(hostileText);
+  assert.ok(Object.prototype.hasOwnProperty.call(evil, "__proto__"), "the splice really created an own '__proto__' property, not a live prototype rewrite");
+
+  assert.throws(() => deserializeGame(evil), /forbidden key/, "the skirmish path rejects it exactly like deserializeGalaxy already does (test/sanitize.test.js)");
+  assert.equal(({}).polluted, undefined, "Object.prototype was never actually polluted");
+
+  // Same class of attack, nested deep inside a real entity field instead of at the save root —
+  // confirms sanitizeSave's walk isn't only checking the top level on this path either.
+  const save2 = freshSkirmishSave(92);
+  save2.units[0].evilNest = { a: { constructor: { x: 1 } } };
+  assert.throws(() => deserializeGame(save2), /forbidden key/, "a nested constructor key is rejected too, wherever it hides in the payload");
+});
