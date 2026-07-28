@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applySeparation } from "../engine/separation.js";
 import { makeUnit } from "../engine/state.js";
+import { buildUnitGrid } from "../engine/grid.js";
 
 test("overlapping same-owner units get pushed apart", () => {
   const state = { units: new Map() };
@@ -92,4 +93,29 @@ test("a whole cluster spawned on one point spreads out over a few ticks", () => 
     }
   }
   assert.ok(minPairDist >= 13, "no two should still be sitting inside each other's radius (7+7=14)");
+});
+
+// Every test above drives applySeparation through its O(n) fallback (no
+// state.unitGrid at all). Real gameplay never does that — sim.js builds
+// state.unitGrid every tick before separation runs — so the grid branch
+// (queryNeighbors + the _gi index it stamps for exactly-once pairing,
+// engine/grid.js) needs its own coverage too.
+test("overlapping same-owner units in different grid cells still get paired and pushed apart via the populated broad-phase grid", () => {
+  // engine/grid.js's CELL is 96: a and b straddle the 1056 cell boundary while
+  // still well inside the 7+7 combined hull radius — the multi-cell case the
+  // very first test above (both units near 500,500, one cell) never exercises.
+  // A broken or silently-skipped neighbor-cell query would leave this pair
+  // overlapping instead of pushed apart.
+  const state = { units: new Map() };
+  const a = makeUnit("skiff", "player", 1052, 500);   // grid column 10
+  const b = makeUnit("skiff", "player", 1060, 500);   // grid column 11 — 8 apart, well inside the 7+7 combined radius
+  state.units.set(a.id, a);
+  state.units.set(b.id, b);
+  state.unitGrid = buildUnitGrid(state);   // the real per-tick broad-phase index + the _gi stamp the pairing loop relies on
+
+  const startDist = Math.hypot(b.x - a.x, b.y - a.y);
+  applySeparation(state, 0.1);
+  const endDist = Math.hypot(b.x - a.x, b.y - a.y);
+
+  assert.ok(endDist > startDist, "the pair should move apart even though they sit in neighboring grid cells");
 });

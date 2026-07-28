@@ -100,3 +100,42 @@ test("a Gate the AI CANNOT see is not sieged (targeting stays fog-gated)", () =>
   assert.ok(attackers.every(u => nearer(u.order, cc, gate)),
     "an unseen Gate can't pull the army — the AI marches on the seen CC instead");
 });
+
+// ---- P1 review gap (supplemental): the Gate override outranks a Tactical economy raid too ----
+//
+// The three tests above already exercise the documented behavior (converges on a visible
+// charging Gate; ignores a non-charging or unseen one) — this closes the one remaining branch:
+// `raid = !gate && state.ai.micro && !desperate && waveCount % RAID_EVERY === 0 && raidTarget(...)`
+// means a charging Gate must outrank even a Tactical economy raid, not just the default
+// Command-Center target. No existing test turns on aiMicro alongside a charging Gate.
+test("a charging Gate outranks even a Tactical economy raid — the wave still converges on it, not the worker line", () => {
+  const { s, cc, gate } = siegeWorld(0.5);
+  s.ai.micro = true;      // Tactical: economy raids are in play
+  s.ai.waveCount = 2;     // this cycle's commit makes it 3 — a RAID_EVERY-th (raid-eligible) wave
+  // +300/-250, not -300/-300: the player base sits near the map's left edge (x=160 on this
+  // seed), so a naive -300 offset lands off-map — invisible to the AI's fog regardless of the
+  // full-map reveal below — and raidTarget would find nothing whether or not the Gate exists.
+  const workerNearPlayer = makeUnit("worker", "player", s.map.bases.player.x + 300, s.map.bases.player.y - 250);
+  s.units.set(workerNearPlayer.id, workerNearPlayer);
+
+  runAI(s, THINK);
+  const attackers = attackersOf(s);
+  assert.ok(attackers.length > 0, "a wave still launches");
+  assert.ok(attackers.every(u => nearer(u.order, gate, cc)),
+    "the wave still converges on the charging Gate rather than peeling off onto the worker-line raid");
+
+  // Regression companion, same RAID_EVERY-th wave: WITHOUT a charging Gate, this fixture really
+  // does prefer the economy raid — confirming the fixture actually reaches the raid branch, so
+  // the assertion above is a genuine override, not a config that never gets there.
+  const { s: s2, cc: cc2 } = siegeWorld(0);   // Gate present but not charging
+  s2.ai.micro = true;
+  s2.ai.waveCount = 2;
+  const worker2 = makeUnit("worker", "player", s2.map.bases.player.x + 300, s2.map.bases.player.y - 250);
+  s2.units.set(worker2.id, worker2);
+
+  runAI(s2, THINK);
+  const attackers2 = attackersOf(s2);
+  assert.ok(attackers2.length > 0, "the comparison wave launches too");
+  assert.ok(attackers2.every(u => nearer(u.order, worker2, cc2)),
+    "…and without a charging Gate, the same RAID_EVERY-th wave really does peel onto the worker line");
+});

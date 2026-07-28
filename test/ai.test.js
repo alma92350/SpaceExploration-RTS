@@ -5,6 +5,8 @@ import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
 import { isNodeDiscovered, isExploredAt, updateFog } from "../engine/fog.js";
+import { aiDoctrine } from "../engine/aiWorkers.js";
+import { pickBuilder, accrueActionBudget } from "../engine/aiCommon.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -65,6 +67,34 @@ test("a throttled AI still commits its attack — the wave is exempt from the AP
   runAI(state, THINK_INTERVAL);
 
   assert.equal(skiff.order?.type, "attack-move", "the wave commits despite zero action budget, so the game still resolves");
+});
+
+// ---- P2 review gap: accrueActionBudget's burst-cap ceiling (engine/aiCommon.js) ----
+//
+// The test above only exercises the ZERO-budget floor (canAct needs >= 1, and a starved AI
+// still throws its attack wave regardless). Nothing yet asserts the OTHER end: `cap =
+// Math.max(2, state.ai.apm * APM_BURST_FRAC)` caps how much a busy AI can bank, so a long
+// stretch of un-thought-about sim time can't hand it one giant burst of actions to spend at once.
+test("accrueActionBudget clamps the banked budget at its burst cap, no matter how long the AI sits un-thought-about", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.ai.apm = 300;   // -> cap = Math.max(2, 300/15) = 20, mirroring aiCommon.js's APM_BURST_FRAC (1/15)
+  const cap = 20;
+
+  // Below the cap, accrual is the plain (apm/60)*dt rate -- a sanity check that what follows
+  // is a genuine ceiling on top of real accrual, not a stub that always just returns the cap.
+  state.ai.actionBudget = 0;
+  accrueActionBudget(state, 1);
+  assert.equal(state.ai.actionBudget, 5, "one second at 300 apm banks 5 credits, comfortably under the cap");
+
+  // A single huge dt, as if the AI went un-thought-about for a very long stretch of sim
+  // time -- without the Math.min ceiling this would bank ~5,000,000 credits.
+  accrueActionBudget(state, 1_000_000);
+  assert.equal(state.ai.actionBudget, cap, "an enormous dt still clamps at the documented burst cap, not an unbounded burst");
+
+  // The ceiling keeps holding on the NEXT accrual too, once already at the cap -- not just a
+  // one-off coincidence of the first Math.min call landing on the cap by chance.
+  accrueActionBudget(state, 1_000_000);
+  assert.equal(state.ai.actionBudget, cap, "the cap keeps holding on later accruals once already at the ceiling");
 });
 
 test("the AI launches repeated attack waves, not just one", () => {
@@ -624,6 +654,69 @@ test("a macro AI teches its doctrine: it builds a Refinery and researches an upg
   assert.ok(sawUpgrade, "and researches its doctrine instead of leaving the Refinery idle");
 });
 
+// ---- P1 review gap: aiDoctrine's world-economy cross-over (engine/aiWorkers.js) ----
+//
+// aiDoctrine prefers the archetype's own stated doctrine, but overrides it when the world's
+// SURFACE economy clearly favors the other commodity (Assault runs on radioactives, Bulwark on
+// crystals): `rad >= cry * 0.6` for an Assault-leaning archetype, `cry >= rad * 0.6` for a
+// Bulwark-leaning one. The test above (Helix) never forces this: Helix is crystal-dense AND its
+// own archetype (Economist) already prefers Bulwark, so the cross-over is never what actually
+// picks the doctrine there. These force a genuine disagreement between archetype and world.
+test("aiDoctrine overrides the archetype's stated preference when the world's economy clearly favors the OTHER commodity", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const wipeSecondary = () => {
+    for (const n of state.map.nodes) if (n.com === "crystals" || n.com === "radioactives") { n.max = 0; n.amount = 0; }
+  };
+
+  // Crystal-rich, radioactive-EMPTY world: rad(0) < cry(1000)*0.6, so an Assault-preferring
+  // archetype (Rusher/Balanced's own stated doctrine) is overridden to Bulwark.
+  wipeSecondary();
+  const cry = { id: "test-cry", com: "crystals", amount: 1000, max: 1000, x: 100, y: 100 };
+  state.map.nodes.push(cry); state.map.nodesById.set(cry.id, cry);
+  assert.equal(aiDoctrine(state, { doctrine: "assault" }), "bulwark",
+    "a crystal-rich, radioactive-empty world forces Bulwark despite the archetype wanting Assault");
+
+  // Mirror image: a radioactive-rich, crystal-EMPTY world overrides a Bulwark-preferring
+  // archetype (the Economist's own stated doctrine) to Assault instead.
+  wipeSecondary();
+  const rad = { id: "test-rad", com: "radioactives", amount: 1000, max: 1000, x: 100, y: 100 };
+  state.map.nodes.push(rad); state.map.nodesById.set(rad.id, rad);
+  assert.equal(aiDoctrine(state, { doctrine: "bulwark" }), "assault",
+    "a radioactive-rich, crystal-empty world forces Assault despite the archetype wanting Bulwark");
+
+  // The exact boundary, read straight from the source (`rad >= cry * 0.6`): AT the cutoff the
+  // archetype's own Assault preference still wins (>=, not >).
+  wipeSecondary();
+  const cry2 = { id: "test-cry2", com: "crystals", amount: 100, max: 100, x: 100, y: 100 };
+  const rad2 = { id: "test-rad2", com: "radioactives", amount: 60, max: 60, x: 100, y: 100 };   // exactly cry*0.6
+  state.map.nodes.push(cry2, rad2); state.map.nodesById.set(cry2.id, cry2); state.map.nodesById.set(rad2.id, rad2);
+  assert.equal(aiDoctrine(state, { doctrine: "assault" }), "assault",
+    "at the exact 0.6 cutoff the archetype's own stated preference still holds");
+});
+
+test("a macro AI whose archetype prefers Assault researches Bulwark instead, once the world's economy overrides it", () => {
+  // Same cross-over as above, but proven end-to-end through the real AI: force a genuine
+  // disagreement (an Assault-preferring archetype on a crystal-rich, radioactive-starved world)
+  // and confirm aiResearch actually banks the WORLD-favored doctrine's upgrade, not the
+  // archetype's own stated one.
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.ai.archetype = { ...state.ai.archetype, doctrine: "assault" };   // stated preference: Assault
+  for (const n of state.map.nodes) if (n.com === "crystals" || n.com === "radioactives") { n.max = 0; n.amount = 0; }
+  const cry = { id: "test-cry", com: "crystals", amount: 1000, max: 1000, x: state.map.bases.ai.x + 200, y: state.map.bases.ai.y };
+  state.map.nodes.push(cry); state.map.nodesById.set(cry.id, cry);
+
+  const refinery = makeBuilding("refinery", "ai", state.map.bases.ai.x, state.map.bases.ai.y - 100);
+  state.buildings.set(refinery.id, refinery);
+  fundAll(state);
+
+  for (let i = 0; i < 5; i++) runAI(state, THINK_INTERVAL);
+
+  assert.equal(state.players.ai.upgrades.reinforcedPlating, true,
+    "the AI researched Bulwark's Tier-1 upgrade — the world-favored doctrine");
+  assert.ok(!state.players.ai.upgrades.overchargedWeapons,
+    "…not Assault's, despite that being the archetype's own stated preference");
+});
+
 test("on a big map the macro AI plants a forward Refinery as a drop-off to shorten a long ore haul", () => {
   // On a Gigantic map the deposit seams sit far from the base, so a long haul is
   // exactly what the drop-off mechanic is for: the AI should plant a Refinery out
@@ -719,6 +812,74 @@ test("the AI spreads workers across ore nodes instead of over-piling one under s
     "it fills more than one home seam to the cap instead of dumping every worker on the nearest");
   assert.ok(Math.max(...nearCounts) - Math.min(...nearCounts) <= 2,
     "and fills the home seams roughly evenly rather than piling one high");
+});
+
+// ---- P1 review gap: the secondary-commodity worker cap (engine/aiWorkers.js) ----
+//
+// secondaryCap = Math.min(2, Math.floor(workers.length / 3)) caps how many AI workers a think
+// cycle will EVER divert onto a secondary commodity (crystals/radioactives) instead of ore — "a
+// small trickle funds them... keeps ore primary everywhere while still reaching the extras". No
+// existing test asserts this cap directly.
+test("assignIdleWorkers caps AI workers on secondary (crystal/radioactive) nodes, however many are on offer", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const base = state.map.bases.ai;
+  // Starve the treasury so no OTHER AI phase (aiBaseAndTech's Barracks/Habitat, which grab
+  // workers[0] directly rather than through pickBuilder) can reassign one of our gatherers to a
+  // build order this cycle — isolating assignIdleWorkers's own cap logic from the rest of runAI.
+  Object.assign(state.players.ai.resources, { ore: 0, crystals: 0, radioactives: 0 });
+  // Plenty of secondary-commodity nodes right at home — uncapped, a purely nearest-first
+  // assignment would happily send far more than the cap onto them.
+  const secondary = [
+    { id: "test-cry-1", com: "crystals", amount: 1000, max: 1000, x: base.x + 60, y: base.y + 40 },
+    { id: "test-cry-2", com: "crystals", amount: 1000, max: 1000, x: base.x - 60, y: base.y + 40 },
+    { id: "test-cry-3", com: "crystals", amount: 1000, max: 1000, x: base.x + 40, y: base.y - 60 },
+    { id: "test-rad-1", com: "radioactives", amount: 1000, max: 1000, x: base.x - 40, y: base.y - 60 },
+    { id: "test-rad-2", com: "radioactives", amount: 1000, max: 1000, x: base.x, y: base.y + 90 },
+  ];
+  for (const n of secondary) { state.map.nodes.push(n); state.map.nodesById.set(n.id, n); }
+
+  // Replace the AI's starting workers with a controlled pool of 12 idle ones. At 12 workers the
+  // bare Math.floor(workers.length / 3) term alone is 4 — past the hard ceiling of 2 — so this
+  // fixture actually exercises the Math.min(2, ...) ceiling, not just the /3 scaling.
+  [...state.units.values()].filter(u => u.owner === "ai").forEach(u => state.units.delete(u.id));
+  const WORKER_COUNT = 12;
+  for (let i = 0; i < WORKER_COUNT; i++) {
+    const w = makeUnit("worker", "ai", base.x, base.y);
+    state.units.set(w.id, w);
+  }
+  const expectedCap = Math.min(2, Math.floor(WORKER_COUNT / 3));
+  assert.equal(expectedCap, 2, "sanity: this fixture's /3 term (4) exceeds the hard ceiling (2)");
+
+  for (let i = 0; i < 4; i++) runAI(state, THINK_INTERVAL);   // several think-cycles, per the review's ask
+
+  const nodeById = state.map.nodesById;
+  const secondaryMiners = [...state.units.values()].filter(u =>
+    u.owner === "ai" && u.type === "worker" && u.order?.type === "gather"
+    && ["crystals", "radioactives"].includes(nodeById.get(u.order.nodeId)?.com)).length;
+
+  assert.equal(secondaryMiners, expectedCap,
+    `exactly the computed cap (${expectedCap}) of workers gather crystals/radioactives — never more, however many nodes/workers are on offer`);
+});
+
+// ---- P2 review gap: pickBuilder's idle-over-busy preference (engine/aiCommon.js) ----
+//
+// pickBuilder skips any worker already mid-build/mid-service/mid-haul so a new job never steals
+// an in-progress site's founder or thrashes an industry logistics run (see the doc comment above
+// it in aiCommon.js). No existing test drives pickBuilder directly: every current call site is
+// only reached transitively through runAI, where a lone idle worker is typically the only
+// candidate anyway. This pits a busy worker planted much closer to the build spot against a
+// distant idle one, so a naive nearest-first pick (ignoring order state) is distinguishable from
+// the real skip-busy-workers logic.
+test("pickBuilder prefers a genuinely idle worker over one mid-build/mid-service/mid-haul, even when the busy one is much closer", () => {
+  const spot = { x: 500, y: 500 };   // stand-in for the new building's chosen foundation spot
+  for (const busyType of ["build", "service", "haul"]) {
+    const busy = makeUnit("worker", "ai", spot.x + 5, spot.y);      // right on top of the spot...
+    busy.order = { type: busyType };
+    const idle = makeUnit("worker", "ai", spot.x + 500, spot.y);    // ...while idle sits far away
+    const picked = pickBuilder([busy, idle], spot.x, spot.y);
+    assert.equal(picked.id, idle.id,
+      `a worker mid-${busyType} is skipped for the distant idle one, despite being by far the nearest candidate`);
+  }
 });
 
 test("a legacy archetype without the Tier 4 fields still runs without throwing", () => {

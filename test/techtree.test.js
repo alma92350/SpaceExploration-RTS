@@ -87,6 +87,23 @@ test("updateResearch is a no-op for a non-Datacenter and for an idle Datacenter"
   assert.ok(!state.players.player.upgrades.metallurgy, "an idle Datacenter accrues nothing");
 });
 
+test("updateResearch silently drops a queued job whose techId no longer resolves in TECHS", () => {
+  const { state, dc } = odysseyWithDatacenter();
+  // Simulates a save written before a tech was renamed/removed: the queued techId
+  // no longer resolves in TECHS. researchTech itself would refuse such an id, so
+  // set the queue directly, same as the non-Datacenter test above.
+  dc.researchQueue = [{ techId: "not-a-real-tech", progress: 0 }];
+  assert.doesNotThrow(() => updateResearch(state, dc, 1), "an unrecognized techId must not throw");
+  assert.equal(dc.researchQueue.length, 0, "the unresolvable job is dropped rather than stalling the queue forever");
+
+  // The Datacenter keeps working normally afterward — a real job can still be
+  // queued and developed to completion.
+  assert.equal(researchTech(state, dc.id, "metallurgy"), true, "a real research job can still be queued after the stale drop");
+  const need = TECHS.metallurgy.time * researchTimeScale(state);
+  for (let t = 0; t < need + 1; t += 0.5) updateResearch(state, dc, 0.5);
+  assert.equal(state.players.player.upgrades.metallurgy, true, "…and develops to completion normally");
+});
+
 test("research develops faster on a high-tech world than a frontier one, and is clamped", () => {
   const hi = createGameState({ planetId: "kybernet", endless: true });   // tech 10
   const lo = createGameState({ planetId: "oort", endless: true });        // tech 2

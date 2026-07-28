@@ -1,8 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
+import { buildUnitGrid } from "../engine/grid.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "../engine/combat.js";
 import { UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
+import { sampleTerrain } from "../engine/map.js";
+import { collectAnvils } from "../engine/sim.js";
 
 function faceOff(state, x = 500, y = 500) {
   const a = makeUnit("skiff", "player", x, y);
@@ -453,6 +456,42 @@ test("a completed Sentinel Turret auto-acquires and damages an enemy unit in ran
   assert.equal(turret.targetId, enemy.id);
 });
 
+test("a turret's target that dies to someone else earlier the same tick is dropped, not deref'd — it re-acquires cleanly instead of freezing", () => {
+  // The mobile-unit analog: "an explicit attack order on a target killed by someone else
+  // re-acquires instead of freezing" above. A turret has no order pipeline, but building.targetId
+  // is the same kind of persisted, potentially-stale reference — this simulates it having locked
+  // onto `stale` on some earlier pass, then `stale` dying to a DIFFERENT attacker before the
+  // turret's own updateBuildingCombat runs this tick.
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const stale = makeUnit("skiff", "ai", turret.x + 10, turret.y);
+  state.units.set(stale.id, stale);
+  turret.targetId = stale.id;          // simulate the turret already locked onto this target
+  state.units.delete(stale.id);        // simulate it dying to a different attacker earlier this same tick
+
+  const other = makeUnit("skiff", "ai", turret.x + 15, turret.y);   // a fresh live enemy still in range
+  state.units.set(other.id, other);
+  const startHp = other.hp;
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  assert.equal(turret.targetId, other.id, "re-acquired the live enemy instead of keeping/deref'ing the dead one");
+  assert.ok(other.hp < startHp, "and actually landed a hit on it, same tick");
+  assert.ok(Number.isFinite(other.hp), "no NaN-poisoning from a stale dereferenced target");
+});
+
+test("a turret whose only target dies to someone else earlier the same tick goes idle, not stuck referencing the corpse", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const stale = makeUnit("skiff", "ai", turret.x + 10, turret.y);
+  state.units.set(stale.id, stale);
+  turret.targetId = stale.id;
+  state.units.delete(stale.id);   // dies to someone else, and nothing else is left in range
+
+  assert.doesNotThrow(() => updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown));
+  assert.equal(turret.targetId, null, "cleanly falls back to idle rather than holding the stale id");
+});
+
 test("a turret under construction never fires and holds no target", () => {
   const state = createGameState({ planetId: "ferros" });
   const turret = makeBuilding("turret", "player", 500, 500, { constructing: true });
@@ -640,4 +679,110 @@ test("a Breacher out-ranges a Sentinel Turret: it chips the turret down while ta
 
   assert.ok(turret.hp < turretHp, "the Breacher should be steadily shelling the turret");
   assert.equal(breacher.hp, breacherHp, "the turret can't reach the Breacher, so it takes no damage");
+});
+
+// ---- Broad-phase grid: every test above drives acquireTarget through the O(n)
+// fallback (no state.unitGrid at all). Real gameplay never does that — sim.js
+// builds state.unitGrid every tick before combat runs — so acquireTarget's grid
+// branch (queryNeighbors, engine/grid.js) needs its own coverage too.
+
+test("acquireTarget finds an enemy through the populated broad-phase grid, across a cell boundary — not just when both units share one cell", () => {
+  // engine/grid.js's CELL is 96: placing the pair 90 apart straddles the
+  // column-10/11 boundary, so a broken or silently-skipped neighbor-cell query
+  // (unlike the same-cell placements every other test in this file happens to
+  // use) would miss this target while the O(n) fallback still finds it fine.
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 1000, 500);   // grid column 10
+  const target = makeUnit("skiff", "ai", 1090, 500);         // grid column 11 — 90 away: inside aggro (120), outside weapon range (40)
+  state.units.set(attacker.id, attacker);
+  state.units.set(target.id, target);
+  state.unitGrid = buildUnitGrid(state);   // the real per-tick broad-phase index (engine/grid.js), same as sim.js builds every tick
+
+  updateCombat(state, attacker, 0.1);
+
+  assert.equal(attacker.autoTarget, target.id, "the target should be acquired through the grid, same as the fallback tests above establish");
+  assert.ok(attacker.x > 1000, "and immediately start closing the distance, exactly like the no-grid case");
+});
+
+// ---- Terrain's combatMult: test/terrain.test.js only checks it as static
+// TERRAIN table data. Nothing before this exercised it in a live attack.
+
+test("terrain's combatMult is genuinely applied to a live attack, not just read as static data", () => {
+  // Baseline: ferros carries no terrain (test/terrain.test.js) — every cell
+  // samples combatMult 1, so this is exactly the plain-base-damage case every
+  // other exact-damage test in this file already assumes.
+  const flat = createGameState({ planetId: "ferros" });
+  const [flatAttacker, flatTarget] = faceOff(flat, 500, 500);
+  const flatStartHp = flatTarget.hp;
+  updateCombat(flat, flatAttacker, UNITS.skiff.cooldown);
+  const flatDamage = flatStartHp - flatTarget.hp;
+  assert.equal(flatDamage, UNITS.skiff.attack, "fixture sanity: flat ground deals plain base damage");
+
+  // Pyralis' central mesa is high ground (test/terrain.test.js): the attacker
+  // stands ON it, the target just beside it — combatMult is read from the
+  // ATTACKER's own position (engine/combat.js attackDamage), a positional edge
+  // for whoever holds the high ground, not a per-target check.
+  const high = createGameState({ planetId: "pyralis" });
+  const map = high.map;
+  const attacker = makeUnit("skiff", "player", map.width * 0.5, map.height * 0.5);
+  const target = makeUnit("skiff", "ai", map.width * 0.5 + 10, map.height * 0.5);
+  high.units.set(attacker.id, attacker);
+  high.units.set(target.id, target);
+  const tile = sampleTerrain(map.terrain, attacker.x, attacker.y);
+  assert.equal(tile.name, "high", "fixture sanity: the attacker is standing on the mesa");
+  const highStartHp = target.hp;
+
+  updateCombat(high, attacker, UNITS.skiff.cooldown);
+
+  const highDamage = highStartHp - target.hp;
+  const expected = UNITS.skiff.attack * tile.combatMult;   // documented as 1.15 (engine/map.js TERRAIN.high)
+  assert.ok(Math.abs(highDamage - expected) < 1e-9, `expected exactly ${expected} from the high-ground multiplier, got ${highDamage}`);
+  assert.ok(highDamage > flatDamage, "and that's strictly more than the flat-ground baseline");
+});
+
+// ---- anvilAura (the Aegis's guardAura): reduces damage taken by allies inside
+// its bubble. Nothing before this landed a real hit through it.
+
+test("a friendly Aegis's cryo-armour aura reduces damage taken by exactly its documented multiplier", () => {
+  const unshielded = createGameState({ planetId: "ferros" });
+  const [attacker1, target1] = faceOff(unshielded, 500, 500);
+  const startHp1 = target1.hp;
+  updateCombat(unshielded, attacker1, UNITS.skiff.cooldown);
+  const unshieldedDamage = startHp1 - target1.hp;
+
+  const shielded = createGameState({ planetId: "ferros" });
+  const attacker2 = makeUnit("skiff", "player", 500, 500);
+  const target2 = makeUnit("skiff", "ai", 500 + UNITS.skiff.range - 1, 500);   // within melee range, as faceOff would place it
+  // Well within the target's 96-range guardAura, but past the attacker's own aggro
+  // range (120) — otherwise it's a second enemy inside spreadEnemy's local band and
+  // the attacker sometimes fans onto the Aegis itself instead of the intended target.
+  const aegis = makeUnit("aegis", "ai", target2.x + 90, target2.y);
+  shielded.units.set(attacker2.id, attacker2);
+  shielded.units.set(target2.id, target2);
+  shielded.units.set(aegis.id, aegis);
+  collectAnvils(shielded);   // sim.js's per-tick anvil snapshot that combat.js's attackDamage reads (engine/sim.js)
+  const startHp2 = target2.hp;
+
+  updateCombat(shielded, attacker2, UNITS.skiff.cooldown);
+
+  const shieldedDamage = startHp2 - target2.hp;
+  const { damageTakenMult } = UNITS.aegis.guardAura;
+  const expected = UNITS.skiff.attack * damageTakenMult;
+  assert.ok(Math.abs(shieldedDamage - expected) < 1e-9, `expected exactly ${expected} with the Aegis's damage-taken multiplier applied, got ${shieldedDamage}`);
+  assert.ok(shieldedDamage < unshieldedDamage, "and that's strictly less than the same attack against an unshielded target");
+});
+
+test("the Aegis's aura doesn't shield itself — the source's explicit exclusion, so it can still be focused down", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const aegis = makeUnit("aegis", "ai", 500 + UNITS.skiff.range - 1, 500);   // within melee range, and trivially within its OWN aura (distance 0)
+  state.units.set(attacker.id, attacker);
+  state.units.set(aegis.id, aegis);
+  collectAnvils(state);
+  const startHp = aegis.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  assert.equal(startHp - aegis.hp, UNITS.skiff.attack,
+    "full damage landed — an Aegis standing inside its own aura radius doesn't reduce its own damage taken");
 });

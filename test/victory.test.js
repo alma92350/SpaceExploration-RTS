@@ -50,6 +50,24 @@ test("a still-constructing Command Center keeps a side in the game", () => {
   assert.equal(state.over, false, "a founded expansion site is enough to stay in the fight");
 });
 
+test("a mutual Command Center wipeout resolves by score, not an arbitrary winner", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear();
+  state.buildings.clear();                      // neither side holds a Command Center — a true mutual wipe
+  state.players.player.resources = { ore: 0, crystals: 0, radioactives: 0 };
+  state.players.ai.resources = { ore: 0, crystals: 0, radioactives: 0 };
+  for (let i = 0; i < 5; i++) {                  // only the AI has a fielded remnant force
+    const u = makeUnit("skiff", "ai", 100 + i, 100);
+    state.units.set(u.id, u);
+  }
+  assert.ok(playerScore(state, "ai") > playerScore(state, "player"), "the AI holds the clear score lead");
+
+  checkWinCondition(state);
+
+  assert.equal(state.over, true, "no side standing still ends the match");
+  assert.equal(state.winner, "ai", "the higher-scoring side wins the mutual wipe — not an arbitrary default");
+});
+
 test("a match that reaches the time limit with both bases intact is decided on score", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   // Both keep their Command Center; push time past the limit and give the AI a
@@ -65,6 +83,19 @@ test("a match that reaches the time limit with both bases intact is decided on s
 
   assert.equal(state.over, true, "the time limit ends an otherwise-endless stalemate");
   assert.equal(state.winner, "ai", "the side that out-massed and out-banked takes the tiebreak");
+});
+
+test("an exact score tie at the time limit resolves to the first side listed in state.owners", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  // A freshly-seeded match is perfectly mirrored — same starting bank, same Command Center, same
+  // three workers on each side — so both sides carry the exact same score into the tiebreak.
+  assert.equal(playerScore(state, "player"), playerScore(state, "ai"), "a fresh match is a dead-even score");
+  state.time = DEFAULT_MATCH_TIME_LIMIT + 1;
+
+  checkWinCondition(state);
+
+  assert.equal(state.over, true, "the time limit still ends an exact stalemate");
+  assert.equal(state.winner, "player", "an exact tie goes to the first side listed in state.owners (the defender's edge)");
 });
 
 test("the score tiebreak values a fielded army over a hoarded bank", () => {

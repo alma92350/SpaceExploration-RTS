@@ -154,6 +154,21 @@ test("ice coolant runs out for the Rig: once ice hits zero, the nuclear cost rev
     "…but now at the FULL nuclear cost — the coolant ran out, so no more discount");
 });
 
+// ---- MAX_CYCLES_PER_TICK: a runtime cap distinct from persist.js's LOAD-TIME digProgress clamp
+// ---- (see the save/load test far below) — this one guards a single updatePlasmaRig call, whether
+// ---- the huge digProgress got there from a tampered save OR just a huge dt/a long stall.
+test("MAX_CYCLES_PER_TICK caps a single update to at most 4 completed dig cycles, even when the math implies many more", () => {
+  const world = rigWorld(1); const { s, rig } = world; powerRig(world);
+  rig.digProgress = 5;   // far more banked progress than one cycle needs — the raw math implies 5 cycles this call
+  updatePlasmaRig(s, rig, 0.1);
+  assert.equal(rig.digCount, 4, "no more than MAX_CYCLES_PER_TICK (4) cycles complete in one call, not the 5 the math implies");
+  assert.ok(rig.digProgress >= 1,
+    "…and progress is left over (still ≥1, a 6th cycle's worth) — proof it was the cap that stopped it, not digProgress running dry");
+  assert.ok((s.players.player.resources.radioactives || 0) >= BUILDINGS.plasmarig.rig.nuclear,
+    "plenty of nuclear remained too — it wasn't a fuel stall either");
+  assert.ok(storeTotal(rig) < storeCapOf("plasmarig"), "…nor a full output buffer — the cap alone did this");
+});
+
 test("richness (and so the yield odds) depends on both location and planet", () => {
   const fer = createGameState({ planetId: "ferros", endless: true });
   const forge = createGameState({ planetId: "forge", endless: true });

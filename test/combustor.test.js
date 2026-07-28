@@ -95,6 +95,15 @@ test("out of fuel (or paused), a Generator grants no Power", () => {
   assert.equal([...paused.buildings.values()][0].input.gas, 100, "…the larder is untouched");
 });
 
+test("a combustor mid-construction never grants Power or burns fuel, even with a full larder", () => {
+  const s = stub([combustor({ constructing: true, input: { gas: 100 } })], {});
+  updateCombustors(s, 0.1);
+  assert.equal(powerCap(s, "player"), 0, "still constructing → grants nothing, however full its larder");
+  const gen = [...s.buildings.values()][0];
+  assert.equal(gen.input.gas, 100, "…and burns none of that fuel while it's only a construction site");
+  assert.ok(!gen.powered, "never marked powered mid-construction");
+});
+
 test("the Combustion Generator is gas-only", () => {
   assert.deepEqual(BUILDINGS.combustor.combust.fuels, ["gas"]);
 });

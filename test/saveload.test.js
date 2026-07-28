@@ -2,6 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+// Pure engine modules — no DOM/window reference anywhere in their own code or import graph
+// (verified by tracing createGameState/createGalaxy/serializeGame/serializeGalaxy's transitive
+// imports), so unlike saveload.js itself these are safe to import statically, before the
+// document stub below even exists.
+import { createGameState } from "../engine/state.js";
+import { mulberry32 } from "../engine/rng.js";
+import { createGalaxy } from "../engine/galaxy.js";
+import { serializeGame, serializeGalaxy } from "../engine/persist.js";
 
 // saveload.js's bottom comment says the `typeof window !== "undefined"` guard around its
 // autosave-timer/listener wiring exists "so importing this module under Node (to unit-test its
@@ -27,18 +35,60 @@ import { fileURLToPath } from "node:url";
 // `typeof window !== "undefined"` guard stays off and no real autosave timer/listener starts —
 // preserving exactly the Node-safety the module's comment promises for the functions under
 // test below.
-const stubEl = () => ({
-  addEventListener() {},
-  removeEventListener() {},
-  classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
-  style: {},
-  dataset: {},
-  getContext() { return null; },
-});
+//
+// The shim below is more capable than the original "survive three addEventListener calls" bar:
+// A real EventTarget (Node's is WHATWG-compliant — addEventListener/dispatchEvent behave exactly
+// like the browser, see test/input.test.js's own header note on this) plus the handful of extra
+// properties/methods this file's later "drive the real Load path" section needs: bootState/
+// bootGalaxy (boot.js) call renderHUD() for real at the end of every boot, which cascades into
+// hud.js's topbar rebuild and hudSelection.js's selection-panel rebuild — genuine DOM building,
+// even though nothing below asserts on any of it. Kept as one class (not per-purpose stubs) so
+// every handle dom.js resolves — loadBtn included — is equally capable.
+class FakeElement extends EventTarget {
+  constructor() {
+    super();
+    this.classList = {
+      _set: new Set(),
+      add: (...c) => c.forEach(x => this.classList._set.add(x)),
+      remove: (...c) => c.forEach(x => this.classList._set.delete(x)),
+      toggle: (c, force) => {
+        const on = force === undefined ? !this.classList._set.has(c) : force;
+        this.classList[on ? "add" : "remove"](c);
+        return on;
+      },
+      contains: c => this.classList._set.has(c),
+    };
+    this.style = {};
+    this.dataset = {};
+  }
+  appendChild(c) { return c; }
+  append() {}
+  removeChild(c) { return c; }
+  remove() {}
+  querySelector() { return null; }
+  querySelectorAll() { return []; }
+  closest() { return null; }
+  getContext() { return null; }
+  getBoundingClientRect() { return { left: 0, top: 0, width: 0, height: 0 }; }
+  click() {}
+}
+const stubEl = () => new FakeElement();
+// loadFromFile() (saveload.js, ~line 131) creates a real <input type=file> as a LOCAL variable —
+// there's no other way for a test to reach the exact instance it wires its "change" listener onto.
+// Stash whichever one createElement most recently made, so the "drive the real Load path" tests
+// below can grab it right after clicking loadBtn. loadFromFile is the only code path any test in
+// this file ever reaches that creates an <input> (setup.js's seed-input field is the only other
+// call site in the whole codebase, and setup.js is never invoked here), so "most recent" is
+// unambiguous.
+let lastFileInput = null;
 globalThis.document = {
   getElementById() { return stubEl(); },
   body: stubEl(),
-  createElement() { return stubEl(); },
+  createElement(tag) {
+    const el = stubEl();
+    if (tag === "input") lastFileInput = el;
+    return el;
+  },
   addEventListener() {},
   removeEventListener() {},
 };
@@ -97,4 +147,145 @@ test("the module reads the documented literal storage keys", () => {
   const src = readFileSync(fileURLToPath(new URL("../saveload.js", import.meta.url)), "utf8");
   assert.match(src, /SAVE_KEY\s*=\s*"stellarfrontier\.save\.v1"/);
   assert.match(src, /ODYSSEY_KEY\s*=\s*"stellarfrontier\.odyssey\.v1"/);
+});
+
+// --- driving the REAL file-Load path: loadBtn -> loadFromFile -> importSave -> bootState/bootGalaxy ---
+// importSave() (saveload.js ~line 124) is the shape-autodetect dispatch: isGalaxySave(parsed) ?
+// bootGalaxy(deserializeGalaxy(parsed)) : bootState(deserializeGame(parsed)). isGalaxySave() itself
+// is already fully covered in isolation by test/save-shape.test.js; what's untested until now is
+// the WIRING — that a galaxy-shaped file really reaches bootGalaxy/deserializeGalaxy and a
+// skirmish-shaped one really reaches bootState/deserializeGame, not swapped.
+//
+// Getting there for real (driving a click on loadBtn, not re-implementing the dispatch by hand)
+// means actually running bootState/bootGalaxy (boot.js), which reaches further into the
+// browser-only UI layer than the guard at the top of this file accounts for:
+//   - input.js's attachInput() registers real listeners on the bare `window` global
+//   - sound.js's unlockAudio() (importSave's own first line) unconditionally reads
+//     `window.AudioContext`, ungated by mute or a typeof check
+//   - engine/loop.js's createLoop().start() calls the bare `requestAnimationFrame` global
+// None of those exist under plain `node --test`. Stubbed below — confirmed empirically to be
+// enough for the whole chain, INCLUDING the renderHUD()/renderSelectionPanel() call bootState
+// makes for real at the end of every boot (hud.js / hudSelection.js), to run to completion
+// without throwing.
+
+// Set up AFTER saveload.js was already imported above, so the module-scope
+// `typeof window !== "undefined"` guard at its own bottom (see this file's header comment) still
+// saw `undefined` and stayed off — this file still never starts a real autosave timer/listener.
+class FakeWindow extends EventTarget {
+  devicePixelRatio = 1;
+  matchMedia() { return { matches: false }; }   // read by render.js / renderEffects.js for DPI + reduced-motion
+}
+globalThis.window = new FakeWindow();
+
+// A minimal Web Audio stand-in — just enough surface (createGain/createOscillator/connect/…) for
+// sound.js's ensureContext() to build its master bus without throwing. Nothing below asserts on
+// audio at all; this exists purely so unlockAudio() doesn't crash the import.
+class FakeAudioContext {
+  currentTime = 0;
+  destination = {};
+  createGain() { return { gain: {}, connect() { return this; } }; }
+  createOscillator() { return { frequency: {}, connect() { return this; }, start() {}, stop() {} }; }
+  resume() {}
+}
+globalThis.window.AudioContext = FakeAudioContext;
+
+// FileReader doesn't exist under Node at all. A "picked file" is a plain { size, __content } (or
+// { size, __error: true }) object rather than a real File/Blob — loadFromFile only ever reads
+// `.size` off it before handing it to `new FileReader()`, so that shape is all readAsText needs.
+// onload/onerror fire asynchronously (a queued microtask), same as the real thing, so every test
+// below awaits past it via pickFile.
+class FakeFileReader extends EventTarget {
+  readAsText(file) {
+    queueMicrotask(() => {
+      if (file.__error) { this.onerror && this.onerror(); return; }
+      this.result = file.__content;
+      this.onload && this.onload();
+    });
+  }
+}
+globalThis.FileReader = FakeFileReader;
+
+// engine/loop.js calls these as bare globals (not `window.`), independently of the window stub
+// above. The fake never actually invokes the queued frame callback — this suite is about the
+// save/load WIRING, not driving simulated frames — so bootState's loop starts and just sits idle,
+// exactly like test/loop.test.js's own stub (see its header comment for the same reasoning).
+globalThis.requestAnimationFrame = () => 0;
+globalThis.cancelAnimationFrame = () => {};
+
+// dom.js resolves its handles (loadBtn included) once, at ITS OWN import time, off the document
+// stub set up near the top of this file — importing it again here just returns that already-
+// cached module, the IDENTICAL object saveload.js's module-scope
+// `loadBtn.addEventListener("click", loadFromFile)` already attached its listener to. session.js's
+// `game` is the same live singleton every UI module reads/writes — bootState/bootGalaxy mutate it
+// for real, so it's what the tests below observe.
+const { loadBtn } = await import("../dom.js");
+const { game } = await import("../session.js");
+
+// Real fixtures, not hand-typed JSON: run the actual serializers (engine/persist.js) over a real
+// createGameState/createGalaxy, so the payload fed through the fake file below is byte-for-byte
+// what a real Save button would have produced — genuinely save-shape-valid, not merely shaped
+// like it.
+const skirmishState = createGameState({ seed: 4242, planetId: "ferros", rng: mulberry32(4242) });
+const skirmishSave = serializeGame(skirmishState);
+const galaxy = createGalaxy({ seed: 777 });
+const galaxySave = serializeGalaxy(galaxy);
+
+// Drive loadBtn's real click handler, capture the <input type=file> loadFromFile() creates (see
+// lastFileInput above), and simulate picking a file of `size` bytes containing `content` — size
+// defaults to content's real length, so callers only pass it explicitly to lie about size (the
+// MAX_SAVE_BYTES gate test below). One macrotask tick (a resolved setTimeout) is enough to run
+// past the FakeFileReader's queued onload/onerror — microtasks always fully drain before the next
+// macrotask runs, confirmed empirically against a standalone repro before relying on it here.
+async function pickFile(content, size = content.length) {
+  loadBtn.dispatchEvent(new Event("click"));
+  const input = lastFileInput;
+  input.files = [{ size, __content: content }];
+  input.dispatchEvent(new Event("change"));
+  await new Promise(r => setTimeout(r, 0));
+}
+
+test("picking a valid skirmish save file loads it through the real bootState/deserializeGame path — game.state ends up correctly loaded, game.galaxy is untouched", async () => {
+  game.state = null;
+  game.galaxy = "sentinel";   // a deliberately non-null, non-galaxy marker — proves bootState
+  // actively clears game.galaxy below, rather than it coincidentally already being falsy.
+  await pickFile(JSON.stringify(skirmishSave));
+  assert.equal(game.state && game.state.seed, skirmishSave.seed,
+    "game.state should be the deserialized skirmish, identifiable by its seed");
+  assert.equal(game.galaxy, null, "a skirmish-shaped save must clear game.galaxy, not leave (or set) a galaxy");
+});
+
+test("picking a valid galaxy (Odyssey) save file loads it through the real bootGalaxy/deserializeGalaxy path — game.galaxy ends up correctly loaded", async () => {
+  game.state = null;
+  game.galaxy = null;
+  await pickFile(JSON.stringify(galaxySave));
+  assert.equal(game.galaxy && game.galaxy.seed, galaxySave.seed,
+    "game.galaxy should be the deserialized galaxy, identifiable by its seed");
+  assert.equal(game.state, game.galaxy && game.galaxy.planets.get(game.galaxy.activeId),
+    "bootGalaxy also boots the galaxy's active planet onto game.state (boot.js activeState)");
+});
+
+test("a file whose size exceeds MAX_SAVE_BYTES is rejected by the size gate BEFORE parsing", async () => {
+  const before = { state: game.state, galaxy: game.galaxy };
+  loadBtn.textContent = "Load";
+  // Deliberately-broken JSON: if the size gate didn't run before JSON.parse, this would instead
+  // throw and land in the DIFFERENT "Load failed" branch below — the exact flashed text (see
+  // flashButton, saveload.js ~line 151) tells the two apart. 9 MB > MAX_SAVE_BYTES (8 MB,
+  // saveload.js ~line 29).
+  await pickFile("{ this is not JSON", 9 * 1024 * 1024);
+  assert.equal(loadBtn.textContent, "File too large");
+  assert.equal(game.state, before.state, "a rejected import must not disturb the current game");
+  assert.equal(game.galaxy, before.galaxy, "a rejected import must not disturb the current game");
+});
+
+test("a file containing invalid JSON is caught gracefully by the try/catch around JSON.parse — flashes 'Load failed', game.state/galaxy stay untouched", async () => {
+  const before = { state: game.state, galaxy: game.galaxy };
+  loadBtn.textContent = "Load";
+  // If the try/catch in loadFromFile's reader.onload were ever removed, this throw would escape
+  // a queued microtask callback as an uncaught exception — crashing the whole test run rather
+  // than failing one assertion. Simply reaching the asserts below is itself part of what "caught
+  // gracefully" means here.
+  await pickFile("{ not: valid json");
+  assert.equal(loadBtn.textContent, "Load failed");
+  assert.equal(game.state, before.state, "a failed import must not disturb the current game");
+  assert.equal(game.galaxy, before.galaxy, "a failed import must not disturb the current game");
 });

@@ -175,6 +175,42 @@ test("an ARMED bomb's fuse also lights from a nearby ENEMY BUILDING, not just un
   assert.ok(!state.buildings.has(enemyBase.id));
 });
 
+test("a CONSTRUCTING enemy building within BOMB_DETECT_RANGE does NOT trip the proximity fuse — checkBombProximity explicitly skips it", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
+  bomb.armed = true;
+  state.units.set(bomb.id, bomb);
+  const enemyBase = makeBuilding("command", "ai", 2000 + 10, 2000, { constructing: true });   // well within both ranges, but unfinished
+  state.buildings.set(enemyBase.id, enemyBase);
+
+  assert.equal(checkBombProximity(state, bomb), false, "a building still under construction can't trip the fuse");
+  assert.equal(bomb.fuseUntil, undefined, "no fuse lit at all");
+  assert.ok(state.units.has(bomb.id), "so the bomb never goes off from this alone");
+  assert.ok(state.buildings.has(enemyBase.id), "...and the constructing building itself is untouched, for now (see the detonation test below)");
+});
+
+test("a constructing building within blast range STILL takes damage once the bomb actually detonates — the constructing skip is fuse-only, not a blast exemption", () => {
+  // The asymmetry: checkBombProximity (above) treats a constructing building as invisible, but
+  // detonateBomb's blast sweep (engine/bomb.js) has no such check — every building in range is
+  // caught, constructing or not. Triggered here via lightFuse directly (the player's "Detonate
+  // Now" — see "lightFuse arms the countdown on direct command regardless of any enemy presence
+  // at all" above), which needs no enemy presence at all, so this constructing building could
+  // never have been the thing that set the bomb off — and still isn't spared by the blast.
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
+  bomb.armed = true;
+  state.units.set(bomb.id, bomb);
+  const constructingBuilding = makeBuilding("command", "ai", 2000 + 10, 2000, { constructing: true });   // well within the core
+  state.buildings.set(constructingBuilding.id, constructingBuilding);
+
+  lightFuse(state, bomb);
+  state.time += BOMB_FUSE_DELAY;
+  updateBombFuse(state, bomb);
+
+  assert.ok(!state.buildings.has(constructingBuilding.id),
+    "the constructing building was caught in the actual blast sweep despite being unable to have triggered it itself");
+});
+
 test("an UNARMED bomb ignores enemy presence entirely, even point-blank", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
