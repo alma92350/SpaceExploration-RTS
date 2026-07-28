@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as sound from "../sound.js";
 import { makeUnit, makeBuilding } from "../engine/state.js";
 import { createFog, FOG_CELL_SIZE } from "../engine/fog.js";
+import { game } from "../session.js";   // control groups + hotkeyActions live here, not on `state` — see setup()
 
 // input.js is one big attachInput() closure that wires real DOM listeners (canvas +
 // window), so exercising it under plain `node --test` (no browser, no jsdom — see
@@ -25,9 +26,13 @@ sound.setMuted(true);
 // focused-control guard, but only past its `t &&` (e.target) short-circuit. Every event
 // dispatched below that reaches that handler is dispatched straight on the fake `window`,
 // and per the WHATWG dispatch algorithm that makes `event.target` that same window object
-// — truthy — so the guard does go on to read `document.body`. A minimal stub is enough;
-// nothing here reads anything beyond `.body`.
-globalThis.document = { body: {} };
+// — truthy — so the guard does go on to read `document.body`.
+//
+// The touch handlers separately call onTouchActive(), which flips document.body into "touch
+// mode" (bigger tap targets, the touch HUD legend) via .classList.contains()/.add() on first
+// real touch — so the stub grows a `classList` mirroring FakeCanvas's own below, still every
+// method a harmless no-op/false. Nothing here reads anything of `document` beyond these.
+globalThis.document = { body: { classList: { contains() { return false; }, add() {}, remove() {}, toggle() {} } } };
 
 const { attachInput } = await import("../input.js");
 
@@ -75,6 +80,14 @@ function setup() {
   globalThis.window = new FakeWindow();
   const canvas = new FakeCanvas();
   const state = makeState();
+  // Control groups (keyboard digits) and the positional-hotkey action list both live on the
+  // shared `game` singleton (session.js), not on `state` — see input.js's groups()/game.hotkeyActions
+  // reads. That object survives across every test in this file (it's the same module-cached
+  // import each time), so without a reset a group bound in one test — or a stubbed
+  // hotkeyActions array — would silently leak into the next one, which always reuses the same
+  // "test" planetId. Fresh empty state, every time.
+  game.groups[state.planetId] = {};
+  game.hotkeyActions = null;
   let calls = 0;
   const controller = attachInput(canvas, state, () => { calls++; });
   return { canvas, window: globalThis.window, state, controller, calls: () => calls };
@@ -362,4 +375,191 @@ test("a plain (non-ctrl) click on an already-selected unit still resets the sele
   leftClick(canvas, window, clientX, clientY, false);   // plain click on b, no ctrl
 
   assert.deepEqual(state.selection, [b.id], "a plain click always replaces the selection — promotion is a ctrl-only gesture");
+});
+
+// ============================================================================
+// Keydown hotkey dispatch — control groups, Q/X, Escape, and the positional Z/C/V/B/N
+// production keys. This whole dispatch body was previously only reachable through a real
+// browser driving real keystrokes, so despite being the single most-used input path in the
+// game (a fast-paced RTS lives and dies by hotkeys, not menu-hunting) it sat effectively
+// untested. Same FakeWindow/`ev()` dispatch the blur tests up top already use —
+// window.dispatchEvent(ev("keydown", {...})) is indistinguishable from the real thing for
+// everything this handler reads (e.key/e.code/e.shiftKey/e.repeat/e.target).
+// ============================================================================
+
+test("Shift+digit binds the current selection to a control group; the bare digit recalls exactly that later, even after the selection has moved on", () => {
+  const { state, window } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  const c = makeUnit("skiff", "player", 900, 500);
+  [a, b, c].forEach(u => state.units.set(u.id, u));
+  state.selection = [a.id, b.id];
+
+  // Shift is the bind modifier (not Ctrl — Ctrl+digit is the browser's own tab-switch shortcut
+  // and can't be reliably suppressed, per input.js's own comment). The match is on e.code, so
+  // the real e.key ("!" under Shift on a US layout) never has to be right for this to bind.
+  window.dispatchEvent(ev("keydown", { key: "1", code: "Digit1", shiftKey: true }));
+
+  state.selection = [c.id];   // selection moves on to something else entirely before recalling
+
+  window.dispatchEvent(ev("keydown", { key: "1", code: "Digit1" }));   // bare 1 — no shiftKey
+
+  assert.deepEqual(state.selection, [a.id, b.id],
+    "recall restores exactly what was bound earlier — a snapshot taken at bind time, not a live reference to whatever the selection is now");
+});
+
+test("recalling a control-group digit that was never bound is a harmless no-op", () => {
+  const { state, window } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  state.units.set(a.id, a);
+  state.selection = [a.id];
+
+  window.dispatchEvent(ev("keydown", { key: "9", code: "Digit9" }));   // group 9 was never assigned
+
+  assert.deepEqual(state.selection, [a.id], "an unbound group's digit must not clear or otherwise touch the current selection");
+});
+
+test("Q selects the whole army — every combat-role unit you own, on-screen or not", () => {
+  const { state, window } = setup();
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  const offscreenBastion = makeUnit("bastion", "player", 3500, 3500);   // well outside the default viewport — Q is whole-map, not just what's visible
+  const worker = makeUnit("worker", "player", 500, 500);                // role "worker" — must be excluded
+  const enemySkiff = makeUnit("skiff", "ai", 500, 500);                 // right type, wrong owner — must be excluded
+  [skiff, offscreenBastion, worker, enemySkiff].forEach(u => state.units.set(u.id, u));
+  state.selection = [];
+
+  window.dispatchEvent(ev("keydown", { key: "q", code: "KeyQ" }));
+
+  assert.deepEqual([...state.selection].sort(), [skiff.id, offscreenBastion.id].sort(),
+    "grabs every player-owned combat unit anywhere on the map; the worker (wrong role) and the enemy skiff (wrong owner) are both excluded");
+});
+
+test("X halts the selection: clears its active order and any queued waypoints", () => {
+  const { state, window } = setup();
+  const worker = makeUnit("worker", "player", 500, 500);
+  worker.order = { type: "gather", nodeId: "node-1" };
+  worker.orderQueue = [{ type: "move", x: 999, y: 999 }];   // a Ctrl-queued waypoint behind the current order
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+
+  window.dispatchEvent(ev("keydown", { key: "x", code: "KeyX" }));
+
+  assert.equal(worker.order, null, "the active order is cleared");
+  assert.deepEqual(worker.orderQueue, [], "queued waypoints are dropped too — X is a full stop, not just cancel-the-current-leg");
+});
+
+test("Escape disarms a pending attack-move", () => {
+  const { window, controller } = setup();
+  controller.toggleAttackMove();
+  assert.equal(controller.attackArmed, true, "attack-move is actually armed before Escape (sanity check)");
+
+  window.dispatchEvent(ev("keydown", { key: "Escape", code: "Escape" }));
+
+  assert.equal(controller.attackArmed, false, "Escape is the keyboard way to back out of an armed attack-move, same as a right-click cancel");
+});
+
+test("Escape also exits build mode", () => {
+  const { window, controller } = setup();
+  controller.startBuild("barracks");
+  assert.ok(controller.building, "build mode is actually active before Escape (sanity check)");
+
+  window.dispatchEvent(ev("keydown", { key: "Escape", code: "Escape" }));
+
+  assert.equal(controller.building, null, "Escape backs out of build-placement mode without placing anything");
+});
+
+test("a positional production hotkey (Z) fires the HUD's bound action exactly once per keypress", () => {
+  const { window } = setup();
+  // hudSelection.js populates game.hotkeyActions with { key, click } entries as it rebuilds the
+  // selection panel — click() replays the real button's own handler (see prodButton there). A
+  // fake entry with its own counting `click` is enough to prove input.js finds the right slot
+  // and fires it, without dragging in the whole HUD module just for this.
+  let runs = 0;
+  game.hotkeyActions = [{ key: "z", click: () => { runs++; } }];
+
+  window.dispatchEvent(ev("keydown", { key: "z", code: "KeyZ" }));
+
+  assert.equal(runs, 1, "the Z slot's action fired exactly once for one keypress");
+});
+
+// ============================================================================
+// The focused-control guard: hotkeys must not fire while a real HUD control (a button, a text
+// input, the Home-confirm modal) has focus, or Space/letters would double as both a game
+// command AND whatever that control does with the same keystroke. dispatchEvent always sets
+// event.target to the object dispatchEvent was called on (see the file-top comment on the
+// document stub) — there's no DOM tree here for a click to bubble up from some other focused
+// descendant, so this test's `window` instance has to stand in for the focused control itself.
+// The guard only probes one method on that target, `.closest(...)`, so giving `window` one that
+// returns truthy — exactly what a real focused <button>/<input>'s own .closest("button, input,
+// ...") would return — reproduces the same branch a real focused HUD control takes.
+// ============================================================================
+
+test("the focused-control guard suppresses a hotkey while a real HUD control has focus", () => {
+  const { state, window, calls } = setup();
+  const army = makeUnit("skiff", "player", 500, 500);
+  state.units.set(army.id, army);
+  state.selection = [];
+
+  window.closest = () => true;   // stands in for "event.target is inside a focused button/input/etc."
+
+  window.dispatchEvent(ev("keydown", { key: "q", code: "KeyQ" }));
+
+  assert.deepEqual(state.selection, [], "Q must not fire while a focused control 'owns' the keystroke");
+  assert.equal(calls(), 0, "nothing should react at all — onChange must not fire either");
+});
+
+// ============================================================================
+// Touch double-tap: the finger equivalent of dblclick (see the Bug 3 section above) — a second
+// tap close to the first, both in time (DOUBLE_TAP_MS) and screen position (DOUBLE_TAP_DIST),
+// upgrades to select-all-of-this-type instead of just re-tapping the one unit. Runs through the
+// exact same canvas EventTarget dispatch as the mouse tests; touchstart/touchend just need a
+// `touches` array carrying the properties input.js actually reads (clientX/clientY) — same idea
+// as `ev()` supplying whatever extra properties a MouseEvent needs.
+// ============================================================================
+
+// A tap is a single-finger touchstart immediately followed by touchend at the same point — the
+// touch equivalent of leftClick/rightClick above. `touches: []` on touchend matches a real
+// TouchList once the one finger that was down has lifted (input.js's endTouch only ever reads
+// e.touches.length, never .changedTouches, so an empty array is all "all fingers up" needs).
+function tap(canvas, clientX, clientY) {
+  canvas.dispatchEvent(ev("touchstart", { touches: [{ clientX, clientY }] }));
+  canvas.dispatchEvent(ev("touchend", { touches: [] }));
+}
+
+test("two quick taps on the same unit are a double-tap: select every unit of that type on screen (the touch equivalent of dblclick)", () => {
+  const { state, canvas, controller } = setup();
+  const [a, b] = placeTwoSkiffs(state);
+  state.selection = [];
+
+  // The very first tap of a fresh controller can never register as a double no matter how the
+  // timing falls: lastTapCX/CY start at literal 0, and this tap's client position (near the
+  // canvas center) is nowhere close to that origin, so the distance half of isDouble alone
+  // already rules it out — no need to fake or wait out performance.now().
+  const { clientX, clientY } = clientFor(controller, a.x, a.y);
+  tap(canvas, clientX, clientY);
+  assert.deepEqual(state.selection, [a.id], "a single tap on a unit just selects it, like a single click (sanity check)");
+
+  tap(canvas, clientX, clientY);   // second tap, same spot, immediately after
+  assert.deepEqual([...state.selection].sort(), [a.id, b.id].sort(),
+    "a double-tap grabs every same-type unit on screen, exactly like dblclick");
+});
+
+test("two taps far apart on screen are NOT a double-tap — the second lands as an ordinary command instead", () => {
+  const { state, canvas, controller } = setup();
+  const [a] = placeTwoSkiffs(state);
+  state.selection = [];
+
+  const first = clientFor(controller, a.x, a.y);
+  tap(canvas, first.clientX, first.clientY);   // selects `a` (see the distance argument in the test above)
+  assert.deepEqual(state.selection, [a.id], "the first tap alone just selects a (sanity check)");
+
+  // Dispatched an instant later (well inside DOUBLE_TAP_MS), but DOUBLE_TAP_DIST (30 client px)
+  // away from the first tap — distance alone must disqualify this as a double-tap, even with
+  // essentially zero time elapsed between the two taps.
+  const far = { clientX: first.clientX + 200, clientY: first.clientY };
+  tap(canvas, far.clientX, far.clientY);
+
+  assert.deepEqual(state.selection, [a.id], "the far tap did not extend the selection to every skiff on screen");
+  assert.deepEqual(a.order, { type: "move", x: 2200, y: 2000 },
+    "instead it was read as an ordinary command for the standing selection — the same plain-move fallback commandAt uses elsewhere");
 });
