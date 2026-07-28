@@ -63,6 +63,10 @@ const stubEl = () => ({
   dataset: {},
   getContext() { return null; },
   appendChild() {},
+  // Needed once startGame() is driven for real, below (P1 finding #8) — overlays.js's
+  // showObjectives() calls objectivesEl.querySelector(".obj-close").addEventListener(...). See
+  // that section's own header comment for the full empirical trace of what else this required.
+  querySelector() { return stubEl(); },
 });
 
 globalThis.document = {
@@ -73,7 +77,7 @@ globalThis.document = {
   removeEventListener() {},
 };
 
-const { pauseLoop, resumeLoop, togglePause } = await import("../boot.js");
+const { pauseLoop, resumeLoop, togglePause, startGame } = await import("../boot.js");
 // dom.js is already loaded (boot.js imports it statically) — re-importing it here just returns
 // the SAME cached module, i.e. the SAME `pauseBtn` object boot.js's syncPause() mutates. A
 // second, independent observable of the same `manual` boolean: the topbar button's label.
@@ -170,4 +174,143 @@ test("resumeLoop() on a reason that was never added is harmless", () => {
   resumeLoop("manual");
   assert.equal(isPausedUI(), false);
   resetPause();
+});
+
+/* ============================================================
+   P1 finding #8 (the second boot.js gap from the same test-suite review): two more
+   module-private helpers — difficultyDials(key) and resolveSeed(cfg) — are neither exported nor
+   reachable except by driving a real start* function and reading what landed on the resulting
+   game.state. startGame(planetId) is the natural driver: it calls both
+   (difficultyDials(setup.difficulty), resolveSeed(setup)) and their outputs land straight on the
+   created state — aiApm/aiMicro under state.ai.apm/state.ai.micro, the seed under state.seed
+   (engine/state.js createGameState, confirmed by reading it: `apm: opts.aiApm ?? null`,
+   `micro: opts.aiMicro ?? false`, `seed: opts.seed ?? null`).
+
+   difficultyDials looks `key` up in setup.js's own exported DIFFICULTY_OPTIONS (the SAME array
+   that drives the Easy/Medium/Hard picker) and falls back to the "medium" entry when `key`
+   matches none of them — the exact fix boot.js's own comment on difficultyDials describes:
+   boot.js used to keep a SEPARATE easy/medium/hard map, and a key that existed in one list but
+   not the other silently fell back to Medium instead of erroring. That fallback branch (an
+   unrecognised key) has never been exercised by any existing test. resolveSeed(cfg) either
+   honors an explicit cfg.seed or draws a fresh Math.random() one, coerced >>> 0 to an unsigned
+   32-bit int either way — also never directly exercised.
+
+   --- extending the stub: what actually broke, in order, driving startGame("ferros") against
+   the document-only stub above (confirmed empirically, not guessed) ---------------------------
+     1. overlays.js's showObjectives() — called by bootState whenever `intro: true`, which
+        startGame's own call to bootState always passes — does
+        `objectivesEl.querySelector(".obj-close").addEventListener("click", hideObjectives)`.
+        The stubEl() above had no querySelector; one line was added to it (harmless to the pause
+        tests above, which never reach this code path).
+     2. input.js's attachInput() (bootState wires every fresh state to one) registers its
+        mouseup/keydown/keyup/blur listeners directly on the bare `window` global — unlike
+        saveload.js's and overlays.js's own browser wiring, this call is NOT behind a
+        `typeof window !== "undefined"` guard, so `window` must actually exist by the time
+        startGame runs. Exactly the gap test/saveload.test.js's own "driving the real Load path"
+        section already hit (see its header comment) and solved the same way: set up AFTER
+        boot.js/setup.js are already imported above, so their own module-scope
+        `typeof window !== "undefined"` guards (which already ran, above) still saw `undefined`
+        and stayed off — this file still starts no real timers/listeners on import; only this
+        section's own explicit startGame() calls below ever touch `window`.
+     3. engine/loop.js's createLoop().start() (the last thing bootState does) calls the bare
+        `requestAnimationFrame` global directly, and — once `loop` is already set, from an
+        earlier call in this same section — loop.stop() equally needs `cancelAnimationFrame`.
+   Nothing else broke: unlike saveload.test.js's Load-path section, no AudioContext stub is
+   needed here — startGame/bootState never call sound.unlockAudio() or any sound.play*()
+   synchronously (those only ever fire from click handlers, or from showGameOver/showScenarioEnd,
+   neither reached here since a freshly created state always starts with `over: false`).
+
+   One more real, ticking side effect showObjectives leaves behind: a genuine 30-SECOND
+   `setTimeout(hideObjectives, 30000)` (overlays.js). Confirmed empirically: without cleanup,
+   `node --test` on this file hangs for ~30s after its last test instead of exiting immediately,
+   because a live Node timer keeps the process alive. hideObjectives() (which bootState itself
+   already calls, unconditionally, at the very top of every later boot) clears it; each test below
+   calls it again at the end so the suite never carries a live timer past its own last test.
+   ============================================================ */
+
+globalThis.window = { addEventListener() {}, removeEventListener() {} };
+globalThis.requestAnimationFrame = () => 0;
+globalThis.cancelAnimationFrame = () => {};
+
+// setup.js/overlays.js are already loaded (transitively, via boot.js's own import graph at the
+// top of this file) — re-importing them here just returns the SAME cached modules: the identical
+// live `setup` object every UI module reads/writes (setup.js's card-click handlers, boot.js's
+// start* functions), and the identical hideObjectives the comment above relies on.
+const { setup, DIFFICULTY_OPTIONS } = await import("../setup.js");
+const { hideObjectives } = await import("../overlays.js");
+
+// Whatever difficulty/seed the setup screen actually started at — captured once, so every test
+// below restores the EXACT starting values rather than a hardcoded guess. setup is a live
+// cross-test singleton exactly like game (see the game.state resets throughout this file); no
+// other test in this file touches it, but nothing resets it between files either.
+const ORIGINAL_DIFFICULTY = setup.difficulty, ORIGINAL_SEED = setup.seed;
+function resetSetup() { setup.difficulty = ORIGINAL_DIFFICULTY; setup.seed = ORIGINAL_SEED; }
+
+test("difficultyDials(): a recognized difficulty key drives the created state's AI with that exact difficulty's aiApm/aiMicro", () => {
+  resetSetup();
+  const hard = DIFFICULTY_OPTIONS.find(o => o.mult === "hard");
+  setup.difficulty = "hard";
+
+  startGame("ferros");
+
+  assert.equal(game.state.ai.apm, hard.aiApm, "state.ai.apm should be Hard's real aiApm from DIFFICULTY_OPTIONS");
+  assert.equal(game.state.ai.micro, hard.aiMicro, "state.ai.micro should be Hard's real aiMicro (true — the AI micros: focus-fire, kiting)");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
+test("difficultyDials(): an unrecognized key silently falls back to Medium's dials — never throws, never some other plausible-but-wrong default", () => {
+  resetSetup();
+  const medium = DIFFICULTY_OPTIONS.find(o => o.mult === "medium");
+  setup.difficulty = "not-a-real-difficulty";   // e.g. a stale/typo'd save, or a future rename that missed one call site
+
+  // This is the exact regression difficultyDials's own `|| DIFFICULTY_OPTIONS.find(o => o.mult
+  // === "medium")` fallback exists to prevent: a difficulty key that matches no entry must not
+  // crash the whole game start...
+  assert.doesNotThrow(() => startGame("ferros"));
+  // ...and must not silently run some OTHER wrong-but-plausible difficulty either — it must be
+  // Medium's dials specifically.
+  assert.equal(game.state.ai.apm, medium.aiApm, "an unrecognized key should fall back to Medium's aiApm");
+  assert.equal(game.state.ai.micro, medium.aiMicro, "an unrecognized key should fall back to Medium's aiMicro");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
+test("resolveSeed(): an explicit setup.seed is honored exactly on the created state, not overridden by a random draw", () => {
+  resetSetup();
+  setup.seed = 12345;
+
+  startGame("ferros");
+
+  assert.equal(game.state.seed, 12345, "an explicit seed must land on state.seed completely unchanged");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
+test("resolveSeed(): a null setup.seed draws a fresh, valid unsigned-32-bit seed every call — never frozen/cached, never out of range", () => {
+  resetSetup();
+  setup.seed = null;
+
+  startGame("ferros");
+  const seed1 = game.state.seed;
+  startGame("ferros");
+  const seed2 = game.state.seed;
+
+  for (const s of [seed1, seed2]) {
+    assert.ok(Number.isInteger(s), `resolved seed ${s} must be an integer`);
+    assert.ok(s >= 0 && s <= 0xFFFFFFFF, `resolved seed ${s} must be a valid unsigned 32-bit value`);
+  }
+  // Not an exact-value assertion (it's genuinely random) — proving it's really drawing a fresh
+  // value each time, not some frozen/cached one, is instead that two independent draws disagree.
+  assert.notEqual(seed1, seed2, "back-to-back calls with no explicit seed must not repeat the same random seed");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
 });
