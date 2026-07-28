@@ -213,14 +213,6 @@ function seedPlayer(state, ownerId, basePos) {
 
 /**
  * @param {State} state
- * @returns {(Unit|Building)[]}
- */
-export function allEntities(state) {
-  return [...state.units.values(), ...state.buildings.values()];
-}
-
-/**
- * @param {State} state
  * @param {string} id
  * @returns {Unit|Building|undefined}
  */
