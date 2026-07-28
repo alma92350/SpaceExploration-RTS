@@ -61,6 +61,26 @@ test("clusterUnits keeps the cluster containing units[0] first, so it stays the 
   assert.equal(clusters[0][0].id, "L0", "units[0]'s cluster is clusters[0]");
 });
 
+test("clusterUnits groups a transitive chain (A-B close, B-C close, A-C far) into one cluster — true transitive closure, not a naive pairwise check", () => {
+  // engine/formation.js's own (unexported) CLUSTER_RADIUS — mirrored here, not imported, same as
+  // GRID_SPACING's legacy constant is mirrored numerically further down this file.
+  const CLUSTER_RADIUS = 150;
+  const a = fakeUnit("A", "skiff", 0, 0);
+  const b = fakeUnit("B", "skiff", 140, 0);    // 140 from A: within CLUSTER_RADIUS
+  const c = fakeUnit("C", "skiff", 280, 0);    // 140 from B: within CLUSTER_RADIUS; 280 from A: NOT
+  assert.ok(Math.hypot(b.x - a.x, b.y - a.y) <= CLUSTER_RADIUS, "fixture: A-B is a close pair");
+  assert.ok(Math.hypot(c.x - b.x, c.y - b.y) <= CLUSTER_RADIUS, "fixture: B-C is a close pair");
+  assert.ok(Math.hypot(c.x - a.x, c.y - a.y) > CLUSTER_RADIUS, "fixture: A-C is NOT directly within radius of each other");
+
+  const clusters = clusterUnits([a, b, c]);
+
+  // A pairwise-only check (each unit tested only against the group's first/anchor member) would
+  // put C in its own cluster, since A-C alone are too far apart — only real transitive closure
+  // through B still catches it.
+  assert.equal(clusters.length, 1, "A-B-C should collapse to one cluster via transitive closure through B");
+  assert.deepEqual(new Set(clusters[0].map(u => u.id)), new Set(["A", "B", "C"]), "all three units land in that one cluster");
+});
+
 // ---- formationSlots: the default (grid, single cluster) path uses the flat, scaled spacing ----
 
 test("formationSlots grid (no shape chosen) matches the flat GRID_SPACING formula (legacy 20, +15% coarser)", () => {

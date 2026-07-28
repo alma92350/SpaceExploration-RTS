@@ -456,6 +456,42 @@ test("a completed Sentinel Turret auto-acquires and damages an enemy unit in ran
   assert.equal(turret.targetId, enemy.id);
 });
 
+test("a turret's target that dies to someone else earlier the same tick is dropped, not deref'd — it re-acquires cleanly instead of freezing", () => {
+  // The mobile-unit analog: "an explicit attack order on a target killed by someone else
+  // re-acquires instead of freezing" above. A turret has no order pipeline, but building.targetId
+  // is the same kind of persisted, potentially-stale reference — this simulates it having locked
+  // onto `stale` on some earlier pass, then `stale` dying to a DIFFERENT attacker before the
+  // turret's own updateBuildingCombat runs this tick.
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const stale = makeUnit("skiff", "ai", turret.x + 10, turret.y);
+  state.units.set(stale.id, stale);
+  turret.targetId = stale.id;          // simulate the turret already locked onto this target
+  state.units.delete(stale.id);        // simulate it dying to a different attacker earlier this same tick
+
+  const other = makeUnit("skiff", "ai", turret.x + 15, turret.y);   // a fresh live enemy still in range
+  state.units.set(other.id, other);
+  const startHp = other.hp;
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  assert.equal(turret.targetId, other.id, "re-acquired the live enemy instead of keeping/deref'ing the dead one");
+  assert.ok(other.hp < startHp, "and actually landed a hit on it, same tick");
+  assert.ok(Number.isFinite(other.hp), "no NaN-poisoning from a stale dereferenced target");
+});
+
+test("a turret whose only target dies to someone else earlier the same tick goes idle, not stuck referencing the corpse", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const stale = makeUnit("skiff", "ai", turret.x + 10, turret.y);
+  state.units.set(stale.id, stale);
+  turret.targetId = stale.id;
+  state.units.delete(stale.id);   // dies to someone else, and nothing else is left in range
+
+  assert.doesNotThrow(() => updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown));
+  assert.equal(turret.targetId, null, "cleanly falls back to idle rather than holding the stale id");
+});
+
 test("a turret under construction never fires and holds no target", () => {
   const state = createGameState({ planetId: "ferros" });
   const turret = makeBuilding("turret", "player", 500, 500, { constructing: true });
