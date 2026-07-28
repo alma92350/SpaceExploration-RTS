@@ -6,6 +6,7 @@ import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
 import { isNodeDiscovered, isExploredAt, updateFog } from "../engine/fog.js";
 import { aiDoctrine } from "../engine/aiWorkers.js";
+import { pickBuilder, accrueActionBudget } from "../engine/aiCommon.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -66,6 +67,34 @@ test("a throttled AI still commits its attack — the wave is exempt from the AP
   runAI(state, THINK_INTERVAL);
 
   assert.equal(skiff.order?.type, "attack-move", "the wave commits despite zero action budget, so the game still resolves");
+});
+
+// ---- P2 review gap: accrueActionBudget's burst-cap ceiling (engine/aiCommon.js) ----
+//
+// The test above only exercises the ZERO-budget floor (canAct needs >= 1, and a starved AI
+// still throws its attack wave regardless). Nothing yet asserts the OTHER end: `cap =
+// Math.max(2, state.ai.apm * APM_BURST_FRAC)` caps how much a busy AI can bank, so a long
+// stretch of un-thought-about sim time can't hand it one giant burst of actions to spend at once.
+test("accrueActionBudget clamps the banked budget at its burst cap, no matter how long the AI sits un-thought-about", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.ai.apm = 300;   // -> cap = Math.max(2, 300/15) = 20, mirroring aiCommon.js's APM_BURST_FRAC (1/15)
+  const cap = 20;
+
+  // Below the cap, accrual is the plain (apm/60)*dt rate -- a sanity check that what follows
+  // is a genuine ceiling on top of real accrual, not a stub that always just returns the cap.
+  state.ai.actionBudget = 0;
+  accrueActionBudget(state, 1);
+  assert.equal(state.ai.actionBudget, 5, "one second at 300 apm banks 5 credits, comfortably under the cap");
+
+  // A single huge dt, as if the AI went un-thought-about for a very long stretch of sim
+  // time -- without the Math.min ceiling this would bank ~5,000,000 credits.
+  accrueActionBudget(state, 1_000_000);
+  assert.equal(state.ai.actionBudget, cap, "an enormous dt still clamps at the documented burst cap, not an unbounded burst");
+
+  // The ceiling keeps holding on the NEXT accrual too, once already at the cap -- not just a
+  // one-off coincidence of the first Math.min call landing on the cap by chance.
+  accrueActionBudget(state, 1_000_000);
+  assert.equal(state.ai.actionBudget, cap, "the cap keeps holding on later accruals once already at the ceiling");
 });
 
 test("the AI launches repeated attack waves, not just one", () => {
@@ -830,6 +859,27 @@ test("assignIdleWorkers caps AI workers on secondary (crystal/radioactive) nodes
 
   assert.equal(secondaryMiners, expectedCap,
     `exactly the computed cap (${expectedCap}) of workers gather crystals/radioactives — never more, however many nodes/workers are on offer`);
+});
+
+// ---- P2 review gap: pickBuilder's idle-over-busy preference (engine/aiCommon.js) ----
+//
+// pickBuilder skips any worker already mid-build/mid-service/mid-haul so a new job never steals
+// an in-progress site's founder or thrashes an industry logistics run (see the doc comment above
+// it in aiCommon.js). No existing test drives pickBuilder directly: every current call site is
+// only reached transitively through runAI, where a lone idle worker is typically the only
+// candidate anyway. This pits a busy worker planted much closer to the build spot against a
+// distant idle one, so a naive nearest-first pick (ignoring order state) is distinguishable from
+// the real skip-busy-workers logic.
+test("pickBuilder prefers a genuinely idle worker over one mid-build/mid-service/mid-haul, even when the busy one is much closer", () => {
+  const spot = { x: 500, y: 500 };   // stand-in for the new building's chosen foundation spot
+  for (const busyType of ["build", "service", "haul"]) {
+    const busy = makeUnit("worker", "ai", spot.x + 5, spot.y);      // right on top of the spot...
+    busy.order = { type: busyType };
+    const idle = makeUnit("worker", "ai", spot.x + 500, spot.y);    // ...while idle sits far away
+    const picked = pickBuilder([busy, idle], spot.x, spot.y);
+    assert.equal(picked.id, idle.id,
+      `a worker mid-${busyType} is skipped for the distant idle one, despite being by far the nearest candidate`);
+  }
 });
 
 test("a legacy archetype without the Tier 4 fields still runs without throwing", () => {
