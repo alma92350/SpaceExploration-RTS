@@ -10,6 +10,7 @@ import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip, hasColonyShip } from "../engine/colony.js";
 import { tick } from "../engine/sim.js";
+import { jumpReadyGalaxy } from "./_helpers.js";
 
 const commandCenters = (state, owner) =>
   [...state.buildings.values()].filter(b => b.owner === owner && b.type === "command");
@@ -357,6 +358,34 @@ test("new-world jump fuel scales with frontier distance", () => {
   assert.ok(Math.min(...costs) > 0, "every new world still costs something");
 });
 
+test("jumpCapital refuses a real jump when credits fall short of the actual cost — nothing about the galaxy changes", () => {
+  const g = jumpReadyGalaxy(9);                              // a real jump-ready galaxy: pad, staged ship, funded
+  const from = activeState(g);
+  const activeIdBefore = g.activeId;
+  const destId = g.worlds.find(w => w !== g.activeId);       // a never-visited world — a real, non-zero fuel cost
+  const dest = g.planets.get(destId);
+  const cost = jumpCost(g, destId);
+  assert.ok(cost > 0, "reaching a fresh world costs real fuel");
+  g.credits = cost - 1;                                       // short of the actual cost, not merely "poor"
+
+  const fromBackgroundBefore = from.background, destBackgroundBefore = dest.background;
+  const fromUnitsBefore = from.units.size, fromBuildingsBefore = from.buildings.size;
+  const destUnitsBefore = dest.units.size, destBuildingsBefore = dest.buildings.size;
+
+  const res = jumpCapital(g, destId);
+
+  assert.equal(res, null, "the jump is refused when credits are short of the real cost");
+  assert.equal(g.activeId, activeIdBefore, "the capital did not relocate");
+  assert.equal(g.credits, cost - 1, "a refused jump doesn't spend the credits it couldn't afford");
+  assert.equal(from.background, fromBackgroundBefore, "the origin is still the active seat, not left as a colony");
+  assert.equal(dest.background, destBackgroundBefore, "the destination is untouched — still just a background world");
+  assert.equal(from.units.size, fromUnitsBefore, "no staged rider left the origin");
+  assert.equal(from.buildings.size, fromBuildingsBefore, "the origin's buildings are untouched");
+  assert.equal(dest.units.size, destUnitsBefore, "nothing arrived at the destination");
+  assert.equal(dest.buildings.size, destBuildingsBefore, "the destination gained no buildings");
+  assert.ok(!g.discovered.has(destId), "the destination was never marked reached");
+});
+
 test("a free reinforcement hop back to a colony carries an army and spends no fuel", () => {
   const g = createGalaxy({ seed: 34 });
   const from = settle(activeState(g));
@@ -457,6 +486,23 @@ test("surrender is the ONLY terminal state — it ends the Odyssey by the player
   assert.equal(activeState(g).over, true, "surrender ends it");
   assert.equal(activeState(g).winner, "ai");
   assert.equal(g.surrendered, true, "…flagged as a surrender (drives the game-over copy)");
+});
+
+test("a surrendered game stays ended — checkGalaxyRescue's guard holds even with a real wipeout", () => {
+  const g = createGalaxy({ seed: 38 });
+  const home = settle(activeState(g));
+  for (const b of commandCenters(home, "player")) home.buildings.delete(b.id);   // raze the only base…
+  assert.ok(!hasColonyShip(home, "player"), "…and the start ship was consumed founding it — a true wipeout");
+
+  surrenderGalaxy(g);
+  assert.equal(activeState(g).over, true, "the surrender ended the run");
+
+  checkGalaxyRescue(g);   // the wipeout conditions that would otherwise dispatch relief are still true
+
+  assert.equal(activeState(g).over, true, "still over — a rescue must never un-end a surrendered game");
+  assert.equal(activeState(g).winner, "ai", "the surrender's result stands");
+  assert.ok(!hasColonyShip(activeState(g), "player"), "no relief colony ship is spawned once the game has been surrendered");
+  assert.ok(!g.reliefNote, "…and no relief toast fires either");
 });
 
 /* ---------- stranded recovery: no catch-22 without a Spaceport ---------- */
