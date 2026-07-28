@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation, issueRepair, issueSetHomeBase } from "../engine/commands.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation, issueServiceBuilding, issueRepair, issueSetHomeBase } from "../engine/commands.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 
@@ -348,6 +348,14 @@ test("issueRepair sends only logistics-capable units to patch a target, manually
   issueRepair(units, "target-1");
   assert.deepEqual(units[0].order, { type: "repair", targetId: "target-1", phase: "toSite", manual: true });
   assert.equal(units[1].order, null, "a non-worker never gets a repair order");
+});
+
+test("issueServiceBuilding sends only logistics-capable units to service a building, manually and standing", () => {
+  const units = capableDummyUnits(2);
+  units[1].type = "skiff";   // e.g. a combat unit caught in the same selection
+  issueServiceBuilding(units, "building-1");
+  assert.deepEqual(units[0].order, { type: "service", buildingId: "building-1", phase: "plan", manual: true });
+  assert.equal(units[1].order, null, "a non-worker never gets a service order");
 });
 
 test("issueSetHomeBase pins eligible units (worker/support/freighter) to a Command Center, ignoring the rest", () => {
