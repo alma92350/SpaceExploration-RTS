@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST } from "../engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST, loadFreighter, unloadFreighter } from "../engine/galaxy.js";
 import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT } from "../engine/market.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
@@ -108,4 +108,99 @@ test("finished goods are dearer on a low-industry world than a high-industry one
 test("a produced good at an industry-5 world matches the old flat 1.5× ceiling (continuity)", () => {
   const m = createMarket({ planetId: "vesper", map: { nodes: [] } });   // industry 5 pivot
   assert.equal(m.base.alloys, 120, "alloys base 80 × 1.5 = 120 — continuous with the pre-Phase-4 flat price");
+});
+
+// ---- exact-value pins on the tuning constants themselves --------------------------------------
+// Every test above only bounds or relative-asserts (buy > sell, price fell, cost > 0): real
+// coverage, but a substantial drift in one of the constants market.js's pricing math is built on
+// (say SPREAD 1.15 → 1.35) would still pass every one of them. These pin a real buy/sell output
+// against the constant's CURRENT documented value, computed from the real formula (not a guessed
+// number), so a drift in the constant itself — not just a directional regression — fails a test.
+
+test("SPREAD is pinned exactly: buying one lot (TRADE_LOT) of a produced good, on a fresh market, costs base × 1.15 × TRADE_LOT", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  const base = s.market.base.machinery;                        // read off the REAL market, not guessed
+  const expected = Math.round(base * 1.15 * TRADE_LOT);        // the exact buy() formula, one lot, zero pressure/glut
+  assert.equal(buy(g, s, "machinery", TRADE_LOT), expected,
+    "a drift in the buy-side SPREAD constant would pass every existing relative test but fails this exact pin");
+});
+
+test("RAW_SPREAD is pinned exactly: buying one lot of a raw good, on a fresh market, costs base × 1.5 × TRADE_LOT", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  const base = s.market.base.ore;
+  const expected = Math.round(base * 1.5 * TRADE_LOT);
+  assert.equal(buy(g, s, "ore", TRADE_LOT), expected,
+    "a drift in RAW_SPREAD (the wide raw-input buy spread that closes the credit-printer loop) fails this exact pin");
+});
+
+test("PRESSURE_FLOOR is pinned exactly: heavy selling bottoms a raw good's price at 40% of equilibrium, not some other clamp", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  s.players.player.resources.ore = 1e6;
+  sell(g, s, "ore", 5000);                                     // far more than the ~300 units needed to saturate the floor
+  assert.equal(s.market.pressure.ore, -0.6, "pressure bottoms out at exactly PRESSURE_FLOOR");
+  // ore is Raw, so glut never applies to it — this isolates the pressure clamp alone.
+  assert.equal(unitPrice(s.market, "ore", "sell"), s.market.base.ore * (1 + (-0.6)),
+    "…so the sell price bottoms at exactly base × (1 + PRESSURE_FLOOR)");
+});
+
+test("PRESSURE_CEIL is pinned exactly: heavy buying tops a raw good's price at 160% of equilibrium, not some other clamp", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1e9;
+  buy(g, s, "ore", 5000);                                      // far more than the ~300 units needed to saturate the ceiling
+  assert.equal(s.market.pressure.ore, 0.6, "pressure tops out at exactly PRESSURE_CEIL");
+  // Read back via the SELL side (no spread) so this pins the pressure ceiling alone, not SPREAD too.
+  assert.equal(unitPrice(s.market, "ore", "sell"), s.market.base.ore * (1 + 0.6),
+    "…so the (spread-free) price tops at exactly base × (1 + PRESSURE_CEIL)");
+});
+
+test("GLUT_CEIL is pinned exactly: dumping a produced good saturates its glut at 0.85, not some other clamp", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  s.players.player.resources.machinery = 1e6;
+  sell(g, s, "machinery", 50000);                              // far more than needed to saturate both pressure and glut
+  assert.equal(s.market.pressure.machinery, -0.6, "pressure also bottoms at PRESSURE_FLOOR from the same selling");
+  assert.equal(s.market.glut.machinery, 0.85, "glut saturates at exactly GLUT_CEIL");
+  const expected = s.market.base.machinery * (1 + (-0.6)) * (1 - 0.85);   // base × (1+PRESSURE_FLOOR) × (1-GLUT_CEIL)
+  assert.equal(unitPrice(s.market, "machinery", "sell"), expected,
+    "a fully-glutted, fully-pressured sell price lands exactly here — a drift in GLUT_CEIL fails this pin");
+});
+
+// ---- zero/negative quantity guards -------------------------------------------------------------
+
+test("sell/buy reject a zero or negative quantity outright — no proceeds, no cost, no resource mutated", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  s.players.player.resources.ore = 500;
+  g.credits = 5000;
+  const oreBefore = s.players.player.resources.ore, creditsBefore = g.credits;
+
+  assert.equal(sell(g, s, "ore", 0), 0, "selling zero earns nothing");
+  assert.equal(sell(g, s, "ore", -10), 0, "selling a negative quantity earns nothing");
+  assert.equal(buy(g, s, "ore", 0), 0, "buying zero costs nothing");
+  assert.equal(buy(g, s, "ore", -10), 0, "buying a negative quantity costs nothing");
+
+  assert.equal(s.players.player.resources.ore, oreBefore, "stock is untouched by every zero/negative call above");
+  assert.equal(g.credits, creditsBefore, "credits are untouched by every zero/negative call above");
+});
+
+test("loadFreighter/unloadFreighter reject a zero or negative quantity outright — neither the hold nor the stockpile moves", () => {
+  const s = createGameState({ planetId: "ferros" });
+  const f = makeUnit("hauler", "player", 0, 0);   // a real freighter: has .freight and a cargoHold
+  s.units.set(f.id, f);
+  s.players.player.resources.alloys = 100;
+  f.freight.alloys = 40;
+
+  assert.equal(loadFreighter(s, f.id, "alloys", 0), 0, "loading zero moves nothing");
+  assert.equal(loadFreighter(s, f.id, "alloys", -5), 0, "loading a negative quantity moves nothing");
+  assert.equal(unloadFreighter(s, f.id, "alloys", 0), 0, "unloading zero moves nothing");
+  assert.equal(unloadFreighter(s, f.id, "alloys", -5), 0, "unloading a negative quantity moves nothing");
+
+  assert.equal(s.players.player.resources.alloys, 100, "the stockpile is untouched by every zero/negative call above");
+  assert.equal(f.freight.alloys, 40, "the hold is untouched by every zero/negative call above");
 });

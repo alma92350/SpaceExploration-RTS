@@ -130,6 +130,25 @@ test("MAX_REPAIRERS caps auto-assignment at 2 workers per building — a 3rd idl
   assert.equal(turret.repairers, 2);
 });
 
+test("MAX_REPAIRERS caps auto-assignment at 2 workers per wounded UNIT too — a 3rd idle worker with nothing else to fix stays idle", () => {
+  const { s, cc } = base();
+  const hurtRanger = makeUnit("ranger", "player", cc.x + 50, cc.y);
+  hurtRanger.hp = 5;
+  s.units.set(hurtRanger.id, hurtRanger);
+  const workers = [...s.units.values()].filter(u => u.owner === "player" && u.type === "worker");
+  assert.ok(workers.length >= 3, "the seeded base starts with 3 workers");
+  workers.forEach(w => { w.x = cc.x; w.y = cc.y; });
+
+  assignRepair(s, workers[0]);
+  assignRepair(s, workers[1]);
+  assignRepair(s, workers[2]);
+
+  assert.equal(workers[0].order.targetId, hurtRanger.id);
+  assert.equal(workers[1].order.targetId, hurtRanger.id);
+  assert.equal(workers[2].order, null, "the cap holds — no third worker piles onto the same wounded unit");
+  assert.equal(hurtRanger.repairers, 2);
+});
+
 test("assignRepair prefers a damaged building in the worker's own Command Center zone over a nearer one in another base's zone", () => {
   const s = createGameState({ planetId: "ferros" });
   const ccA = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");

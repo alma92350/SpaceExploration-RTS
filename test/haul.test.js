@@ -305,6 +305,28 @@ test("a service worker also carries the finished OUTPUT back on the return trip 
   assert.ok(storeTotal(sm) < 40, "…drawing down its output buffer");
 });
 
+test("a service worker delivers a needed input AND picks up an output backlog in the SAME visit, when both are true at once", () => {
+  // Neither leg-only test above proves the OTHER leg isn't just silently skipped when a factory
+  // needs both at the same time — a starved larder forces the "toCC" fetch leg first, so this is
+  // the one case where the "toBuilding" visit has to do BOTH jobs (deliver the fetched input, then
+  // immediately pick up the waiting output) before the worker ever lets go of the job.
+  const { s, cc, workers } = base(1);
+  const sm = plantFactory(s, cc);
+  sm.store = { metals: 40 };             // an output backlog already waiting…
+  s.players.player.resources.ore = 100;  // …while the larder (unset — see plantFactory) needs feeding too
+  s.players.player.resources.metals = 0;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: sm.id, phase: "plan" };
+
+  for (let i = 0; i < 4000 && w.order; i++) updateService(s, w, 0.05);
+
+  assert.equal(w.order, null, "the auto-assigned worker completed its ONE round trip and went idle — no second visit was needed");
+  assert.ok(inputTotal(sm) > 0, "the needed input was delivered on the way in");
+  assert.ok((s.players.player.resources.metals || 0) > 0, "…and the pre-existing output backlog was picked up and banked on that SAME trip");
+  assert.ok(storeTotal(sm) < 40, "…drawing down the output buffer that was already sitting there before the worker ever arrived");
+});
+
 // ---- multi-input recipes: one oversupplied input must never crowd out room for another --------
 
 test("inputCapOf splits the larder evenly across a recipe's real (non-energy) input commodities", () => {
