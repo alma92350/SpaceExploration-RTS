@@ -2,17 +2,24 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { issueMove } from "../engine/commands.js";
+import { issueMove, issueEscort } from "../engine/commands.js";
 import { isNodeDiscovered } from "../engine/fog.js";
 import { PLANET_ARCHETYPE } from "../engine/aiArchetypes.js";
+import { UNITS } from "../engine/entities.js";
+import { mulberry32, hashStr } from "../engine/rng.js";
 
+// Seeded per planet (mulberry32, not the unseeded Math.random fallback — see
+// engine/state.js's deterministic-exempt default) so a failure in any of the 18 cases
+// across the two loops below reproduces exactly on rerun, instead of being a one-off
+// tied to whatever that run's platform PRNG happened to roll for the map.
+//
 // The load-bearing invariant for every economy/tech/terrain change: the scripted
 // AI must still drive every world to a decisive finish. A stalled economy, a
 // tech-gate deadlock, or terrain that traps a wave would show up here as a
 // non-resolving world. Runs the whole roster, not just ferros/glacius.
 for (const planetId of Object.keys(PLANET_ARCHETYPE)) {
   test(`a full skirmish resolves to a winner on ${planetId}`, () => {
-    const state = createGameState({ planetId });
+    const state = createGameState({ planetId, rng: mulberry32(hashStr(planetId)) });
     let ticks = 0;
     while (!state.over && ticks < 20000) { tick(state, 0.1); ticks++; }
     assert.equal(state.over, true, `${planetId} should reach a winner before the ceiling`);
@@ -26,47 +33,13 @@ for (const planetId of Object.keys(PLANET_ARCHETYPE)) {
 // stalled the finish, one of these nine would blow past the ceiling.
 for (const planetId of Object.keys(PLANET_ARCHETYPE)) {
   test(`a Tactical-AI skirmish still resolves to a winner on ${planetId}`, () => {
-    const state = createGameState({ planetId, aiMicro: true });
+    const state = createGameState({ planetId, aiMicro: true, rng: mulberry32(hashStr(planetId)) });
     let ticks = 0;
     while (!state.over && ticks < 20000) { tick(state, 0.1); ticks++; }
     assert.equal(state.over, true, `${planetId} (Tactical AI) should reach a winner before the ceiling`);
     assert.ok(["player", "ai"].includes(state.winner));
   });
 }
-
-test("a full skirmish runs to a decisive winner without throwing", () => {
-  const state = createGameState({ planetId: "ferros" });
-  const dt = 0.1;
-  let ticks = 0;
-  const maxTicks = 20000;   // 2000s of sim time — generous ceiling for a scripted AI to close it out
-
-  while (!state.over && ticks < maxTicks) {
-    tick(state, dt);
-    ticks++;
-  }
-
-  assert.equal(state.over, true, "the skirmish should reach a winner before the ceiling");
-  assert.ok(["player", "ai"] .includes(state.winner));
-});
-
-test("a full skirmish concludes on a modified, poor-economy world (glacius)", () => {
-  // glacius carries a speed modifier and deposits no crystals/radioactives —
-  // it exercises the modifier plumbing and the AI's spendable-node filter and
-  // effectiveMix together. If any of them stalled the AI's economy or its lone
-  // wave, the game would never reach a winner within the ceiling.
-  const state = createGameState({ planetId: "glacius" });
-  const dt = 0.1;
-  let ticks = 0;
-  const maxTicks = 20000;
-
-  while (!state.over && ticks < maxTicks) {
-    tick(state, dt);
-    ticks++;
-  }
-
-  assert.equal(state.over, true, "the skirmish should reach a winner before the ceiling");
-  assert.ok(["player", "ai"].includes(state.winner));
-});
 
 test("a unit walks through its queued waypoints in order, then goes idle", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
@@ -144,4 +117,79 @@ test("tick() is a no-op once the game is already over", () => {
   tick(state, 1);
 
   assert.equal(state.time, timeBefore);
+});
+
+// ---- updateUnit's switch actually reaches "scout"/"attack" through tick() — not just
+// via the direct updateScoutMode/updateWorkerCombat calls scout.test.js/combat.test.js make ----
+
+test("a worker given a scout order actually scouts once tick() dispatches to it, not just when updateScoutMode is called directly", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  // Midfield, clear of both bases — same isolation the other direct-injection tests above use.
+  const worker = makeUnit("worker", "player", 700, 300);
+  state.units.set(worker.id, worker);
+  worker.order = { type: "scout" };   // the real order shape (see test/scout.test.js) — sim.js/scout.js fill in tx/ty themselves
+  const x0 = worker.x, y0 = worker.y;
+
+  for (let i = 0; i < 20; i++) tick(state, 0.1);
+
+  assert.ok(Math.hypot(worker.x - x0, worker.y - y0) > 1, "the worker travelled toward unexplored ground — scout mode actually ran under tick()'s real dispatch");
+  assert.equal(worker.order.type, "scout", "scout mode is persistent through the real dispatch too, same as issueScout would leave it");
+});
+
+test("a worker with an explicit attack order damages its target once tick() dispatches to updateWorkerCombat", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = makeUnit("worker", "player", 700, 300);
+  // Player-owned (not "ai") so the AI's own think-cycle — which runs on this very first tick —
+  // never touches it; the only thing that can explain a change in its hp is the worker's swing.
+  const target = makeUnit("skiff", "player", 708, 300);   // within the worker's short reach
+  state.units.set(worker.id, worker);
+  state.units.set(target.id, target);
+  worker.order = { type: "attack", targetId: target.id };
+  const startHp = target.hp;
+
+  tick(state, 0.1);
+
+  assert.equal(startHp - target.hp, UNITS.worker.attack, "the worker's weak swing landed through tick()'s real 'case attack' dispatch, not just a direct updateWorkerCombat call");
+});
+
+// ---- updateSupport's Mender-only branches, same gap: "attack" (reinterpreted as a harmless
+// chase — see the comment above updateSupport in engine/sim.js) and "escort" are only ever
+// proven at the updateSupport/keepEscortStation level, never through the real tick() entry point ----
+
+test("a Mender's attack order chases its target but deals it no damage, through the real tick dispatch", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cx = state.map.width / 2, cy = state.map.height / 2;   // mid-map, clear of both bases
+  // Player-owned and idle, same isolation reasoning as test/escort.test.js's own tick()-driven
+  // escort test — nothing but the Mender's own approach can explain the closing distance.
+  const target = makeUnit("skiff", "player", cx, cy);
+  const mender = makeUnit("mender", "player", cx - 300, cy);
+  state.units.set(target.id, target);
+  state.units.set(mender.id, mender);
+  mender.order = { type: "attack", targetId: target.id };
+  const d0 = Math.hypot(mender.x - target.x, mender.y - target.y);
+  const hp0 = target.hp;
+
+  for (let i = 0; i < 120; i++) tick(state, 0.1);
+
+  const d1 = Math.hypot(mender.x - target.x, mender.y - target.y);
+  assert.ok(d1 < d0 - 100, `the Mender closed hard on its target through tick()'s real dispatch (${d0.toFixed(0)} -> ${d1.toFixed(0)})`);
+  assert.equal(target.hp, hp0, "an 'attack' order on a Mender is reinterpreted as chase-and-mend — it must deal NO damage, even through the real dispatch");
+  assert.equal(mender.order.type, "attack", "a persistent chase — never clears on arrival, unlike a plain move");
+});
+
+test("a Mender given an escort order keeps station on its guarded unit, through the real tick dispatch", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cx = state.map.width / 2, cy = state.map.height / 2;
+  const target = makeUnit("skiff", "player", cx, cy);
+  const mender = makeUnit("mender", "player", cx - 300, cy);
+  state.units.set(target.id, target);
+  state.units.set(mender.id, mender);
+  issueEscort([mender], target.id);   // same real command test/escort.test.js's own tick()-driven case uses
+  const d0 = Math.hypot(mender.x - target.x, mender.y - target.y);
+
+  for (let i = 0; i < 120; i++) tick(state, 0.1);
+
+  const d1 = Math.hypot(mender.x - target.x, mender.y - target.y);
+  assert.ok(d1 < d0 - 100, `the Mender closed on its escort slot through tick()'s real dispatch (${d0.toFixed(0)} -> ${d1.toFixed(0)})`);
+  assert.ok(mender.order && mender.order.type === "escort", "and it's still escorting — keeping station, not a one-shot move");
 });
