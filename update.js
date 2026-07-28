@@ -95,7 +95,14 @@ export function showBanner(manifest) {
   (document.getElementById("app") || document.body).prepend(banner);
 }
 
-showVersionChip();
-// A short delay so the first check doesn't contend with initial load; then periodic re-checks.
-setTimeout(checkForUpdate, 4000);
-setInterval(checkForUpdate, CHECK_INTERVAL_MS);
+// Browser-only kickoff — guarded so importing this module under Node (to unit-test its pure
+// logic, e.g. showBanner) doesn't touch a non-existent `document`/`window`, and doesn't arm a
+// REAL, never-cleared 30-minute setInterval that would keep `node --test` from ever exiting (the
+// same pattern saveload.js's own autosave-timer guard already uses). In the browser `window`
+// always exists, so this still runs unconditionally, exactly as before.
+if (typeof window !== "undefined") {
+  showVersionChip();
+  // A short delay so the first check doesn't contend with initial load; then periodic re-checks.
+  setTimeout(checkForUpdate, 4000);
+  setInterval(checkForUpdate, CHECK_INTERVAL_MS);
+}

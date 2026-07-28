@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { game } from "../session.js";
+// Pure engine/fixture modules — no DOM/window reference anywhere in their own code or import
+// graph (engine/galaxy.js, engine/state.js — see test/saveload.test.js's header comment for the
+// identical reasoning about createGalaxy), so safe to import statically here, before the document
+// stub below even exists. jumpReadyGalaxy is the shared "pad, staged ship, funded" origin fixture
+// test/odyssey.test.js's own jumpCapital tests already use — reused below (P2 finding, near the
+// bottom of this file) so initiateJump's own tests don't re-roll it slightly differently.
+import { jumpReadyGalaxy } from "./_helpers.js";
+import { makeBuilding } from "../engine/state.js";
 
 /* ============================================================
    boot.js's pause-reason refcounting is the #4 finding from the test-suite review (boot.js
@@ -77,7 +85,7 @@ globalThis.document = {
   removeEventListener() {},
 };
 
-const { pauseLoop, resumeLoop, togglePause, startGame } = await import("../boot.js");
+const { pauseLoop, resumeLoop, togglePause, startGame, initiateJump } = await import("../boot.js");
 // dom.js is already loaded (boot.js imports it statically) — re-importing it here just returns
 // the SAME cached module, i.e. the SAME `pauseBtn` object boot.js's syncPause() mutates. A
 // second, independent observable of the same `manual` boolean: the topbar button's label.
@@ -313,4 +321,138 @@ test("resolveSeed(): a null setup.seed draws a fresh, valid unsigned-32-bit seed
   hideObjectives();
   game.state = null;
   resetSetup();
+});
+
+/* ============================================================
+   P2 finding: initiateJump's afford + needsPick gating (boot.js, `export function
+   initiateJump(destId)`). Exported, so — unlike difficultyDials/resolveSeed above — it's
+   directly importable; the interesting part is exercising its three branches for real, against a
+   genuine galaxy (jumpReadyGalaxy from test/_helpers.js — the same "pad, staged ship, funded"
+   origin fixture test/odyssey.test.js's own jumpCapital tests already use):
+
+     1. Can't afford it (g.credits < jumpCost(g, destId)) -> null. initiateJump's own header
+        comment: "a jump that plain can't happen still fails fast, synchronously, with no picker
+        ever shown" — jumpCapital re-validates the SAME afford check internally, so this check
+        alone isn't provable on the immediate-jump branch (double-gated there either way); it only
+        bites for real on the needsPick=true branch, where — without it — a picker would open for
+        a jump the player can't actually complete. So the test below deliberately targets a
+        destination with NO player Spaceport (needsPick would be true if reached), the same shape
+        as test 3 below, just unaffordable.
+     2. Affordable, and the destination ALREADY has a player Spaceport (playerSpaceports(dest).length
+        > 0) -> `needsPick` is false (engine/galaxy.js's landingZone already knows where "home" is
+        there) -> jumps immediately, returning jumpCapital's own summary object — NOT the bare
+        `true` the picker branch returns.
+     3. Affordable, destination has NO player Spaceport, origin can actually launch (canJump) -> a
+        pick genuinely applies -> returns `true`, having deferred the real jump to the landing
+        picker's own onPick callback (landingPicker.js openLandingPicker).
+
+   Branch 3 drives the REAL landingPicker.js openLandingPicker — a named ES-module import inside
+   boot.js, so it can't be swapped for a spy from outside (and this repo's CI matrix runs Node 20
+   too, where node:test's `mock.module` isn't available even if the target were only 22+). Read in
+   full (landingPicker.js) for exactly what DOM surface it touches: div/h2/p/canvas/button elements
+   via document.createElement, a 2D context to draw into, and one document.body.appendChild for the
+   overlay itself — landingPickEl/withLandingPickDom below build just enough of a document for it
+   to run to completion for real, and the overlay it genuinely appends is the observable proof a
+   picker really opened. The swap is installed and restored inside EACH test body (never at module
+   scope), so it can never affect another test regardless of where in the file it's written — every
+   test body here only runs after this whole module's own top-level evaluation (every statement in
+   this file, top to bottom) has already finished.
+   ============================================================ */
+
+// A no-op-Proxy 2D context — same idiom as test/hudSelection.test.js's fakeCtx(): any method call
+// tolerated, any property read/write round-trips through a plain backing object — so
+// openLandingPicker's draw() (fillStyle/fillRect/strokeStyle/beginPath/arc/stroke/…) runs to
+// completion without hand-enumerating the canvas API.
+function fakeLandingPickCtx() {
+  return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
+}
+// Everything document.createElement(...) needs to survive a REAL openLandingPicker() call
+// (confirmed by reading it in full): setAttribute/append/focus/remove beyond what this file's own
+// stubEl() above offers, plus a WORKING (not null) 2D context specifically for its canvas.
+function landingPickEl(tag) {
+  return {
+    addEventListener() {}, removeEventListener() {},
+    classList: makeClassList(), style: {}, dataset: {},
+    getContext() { return tag === "canvas" ? fakeLandingPickCtx() : null; },
+    appendChild(c) { return c; }, append() {}, setAttribute() {}, remove() {}, focus() {},
+    querySelector() { return landingPickEl("div"); },
+  };
+}
+// Swap in a document capable of running the real openLandingPicker for the duration of `fn`
+// (synchronous), returning whatever got appended to document.body — restored in a `finally` so a
+// failing assertion can never leak the swap into a later test.
+function withLandingPickDom(fn) {
+  const appended = [];
+  const originalCreateElement = document.createElement;
+  const originalAppendChild = document.body.appendChild;
+  document.createElement = tag => landingPickEl(tag);
+  document.body.appendChild = c => { appended.push(c); return c; };
+  try { fn(); } finally { document.createElement = originalCreateElement; document.body.appendChild = originalAppendChild; }
+  return appended;
+}
+
+test("initiateJump: insufficient credits returns null without opening a picker or launching", () => {
+  resetPause();
+  game.input = null;   // isolate from whatever attachInput() the startGame-driving tests above left behind
+  const g = jumpReadyGalaxy(101);
+  const originId = g.activeId;
+  const destId = g.worlds.find(w => w !== g.activeId);   // never-visited -> jumpCost(g, destId) > 0, and starts with no player Spaceport
+  g.credits = 0;                                          // can't afford ANY nonzero-cost jump
+  game.galaxy = g;
+
+  const appended = withLandingPickDom(() => {
+    assert.equal(initiateJump(destId), null, "an unaffordable jump must return null");
+  });
+  assert.equal(appended.length, 0, "no landing-picker overlay should ever have been created for a jump that can't be paid for");
+  assert.equal(g.activeId, originId, "no jump can have happened — the active world is unchanged");
+  assert.equal(g.credits, 0, "nothing was spent");
+
+  game.galaxy = null;
+  resetPause();
+});
+
+test("initiateJump: a destination that already has a player Spaceport needs no pick and jumps immediately", () => {
+  resetPause();
+  game.input = null;
+  const g = jumpReadyGalaxy(102);
+  const destId = g.worlds.find(w => w !== g.activeId);
+  const dest = g.planets.get(destId);
+  // Stand a finished Spaceport right on the destination — the exact shape test/landing.test.js's
+  // own "a Spaceport already standing at the destination" fixture uses.
+  const destPad = makeBuilding("spaceport", "player", dest.map.bases.player.x + 40, dest.map.bases.player.y);
+  dest.buildings.set(destPad.id, destPad);   // playerSpaceports(dest).length > 0 -> needsPick is false
+  game.galaxy = g;
+
+  const result = initiateJump(destId);
+  assert.notEqual(result, true, "an immediate jump must return jumpCapital's own result object, never the bare `true` the picker branch returns");
+  assert.ok(result && typeof result === "object" && result.destId === destId,
+    "the returned value is the real jump summary (engine/galaxy.js jumpCapital)");
+  assert.equal(g.activeId, destId, "the jump actually ran synchronously — the active world changed");
+
+  game.galaxy = null;
+  game.state = null;
+  game.input = null;
+  resetPause();
+});
+
+test("initiateJump: a destination with no player Spaceport, origin launch-ready, opens a landing picker and defers the jump", () => {
+  resetPause();
+  game.input = null;
+  const g = jumpReadyGalaxy(103);
+  const originId = g.activeId;
+  const destId = g.worlds.find(w => w !== g.activeId);   // never-visited, unsettled -> starts with no player Spaceport
+  const creditsBefore = g.credits;
+  game.galaxy = g;
+
+  const appended = withLandingPickDom(() => {
+    assert.equal(initiateJump(destId), true, "a pick that genuinely applies returns the bare `true` sentinel, not a jump result");
+  });
+  assert.equal(appended.length, 1, "the real landing picker (landingPicker.js openLandingPicker) should have appended its overlay to document.body");
+  assert.equal(appended[0].className, "landing-pick-confirm", "…specifically the landing-pick overlay, identifiable by its own class");
+  assert.equal(g.activeId, originId, "the jump itself is DEFERRED to the picker's own onPick — nothing has moved yet");
+  assert.equal(g.credits, creditsBefore, "fuel isn't spent until the jump actually launches from onPick, not merely from opening the picker");
+
+  resumeLoop("landing-pick");   // this test never drives the picker's own onPick/onCancel, so clear the pause it opened
+  game.galaxy = null;
+  resetPause();
 });
