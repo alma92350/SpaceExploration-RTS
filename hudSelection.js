@@ -326,6 +326,11 @@ export function renderSelectionPanel() {
     const rows = panelEl.querySelectorAll(".recycle-progress");
     recycling.forEach((e, i) => { if (rows[i]) rows[i].textContent = recycleRowText(e); });
   }
+
+  // Keep a rendered Market panel's prices and Buy/Sell afford state live every tick — see
+  // refreshMarketRows (above renderMarket) for why trading can't just rely on the rebuild
+  // signature the patches above lean on.
+  if (game.galaxy && state.market) refreshMarketRows(state);
 }
 
 // "♻ Recycling Plasma Rig — 42%" — shared by the rebuild and the live patch so they never drift.
@@ -365,6 +370,47 @@ function renderQueueRows(building) {
   });
 }
 
+// One market row's live numbers — the label's price and both buttons' afford text/state.
+// Shared by renderMarket (the initial build, right below) and refreshMarketRows (the every-tick
+// live patch further below) so the two can never drift apart.
+function marketRowFields(state, com) {
+  // Reuse the commodity's data icon (data.js COM) — the same emblem the resource readout uses.
+  const meta = COM[com];
+  const res = state.players.player.resources;
+  const have = Math.floor(res[com] || 0);
+  const sellPrice = unitPrice(state.market, com, "sell");
+  const buyPrice = unitPrice(state.market, com, "buy");
+  return {
+    label: `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} ◈${Math.round(sellPrice)}`,
+    sellDisabled: have < TRADE_LOT,
+    sellTitle: `Sell ${TRADE_LOT} ${com} for ~◈${Math.round(sellPrice * TRADE_LOT)}`,
+    buyDisabled: !(game.galaxy.credits >= buyPrice * TRADE_LOT),
+    buyTitle: `Buy ${TRADE_LOT} ${com} for ~◈${Math.round(buyPrice * TRADE_LOT)}`,
+  };
+}
+
+// Live-patch every Market row already in the DOM: the price label, and each Buy/Sell button's
+// disabled state + tooltip. Called once right after renderMarket builds the rows, and again on
+// every renderSelectionPanel() tick (hudSelection.js's own signature-guard section) — a trade's
+// slippage relaxes back toward equilibrium continuously (engine/market.js updateMarket), so the
+// underlying price is nearly always drifting. That has to be a PATCH, not folded into the panel's
+// rebuild signature: the signature only triggers a full rebuild — tearing down and recreating the
+// very Buy/Sell buttons the player may be repeatedly clicking — which is the dropped-click hazard
+// the rebuild-signature guard exists to avoid (see the comment above renderSelectionPanel's own
+// signature). Patching text/class/title in place instead keeps the price live with zero risk of
+// replacing a button out from under an in-flight click.
+function refreshMarketRows(state) {
+  panelEl.querySelectorAll(".market-row").forEach(row => {
+    const fields = marketRowFields(state, row.dataset.com);
+    const label = row.querySelector(".market-com");
+    if (label) label.textContent = fields.label;
+    const sellBtn = row.querySelector(".market-sell");
+    if (sellBtn) { sellBtn.className = "market-btn market-sell" + (fields.sellDisabled ? " disabled" : ""); sellBtn.title = fields.sellTitle; }
+    const buyBtn = row.querySelector(".market-buy");
+    if (buyBtn) { buyBtn.className = "market-btn market-buy" + (fields.buyDisabled ? " disabled" : ""); buyBtn.title = fields.buyTitle; }
+  });
+}
+
 // The Odyssey trade panel, shown under a finished Market building (moved off the Command
 // Center so a destroyed/absent CC doesn't strand a colony without a market). One row per
 // tradeable commodity: its live sell price, and Sell/Buy buttons in fixed lots. Selling
@@ -391,31 +437,24 @@ function renderMarket(state) {
   for (const com of coms) {
     const row = document.createElement("div");
     row.className = "market-row";
+    row.dataset.com = com;
 
     const label = document.createElement("span");
     label.className = "market-com";
-    // Reuse the commodity's data icon (data.js COM) — the same emblem the resource readout uses.
-    const meta = COM[com];
-    label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} ◈${Math.round(unitPrice(state.market, com, "sell"))}`;
     row.appendChild(label);
 
-    const have = Math.floor(res[com] || 0);
     const sellBtn = document.createElement("button");
-    sellBtn.className = "market-btn" + (have < TRADE_LOT ? " disabled" : "");
+    sellBtn.className = "market-btn market-sell";
     sellBtn.textContent = `Sell ${TRADE_LOT}`;
-    sellBtn.title = `Sell ${TRADE_LOT} ${com} for ~◈${Math.round(unitPrice(state.market, com, "sell") * TRADE_LOT)}`;
     sellBtn.addEventListener("click", () => {
       if (Math.floor(res[com] || 0) >= TRADE_LOT) { sell(game.galaxy, state, com, TRADE_LOT); renderHUD(); }
       else sound.playProductionBlocked();
     });
     row.appendChild(sellBtn);
 
-    const buyPrice = unitPrice(state.market, com, "buy");
-    const canBuy = game.galaxy.credits >= buyPrice * TRADE_LOT;
     const buyBtn = document.createElement("button");
-    buyBtn.className = "market-btn" + (canBuy ? "" : " disabled");
+    buyBtn.className = "market-btn market-buy";
     buyBtn.textContent = `Buy ${TRADE_LOT}`;
-    buyBtn.title = `Buy ${TRADE_LOT} ${com} for ~◈${Math.round(buyPrice * TRADE_LOT)}`;
     buyBtn.addEventListener("click", () => {
       if (game.galaxy.credits >= unitPrice(state.market, com, "buy") * TRADE_LOT) { buy(game.galaxy, state, com, TRADE_LOT); renderHUD(); }
       else sound.playProductionBlocked();
@@ -424,6 +463,7 @@ function renderMarket(state) {
 
     panelEl.appendChild(row);
   }
+  refreshMarketRows(state);
 }
 
 // Commodities a freighter panel offers to load: anything already aboard, or anything the player

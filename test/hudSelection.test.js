@@ -53,8 +53,23 @@ class FakeElement extends EventTarget {
   append(...cs) { this.children.push(...cs); }
   set innerHTML(v) { if (v === "") this.children = []; }   // the only value rebuildSelectionPanel ever assigns it
   get innerHTML() { return ""; }
-  querySelector() { return null; }    // renderSelectionPanel's live-patch ("skip") branch tolerates this —
-  querySelectorAll() { return []; }   // it always guards with `if (row) …` / `rows[i] &&`, never assumes a hit
+  // A minimal REAL selector: every call site in hudSelection.js queries a single class name
+  // (".market-row", ".queue-label", ".recycle-progress", …) — never a combinator or attribute
+  // selector — so a depth-first walk matching one class per node is enough. This used to return
+  // null/[] unconditionally, which every live-patch call site tolerates (`if (row) …` / `rows[i]
+  // &&`) — fine for TARGETs 1-4 above, none of which ever reach a patch branch with a populated
+  // queue/research/recycle/market row to find. TARGET 5 below needs the opposite: proof that a
+  // SPECIFIC node's text/class really changed in place, which requires a real match, not a
+  // guaranteed miss.
+  _queryAll(selector) {
+    const cls = selector.slice(1);
+    const out = [];
+    const walk = kids => { for (const c of kids) { if (c._classes?.has(cls)) out.push(c); if (c.children) walk(c.children); } };
+    walk(this.children);
+    return out;
+  }
+  querySelector(selector) { return this._queryAll(selector)[0] || null; }
+  querySelectorAll(selector) { return this._queryAll(selector); }
   // makeButton's {kind,type} icon path (render.js spriteIcon, called for every produce/build
   // button) draws into a real 2D context and reads canvas.toDataURL() back. Both have to
   // succeed, or spriteIcon's own catch fires a console.error on EVERY icon button, on every
@@ -104,6 +119,7 @@ const { panelEl } = await import("../dom.js");
 const { renderSelectionPanel, resetSelectionSignature } = await import("../hudSelection.js");
 const { queueProduction, researchUpgrade } = await import("../engine/production.js");
 const { UNITS, UPGRADES } = await import("../engine/entities.js");
+const { createMarket, TRADE_LOT } = await import("../engine/market.js");
 
 // Mirrors hudSelection.js's own module-private costText() (hudSelection.js:1509) — kept local so
 // a button's label is matched against UNITS' REAL cost, not a hand-typed "50 ore" that could
@@ -496,4 +512,103 @@ test("Refinery research: with the SAME doctrine committed, an unmet Tier-1 alone
   assert.ok(btn, "expected the Field Recycling research button in the rebuilt panel");
   assert.ok(btn.classList.contains("disabled"));
   assert.equal(btn.title, "Requires Rapid Fabrication", "same doctrine ⇒ only the tier-locked message applies");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 5 — the reported bug: the Market panel's price/afford-state live patch
+   (hudSelection.js's marketRowFields/refreshMarketRows). A Buy or Sell trade mutates
+   engine/market.js's trade pressure, but touches nothing renderSelectionPanel's rebuild
+   SIGNATURE tracks (selection, queue, upgrades, collapsed sections, …) — so the price the panel
+   shows has to be kept live by patching the existing row's nodes in place, on every
+   renderSelectionPanel() tick, not by waiting for a rebuild that a trade alone never triggers.
+   Before the fix, this left the price frozen until the player deselected the Market and
+   reselected it (the only thing that forces a rebuild).
+   --------------------------------------------------------------------------------------------- */
+
+// A finished Market building, selected alone, with a real price book (engine/market.js
+// createMarket). Mirrors setup()'s shape but swaps the Command Center for a Market. Both the ore
+// stockpile and the credit balance are absurd on purpose: availabilitySignature() (hudSelection.js)
+// folds "can the player afford every UNIT/BUILDING/UPGRADE cost" into the panel's rebuild
+// signature, and some upgrade costs run into the thousands (TARGET 4 above uses 2000) — a modest
+// ore balance could cross one of those lines after a couple of trade lots and trigger a REAL
+// rebuild, which is a legitimate reason to rebuild (TARGET 2 covers it) but would wrongly conflate
+// with what THESE tests isolate: a trade that crosses no such line and must be a pure live patch.
+// 1e7/1e9 sit far above every real cost table, so a handful of TRADE_LOTs can never cross one.
+function setupMarket(seed) {
+  const { state } = setup(seed);
+  const market = makeBuilding("market", "player", 500, 500);
+  state.buildings.set(market.id, market);
+  state.selection = [market.id];
+  state.market = createMarket(state);
+  state.players.player.resources.ore = 1e7;
+  game.galaxy = { credits: 1e9 };
+  return { state, market };
+}
+
+function marketRow(com) {
+  return panelEl.querySelectorAll(".market-row").find(r => r.dataset.com === com);
+}
+
+// Ore runs cheap on an ore-rich map (e.g. base 5 on ferros) — one lot's ~5% slippage can round to
+// the same displayed integer and make a text-equality assertion flaky. Several lots' worth of
+// slippage compounds past any rounding boundary regardless of the map's (seed-dependent) base
+// price — confirmed against every seed these tests use before picking this constant.
+const PROBE_LOTS = 4;
+
+test("clicking Sell in the Market panel refreshes that row's price and Sell button in place — no rebuild needed", () => {
+  const { state } = setupMarket(301);
+
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  assert.ok(row, "expected an 'ore' row in the rebuilt Market panel");
+  const oreBefore = state.players.player.resources.ore;
+  const priceBefore = row.querySelector(".market-com").textContent;
+  const sellBtn = row.querySelector(".market-sell");
+  assert.ok(sellBtn, "expected a Sell button in the ore row");
+
+  for (let i = 0; i < PROBE_LOTS; i++) sellBtn.click();   // sell(): drops stock, crashes the price — neither touches the rebuild signature
+  assert.equal(state.players.player.resources.ore, oreBefore - PROBE_LOTS * TRADE_LOT, "sanity: the clicks really sold that many lots");
+
+  const rowAfter = marketRow("ore");
+  assert.equal(rowAfter, row, "the row must still be the SAME node — a live patch, not a rebuild");
+  const priceAfter = rowAfter.querySelector(".market-com").textContent;
+  assert.notEqual(priceAfter, priceBefore,
+    "the displayed price must move as the trades land — this is the reported bug: it used to stay " +
+    "frozen at the pre-trade price until the Market was deselected and reselected");
+});
+
+test("clicking Buy in the Market panel refreshes that row's price and Buy button in place — no rebuild needed", () => {
+  const { state } = setupMarket(302);
+
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  const oreBefore = state.players.player.resources.ore;
+  const priceBefore = row.querySelector(".market-com").textContent;
+  const buyBtn = row.querySelector(".market-buy");
+  assert.ok(buyBtn, "expected a Buy button in the ore row");
+  const buyTitleBefore = buyBtn.title;
+
+  for (let i = 0; i < PROBE_LOTS; i++) buyBtn.click();   // buy(): adds stock, pushes the price the OTHER direction
+  assert.equal(state.players.player.resources.ore, oreBefore + PROBE_LOTS * TRADE_LOT, "sanity: the clicks really bought that many lots");
+
+  const rowAfter = marketRow("ore");
+  assert.equal(rowAfter, row, "the row must still be the SAME node — a live patch, not a rebuild");
+  assert.notEqual(rowAfter.querySelector(".market-com").textContent, priceBefore,
+    "buying must also refresh the live price, not just selling");
+  assert.notEqual(rowAfter.querySelector(".market-buy").title, buyTitleBefore,
+    "the Buy button's own tooltip (its cost for the next lot) must move too, since the price it quotes just did");
+});
+
+test("the Market panel's live patch survives an UNRELATED renderSelectionPanel tick (the normal 150ms HUD poll) without losing the fresh price", () => {
+  setupMarket(303);
+
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  for (let i = 0; i < PROBE_LOTS; i++) row.querySelector(".market-sell").click();
+  const priceAfterSell = row.querySelector(".market-com").textContent;
+
+  renderSelectionPanel();   // an ordinary tick — nothing changed since the clicks' own renderHUD() already patched it
+  assert.equal(marketRow("ore"), row, "an unrelated tick must not rebuild the row either");
+  assert.equal(marketRow("ore").querySelector(".market-com").textContent, priceAfterSell,
+    "the price must stay exactly what the trades set it to — not drift, not revert");
 });
