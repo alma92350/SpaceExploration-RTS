@@ -21,6 +21,7 @@ import { deployColonyShip } from "./colony.js";
 import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
 import { affordableOnSurface, aiDoctrine } from "./aiWorkers.js";
 import { pickNextUnitType, visibleEnemyForceCount } from "./aiMilitary.js";
+import { difficultyFor } from "./aiDifficulty.js";
 
 const HOME_RADIUS = 420;          // nodes this close to an AI CC count as "home" economy
 const CLAIM_RADIUS = 260;         // a cluster with any CC this close is already claimed
@@ -142,10 +143,13 @@ export function aiBaseAndTech(state, ctx) {
   // AI builds the LABOUR its economy needs, the same investment the player makes. Odyssey only (the
   // industry that drives it is odysseyOnly); a skirmish keeps the archetype's flat workerTarget.
   // strategy.workerTargetMult (engine/aiStrategy.js Economic) leans further into economy still; 1 (a
-  // no-op) for every other strategy, so this is unchanged until a match opts into one.
+  // no-op) for every other strategy, so this is unchanged until a match opts into one. Layered again by
+  // difficultyFor(state).workerTargetMult (engine/aiDifficulty.js) — Easy trims it, Hard grows it — 1 at
+  // Medium (a no-op), the same multiplicative composition as the strategy layer right above it.
   const industryCount = state.endless
     ? buildings.filter(b => !b.constructing && (recipeOf(b) || BUILDINGS[b.type].rig)).length : 0;
-  const workerTarget = arch("workerTarget") * (strategy.workerTargetMult || 1) + industryCount * 2;   // ~MAX_SERVERS worth of haulers per factory/rig
+  const workerTarget = arch("workerTarget") * (strategy.workerTargetMult || 1) * (difficultyFor(state).workerTargetMult || 1)
+    + industryCount * 2;   // ~MAX_SERVERS worth of haulers per factory/rig
   if (cc && workers.length < workerTarget && cc.queue.length === 0 && canAct(state)) {
     if (queueProduction(state, cc.id, "worker")) spend(state);
   }

@@ -39,9 +39,12 @@ test("upgrades form three mutually-exclusive doctrines — two tiers each, excep
   assert.deepEqual(UPGRADES.rapidFabrication.requires, ["logisticsNetwork"]);
   assert.deepEqual(UPGRADES.recycling.requires, ["rapidFabrication"], "T3 requires T2");
   // Assault and Bulwark are exactly two tiers; Logistics runs a third (Field Recycling) — and
-  // every tier-2-or-later requires the tier right below it.
+  // every tier-2-or-later requires the tier right below it. Filtered to doctrine-bearing
+  // entries only — a difficulty-only entry like hardEdge (Hard's seeded economic edge,
+  // engine/aiDifficulty.js) has no doctrine on purpose (see committedDoctrine) and isn't
+  // part of this grouping.
   const byDoctrine = {};
-  for (const u of Object.values(UPGRADES)) (byDoctrine[u.doctrine] ??= []).push(u);
+  for (const u of Object.values(UPGRADES).filter(u => u.doctrine)) (byDoctrine[u.doctrine] ??= []).push(u);
   assert.deepEqual(Object.keys(byDoctrine).sort(), ["assault", "bulwark", "logistics"]);
   assert.equal(byDoctrine.assault.length, 2);
   assert.equal(byDoctrine.bulwark.length, 2);
@@ -68,6 +71,18 @@ test("committedDoctrine reports the chosen path, and is null before any research
   assert.equal(committedDoctrine(s, "player"), null, "nothing researched -> no doctrine");
   s.players.player.upgrades.reinforcedPlating = true;
   assert.equal(committedDoctrine(s, "player"), "bulwark", "a Bulwark upgrade commits the Bulwark doctrine");
+});
+
+test("committedDoctrine ignores a non-doctrine UPGRADES entry (hardEdge, Hard difficulty's seeded economic edge)", () => {
+  assert.equal(UPGRADES.hardEdge.doctrine, undefined, "hardEdge must stay doctrine-less by design");
+  // Seeded alone (as it would be at game creation, before any real doctrine research), it must
+  // NOT read as "committed to the undefined doctrine" — that would silently disable the
+  // doctrine lock in researchUpgrade for the rest of the match.
+  const s = { players: { player: { upgrades: { hardEdge: true } } } };
+  assert.equal(committedDoctrine(s, "player"), null, "hardEdge alone commits to nothing");
+  // And it must not mask a REAL commitment sitting alongside it, regardless of key order.
+  s.players.player.upgrades.logisticsNetwork = true;
+  assert.equal(committedDoctrine(s, "player"), "logistics", "the real doctrine pick still resolves with hardEdge present");
 });
 
 test("the tech tree extends past the Foundry: Arsenal (needs Foundry) -> Dreadnought", () => {
