@@ -2,8 +2,10 @@
    AI DIFFICULTY (engine/aiDifficulty.js): the Easy/Medium/Hard pick from the splash
    screen, orthogonal to the archetype and the player-picked strategy — see the
    module header for the full design. Tier 0 (scaffold: state.ai.difficulty,
-   difficultyFor, round-trip) and Tier 1 (the first three economic dials — worker
-   target, war patience, the seeded economic edge) both land here.
+   difficultyFor, round-trip) and Tier 1 (worker target, war patience, the seeded
+   economic edge) both land here. Tier 2 (AI-only research pace) is table-shape-only
+   here — its actual behavioral coverage lives in test/techtree.test.js, alongside
+   updateResearch/researchTimeScale, which it composes with.
    ============================================================ */
 
 import { test } from "node:test";
@@ -28,20 +30,19 @@ test("Medium carries no economic dial fields — the baseline every dial is rela
   }
 });
 
-test("researchPaceMult and marketAccess are still unset on every tier — reserved for a later tier", () => {
+test("marketAccess is still unset on every tier — reserved for a later tier", () => {
   for (const opt of DIFFICULTY_OPTIONS) {
-    assert.equal(opt.researchPaceMult, undefined, `${opt.mult}.researchPaceMult not landed yet`);
     assert.equal(opt.marketAccess, undefined, `${opt.mult}.marketAccess not landed yet`);
   }
 });
 
-test("Easy softens worker target and war patience; Hard sharpens both, plus the economic edge", () => {
+test("Easy softens worker target, war patience, and research pace; Hard sharpens all three, plus the economic edge", () => {
   const easy = DIFFICULTY_OPTIONS.find(o => o.mult === "easy");
   const hard = DIFFICULTY_OPTIONS.find(o => o.mult === "hard");
-  assert.ok(easy.workerTargetMult < 1 && easy.graceMult > 1 && easy.grievanceMult < 1,
-    "Easy: a smaller economy and a longer diplomatic fuse");
-  assert.ok(hard.workerTargetMult > 1 && hard.graceMult < 1 && hard.grievanceMult > 1,
-    "Hard: a bigger economy and a shorter diplomatic fuse");
+  assert.ok(easy.workerTargetMult < 1 && easy.graceMult > 1 && easy.grievanceMult < 1 && easy.researchPaceMult > 1,
+    "Easy: a smaller economy, a longer diplomatic fuse, and slower research (a LARGER pace divisor is slower progress)");
+  assert.ok(hard.workerTargetMult > 1 && hard.graceMult < 1 && hard.grievanceMult > 1 && hard.researchPaceMult < 1,
+    "Hard: a bigger economy, a shorter diplomatic fuse, and faster research (a SMALLER pace divisor is faster progress)");
   assert.equal(hard.economicEdge, true);
   assert.equal(easy.economicEdge, undefined, "Easy gets no economic edge");
 });
