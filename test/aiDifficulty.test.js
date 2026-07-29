@@ -5,7 +5,9 @@
    difficultyFor, round-trip) and Tier 1 (worker target, war patience, the seeded
    economic edge) both land here. Tier 2 (AI-only research pace) is table-shape-only
    here — its actual behavioral coverage lives in test/techtree.test.js, alongside
-   updateResearch/researchTimeScale, which it composes with.
+   updateResearch/researchTimeScale, which it composes with. Tier 3 (market barter)
+   is the same split: the gating tests are here, aiBarter's own mechanism is covered
+   in test/market.test.js alongside sell/buy, which it composes with.
    ============================================================ */
 
 import { test } from "node:test";
@@ -14,6 +16,7 @@ import { createGameState, makeUnit } from "../engine/state.js";
 import { createGalaxy, activeState } from "../engine/galaxy.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { runAI } from "../engine/ai.js";
+import { aiMarketBarter } from "../engine/aiEconomy.js";
 import { createDiplomacy, updateDiplomacy } from "../engine/diplomacy.js";
 import { UPGRADES } from "../engine/entities.js";
 import { DIFFICULTY_OPTIONS, difficultyFor } from "../engine/aiDifficulty.js";
@@ -22,18 +25,17 @@ const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force 
 
 /* ---------- the table + resolution (Tier 0) ---------- */
 
-test("Medium carries no economic dial fields — the baseline every dial is relative to", () => {
+test("Medium carries none of the archetype-scaling dials — the baseline every one of them is relative to", () => {
   const medium = DIFFICULTY_OPTIONS.find(o => o.mult === "medium");
-  for (const field of ["workerTargetMult", "graceMult", "grievanceMult", "economicEdge",
-                        "researchPaceMult", "marketAccess"]) {
+  for (const field of ["workerTargetMult", "graceMult", "grievanceMult", "economicEdge", "researchPaceMult"]) {
     assert.equal(medium[field], undefined, `medium.${field} should be unset`);
   }
 });
 
-test("marketAccess is still unset on every tier — reserved for a later tier", () => {
-  for (const opt of DIFFICULTY_OPTIONS) {
-    assert.equal(opt.marketAccess, undefined, `${opt.mult}.marketAccess not landed yet`);
-  }
+test("marketAccess unlocks for Medium and Hard alike (a competence fix, not a Hard-only edge); Easy stays without it", () => {
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "easy").marketAccess, undefined, "Easy: kept simple for a new player");
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "medium").marketAccess, true);
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "hard").marketAccess, true);
 });
 
 test("Easy softens worker target, war patience, and research pace; Hard sharpens all three, plus the economic edge", () => {
@@ -173,4 +175,36 @@ test("hardEdge is doctrine-less and excluded from the player-facing Refinery pan
   assert.equal(UPGRADES.hardEdge.aiOnly, true);
   assert.equal(typeof UPGRADES.hardEdge.gatherYieldMult, "number");
   assert.equal(typeof UPGRADES.hardEdge.produceTimeMult, "number");
+});
+
+/* ---------- Tier 3: market barter gating (the mechanism itself is test/market.test.js) ---------- */
+
+test("aiMarketBarter never fires on Easy, even against an enormous surplus", () => {
+  const g = createGalaxy({ seed: 3, difficulty: "easy" });
+  const s = activeState(g);
+  s.players.ai.resources.ore = 1_000_000;
+  const before = { ...s.players.ai.resources };
+  aiMarketBarter(s);
+  assert.deepEqual(s.players.ai.resources, before, "Easy has no marketAccess — a pure no-op regardless of surplus");
+});
+
+test("aiMarketBarter fires on Medium and Hard alike against a real surplus", () => {
+  for (const difficulty of ["medium", "hard"]) {
+    const g = createGalaxy({ seed: 3, difficulty });
+    const s = activeState(g);
+    s.players.ai.resources.ore = 1_000_000;
+    const oreBefore = s.players.ai.resources.ore;
+    aiMarketBarter(s);
+    assert.ok(s.players.ai.resources.ore < oreBefore, `${difficulty}: a real trade actually moved the surplus`);
+  }
+});
+
+test("aiMarketBarter is a no-op outside Odyssey — there's no state.market to trade on", () => {
+  const skirmish = createGameState({ planetId: "ferros", difficulty: "hard" });
+  assert.equal(skirmish.market, undefined, "sanity: a bare skirmish state really has no market");
+  assert.doesNotThrow(() => aiMarketBarter(skirmish));
+
+  const bareEndless = createGameState({ planetId: "ferros", endless: true, difficulty: "hard" });
+  assert.equal(bareEndless.market, undefined, "sanity: state.market is only ever set by galaxy.js's addPlanet, not createGameState itself");
+  assert.doesNotThrow(() => aiMarketBarter(bareEndless));
 });

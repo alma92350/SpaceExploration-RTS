@@ -44,7 +44,7 @@
      • aiStrategy.js   — the player-picked strategy table (Aggressive/Economic/Force Parity)
      • aiWorkers.js    — idle-worker logistics/gather steering + the unit-mix filters
      • aiMilitary.js   — defend/attack waves, focus-fire, the scout, target/mix picks
-     • aiEconomy.js    — base build-out, expansion, tech gates, production, research
+     • aiEconomy.js    — base build-out, expansion, tech gates, production, research, market barter
      • aiIndustry.js   — the Odyssey factory chain / power / capital path / rig
      • aiSuperweapon.js — arms/delivers a built Helium Bomb
    The phase order in runAI is load-bearing (shared action budget + ore reserves),
@@ -58,7 +58,7 @@ import { playerBuildings, playerUnits } from "./state.js";
 import { accrueActionBudget } from "./aiCommon.js";
 import { assignIdleWorkers } from "./aiWorkers.js";
 import { updateScout, aiMilitary, applyFocusFire, visibleThreatsNearHome } from "./aiMilitary.js";
-import { aiFoundOrSurvive, aiExpand, aiBaseAndTech, aiProduceAndFortify, aiResearch } from "./aiEconomy.js";
+import { aiFoundOrSurvive, aiExpand, aiBaseAndTech, aiProduceAndFortify, aiResearch, aiMarketBarter } from "./aiEconomy.js";
 import { aiIndustry } from "./aiIndustry.js";
 import { aiSuperweapon } from "./aiSuperweapon.js";
 import { strategyFor } from "./aiStrategy.js";
@@ -85,6 +85,7 @@ export function runAI(state, dt) {
   aiBaseAndTech(state, ctx);       // workers, supply, Barracks, the Foundry/Arsenal tech gates, the Mender
   aiProduceAndFortify(state, ctx); // the shared unit-production cycle, Turrets, a 2nd Barracks, Refineries
   aiResearch(state, ctx);          // one doctrine upgrade per think cycle
+  aiMarketBarter(state);           // Odyssey, Medium+/Hard only: convert a surplus into this cycle's bottleneck
   aiIndustry(state, ctx);          // Odyssey: power the base + electrify it (deeper phases: the factory chain)
   aiMilitary(state, ctx);          // defend a pressed base, else muster and commit the next wave
   aiSuperweapon(state, ctx);       // Odyssey: arm/deliver a built Helium Bomb (engine/aiSuperweapon.js)

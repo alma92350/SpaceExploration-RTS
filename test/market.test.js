@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST, loadFreighter, unloadFreighter } from "../engine/galaxy.js";
-import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT } from "../engine/market.js";
+import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT, aiBarter } from "../engine/market.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
+import { SPENDABLE, UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
 
 test("createGalaxy hands every world its own price book", () => {
   const g = createGalaxy({ seed: 5 });
@@ -203,4 +204,77 @@ test("loadFreighter/unloadFreighter reject a zero or negative quantity outright 
 
   assert.equal(s.players.player.resources.alloys, 100, "the stockpile is untouched by every zero/negative call above");
   assert.equal(f.freight.alloys, 40, "the hold is untouched by every zero/negative call above");
+});
+
+/* ---------- aiBarter (Tier 3 of the section-08 economic-dial proposal) ---------- */
+
+// The largest amount any single unit/building/upgrade costs of `com` — the same "one big
+// purchase" yardstick aiBarter itself measures surplus/bottleneck against (market.js's private
+// MAX_SINGLE_COST), recomputed here so the test can set a baseline that's provably safe per
+// commodity instead of guessing one flat number (a cheap-only commodity like AI Cores needs a
+// much smaller "not surplus yet" baseline than ore does).
+function maxSingleCostFor(com) {
+  let max = 0;
+  for (const d of [...Object.values(UNITS), ...Object.values(BUILDINGS), ...Object.values(UPGRADES)])
+    max = Math.max(max, d.cost?.[com] || 0);
+  return max;
+}
+
+// Every spendable commodity set to 2x its OWN max-single-cost — comfortably below aiBarter's 5x
+// surplus threshold for every commodity uniformly, and (since that's always > 0) comfortably
+// above the "0" a test then sets on exactly one commodity to make it the unambiguous minimum. So
+// a test can single out one clear surplus and one clear bottleneck without needing to know
+// aiBarter's internal tie-break order (SPENDABLE's own fixed declaration order) to predict the rest.
+function levelAiResources(state) {
+  for (const com of SPENDABLE) state.players.ai.resources[com] = 2 * maxSingleCostFor(com);
+}
+
+test("aiBarter is a no-op when nothing is oversupplied past the surplus threshold", () => {
+  const g = createGalaxy({ seed: 3 });
+  const s = activeState(g);
+  levelAiResources(s);
+  const before = { ...s.players.ai.resources };
+  assert.equal(aiBarter(s), null);
+  assert.deepEqual(s.players.ai.resources, before, "resources are untouched on a no-op cycle");
+});
+
+test("aiBarter converts the AI's clearest surplus into its clearest bottleneck, moving both sides' market pressure", () => {
+  const g = createGalaxy({ seed: 3 });
+  const s = activeState(g);
+  levelAiResources(s);
+  s.players.ai.resources.ore = 100000;         // unambiguously the highest coverage
+  s.players.ai.resources.radioactives = 0;     // unambiguously the lowest (strictly under the 50 baseline)
+  const oreBefore = s.players.ai.resources.ore;
+  const pressureOreBefore = s.market.pressure.ore || 0, pressureRadBefore = s.market.pressure.radioactives || 0;
+
+  const trade = aiBarter(s);
+  assert.ok(trade, "a real trade happens once something clears the surplus bar");
+  assert.equal(trade.from, "ore");
+  assert.equal(trade.to, "radioactives");
+  assert.ok(trade.qty > 0 && trade.gained > 0);
+  assert.equal(s.players.ai.resources.ore, oreBefore - trade.qty, "the surplus side pays out exactly qty");
+  assert.equal(s.players.ai.resources.radioactives, trade.gained, "the bottleneck side receives exactly gained");
+  assert.ok((s.market.pressure.ore || 0) < pressureOreBefore, "selling ore locally nudges its price down");
+  assert.ok((s.market.pressure.radioactives || 0) > pressureRadBefore, "buying radioactives locally nudges its price up");
+});
+
+test("aiBarter never touches galaxy.credits — it's a same-planet conversion, not a sale", () => {
+  const g = createGalaxy({ seed: 3 });
+  const s = activeState(g);
+  levelAiResources(s);
+  s.players.ai.resources.ore = 100000;
+  s.players.ai.resources.radioactives = 0;
+  const creditsBefore = g.credits;
+  assert.ok(aiBarter(s), "sanity: a real trade actually happens here");
+  assert.equal(g.credits, creditsBefore, "galaxy.credits is never read or written by aiBarter");
+});
+
+test("aiBarter caps a single trade at one lot, even against an enormous surplus", () => {
+  const g = createGalaxy({ seed: 3 });
+  const s = activeState(g);
+  levelAiResources(s);
+  s.players.ai.resources.ore = 10_000_000;
+  s.players.ai.resources.radioactives = 0;
+  const trade = aiBarter(s);
+  assert.equal(trade.qty, TRADE_LOT, "one lot per think-cycle, same lot size the player's own trades use");
 });

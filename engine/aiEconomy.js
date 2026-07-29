@@ -22,6 +22,7 @@ import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
 import { affordableOnSurface, aiDoctrine } from "./aiWorkers.js";
 import { pickNextUnitType, visibleEnemyForceCount } from "./aiMilitary.js";
 import { difficultyFor } from "./aiDifficulty.js";
+import { aiBarter } from "./market.js";
 
 const HOME_RADIUS = 420;          // nodes this close to an AI CC count as "home" economy
 const CLAIM_RADIUS = 260;         // a cluster with any CC this close is already claimed
@@ -375,6 +376,19 @@ export function aiResearch(state, ctx) {
       if (researchUpgrade(state, refinery.id, u.id)) { spend(state); break; }
     }
   }
+}
+
+// MARKET BARTER (Tier 3, engine/aiDifficulty.js marketAccess — Medium and Hard): convert a
+// commodity the AI is sitting on well past anything it could spend into whichever spendable
+// commodity it's shortest on, at this world's live market rate (engine/market.js aiBarter) —
+// never touching galaxy.credits, since there's no AI-side credit account to spend from. Odyssey-
+// only (state.market is an Odyssey concept, set once per world in engine/galaxy.js addPlanet) and
+// gated by the AI's own APM budget like every other decision, so this needs no separate pacing
+// dial of its own — Hard's higher APM already means more frequent barters for free.
+/** @param {State} state */
+export function aiMarketBarter(state) {
+  if (!state.endless || !state.market || !difficultyFor(state).marketAccess) return;
+  if (canAct(state) && aiBarter(state)) spend(state);
 }
 
 // Fraction of home ore still in the ground: remaining/max summed over every

@@ -18,6 +18,7 @@
 "use strict";
 
 import { COM, PLANETS } from "../data.js";
+import { UNITS, BUILDINGS, UPGRADES, SPENDABLE } from "./entities.js";
 
 // EVERY commodity is tradeable — the whole catalog (data.js COM), so nothing you can hold is a
 // dead counter. Equilibrium base prices come straight from the commodity table (COM.base), the
@@ -169,4 +170,60 @@ export function tradeables(state) {
   const present = new Set(state.map.nodes.map(n => n.com));
   const res = state.players.player.resources;
   return TRADEABLE.filter(c => present.has(c) || (res[c] || 0) > 0);
+}
+
+/* ---------- AI barter (Tier 3 of the section-08 economic-dial proposal) ---------- */
+
+// A fixed, deterministic iteration order over every commodity anything in the game actually
+// costs — SPENDABLE (entities.js) is a Set built by walking UNITS/BUILDINGS/UPGRADES in their
+// own fixed declaration order, so this is stable run to run: the tie-break for "most/least
+// surplus" below is simply "first encountered in this order", never an unseeded sort.
+const SPENDABLE_ORDER = [...SPENDABLE];
+
+// The largest amount any SINGLE unit/building/upgrade ever costs of `com` — computed once, the
+// "one big purchase" yardstick both surplus and bottleneck are measured against below, so the
+// two read on the same scale regardless of how differently priced two commodities are (a
+// world drowning in 500 radioactives and one drowning in 500 ore aren't equally oversupplied
+// if a single Colony Ship alone costs 500 ore).
+const MAX_SINGLE_COST = (() => {
+  const max = {};
+  for (const d of [...Object.values(UNITS), ...Object.values(BUILDINGS), ...Object.values(UPGRADES)])
+    for (const [com, qty] of Object.entries(d.cost || {})) max[com] = Math.max(max[com] || 0, qty);
+  return max;
+})();
+
+const BARTER_LOT = TRADE_LOT;        // same lot size the player's own trades use
+const SURPLUS_COVER = 5;             // holding > 5x the priciest single purchase ⇒ nothing to spend this on soon
+
+// One AI barter trade this think-cycle, all priced off THIS world's own live market — a
+// same-planet CONVERSION, never touching galaxy.credits (there is no AI-side credit account;
+// see engine/aiDifficulty.js's section-08 note on why sell/buy couldn't be reused as-is).
+// Finds the AI's most oversupplied spendable commodity (coverage — resources held, in units of
+// "how many of the priciest single purchase" — past SURPLUS_COVER) and its scarcest (lowest
+// coverage), and converts one LOT of the former into the latter at the market's current
+// sell/buy prices, applying the same slippage a player trade would. Returns
+// `{ from, to, qty, gained }` on a real trade, `null` on a no-op cycle (nothing oversupplied
+// enough yet, or fewer than two spendable commodities in play on this world).
+export function aiBarter(state) {
+  const market = state.market;
+  const res = state.players.ai.resources;
+  let surplus = null, surplusCover = SURPLUS_COVER;
+  let short = null, shortCover = Infinity;
+  for (const com of SPENDABLE_ORDER) {
+    const cover = (res[com] || 0) / MAX_SINGLE_COST[com];
+    if (cover > surplusCover) { surplusCover = cover; surplus = com; }
+    if (cover < shortCover) { shortCover = cover; short = com; }
+  }
+  if (!surplus || !short || surplus === short) return null;   // nothing oversupplied, or only one commodity in play
+
+  const qty = Math.min(BARTER_LOT, Math.floor(res[surplus]));
+  if (qty <= 0) return null;
+  const rate = unitPrice(market, surplus, "sell") / unitPrice(market, short, "buy");
+  const gained = qty * rate;
+
+  res[surplus] -= qty;
+  res[short] = (res[short] || 0) + gained;
+  applySlippage(market, surplus, qty / BARTER_LOT, -1);
+  applySlippage(market, short, gained / BARTER_LOT, +1);
+  return { from: surplus, to: short, qty, gained };
 }
