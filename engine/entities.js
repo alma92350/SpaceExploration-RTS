@@ -811,6 +811,17 @@ export const UNITS = {
   },
 };
 
+// Every commodity that anything (a unit, a building, an upgrade) actually costs — computed
+// once. Shared by aiWorkers.js's assignIdleWorkers (so a poor-economy world's AI, e.g. Glacius'
+// ice/gas it can never spend, prefers nodes it can actually use) and market.js's AI barter (so
+// it never treats an already-dead-end commodity as a real "bottleneck" to trade toward).
+export const SPENDABLE = (() => {
+  const coms = new Set();
+  for (const d of [...Object.values(UNITS), ...Object.values(BUILDINGS), ...Object.values(UPGRADES)])
+    for (const com of Object.keys(d.cost || {})) coms.add(com);
+  return coms;
+})();
+
 export function canAfford(resources, cost) {
   return Object.entries(cost).every(([com, qty]) => (resources[com] || 0) >= qty);
 }

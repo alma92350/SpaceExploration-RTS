@@ -33,6 +33,13 @@
    tech tree) applies it to the AI's OWN research only, never the player's, even on
    the same tech-rated world; doctrine upgrades (production.js's instant-on-afford
    researchUpgrade) aren't timed at all, so this dial doesn't touch them.
+
+   Tier 3 adds marketAccess — unlocks market.js's aiBarter (called from
+   aiEconomy.js's aiMarketBarter, gated through the AI's own APM budget like every
+   other decision). Medium and Hard both get it; Easy doesn't, so a new player
+   isn't shown an AI that "trades" in a way they can't yet see or counter. No
+   separate throttle needed: Hard's higher APM already means more frequent
+   barters for free, the same way it already means more frequent everything else.
    ============================================================ */
 
 "use strict";
@@ -40,9 +47,10 @@
 export const DIFFICULTY_OPTIONS = [
   { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false,
     workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85, researchPaceMult: 1.3 },
-  { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false },
+  { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false, marketAccess: true },
   { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
-    workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75 },
+    workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75,
+    marketAccess: true },
 ];
 
 /** The active difficulty entry for this match — DIFFICULTY_OPTIONS' medium entry when

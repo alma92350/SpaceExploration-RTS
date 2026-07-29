@@ -9,22 +9,16 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, prereqsMet } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, prereqsMet, SPENDABLE } from "./entities.js";
 import { assignService, assignHaul, countLogistics } from "./haul.js";
 import { assignRepair, countRepairJobs } from "./repair.js";
 import { isNodeDiscovered } from "./fog.js";
 
 const SATURATION_STEER = 250;     // distance-equivalent penalty per worker a node is over the soft cap
 
-// Every commodity that anything the AI builds actually costs — computed once.
+// SPENDABLE (entities.js): every commodity that anything the AI builds actually costs.
 // assignIdleWorkers prefers nodes of these types so a poor-economy world's AI
 // (Glacius: ice/gas it can never spend) doesn't mine dead-end commodities.
-const SPENDABLE = (() => {
-  const coms = new Set();
-  for (const d of [...Object.values(UNITS), ...Object.values(BUILDINGS), ...Object.values(UPGRADES)])
-    for (const com of Object.keys(d.cost || {})) coms.add(com);
-  return coms;
-})();
 
 // Give a BOUNDED share of the AI's idle workers real logistics jobs — servicing factories (carry
 // inputs in, outputs out), hauling pure producers (the Plasma Rig) to a Command Center, and
