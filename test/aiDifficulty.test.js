@@ -88,12 +88,13 @@ test("createGameState wires opts.difficulty onto state.ai.difficulty", () => {
   assert.equal(difficultyFor(s), DIFFICULTY_OPTIONS.find(o => o.mult === "hard"));
 });
 
-test("createGalaxy threads settings.difficulty down into every planet's state.ai.difficulty, not just the active one", () => {
+test("createGalaxy threads settings.difficulty onto the active (start) planet's state.ai.difficulty", () => {
+  // Superseded by the varied-neighbour feature (test/livingGalaxy.test.js): every OTHER world now
+  // resolves its own independent difficulty (neighbourAiProfile, engine/galaxy.js) rather than
+  // mirroring this setting everywhere — only the player's actual start seat still matches it exactly.
   const g = createGalaxy({ seed: 11, difficulty: "hard" });
   assert.equal(g.settings.difficulty, "hard");
-  for (const state of g.planets.values()) {
-    assert.equal(state.ai.difficulty, "hard", `world ${state.planetId} should inherit the galaxy's difficulty`);
-  }
+  assert.equal(g.planets.get(g.activeId).ai.difficulty, "hard", "the start world matches the player's pick");
   assert.equal(activeState(g).ai.difficulty, "hard");
 });
 

@@ -100,6 +100,22 @@ Match the surrounding code: the same comment density (this codebase explains *wh
 the same naming, the same idioms. Prefer a small pure helper in the right module over a clever
 one-liner. Add or update a test for any behavioural change.
 
+## Test-Driven Development
+
+For a new feature or a behavioural change, write the test(s) first, from the requirement, before
+writing the implementation:
+
+1. Turn the requirement into one or more `node:test` cases in the file where that behavior
+   belongs (see the existing suite for the idiom — direct state construction, no mocks). Do this
+   from what the feature is supposed to do, not by reading ahead into a planned implementation.
+2. Run them and confirm they fail for the right reason (a missing export, an assertion against
+   current behavior) — red before green.
+3. Implement the smallest change that makes them pass, following the rest of this guide (purity,
+   determinism, save versioning).
+4. Run the whole suite (`npm test`) and `npm run typecheck` — a new feature can surface a
+   now-outdated assumption in an older test; update that test's assertion to the new, intended
+   contract rather than deleting coverage.
+
 ## Commits
 
 - Keep commits focused and their messages descriptive — say what changed and why, and note that
