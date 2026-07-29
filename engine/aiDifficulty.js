@@ -40,6 +40,13 @@
    isn't shown an AI that "trades" in a way they can't yet see or counter. No
    separate throttle needed: Hard's higher APM already means more frequent
    barters for free, the same way it already means more frequent everything else.
+
+   Tier 4 adds rusherGraduates (Hard only — the one identity-level change, not just
+   a number): past aiIndustry.js's RUSHER_GRADUATE_TIME into an Odyssey world, a
+   non-developing archetype (today, only a Rusher) picks up the deep factory chain
+   a patient developer would, the same third condition strategy.wantsIndustryAlways
+   already is on that gate. Skirmish is untouched by construction (aiIndustry.js
+   returns on !state.endless before this is ever read).
    ============================================================ */
 
 "use strict";
@@ -50,7 +57,7 @@ export const DIFFICULTY_OPTIONS = [
   { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false, marketAccess: true },
   { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
     workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75,
-    marketAccess: true },
+    marketAccess: true, rusherGraduates: true },
 ];
 
 /** The active difficulty entry for this match — DIFFICULTY_OPTIONS' medium entry when

@@ -7,7 +7,10 @@
    here — its actual behavioral coverage lives in test/techtree.test.js, alongside
    updateResearch/researchTimeScale, which it composes with. Tier 3 (market barter)
    is the same split: the gating tests are here, aiBarter's own mechanism is covered
-   in test/market.test.js alongside sell/buy, which it composes with.
+   in test/market.test.js alongside sell/buy, which it composes with. Tier 4
+   (rusherGraduates) is table-shape-only here too — its actual behavior lives in
+   test/aiIndustry.test.js, right alongside the "Rusher skips the deep chain" test
+   it carves an exception into.
    ============================================================ */
 
 import { test } from "node:test";
@@ -47,6 +50,12 @@ test("Easy softens worker target, war patience, and research pace; Hard sharpens
     "Hard: a bigger economy, a shorter diplomatic fuse, and faster research (a SMALLER pace divisor is faster progress)");
   assert.equal(hard.economicEdge, true);
   assert.equal(easy.economicEdge, undefined, "Easy gets no economic edge");
+});
+
+test("rusherGraduates is Hard-only — the one identity-level dial, not just a number", () => {
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "easy").rusherGraduates, undefined);
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "medium").rusherGraduates, undefined);
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "hard").rusherGraduates, true);
 });
 
 test("every difficulty option still names its two original dials (aiApm, aiMicro) and its key", () => {

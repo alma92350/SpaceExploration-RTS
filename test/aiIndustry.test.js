@@ -184,6 +184,37 @@ test("a Rusher AI electrifies but skips the deep factory chain (temperament pres
   assert.ok(!built.has("smelter") && !built.has("datacenter"), "a Rusher builds no factory chain");
 });
 
+// Tier 4 (engine/aiDifficulty.js rusherGraduates, Hard only): past RUSHER_GRADUATE_TIME, a Rusher
+// picks up the same deep chain a patient developer would — tested at the DECISION level (the
+// existing "developer AI opens the industrial chain" idiom above), not a real-time simulation.
+test("a Rusher AI on Hard, once its opening rush is long past, graduates into the deep factory chain", () => {
+  const s = aiBase("korrath");
+  s.ai.difficulty = "hard";
+  s.time = 1300;   // past RUSHER_GRADUATE_TIME (1200)
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(aiTypes(s).has("smelter"), "graduated: the Rusher raised a Smelter");
+  assert.ok(aiTypes(s).has("datacenter"), "…and a Datacenter to research");
+});
+
+test("a Rusher AI on Hard but still within its opening rush window has not graduated yet", () => {
+  const s = aiBase("korrath");
+  s.ai.difficulty = "hard";
+  s.time = 500;   // well before RUSHER_GRADUATE_TIME (1200)
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(!aiTypes(s).has("smelter") && !aiTypes(s).has("datacenter"), "too soon to graduate — still a lean Rusher");
+});
+
+test("a Rusher AI on Medium never graduates, however long the game runs — rusherGraduates is Hard-only", () => {
+  const s = aiBase("korrath");
+  s.ai.difficulty = "medium";
+  s.time = 5000;   // far past RUSHER_GRADUATE_TIME — only the difficulty gate should be stopping it now
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(!aiTypes(s).has("smelter") && !aiTypes(s).has("datacenter"), "Medium keeps the Rusher's temperament forever");
+});
+
 // Phase 4 — the capital path. Tested at the DECISION level (runAI issues the build/queue immediately,
 // via issueBuild/queueProduction) rather than simulating the ~10-minute climb, so it stays fast.
 test("with the Strategic tree standing, the AI founds a Star Dock and a Plasma Rig", () => {
