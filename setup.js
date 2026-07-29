@@ -13,6 +13,8 @@ import { PLANETS } from "./data.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { STRATEGIES } from "./engine/aiStrategy.js";
+import { DIFFICULTY_OPTIONS } from "./engine/aiDifficulty.js";
+export { DIFFICULTY_OPTIONS };   // re-exported: boot.js and a few tests still import it from here
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame, hasOdysseySave, loadOdyssey } from "./saveload.js";
 import { APP_VERSION } from "./version.js";
@@ -36,18 +38,6 @@ const RESOURCE_OPTIONS = [
   { label: "Rare", mult: 0.6, note: "lean deposits" },
   { label: "Normal", mult: 1.0, note: "balanced" },
   { label: "Abundant", mult: 1.5, note: "rich deposits" },
-];
-// Difficulty bundles the two dials — how FAST the opponent acts (aiApm) and
-// whether it MICROS its army (aiMicro) — into one Easy/Medium/Hard pick, plus
-// the picker's own label/note. This is the ONE list of valid difficulty keys:
-// it drives the Easy/Medium/Hard buttons here AND (via boot.js's difficultyDials,
-// which looks a key up in this same array) the AI dials a match actually runs
-// with — so a key can never exist in one place and not the other, which used to
-// let a mismatched difficulty silently downgrade to Medium instead of erroring.
-export const DIFFICULTY_OPTIONS = [
-  { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false },
-  { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false },
-  { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true },
 ];
 // Playable factions for the setup picker — a passive-trait identity for your side
 // (engine/factions.js). Each option's `mult` is the faction id, its note the short

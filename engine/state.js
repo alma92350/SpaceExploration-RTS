@@ -80,7 +80,7 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
  * regenerates deterministically from the seed, so two same-option runs are identical.
  * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
  *   resourceMult?: number, endless?: boolean, aiApm?: number, aiMicro?: boolean,
- *   aiStrategy?: string, playerFaction?: string, aiFaction?: string }} [opts]
+ *   aiStrategy?: string, difficulty?: string, playerFaction?: string, aiFaction?: string }} [opts]
  * @returns {State}
  */
 export function createGameState(opts = {}) {
@@ -156,6 +156,7 @@ export function createGameState(opts = {}) {
       apm: opts.aiApm ?? null,      // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
       micro: opts.aiMicro ?? false, // Tactical AI: unit-level micro (focus-fire, kiting). Off by default (and in tests).
       strategy: opts.aiStrategy || "default",   // player-picked AI strategy (engine/aiStrategy.js) — "default" ⇒ byte-identical to today
+      difficulty: opts.difficulty || "medium",  // splash-screen Easy/Medium/Hard pick (engine/aiDifficulty.js) — read via difficultyFor(state)
       lastThreatAt: null,     // sim-time of the last seen threat near home — drives the Economic strategy's war-footing window (engine/ai.js)
       actionBudget: 0,        // accumulated action credits (see engine/ai.js's accrueActionBudget)
       attackForce: 0,         // size of the current committed attack at its peak — drives the retreat check (ai.js)

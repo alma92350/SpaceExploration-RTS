@@ -218,6 +218,7 @@
  * @property {{x:number, y:number}|null} colonyTarget
  * @property {number|null} apm
  * @property {boolean} micro
+ * @property {string} difficulty   splash-screen Easy/Medium/Hard pick (engine/aiDifficulty.js), read via difficultyFor(state)
  * @property {number} actionBudget
  * @property {number} attackForce
  * @property {boolean} attackDesperate

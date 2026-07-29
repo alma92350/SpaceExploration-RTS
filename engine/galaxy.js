@@ -132,7 +132,8 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   const aiFaction = archetypeFor(planetId).faction || "neutral";
   const state = createGameState({
     planetId, seed, rng: mulberry32(seed),
-    aiApm: s.aiApm, aiMicro: s.aiMicro, aiStrategy: s.aiStrategy, sizeMult: s.sizeMult, resourceMult: s.resourceMult,
+    aiApm: s.aiApm, aiMicro: s.aiMicro, aiStrategy: s.aiStrategy, difficulty: s.difficulty,
+    sizeMult: s.sizeMult, resourceMult: s.resourceMult,
     playerFaction: s.playerFaction, aiFaction, endless: true,
   });
   if (unsettled) {
