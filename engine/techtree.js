@@ -21,6 +21,7 @@
 
 import { PLANETS } from "../data.js";
 import { canAfford, payCost, prereqsMet } from "./entities.js";
+import { difficultyFor } from "./aiDifficulty.js";
 
 // The tree. `cost` is gathered commodities (paid on start); `time` is seconds to
 // develop at a tech-5 world (scaled by researchTimeScale). `requires` are prereq
@@ -89,6 +90,15 @@ export function techMult(upgrades, field) {
   return m;
 }
 
+// Difficulty's research-pace dial (engine/aiDifficulty.js), applied to the AI's OWN
+// Datacenter research only — never the player's, even on the same tech-rated world.
+// researchTimeScale above is deliberately per-WORLD (a Syndicate hub is fast for
+// whoever researches there); this is the one further, per-OWNER layer on top of it.
+// 1 (a no-op) for the player and for every difficulty that doesn't set the field.
+function aiResearchPaceMult(state, owner) {
+  return owner === "ai" ? (difficultyFor(state).researchPaceMult || 1) : 1;
+}
+
 // Advance a Datacenter's research QUEUE by dt — a no-op for anything that isn't a
 // completed Datacenter with a queued job. Develops the head of the queue; on
 // completion the node lands in player.upgrades (where prereqsMet/techMult read it),
@@ -101,7 +111,7 @@ export function updateResearch(state, building, dt) {
   const job = queue[0];
   const def = TECHS[job.techId];
   if (!def) { queue.shift(); return; }
-  job.progress += dt / (def.time * researchTimeScale(state));
+  job.progress += dt / (def.time * researchTimeScale(state) * aiResearchPaceMult(state, building.owner));
   if (job.progress >= 1) {
     state.players[building.owner].upgrades[job.techId] = true;
     queue.shift();

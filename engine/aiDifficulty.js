@@ -28,16 +28,21 @@
        (entities.js) onto the AI's own upgrades at creation (engine/state.js), which
        gather.js/production.js already pick up via the existing generic upgradeMult
        — no plumbing changes needed there at all.
+
+   Tier 2 adds researchPaceMult — techtree.js's updateResearch (the Odyssey Datacenter
+   tech tree) applies it to the AI's OWN research only, never the player's, even on
+   the same tech-rated world; doctrine upgrades (production.js's instant-on-afford
+   researchUpgrade) aren't timed at all, so this dial doesn't touch them.
    ============================================================ */
 
 "use strict";
 
 export const DIFFICULTY_OPTIONS = [
   { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false,
-    workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85 },
+    workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85, researchPaceMult: 1.3 },
   { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false },
   { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
-    workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true },
+    workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75 },
 ];
 
 /** The active difficulty entry for this match — DIFFICULTY_OPTIONS' medium entry when

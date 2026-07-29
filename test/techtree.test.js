@@ -4,13 +4,15 @@ import { createGameState, makeBuilding } from "../engine/state.js";
 import { TECHS, researchTech, updateResearch, researchTimeScale, techMult } from "../engine/techtree.js";
 import { BUILDINGS, prereqsMet } from "../engine/entities.js";
 
-// A datacenter owned by the player on an endless world, with commodities to burn.
-function odysseyWithDatacenter(planetId = "ferros") {
-  const state = createGameState({ planetId, endless: true });
-  const dc = makeBuilding("datacenter", "player", 600, 500);
+// A datacenter on an endless world, with commodities to burn — owned by the player by
+// default, but an AI-owned one (and any extra createGameState opts, e.g. difficulty) can be
+// asked for too, for the AI-only research-pace tests below.
+function odysseyWithDatacenter(planetId = "ferros", owner = "player", stateOpts = {}) {
+  const state = createGameState({ planetId, endless: true, ...stateOpts });
+  const dc = makeBuilding("datacenter", owner, 600, 500);
   state.buildings.set(dc.id, dc);
-  state.players.player.resources.crystals = 1000;
-  state.players.player.resources.radioactives = 1000;
+  state.players[owner].resources.crystals = 1000;
+  state.players[owner].resources.radioactives = 1000;
   return { state, dc };
 }
 
@@ -109,6 +111,32 @@ test("research develops faster on a high-tech world than a frontier one, and is 
   const lo = createGameState({ planetId: "oort", endless: true });        // tech 2
   assert.ok(researchTimeScale(hi) < researchTimeScale(lo), "Kybernet out-researches Oort");
   assert.ok(researchTimeScale(hi) >= 0.5 && researchTimeScale(lo) <= 2, "clamped so no world is punishing");
+});
+
+/* ---------- difficulty's research-pace dial (Tier 2, engine/aiDifficulty.js) — AI-only ---------- */
+
+test("Hard's AI researches faster, and Easy's slower, than Medium's — at the identical world/tech/job", () => {
+  const progressAfterOneTick = difficulty => {
+    const { state, dc } = odysseyWithDatacenter("ferros", "ai", { difficulty });
+    researchTech(state, dc.id, "metallurgy");
+    updateResearch(state, dc, 1);
+    return dc.researchQueue[0].progress;
+  };
+  const easy = progressAfterOneTick("easy"), medium = progressAfterOneTick("medium"), hard = progressAfterOneTick("hard");
+  assert.ok(hard > medium, "Hard's AI develops the identical job faster than Medium's");
+  assert.ok(medium > easy, "Medium's AI develops the identical job faster than Easy's");
+});
+
+test("difficulty's research-pace dial never touches the PLAYER's own research, even on an AI-favoring difficulty", () => {
+  const progressAfterOneTick = difficulty => {
+    const { state, dc } = odysseyWithDatacenter("ferros", "player", { difficulty });
+    researchTech(state, dc.id, "metallurgy");
+    updateResearch(state, dc, 1);
+    return dc.researchQueue[0].progress;
+  };
+  const easy = progressAfterOneTick("easy"), medium = progressAfterOneTick("medium"), hard = progressAfterOneTick("hard");
+  assert.equal(easy, medium, "the player's pace is identical on Easy...");
+  assert.equal(hard, medium, "...Medium, and Hard alike — this dial reads building.owner, not who's asking");
 });
 
 test("passive nodes multiply industry through techMult; unlock nodes carry no passive field", () => {
