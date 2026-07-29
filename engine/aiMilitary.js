@@ -16,6 +16,7 @@ import { hostility } from "./diplomacy.js";
 import { chargingPlayerWonder } from "./wonder.js";
 import { canAct, spend } from "./aiCommon.js";
 import { effectiveMix } from "./aiWorkers.js";
+import { playerUnits, playerBuildings } from "./state.js";
 
 const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
 
@@ -136,6 +137,15 @@ function aiOffense(state, ctx, nonScout) {
     // — see the "score, not combat" test in test/aiStrategy.test.js. Odyssey never needed a
     // timeout here at all (a world doesn't require combat to resolve), so this is the one
     // regime where the guard is new.
+    //
+    // playerHasPresence guards the Odyssey commit the same way: the living galaxy
+    // instantiates every world from turn one, but a world the player hasn't reached yet
+    // starts with zero player units or buildings (engine/galaxy.js addPlanet's `unsettled`
+    // seeding). Its diplomacy still drifts to war on its own (scarcity, late-game creep),
+    // so without this guard the neighbour would muster and commit waves at chooseAttackTarget's
+    // empty fallback coordinate forever — production spent chasing nobody. Skirmish is
+    // untouched (it never reaches this branch), and the guard clears the moment the player
+    // has anything at all here, so a real expedition still gets fought over normally.
     let strike = [], desperate = false;
     if (cc) {
       if (!state.diplomacy) {
@@ -144,7 +154,7 @@ function aiOffense(state, ctx, nonScout) {
           strike = withoutHomeGuard(homeArmy, cc, timedOut ? 0 : effGarrison);
           desperate = timedOut;
         }
-      } else if (!strategy.neverInitiates) {
+      } else if (!strategy.neverInitiates && playerHasPresence(state)) {
         const h = hostility(state);
         const pm = (archetype.odyssey && archetype.odyssey.probeMin) || PROBE_MIN;   // archetype's Odyssey probe floor (Rusher 5 > Economist 4 > default 3)
         const muster = Math.max(pm, Math.round(effArmyAttackSize * h));
@@ -282,6 +292,17 @@ function withoutHomeGuard(homeArmy, cc, garrison) {
   const byDistHome = homeArmy.slice().sort((a, b) =>
     Math.hypot(a.x - cc.x, a.y - cc.y) - Math.hypot(b.x - cc.x, b.y - cc.y));
   return byDistHome.slice(garrison);   // drop the closest `garrison` — they stay home
+}
+
+// Does the player have ANYTHING at all on this world — a unit or a building, either
+// counts? Deliberately NOT fog-gated, unlike the AI's other reactive reads
+// (visibleEnemyForceCount, counterToPlayerArmy, visibleThreatsNearHome): those ask "what
+// can the AI currently see", this asks "could a wave possibly find anyone at all" — a
+// background world the player has never reached has zero of both (engine/galaxy.js
+// addPlanet's `unsettled` seeding strips them at creation), and no amount of fog-of-war
+// nuance changes that a wave sent there fights nobody.
+function playerHasPresence(state) {
+  return playerUnits(state, "player").length > 0 || playerBuildings(state, "player").length > 0;
 }
 
 // Where to send the wave. Prefer a seen enemy Command Center (the win
