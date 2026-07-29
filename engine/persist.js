@@ -404,6 +404,10 @@ function serPlanet(state) {
       // way aiApm/aiMicro already are (not re-derived like the archetype, since it's not a function of
       // planetId), so an old save without the field defaults to "default" (byte-identical to today).
       aiStrategy: state.ai.strategy || "default",
+      // The splash-screen Easy/Medium/Hard pick (engine/aiDifficulty.js) — persisted the same
+      // redundant-per-planet way aiApm/aiMicro/aiStrategy already are, so an old save without the
+      // field defaults to "medium" (the same fallback difficultyFor(state) itself applies).
+      aiDifficulty: state.ai.difficulty || "medium",
       // Sim-time of the last seen threat near home (drives Economic's war-footing window,
       // engine/ai.js). Additive + nullish-defaulted, so an old save without it loads as "no recent
       // threat" — the safe, conservative default (a freshly reloaded game reads as being at peace).
@@ -557,6 +561,7 @@ function rehydratePlanet(P) {
       scoutId: P.ai.aiScoutId, think: P.ai.aiThink,
       apm: P.ai.aiApm, micro: P.ai.aiMicro,
       strategy: P.ai.aiStrategy || "default",
+      difficulty: P.ai.aiDifficulty || "medium",
       lastThreatAt: P.ai.aiLastThreatAt ?? null,
       actionBudget: P.ai.aiActionBudget,
       attackForce: P.ai.aiAttackForce, attackDesperate: P.ai.aiAttackDesperate,

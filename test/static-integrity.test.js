@@ -98,17 +98,19 @@ test("data.js's lore-flavor faction data has its own name — no duplicate FACTI
 });
 
 // Regression guard: boot.js used to keep its own hand-maintained easy/medium/hard -> {aiApm,
-// aiMicro} map, entirely separate from setup.js's DIFFICULTY_OPTIONS (which drives the
-// Easy/Medium/Hard picker). If the two ever drifted — a difficulty key added to one list but
-// not the other — `DIFFICULTY[setup.difficulty] || DIFFICULTY.medium` silently downgraded an
-// unrecognised difficulty to Medium instead of erroring. setup.js's DIFFICULTY_OPTIONS is now
-// the one list carrying the AI dials too, and boot.js derives from it.
-test("setup.js's DIFFICULTY_OPTIONS is the single source of every difficulty's AI dials; boot.js derives from it", () => {
+// aiMicro} map, entirely separate from the list driving the Easy/Medium/Hard picker. If the two
+// ever drifted — a difficulty key added to one list but not the other —
+// `DIFFICULTY[setup.difficulty] || DIFFICULTY.medium` silently downgraded an unrecognised
+// difficulty to Medium instead of erroring. engine/aiDifficulty.js's DIFFICULTY_OPTIONS is the
+// one list carrying the AI dials (and, going forward, any economic difficulty fields) — setup.js
+// imports it for the picker rather than keeping its own copy, and boot.js derives from it too.
+test("engine/aiDifficulty.js's DIFFICULTY_OPTIONS is the single source of every difficulty's AI dials; setup.js and boot.js derive from it", () => {
+  const difficultySrc = readFileSync(join(root, "engine", "aiDifficulty.js"), "utf8");
   const setupSrc = readFileSync(join(root, "setup.js"), "utf8");
   const bootSrc = readFileSync(join(root, "boot.js"), "utf8");
 
-  const optionsBlock = setupSrc.match(/export const DIFFICULTY_OPTIONS\s*=\s*\[([\s\S]*?)\n\];/);
-  assert.ok(optionsBlock, "setup.js must export DIFFICULTY_OPTIONS");
+  const optionsBlock = difficultySrc.match(/export const DIFFICULTY_OPTIONS\s*=\s*\[([\s\S]*?)\n\];/);
+  assert.ok(optionsBlock, "engine/aiDifficulty.js must export DIFFICULTY_OPTIONS");
   const entries = [...optionsBlock[1].matchAll(/\{([^}]*)\}/g)].map(m => m[1]);
   assert.ok(entries.length >= 3, "expected at least the three Easy/Medium/Hard entries");
   for (const entry of entries) {
@@ -117,6 +119,10 @@ test("setup.js's DIFFICULTY_OPTIONS is the single source of every difficulty's A
     assert.match(entry, /aiMicro:\s*(true|false)/, `difficulty option missing its aiMicro dial (must live in the canonical list): ${entry}`);
   }
 
+  assert.doesNotMatch(setupSrc, /export const DIFFICULTY_OPTIONS\s*=\s*\[/,
+    "setup.js must not keep its own copy of DIFFICULTY_OPTIONS — that duplication is exactly the drift this guards against");
+  assert.match(setupSrc, /import\s*\{[^}]*\bDIFFICULTY_OPTIONS\b[^}]*\}\s*from\s*["']\.\/engine\/aiDifficulty\.js["']/,
+    "setup.js should import DIFFICULTY_OPTIONS from engine/aiDifficulty.js");
   assert.match(bootSrc, /import\s*\{[^}]*\bDIFFICULTY_OPTIONS\b[^}]*\}\s*from\s*["']\.\/setup\.js["']/,
     "boot.js should import DIFFICULTY_OPTIONS from setup.js rather than hardcoding its own difficulty list");
   assert.doesNotMatch(bootSrc, /easy:\s*\{\s*aiApm/,
