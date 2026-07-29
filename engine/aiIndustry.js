@@ -16,6 +16,15 @@ import { powerCap, powerDraw } from "./industry.js";
 import { researchTech } from "./techtree.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
+import { difficultyFor } from "./aiDifficulty.js";
+
+// Tier 4 (engine/aiDifficulty.js rusherGraduates, Hard only): how long into an Odyssey world a
+// non-developing archetype's opening rush has clearly either succeeded or become a non-factor —
+// past this, on Hard, it graduates into a patient developer rather than staying a permanent
+// flatline for the rest of what can be an hours-long session. Pure time, no wave-outcome
+// tracking needed: if the game is still running this far in, "wait for the rush to resolve, then
+// judge it" and "just check the clock" converge on the same answer.
+const RUSHER_GRADUATE_TIME = 1200;   // 20 minutes
 
 // The industrial build order the AI climbs (Odyssey), lowest tier first. prereqsMet gates each on
 // its `requires` (an earlier factory + a research node), so the AI can only raise the next one once
@@ -70,9 +79,15 @@ export function aiIndustry(state, ctx) {
   // the Refinery (Economist/Balanced build it; a Rusher does not). A Rusher stops at power+electrify —
   // UNLESS the player-picked strategy overrides it: Economic (aiStrategy.js wantsIndustryAlways) climbs
   // the deep chain regardless of archetype, since pure economy means using every economic capability
-  // in the game, even paired with a Rusher/Balanced world that wouldn't normally bother. The chain
-  // needs the grid, so wait for the Reactor before starting it either way.
-  if (!(archetype.wantsRefinery || strategy.wantsIndustryAlways) || !hasReactor) return;
+  // in the game, even paired with a Rusher/Balanced world that wouldn't normally bother. OR unless
+  // it's graduated (Tier 4, engine/aiDifficulty.js rusherGraduates — Hard only): a non-developing
+  // archetype whose opening rush is long since resolved one way or the other picks up the same deep
+  // chain a patient developer would, rather than sitting on a permanent 2-upgrade ceiling for the rest
+  // of what can be an hours-long Odyssey session. Skirmish is untouched regardless — this whole
+  // function already returned above on !state.endless, and a skirmish never runs this long anyway.
+  // The chain needs the grid, so wait for the Reactor before starting it either way.
+  const graduated = !!difficultyFor(state).rusherGraduates && state.time > RUSHER_GRADUATE_TIME;
+  if (!(archetype.wantsRefinery || strategy.wantsIndustryAlways || graduated) || !hasReactor) return;
 
   // FACTORY CHAIN: raise the next chain building whose prereqs (its earlier factory + its research
   // node) are met and that the AI doesn't already have, one per think cycle, reserve-aware. Spread
