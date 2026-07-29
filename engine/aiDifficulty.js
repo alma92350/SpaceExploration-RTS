@@ -14,17 +14,30 @@
    difficultyFor(state) the same defensive way engine/aiStrategy.js's
    strategyFor(state) already reads STRATEGIES — a multiplier field with `|| 1`
    at its use site, a flag read falsy — so an absent field or a legacy/unknown key
-   composes as a no-op. This file adds no such field yet: state.ai.difficulty and
-   this resolver are pure scaffold, unread by anything but their own test until a
-   dial is added on top.
+   composes as a no-op. Medium carries none of them at all (byte-identical to
+   unset), same as STRATEGIES.default — it's the baseline every dial is relative to.
+
+   Tier 1 dials (worker target, war patience, economic edge) compose
+   MULTIPLICATIVELY on top of whatever the archetype and player-picked strategy
+   already contribute — the same relationship Aggressive/Economic/Force Parity
+   already have with the archetype's own Odyssey overlay (aiArchetypes.js) — so
+   this is one more layer, not a replacement:
+     • workerTargetMult   — aiEconomy.js's workerTarget formula.
+     • graceMult/grievanceMult — diplomacy.js's updateDiplomacy war-onset composition.
+     • economicEdge       — seeds the synthetic `hardEdge` UPGRADES entry
+       (entities.js) onto the AI's own upgrades at creation (engine/state.js), which
+       gather.js/production.js already pick up via the existing generic upgradeMult
+       — no plumbing changes needed there at all.
    ============================================================ */
 
 "use strict";
 
 export const DIFFICULTY_OPTIONS = [
-  { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false },
+  { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false,
+    workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85 },
   { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false },
-  { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true },
+  { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
+    workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true },
 ];
 
 /** The active difficulty entry for this match — DIFFICULTY_OPTIONS' medium entry when

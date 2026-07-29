@@ -12,6 +12,7 @@ import { generateMap } from "./map.js";
 import { BUILDINGS, UNITS } from "./entities.js";
 import { createFog, updateFog } from "./fog.js";
 import { archetypeFor } from "./aiArchetypes.js";
+import { difficultyFor } from "./aiDifficulty.js";
 
 // Entity-id counter. Reset to 1 at the start of every createGameState (below)
 // so a fresh game is a pure function of its seed: two same-seed runs mint the
@@ -179,6 +180,12 @@ export function createGameState(opts = {}) {
   // pair. map.bases is keyed by owner id (engine/map.js).
   for (const id of owners) seedPlayer(state, id, map.bases[id]);
   for (const id of owners) updateFog(state, state.fogs[id], id);
+
+  // Hard difficulty's economic edge (engine/aiDifficulty.js): seed the synthetic hardEdge
+  // upgrade (entities.js) straight onto the AI's own upgrades, once, at creation — never
+  // researched, so it needs no Refinery/Datacenter and survives save/load via the ordinary
+  // player.upgrades round-trip (engine/persist.js) with no special-casing.
+  if (difficultyFor(state).economicEdge) state.players.ai.upgrades.hardEdge = true;
 
   return state;
 }

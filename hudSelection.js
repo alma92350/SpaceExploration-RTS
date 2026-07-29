@@ -97,6 +97,13 @@ function queueSignature(sel) {
   return prod + "#" + research;
 }
 
+// UPGRADES entries a human player can actually see/research at a Refinery — excludes a
+// difficulty-only entry like hardEdge (engine/aiDifficulty.js's economic edge), which is
+// seeded straight onto the AI's own upgrades at creation and was never meant to be a real,
+// purchasable, doctrine-bearing pick. Hoisted once, reused by ALL_COSTS below and the
+// Refinery research panel (renderSelectionPanel).
+const RESEARCHABLE_UPGRADES = Object.values(UPGRADES).filter(u => !u.aiOnly);
+
 // Every cost the affordability fingerprint below checks — hoisted to module load
 // time. UNITS/BUILDINGS/UPGRADES (engine/entities.js) are static definitions that
 // never change at runtime, so rebuilding this array from scratch on every call (as
@@ -106,7 +113,7 @@ const ALL_COSTS = [
   ...Object.values(UNITS).map(u => u.cost),
   ...Object.values(UNITS).filter(u => u.altCost).map(u => u.altCost),   // e.g. the Worker's biomass price
   ...Object.values(BUILDINGS).map(b => b.cost),
-  ...Object.values(UPGRADES).map(u => u.cost),
+  ...RESEARCHABLE_UPGRADES.map(u => u.cost),
 ];
 
 // Fingerprint of what the player can currently afford and which completed
@@ -914,8 +921,8 @@ function rebuildSelectionPanel(sel) {
     const upgrades = state.players.player.upgrades;
     const chosen = committedDoctrine(state, "player");   // null until the first research commits a doctrine
     const label = { assault: "Assault", bulwark: "Bulwark", logistics: "Logistics" };
-    if (sectionToggle("refinery:research", "Research", Object.keys(UPGRADES).length)) {
-      Object.values(UPGRADES).forEach(u => {
+    if (sectionToggle("refinery:research", "Research", RESEARCHABLE_UPGRADES.length)) {
+      RESEARCHABLE_UPGRADES.forEach(u => {
         if (upgrades[u.id]) {
           const row = document.createElement("div");
           row.className = "sel-row";

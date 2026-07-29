@@ -526,6 +526,18 @@ export const UPGRADES = {
     cost: { crystals: 180, ore: 140 }, requires: ["rapidFabrication"],
     desc: "+30% of a recycled unit/building's cost reclaimed (up to an 80% cap)",
   },
+  // Hard difficulty's economic edge (engine/aiDifficulty.js) — seeded straight onto
+  // state.players.ai.upgrades at creation (engine/state.js), never researched, so it needs
+  // none of a real entry's machinery: no cost, no doctrine, no tier/requires. It rides the
+  // exact same gatherYieldMult/produceTimeMult fields logisticsNetwork/rapidFabrication use —
+  // gather.js/production.js need no changes at all to pick it up. `aiOnly` keeps it out of the
+  // player-facing Refinery research panel and its cost fingerprint (hudSelection.js); having no
+  // `doctrine` keeps it invisible to committedDoctrine (which now guards on `.doctrine`
+  // explicitly — see below) and to aiEconomy.js's per-doctrine research path.
+  hardEdge: {
+    id: "hardEdge", name: "Hard Edge", aiOnly: true,
+    gatherYieldMult: 1.1, produceTimeMult: 0.9,
+  },
 };
 
 // Product of a multiplier field across a player's RESEARCHED upgrades (1 when
@@ -545,9 +557,14 @@ export function upgradeMult(upgrades, field) {
 // The doctrine a player has committed to — the doctrine of any upgrade they've
 // researched — or null if they haven't picked one yet. Researching an upgrade of
 // the other doctrine is then locked out (see production.js's researchUpgrade).
+// Guards on `.doctrine` itself, not just UPGRADES membership: a non-doctrine entry
+// (hardEdge, Hard difficulty's seeded economic edge) must stay invisible here, the same
+// way researchUpgrade's own doctrine-lock check already reads `def.doctrine` rather than
+// just `UPGRADES[id]` — without this, hardEdge being seeded before any real research would
+// make this return `undefined` forever, silently disabling the doctrine lock entirely.
 export function committedDoctrine(state, owner) {
   const ups = state.players[owner].upgrades;
-  for (const id of Object.keys(ups)) if (ups[id] && UPGRADES[id]) return UPGRADES[id].doctrine;
+  for (const id of Object.keys(ups)) if (ups[id] && UPGRADES[id]?.doctrine) return UPGRADES[id].doctrine;
   return null;
 }
 

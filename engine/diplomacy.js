@@ -22,6 +22,7 @@ import { chargingPlayerWonder } from "./wonder.js";
 import { BUILDINGS } from "./entities.js";
 import { TECHS } from "./techtree.js";
 import { strategyFor } from "./aiStrategy.js";
+import { difficultyFor } from "./aiDifficulty.js";
 
 // Above this stance the neighbour holds its fire (peace); at or below it, war.
 export const PEACE_THRESHOLD = -0.15;
@@ -135,11 +136,15 @@ export function updateDiplomacy(state, dt) {
   // the same relationship the archetype's own odyssey overlay already has with its skirmish base.
   // An Aggressive strategy shrinks grace and sharpens grievance further, on ANY archetype/world,
   // not just a Rusher's; "default" carries no override (`|| 1`), so this is a no-op until a match
-  // actually opts into a strategy.
+  // actually opts into a strategy. DIFFICULTY (engine/aiDifficulty.js) layers on top again — Easy is
+  // a touch more patient/forgiving, Hard a touch less — deliberately mild since it's a THIRD
+  // multiplicative layer on an already-composed number; GRACE_FLOOR still floors the opening window
+  // regardless of how short these three combine to make it.
   const od = state.ai.archetype && state.ai.archetype.odyssey;
   const st = strategyFor(state);
-  const graceMult = ((od && od.graceMult) || 1) * (st.graceMult || 1);
-  const grievanceMult = ((od && od.grievanceMult) || 1) * (st.grievanceMult || 1);
+  const df = difficultyFor(state);
+  const graceMult = ((od && od.graceMult) || 1) * (st.graceMult || 1) * (df.graceMult || 1);
+  const grievanceMult = ((od && od.grievanceMult) || 1) * (st.grievanceMult || 1) * (df.grievanceMult || 1);
   const grace = GRACE_TIME * graceMult;
   const grievance = GRIEVANCE_PER_KILL * grievanceMult;
   const creep = CREEP_RATE * grievanceMult;
