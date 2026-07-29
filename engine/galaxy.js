@@ -29,6 +29,8 @@ import { createDiplomacy, aiDevelopment } from "./diplomacy.js";
 import { UNITS, BUILDINGS, freightUsed, freightRoom } from "./entities.js";
 import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
+import { DIFFICULTY_OPTIONS } from "./aiDifficulty.js";
+import { STRATEGIES } from "./aiStrategy.js";
 import { PLANETS, COM } from "../data.js";
 
 // The worlds an Odyssey can settle: the skirmish nine PLUS the Odyssey-only extras
@@ -44,6 +46,22 @@ function planetSeed(seed, planetId) {
   let h = seed >>> 0;
   for (let i = 0; i < planetId.length; i++) h = (Math.imul(h ^ planetId.charCodeAt(i), 0x01000193)) >>> 0;
   return h >>> 0;
+}
+
+// VARIED NEIGHBOURS: every world but the player's start seat carries its OWN difficulty and AI
+// Strategy (personality) — a distribution across the galaxy, some easier, some harder — instead
+// of mirroring the player's own splash-screen pick everywhere. Pure function of the galaxy seed +
+// planetId (a distinctly-keyed planetSeed, so this draws an independent stream from map
+// generation's own rng), so the same galaxy seed always assigns the same profile to the same
+// world: exploring is how you learn a neighbour's temperament, not a settings screen.
+// aiApm/aiMicro are read off the SAME resolved difficulty entry, never left mismatched with a
+// different world's dials (addPlanet threads all four through together).
+export function neighbourAiProfile(seed, planetId) {
+  const pick = mulberry32(planetSeed(seed, planetId + ":neighbourProfile"));
+  const diffOpt = DIFFICULTY_OPTIONS[Math.floor(pick() * DIFFICULTY_OPTIONS.length)];
+  const strategyKeys = Object.keys(STRATEGIES);
+  const aiStrategy = strategyKeys[Math.floor(pick() * strategyKeys.length)];
+  return { difficulty: diffOpt.mult, aiApm: diffOpt.aiApm, aiMicro: diffOpt.aiMicro, aiStrategy };
 }
 
 // Create an Odyssey galaxy. Phase 1: a single active planet (the player's
@@ -126,13 +144,21 @@ const incomeBuildingCount = state => {
 // `unsettled` strips the auto-seeded player presence: a jump DESTINATION you
 // haven't settled yet has only its neighbour — your capital + forces arrive via
 // the jump, not from map generation.
+//
+// AI dials: the player's OWN splash-screen difficulty/strategy pick (galaxy.settings) applies
+// only to the start seat (planetId === galaxy.activeId, true for every world at the point
+// createGalaxy calls this). Every other world resolves its own varied profile instead
+// (neighbourAiProfile, above) — a distribution across the galaxy, not one setting everywhere.
 export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   const s = galaxy.settings;
   const seed = planetSeed(galaxy.seed, planetId);
   const aiFaction = archetypeFor(planetId).faction || "neutral";
+  const profile = planetId === galaxy.activeId
+    ? { difficulty: s.difficulty, aiApm: s.aiApm, aiMicro: s.aiMicro, aiStrategy: s.aiStrategy }
+    : neighbourAiProfile(galaxy.seed, planetId);
   const state = createGameState({
     planetId, seed, rng: mulberry32(seed),
-    aiApm: s.aiApm, aiMicro: s.aiMicro, aiStrategy: s.aiStrategy, difficulty: s.difficulty,
+    aiApm: profile.aiApm, aiMicro: profile.aiMicro, aiStrategy: profile.aiStrategy, difficulty: profile.difficulty,
     sizeMult: s.sizeMult, resourceMult: s.resourceMult,
     playerFaction: s.playerFaction, aiFaction, endless: true,
   });
