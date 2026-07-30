@@ -129,62 +129,29 @@ test("a constructing expansion Command Center only becomes a dropoff once it com
   assert.ok(state.players.player.resources.ore > before, "the finished expansion is the nearest dropoff");
 });
 
-test("a forward Refinery is a drop-off with a FINITE intake buffer — the haul lands there, not the treasury", () => {
+test("a Refinery planted right on a node is NOT a drop-off — the gatherer walks past it to the Command Center", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
   const node = firstNode(state, "ore");
   // A completed Refinery planted right on the node, far from the seeded base CC.
   const refinery = makeBuilding("refinery", "player", node.x + 12, node.y, { constructing: false });
   state.buildings.set(refinery.id, refinery);
-  // The worker is full and standing at the node — well beyond DROP_REACH of the
-  // base CC, so a deposit this tick can ONLY be the nearby Refinery.
-  worker.x = node.x; worker.y = node.y;
-  worker.cargo = { com: "ore", qty: 10 };
-  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
-  const before = state.players.player.resources.ore;
   const cc = [...state.buildings.values()].find(b => b.type === "command");
-  assert.ok(Math.hypot(cc.x - worker.x, cc.y - worker.y) > 30, "the base CC is out of drop reach — only the Refinery is close");
-
-  updateGather(state, worker, 0.05);
-  assert.ok(storeTotal(refinery) > 0, "the Refinery's finite intake buffer accepted the haul");
-  assert.equal(state.players.player.resources.ore, before, "…and it does NOT reach the treasury until a worker hauls it to the CC");
-  assert.equal(worker.cargo.qty, 0, "cargo emptied at the forward Refinery");
-});
-
-test("a FULL forward drop-off reroutes the gatherer instead of accepting more", () => {
-  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
-  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
-  const node = firstNode(state, "ore");
-  const cc = [...state.buildings.values()].find(b => b.type === "command" && b.owner === "player");
-  const refinery = makeBuilding("refinery", "player", node.x + 12, node.y, { constructing: false });
-  refinery.store = { ore: 100 };   // brimming (storeCap 100) → can't take more
-  state.buildings.set(refinery.id, refinery);
-  worker.x = node.x; worker.y = node.y;
-  worker.cargo = { com: "ore", qty: 10 };
-  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
-
-  updateGather(state, worker, 0.05);
-  assert.equal(worker.cargo.qty, 10, "the full Refinery took nothing — the load stays aboard");
-  assert.ok(storeTotal(refinery) <= 100, "…and its buffer didn't exceed capacity");
-  // With the Refinery full, the gatherer is now routing to the CC (the bottomless warehouse).
-  const toCC = Math.hypot(cc.x - worker.x, cc.y - worker.y);
-  for (let i = 0; i < 4000 && state.players.player.resources.ore === 0; i++) updateGather(state, worker, 0.05);
-  assert.ok(state.players.player.resources.ore > 0, "it rerouted to the Command Center and banked there");
-});
-
-test("a still-constructing Refinery is not yet a drop-off", () => {
-  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
-  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
-  const node = firstNode(state, "ore");
-  const refinery = makeBuilding("refinery", "player", node.x + 12, node.y, { constructing: true });
-  state.buildings.set(refinery.id, refinery);
   worker.x = node.x; worker.y = node.y;
   worker.cargo = { com: "ore", qty: 10 };
   worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
   const before = state.players.player.resources.ore;
+  assert.ok(Math.hypot(cc.x - worker.x, cc.y - worker.y) > 30, "the base CC is out of drop reach — the Refinery sits right next to the worker");
 
   updateGather(state, worker, 0.05);
-  assert.equal(state.players.player.resources.ore, before, "an unfinished Refinery banks nothing — the worker heads for the distant CC");
+  assert.equal(storeTotal(refinery), 0, "the Refinery has no intake buffer — it never banks a raw haul");
+  assert.equal(state.players.player.resources.ore, before, "nothing reaches the treasury yet — the worker is still walking to the CC");
+  assert.equal(worker.cargo.qty, 10, "cargo stays aboard, unaffected by standing next to the Refinery");
+
+  // Walk it all the way home and confirm it banks at the CC, never at the Refinery.
+  for (let i = 0; i < 4000 && state.players.player.resources.ore === before; i++) updateGather(state, worker, 0.05);
+  assert.ok(state.players.player.resources.ore > before, "it reached the Command Center and banked there");
+  assert.equal(storeTotal(refinery), 0, "the Refinery still received nothing");
 });
 
 test("Logistics Network (+25% yield) banks more per haul", () => {

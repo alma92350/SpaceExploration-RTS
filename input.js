@@ -239,9 +239,9 @@ export function attachInput(canvas, state, onChange) {
       if (workers.length) { issueAssistBuild(workers, target.id, target.type, queue); sound.playOrder(); onChange(); }
       return;
     }
-    // A completed friendly building with logistics buffers (a factory, the Rig, a forward drop-off):
-    // selected workers are ASSIGNED to service it — a standing round trip carrying its inputs in and
-    // its output out (engine/haul.js), until re-ordered elsewhere.
+    // A completed friendly building with logistics buffers (a factory, the Rig): selected workers
+    // are ASSIGNED to service it — a standing round trip carrying its inputs in and its output out
+    // (engine/haul.js), until re-ordered elsewhere.
     if (target && target.owner === "player" && target.kind === "building" && !target.constructing
         && (recipeOf(target) || storeCapOf(target.type) > 0)) {
       const workers = selected.filter(u => canLogisticsType(u.type));

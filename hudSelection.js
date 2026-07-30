@@ -250,7 +250,7 @@ export function renderSelectionPanel() {
         const info = rigInfo(state, rig);
         return `${!!rig.paused}:${info.nuclearOk}:${Math.round(info.throttle * 10)}:${rig.digCount || 0}:${Math.round(info.progress * 4)}:${powerEfficiency(state, rig.owner, rig.x, rig.y).name}:${info.storeFull}:${Math.round((info.stored / (info.storeCap || 1)) * 10)}:${iceCoolantMult(state, rig.owner) < 1}`;
       })()
-    // Rebuild a selected forward drop-off's intake line as gatherers fill it and workers clear it.
+    // Rebuild a selected non-recipe output buffer's (the Plasma Rig) intake line as workers clear it.
     + "|" + (() => {
         const d = sel.find(e => e.kind === "building" && e.owner === "player" && !e.constructing
           && storeCapOf(e.type) > 0 && !BUILDINGS[e.type].recipe && !BUILDINGS[e.type].isCommandCenter);
@@ -1147,9 +1147,9 @@ function rebuildSelectionPanel(sel) {
       { tip: gen.paused ? "Bring it back online, feeding the grid again" : "Take it off the grid until resumed, without demolishing it" }));
   }
 
-  // Forward drop-off (Refinery / Foundry / Arsenal): a finite INTAKE buffer gatherers bank
-  // raw hauls into (engine/gather.js). When it fills, gatherers reroute elsewhere until a
-  // worker clears it to the Command Center — so surface how full it is and whether it's full.
+  // Any non-recipe building with a finite output buffer (storeCap, engine/entities.js) that
+  // isn't the Command Center: surface how full it is and whether it's full, same finite-storage
+  // idiom as the factory/Rig panels above.
   const drop = sel.find(e => e.kind === "building" && e.owner === "player" && !e.constructing
     && storeCapOf(e.type) > 0 && !BUILDINGS[e.type].recipe && !BUILDINGS[e.type].isCommandCenter);
   if (drop) {
@@ -1158,8 +1158,8 @@ function rebuildSelectionPanel(sel) {
     const full = storeRoom(drop) <= 1e-6;
     const row = document.createElement("div");
     row.className = "sel-note " + (full ? "bad" : pct >= 66 ? "warn" : "");
-    row.textContent = `Intake buffer ${Math.round(have)}/${cap} (${pct}%)`
-      + (full ? " — FULL: gatherers reroute until it's hauled off" : " — workers haul it to a Command Center");
+    row.textContent = `Output buffer ${Math.round(have)}/${cap} (${pct}%)`
+      + (full ? " — FULL: production stalls until it's hauled off" : " — workers haul it to a Command Center");
     panelEl.appendChild(row);
   }
 

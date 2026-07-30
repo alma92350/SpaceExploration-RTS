@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The Refinery, Foundry, and Arsenal no longer double as forward resource drop-offs — they're
+  ore-tech buildings only now (Refinery for doctrine research, Foundry/Arsenal as Tier-2/Tier-3
+  gates). All gather and haul traffic runs straight to a Command Center; the AI no longer plants
+  additional Refineries out at far ore seams as decentralized collection points.
+
 ## [1.0.0] — 2026-07-22
 
 First tagged release. A complete, self-contained real-time strategy game plus an open-world

@@ -5,12 +5,11 @@
    Buildings buffer goods locally (engine/entities.js store/input) and workers move
    them. Three jobs:
 
-   - HAUL: a one-way run for a PURE producer (the Plasma Rig; the forward drop-offs) —
-     buildings that only OUTPUT. The worker walks there, loads a cargo, and carries it to
-     whichever is nearer RIGHT NOW — its own Command Center, or a closer forward drop-off
-     (Refinery/Foundry/Arsenal) — the same "closest drop point at the moment" pick a raw
-     gatherer already makes (gather.js nearestGatherDrop), re-checked every tick of the
-     walk so a nearer option that appears or frees up room mid-trip is taken immediately.
+   - HAUL: a one-way run for a PURE producer (the Plasma Rig) — a building that only
+     OUTPUTs. The worker walks there, loads a cargo, and carries it to its own Command
+     Center — the same pick a raw gatherer already makes (gather.js nearestGatherDrop),
+     re-checked every tick of the walk. There is no forward/decentralized collection
+     point, so this is always a straight run home.
 
    - SERVICE: a ROUND TRIP for a FACTORY, or a one-way INPUT-ONLY run for a fuel-burning
      power station (the Combustion Generator, the Biomass Reactor — def.combust). A factory
@@ -78,7 +77,7 @@
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS, BUILDINGS, storeTotal, storeCapOf, storeRoom, inputRoom, freightUsed, freightRoom } from "./entities.js";
+import { UNITS, BUILDINGS, storeTotal, storeCapOf, inputRoom, freightUsed, freightRoom } from "./entities.js";
 import { nearestCommandCenter, nearestGatherDrop, zoneFirst } from "./gather.js";
 import { recipeOf } from "./industry.js";
 
@@ -237,8 +236,8 @@ function neededInput(building, needs, res) {
   return want;
 }
 
-// The nearest own PURE producer (an output buffer, no recipe: the Plasma Rig, the forward
-// drop-offs) whose buffer is at least `minFraction` full and isn't already served by MAX_HAULERS —
+// The nearest own PURE producer (an output buffer, no recipe: the Plasma Rig) whose buffer
+// is at least `minFraction` full and isn't already served by MAX_HAULERS —
 // shared by assignHaul's auto-assignment (minFraction defaults to ASSIGN_FRACTION: don't pull a
 // fresh worker off other work for a trivial backlog) and a FERRY worker's "plan" phase (which
 // passes 0: a worker already dedicated to a freighter, with nothing else to do, should pick up
@@ -350,14 +349,11 @@ export function assignFerry(state, unit) {
 }
 
 /**
- * Advance a HAUL job: walk to the producer → load a cargo → carry it to the NEAREST place that'll
- * take it right now — its own Command Center, or a closer forward drop-off (Refinery/Foundry/
- * Arsenal) planted specifically to shorten a distant run, exactly like a raw gatherer already
- * picks (gather.js nearestGatherDrop) — and bank it there (1:1 — the goods were already
- * extracted). Re-picked fresh every tick of the walk, so a nearer option that appears (or frees up
- * room) mid-trip is taken immediately, not just at the moment the load first filled. Repeats while
- * the producer has a backlog, else idle. Salvages gracefully if the producer is razed or there's
- * nowhere to deliver to.
+ * Advance a HAUL job: walk to the producer → load a cargo → carry it to its own Command Center,
+ * exactly like a raw gatherer already picks (gather.js nearestGatherDrop) — and bank it there (1:1
+ * — the goods were already extracted). Re-picked fresh every tick of the walk. Repeats while the
+ * producer has a backlog, else idle. Salvages gracefully if the producer is razed or there's no
+ * Command Center to deliver to.
  * @param {State} state @param {Unit} unit @param {number} dt
  */
 export function updateHaul(state, unit, dt) {
@@ -380,33 +376,17 @@ export function updateHaul(state, unit, dt) {
     return;
   }
   if (order.phase === "toDrop") {
-    // Exclude the producer this load just came FROM: a Foundry/Refinery/Arsenal is both a valid
-    // haul source AND a valid forward drop-off, so without this a worker standing right on it
-    // after loading would find itself the nearest "drop", unload straight back into the same
-    // pile, then reload — an infinite loop that never actually leaves (see nearestGatherDrop).
+    // excludeId guards against a worker finding its own HAUL source as its drop target and
+    // looping (see nearestGatherDrop) — a harmless no-op today, since a Command Center (the only
+    // drop target) can never itself be a HAUL source.
     const drop = nearestGatherDrop(state, unit.owner, unit.x, unit.y, order.buildingId);
-    if (!drop) { unit.order = null; return; }   // nowhere with room to deliver (and no CC) → hold the load, idle
+    if (!drop) { unit.order = null; return; }   // no Command Center → hold the load, idle
     if (reached(unit, drop)) {
-      depositHaul(state, unit, drop);
-      if (unit.cargo && unit.cargo.qty > 0) return;   // a full forward drop-off took only part of it — reroute next tick
+      bankCargo(state, unit);
       order.phase = (src && !src.constructing && storeTotal(src) > 0) ? "toSource" : null;
       if (!order.phase) unit.order = null;
     } else stepToward(state, unit, drop.x, drop.y, def.speed, dt);
   }
-}
-
-// Deposit a hauler's cargo at `drop`: the bottomless treasury if it's a Command Center (bankCargo,
-// 1:1, always takes the whole load), or — a forward drop-off (Refinery/Foundry/Arsenal) planted
-// closer to the producer specifically to shorten the run — into ITS OWN finite `store` buffer,
-// clamped to whatever room is left (same finite-intake handling gather.js's raw gatherers already
-// get; a partial deposit just rides home on the cargo, and updateHaul above reroutes it next tick).
-function depositHaul(state, unit, drop) {
-  if (BUILDINGS[drop.type].isCommandCenter) { bankCargo(state, unit); return; }
-  const put = Math.min(unit.cargo.qty, storeRoom(drop));
-  drop.store = drop.store || {};
-  drop.store[unit.cargo.com] = (drop.store[unit.cargo.com] || 0) + put;
-  unit.cargo.qty -= put;
-  if (unit.cargo.qty <= 1e-6) { unit.cargo.qty = 0; unit.cargo.com = null; }
 }
 
 // Bank a worker's whole cargo into the owner's treasury (1:1) and empty it.

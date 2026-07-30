@@ -1,7 +1,7 @@
 /* ============================================================
    AI — the economic build order: (re)seat a base from a colony ship, expand to
    fresh ore, raise workers/supply/Barracks and the Foundry+Arsenal tech gates,
-   run the shared unit-production cycle with Turrets and forward Refineries, and
+   run the shared unit-production cycle with Turrets and the Refinery, and
    research the doctrine. Depends on aiCommon (budget + affordability), aiWorkers
    (affordableOnSurface / aiDoctrine) and aiMilitary (pickNextUnitType); nothing
    depends back on this module, so the import graph stays acyclic.
@@ -12,7 +12,7 @@
 import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
-import { BUILDINGS, UNITS, UPGRADES, canAfford, isDropOff } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
 import { recipeOf } from "./industry.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { isNodeDiscovered } from "./fog.js";
@@ -29,8 +29,6 @@ const CLAIM_RADIUS = 260;         // a cluster with any CC this close is already
 const CLUSTER_RADIUS = 160;       // nodes within this of an anchor sum into its cluster score
 const EXPANSION_STANDOFF = 70;    // CC-to-anchor-node placement distance (26 CC radius + 16 node radius + clearance)
 const BARRACKS_BUFFER = 150;      // bank kept when adding a barracks so the mix doesn't starve
-const FORWARD_DROP_MIN = 360;     // ore worked this far from every drop-off is worth a forward Refinery drop-off
-const MAX_AI_REFINERIES = 3;      // hard cap so forward drop-offs never run away with the AI's ore
 const COLONY_ARRIVE = 40;         // Odyssey: an in-flight colony ship this close to its target deploys (ai.js expansion)
 
 // Odyssey found/survive: no Command Center but a colony ship in hand -> deploy in place. Budget-exempt so even a 1-APM neighbour always seats a base (else it mis-reads as pacified). Skirmish: colonyShip is null -> no-op.
@@ -263,7 +261,7 @@ function standingArmyCap(state, ctx) {
   return Infinity;
 }
 
-// The shared unit-production cycle across every idle Barracks (Foundry/Refinery reserves held back), Sentinel Turrets along the approach lane, a second Barracks, and the research Refinery plus forward drop-off Refineries out at far seams.
+// The shared unit-production cycle across every idle Barracks (Foundry/Refinery reserves held back), Sentinel Turrets along the approach lane, a second Barracks, and the research Refinery.
 /** @param {State} state @param {AiContext} ctx */
 export function aiProduceAndFortify(state, ctx) {
   const { allBarracks, ai, archetype, strategy, cc, barracks, workers, buildings, army } = ctx;
@@ -324,39 +322,15 @@ export function aiProduceAndFortify(state, ctx) {
     if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y)) spend(state);
   }
 
-  // REFINERY & FORWARD DROP-OFFS. A Refinery both researches the AI's doctrine
-  // and doubles as a resource drop-off (entities.js isDropOff). So the AI builds
-  // its FIRST near home for the research (reserve-aware, kept safe behind the
-  // base) — then, once a macro AI is hauling ore a long way from every drop-off,
-  // it plants ADDITIONAL Refineries out at those far seams: cheap, decentralized
-  // collection points that shorten the haul without the cost of a whole second
-  // Command Center. Forward drop-offs spend genuine surplus only (the expansion
-  // reserve and a mix buffer stay untouched) and are capped, and no seam on a
-  // small map is ever far enough to trigger one — so it fires exactly on the big
-  // maps where the fixed home cluster can't reach the deposits. cc-guarded: cc is
-  // the completed-only find, so a home CC lost mid-expansion leaves it undefined.
+  // REFINERY. Hosts the AI's doctrine research, so it builds exactly one, near
+  // home (reserve-aware, kept safe behind the base). cc-guarded: cc is the
+  // completed-only find, so a home CC lost mid-expansion leaves it undefined.
   const refineries = buildings.filter(b => b.type === "refinery");
-  const dropoffs = buildings.filter(b => !b.constructing && isDropOff(b.type));
-  const fwdAnchor = forwardDropoffAnchor(state, workers, dropoffs);
   const buildResearchRefinery = refineries.length === 0;   // ungated by archetype, as before
-  const buildForwardDropoff = archetype.wantsRefinery && refineries.length > 0
-    && refineries.length < MAX_AI_REFINERIES && !refineries.some(r => r.constructing) && !!fwdAnchor;
-  if ((buildResearchRefinery || buildForwardDropoff) && barracks && !barracks.constructing && cc && workers.length > 0) {
-    // The research build banks behind an expansion; a forward drop-off spends
-    // only genuine surplus (keeps the expansion reserve AND a mix buffer back).
-    const keep = buildForwardDropoff ? ctx.oreReserve + BARRACKS_BUFFER : ctx.oreReserve;
-    if (canAffordKeeping(ai.resources, BUILDINGS.refinery.cost, keep)) {
-      let spot;
-      if (buildForwardDropoff) {
-        const toward = Math.atan2(cc.y - fwdAnchor.y, cc.x - fwdAnchor.x);   // home side of the far cluster
-        spot = findPlacement(state, "refinery",
-          fwdAnchor.x + Math.cos(toward) * EXPANSION_STANDOFF,
-          fwdAnchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
-      } else {
-        spot = findPlacement(state, "refinery", cc.x - 90, cc.y - 90);
-      }
-      if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "refinery", spot.x, spot.y)) spend(state);
-    }
+  if (buildResearchRefinery && barracks && !barracks.constructing && cc && workers.length > 0
+      && canAffordKeeping(ai.resources, BUILDINGS.refinery.cost, ctx.oreReserve)) {
+    const spot = findPlacement(state, "refinery", cc.x - 90, cc.y - 90);
+    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "refinery", spot.x, spot.y)) spend(state);
   }
 }
 
@@ -427,34 +401,6 @@ function bestExpansionCluster(state, myCCs) {
     const dHome = Math.min(...myCCs.map(c => Math.hypot(c.x - n.x, c.y - n.y)));
     const score = cluster - 0.2 * dHome;   // richness first; keeps it on its own side unless dry
     if (score > bestScore) { bestScore = score; best = n; }
-  }
-  return best;
-}
-
-// The ore seam worth a forward Refinery drop-off: the richest cluster the AI is
-// ACTIVELY hauling from that sits beyond FORWARD_DROP_MIN of every existing
-// drop-off. Keying it off ore workers are really mining (not just any charted
-// seam) keeps the drop-off on the AI's own side — workers pick the nearest ore,
-// so a "far" worked seam is far from home, never across the map at the enemy —
-// and only fires it when the round trip is genuinely long. Returns null when
-// every worked seam is already inside a drop-off's reach, which is always the
-// case on a small map, so the forward drop-off is a big-map behaviour only.
-function forwardDropoffAnchor(state, workers, dropoffs) {
-  if (!dropoffs.length) return null;
-  const nodeById = state.map.nodesById || new Map(state.map.nodes.map(n => [n.id, n]));
-  const seen = new Set();
-  let best = null, bestCluster = -Infinity;
-  for (const w of workers) {
-    if (!w.order || w.order.type !== "gather") continue;
-    const n = nodeById.get(w.order.nodeId);
-    if (!n || n.com !== "ore" || n.amount <= 0 || seen.has(n.id)) continue;
-    seen.add(n.id);
-    const dDrop = Math.min(...dropoffs.map(d => Math.hypot(d.x - n.x, d.y - n.y)));
-    if (dDrop < FORWARD_DROP_MIN) continue;   // already inside an existing drop-off's haul
-    let cluster = 0;
-    for (const m of state.map.nodes)
-      if (m.com === "ore" && m.amount > 0 && Math.hypot(m.x - n.x, m.y - n.y) <= CLUSTER_RADIUS) cluster += m.amount;
-    if (cluster > bestCluster) { bestCluster = cluster; best = n; }
   }
   return best;
 }
