@@ -49,25 +49,52 @@ Other things the review found worth stating plainly:
 
 ---
 
-## 2. What the bench measured
+## 2. What the bench measured, and what changed
 
 Reproduce any row with the command under it. All runs are seeded and deterministic.
 
-The headline: a full-roster soak — **11 worlds × 4 strategies, Medium, 40 sim-minutes each,
-against a player that seats a base and then does nothing** (`node tools/ailab.js check
---minutes 40`, 44 runs, ~3½ minutes of wall clock) — fires every one of the bench's five
-named defects:
+The soak is **11 worlds × 4 strategies, Medium, 40 sim-minutes each** — 44 runs, a few minutes of
+wall clock. It is run against two opponents, because the answer differs completely between them:
+`passive` (a player who seats a base and then does nothing) and `skirmisher` (a turtle economy
+that throws its army at the AI whenever it musters one).
 
-| detector | fires on | what it means |
-|---|---|---|
-| `production-stall` | **43 / 44** | a completed Barracks stood idle while the AI held real money |
-| `hoarding` | **23 / 44** | banked resources peaked above 4,000 with nothing to spend them on |
-| `hostile-but-idle` | **22 / 44** | the HUD reads *Hostile* and no wave ever comes |
-| `dev-flatline` | **19 / 44** | the industry/tech climb stopped and never resumed |
-| `supply-deadlock` | **5 / 44** | production wedged on a unit that can't fit under the supply cap |
+Before / after the fixes in this pass, under **identical** metric definitions — the "before"
+column is the pre-fix engine measured with today's bench, from a `git worktree` at the pre-fix
+commit, not remembered numbers:
 
-Mean quality score across the roster: **0.33 / 1.00**. The sections below take each finding
-apart.
+| detector | passive: before | passive: after | skirmisher: before | skirmisher: after |
+|---|---|---|---|---|
+| `supply-deadlock` | 4 / 44 | **1 / 44** | 4 / 44 | 2 / 44 |
+| `hoarding` | 14 / 44 | **2 / 44** | 5 / 44 | 1 / 44 |
+| `dev-flatline` | 19 / 44 | **11 / 44** | 34 / 44 | 35 / 44 |
+| `production-stall` | 18 / 44 | **18 / 44** | 9 / 44 | 7 / 44 |
+| `hostile-but-idle` | 0 / 44 | **2 / 44** | 13 / 44 | 34 / 44 |
+| **mean score** | 0.497 | **0.619** | 0.373 | 0.336 |
+
+Read that table honestly, because two of its columns are not wins.
+
+Against a **passive** player the AI is substantially better: it no longer wedges, no longer
+hoards, and develops on eight more worlds. `production-stall` is the exception — it did not move
+at all, across two attempts. Probing the worlds it fires on shows why: the residue is the Rusher
+archetype doing what it is designed to do (six workers, one Barracks) on Medium, where
+`rusherGraduates` deliberately does not apply. That is not a stall the code can fix; it's the
+Medium half of §2.4, and changing it means changing what a Rusher *is*.
+
+Against a **skirmisher** the mean fell, 0.373 → 0.336, and that number needs unpacking
+rather than defending. Most of it is a denominator change: `hostile-but-idle` and the `pressure`
+component now apply to the never-initiating strategies too, because provocation gives them
+standing where before the question was dropped as unanswerable. They are being *measured* on
+something they used to be excused from. Underneath it, the real story is §2.9 — the AI dies in
+the first ten minutes, so none of the long-game fixes ever come into play. That is the next
+decision to make, and it is not a code decision.
+
+One methodological note, because it bit three times: **a detector must not fire on behaviour the
+design intends.** Scaling the AI up turned three of the five into false positives — "any Barracks
+idle" fired on 42 of 44 healthy runs once surplus opened six of them; a peak-based thrift measure
+scored a working economy (which peaks high and spends straight back down) the same as a stalled
+one; and momentary supply pressure with a Habitat already going up is not a deadlock. Each was
+rewritten and pinned with a test. A metric that rewards the wrong thing is worse than no metric,
+because the tuning loop optimises against it.
 
 ### 2.1 Half the galaxy's neighbours can never attack you
 
@@ -424,6 +451,13 @@ Sequenced so each step makes the next one measurable:
 One row per experiment, including the ones that didn't work. Unrecorded negative results get
 re-run.
 
-| date | hypothesis | overrides | result | kept? |
+| date | hypothesis | change | result | kept? |
 |---|---|---|---|---|
-| 2026-07-30 | — (baseline) | — | `check --minutes 40`, 44 runs: mean score **0.328**. production-stall 43/44 · hoarding 23/44 · hostile-but-idle 22/44 · dev-flatline 19/44 · supply-deadlock 5/44 | n/a |
+| 2026-07-30 | — (baseline) | — | passive **0.497** · skirmisher **0.373**. supply-deadlock 4/44 · hoarding 14/44 · dev-flatline 19/44 · production-stall 18/44 | n/a |
+| 2026-07-30 | the five §2 defects are real and independently fixable | engine, TDD (§2.1–2.4, 2.6) | passive **0.619** (+0.122) · skirmisher **0.336** (-0.037). hoarding 14→2 · dev-flatline 19→11 · supply-deadlock 4→1 | **yes** |
+| 2026-07-30 | extra Barracks alone will drain the hoard | Barracks escalation on surplus | no effect on `economic`/`matching` — a standing-army cap means extra capacity sits idle, so their bank kept climbing. Needed a second, in-character sink | partly — kept, but insufficient alone |
+| 2026-07-30 | a rich neighbour should GROW, not stockpile | surplus also funds a colony ship | this is what actually moved hoarding 14→2 | **yes** |
+| 2026-07-30 | `rusherGraduates` needs retuning | — | **not needed.** The graduation gate was fine; the 30-minute lag was unit production eating the ore first. Fixing the reserve fixed the symptom, so the dial was left alone | no change |
+| 2026-07-30 | a wiped neighbour should be able to re-found (§2.5) | — | **rejected.** A background world has no player and no third party, so the AI cannot die unattended; the only path there is the player razing it, which is `galaxy.pacified` — permanent by design. A re-founding AI would show a world as "pacified" with a live neighbour rebuilding on it | no |
+| 2026-07-30 | the bench's own detectors are still valid after the fixes | — | **no** — three of five became false positives on the scaled-up AI. Rewritten and pinned with tests; the pre-fix baseline was re-measured under the new definitions rather than compared across them | corrected |
+| 2026-07-30 | `production-stall` is one Habitat per 10 s throttling the army | parallel Habitats when supply, not ore, is the bottleneck | **no** — 18/44 before, 18/44 after. Probing the worlds it fires on shows the residue is the Rusher archetype's designed economy (six workers, one Barracks) on Medium, where `rusherGraduates` doesn't apply. Kept anyway: it is what moved supply-deadlock 4→1 | kept, but it did not fix what it was aimed at |
