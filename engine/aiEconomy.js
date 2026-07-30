@@ -19,7 +19,7 @@ import { isNodeDiscovered } from "./fog.js";
 import { playerUnits } from "./state.js";
 import { deployColonyShip } from "./colony.js";
 import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
-import { affordableOnSurface, aiDoctrine } from "./aiWorkers.js";
+import { affordableOnSurface, aiDoctrine, maxSupplyDemand } from "./aiWorkers.js";
 import { pickNextUnitType, visibleEnemyForceCount } from "./aiMilitary.js";
 import { difficultyFor } from "./aiDifficulty.js";
 import { aiBarter } from "./market.js";
@@ -30,6 +30,12 @@ const CLUSTER_RADIUS = 160;       // nodes within this of an anchor sum into its
 const EXPANSION_STANDOFF = 70;    // CC-to-anchor-node placement distance (26 CC radius + 16 node radius + clearance)
 const BARRACKS_BUFFER = 150;      // bank kept when adding a barracks so the mix doesn't starve
 const COLONY_ARRIVE = 40;         // Odyssey: an in-flight colony ship this close to its target deploys (ai.js expansion)
+const HABITAT_SEARCH_RADIUS = 360;   // wider than the default placement search — a built-out Odyssey base is crowded
+// SURPLUS SINK (Odyssey — see aiProduceAndFortify): banked ore per extra Barracks, and the cap on
+// how many the escalation can add on top of the archetype's own maxBarracks.
+const SURPLUS_STEP = 2000;
+const SURPLUS_MAX_BARRACKS = 4;
+const SURPLUS_EXPAND_ORE = 2500;   // …and the bank at which it settles a fresh cluster regardless of depletion
 
 // Odyssey found/survive: no Command Center but a colony ship in hand -> deploy in place. Budget-exempt so even a 1-APM neighbour always seats a base (else it mis-reads as pacified). Skirmish: colonyShip is null -> no-op.
 /** @param {State} state @param {AiContext} ctx */
@@ -102,8 +108,19 @@ export function aiExpand(state, ctx) {
     } else if (!colonyShip && cc && workers.length > 0
                && !buildings.some(b => b.type === "command" && b.constructing)
                && !cc.queue.some(j => j.unitType === "colonyship")) {
-      // No ship in flight → bank for and PRODUCE one once home ore runs thin and there's somewhere to settle.
-      if (threshold > 0 && homeOreFraction(state, myCCs) < threshold && bestExpansionCluster(state, myCCs)) {
+      // No ship in flight → bank for and PRODUCE one once home ore runs thin and there's somewhere
+      // to settle — OR once the AI is simply sitting on money it has nothing else to spend on.
+      //
+      // That second trigger is the surplus sink for a strategy that CAPS its standing army
+      // (Economic, Force Parity): extra Barracks are no use to them, so the escalation in
+      // aiProduceAndFortify can't drain the pile, and theirs were the four biggest banks in the
+      // roster soak — 36,207 ore and no purchase left (docs/odyssey-ai-review.md §2.3). Growth is
+      // the in-character answer: a rich neighbour settles another cluster instead of waiting for
+      // its home seam to thin. Bounded for free — bestExpansionCluster returns null once the map
+      // is claimed, and only one ship is ever in flight.
+      const surplus = ai.resources.ore >= SURPLUS_EXPAND_ORE;
+      if (((threshold > 0 && homeOreFraction(state, myCCs) < threshold) || surplus)
+          && bestExpansionCluster(state, myCCs)) {
         ctx.oreReserve = colonyCost;                               // pause infrastructure while banking (units keep flowing)
         if (ai.resources.ore >= colonyCost && canAct(state) && queueProduction(state, cc.id, "colonyship")) { spend(state); ctx.oreReserve = 0; }
       }
@@ -153,16 +170,34 @@ export function aiBaseAndTech(state, ctx) {
     if (queueProduction(state, cc.id, "worker")) spend(state);
   }
 
-  // Near the cap (or over it after losing a Habitat) with none already
-  // going up: put down a Habitat by the CC, or production stalls forever.
-  // The `>= cap - 2` fires before a 2-supply unit can wedge the mix cycle
-  // (the AI retries the same mix entry until it succeeds), and the same
-  // condition covers the destroyed-Habitat over-cap case.
+  // Near the cap (or over it after losing a Habitat) with none already going up: put down a
+  // Habitat by the CC, or production stalls forever. The margin is the biggest supply cost the
+  // AI could actually try to pay next (maxSupplyDemand — engine/aiWorkers.js), NOT a flat 2:
+  // the mix cycle retries the same entry until it succeeds, so a gap too narrow for a 4-supply
+  // Dreadnought but too wide to trip a `cap - 2` trigger deadlocked production permanently
+  // (docs/odyssey-ai-review.md §2.2). The same condition covers the destroyed-Habitat over-cap
+  // case. A world whose mix tops out at 2 supply is unchanged — maxSupplyDemand floors at 2.
+  //
+  // Supply already ON THE WAY counts, rather than a flat "never a second while one is going up":
+  // a Habitat takes 10s to grant its 8, and a surplus-scaled production line (below) consumes
+  // more than that, so the old guard throttled the AI into a permanent shortfall. Crediting
+  // pending Habitats at their supplyGrants is the same rule expressed arithmetically — with none
+  // in flight it reduces to exactly the condition above.
   const used = supplyUsed(state, "ai"), cap = supplyCap(state, "ai");
-  const habitatConstructing = buildings.some(b => b.type === "habitat" && b.constructing);
-  if (cc && workers.length > 0 && used >= cap - 2 && !habitatConstructing
+  const pending = buildings.filter(b => b.type === "habitat" && b.constructing).length
+    * (BUILDINGS.habitat.supplyGrants || 0);
+  if (cc && workers.length > 0 && used >= cap + pending - maxSupplyDemand(state, archetype)
       && canAfford(ai.resources, BUILDINGS.habitat.cost)) {
-    const spot = findPlacement(state, "habitat", cc.x, cc.y + 90);
+    // Try EVERY Command Center, with a wide search at each: a late-Odyssey capital packs 70+
+    // buildings around it, and measured, every candidate spot near the home CC was taken while the
+    // AI's own expansions had room to spare — so it silently stopped raising Habitats at all and
+    // re-froze production, the same permanent stall the margin above just fixed.
+    const anchors = buildings.filter(b => b.type === "command" && !b.constructing);
+    let spot = null;
+    for (const c of anchors) {
+      spot = findPlacement(state, "habitat", c.x, c.y + 90, HABITAT_SEARCH_RADIUS);
+      if (spot) break;
+    }
     if (spot && canAct(state) && issueBuild(state, workers[0].id, "habitat", spot.x, spot.y)) spend(state);
   }
 
@@ -283,7 +318,8 @@ export function aiProduceAndFortify(state, ctx) {
       if (b.constructing || b.queue.length > 0) continue;
       if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
       const nextType = pickNextUnitType(state, archetype);
-      if (!canAffordKeeping(ai.resources, UNITS[nextType].cost, ctx.foundryReserve + ctx.refineryReserve)) continue;   // hold back ore while banking the Foundry / Refinery
+      if (!canAffordKeeping(ai.resources, UNITS[nextType].cost,
+                            ctx.foundryReserve + ctx.refineryReserve + ctx.industryReserve)) continue;   // hold back ore while banking the Foundry / Refinery / industry bootstrap
       if (queueProduction(state, b.id, nextType)) {
         spend(state);
         state.ai.unitsBuilt = (state.ai.unitsBuilt || 0) + 1;
@@ -315,8 +351,20 @@ export function aiProduceAndFortify(state, ctx) {
   // A second Barracks once the first is up and the mix has a comfortable
   // buffer on top of any expansion reserve (allBarracks counts constructing
   // ones, so it never founds a third while the second is still going up).
+  //
+  // SURPLUS SINK (Odyssey only). Everything else the AI can buy is FINITE — a fixed factory
+  // chain, a fixed research order, one Star Dock, one Plasma Rig, and this very cap — so a
+  // developed neighbour in a mode with no end eventually runs out of purchases and simply banks
+  // its income: measured at 30,000+ ore with an army that hadn't grown in 20 sim-minutes
+  // (docs/odyssey-ai-review.md §2.3). A play-forever AI needs a terminal LOOP, not a terminal
+  // list, and more Barracks is the one purchase that keeps converting ore into army indefinitely.
+  // Bounded by SURPLUS_MAX_BARRACKS so a rich AI scales up instead of sprawling across the map,
+  // and gated on state.endless: a 40-minute skirmish never banks this much, and its exact
+  // barracks counts are part of the archetype contract the skirmish suite pins.
+  const surplusBarracks = state.endless
+    ? Math.min(SURPLUS_MAX_BARRACKS, Math.floor(ai.resources.ore / SURPLUS_STEP)) : 0;
   if (barracks && !barracks.constructing && cc && workers.length > 0
-      && allBarracks.length < (archetype.maxBarracks || 1)
+      && allBarracks.length < (archetype.maxBarracks || 1) + surplusBarracks
       && canAffordKeeping(ai.resources, BUILDINGS.barracks.cost, ctx.oreReserve + BARRACKS_BUFFER)) {
     const spot = findPlacement(state, "barracks", cc.x + 90, cc.y + 90);
     if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y)) spend(state);

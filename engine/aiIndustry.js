@@ -40,6 +40,47 @@ const INDUSTRY_CHAIN = ["smelter", "datacenter", "assembler", "chipfab", "machin
 const RESEARCH_ORDER = ["metallurgy", "reactors", "electronics", "automation", "heavyalloys",
                         "machining", "antimatter", "aicores"];
 
+// How many chain buildings get a BANKING reserve before the AI is expected to fund the rest from
+// genuine surplus (aiIndustryReserve, below). Two — the Smelter and the Datacenter — is the set
+// that opens the tree; past them the AI has industrial income and a longer reserve would just
+// freeze its army for the whole climb.
+const INDUSTRY_BOOTSTRAP = 2;
+
+// Does this AI climb past power+electrify into the deep chain? The patient-developer signal
+// (archetype.wantsRefinery), the Economic strategy's override, or Hard's rusher graduation —
+// factored out so aiIndustryReserve banks for exactly what aiIndustry will go on to build.
+function wantsDeepIndustry(state, archetype, strategy) {
+  const graduated = !!difficultyFor(state).rusherGraduates && state.time > RUSHER_GRADUATE_TIME;
+  return !!(archetype.wantsRefinery || strategy.wantsIndustryAlways || graduated);
+}
+
+// The ore the AI must BANK this cycle to get its industry off the ground. runAI calls this between
+// aiBaseAndTech and aiProduceAndFortify, because the phase order is production-first,
+// industry-last with no holdback between them — so an archetype whose units are cheap relative to
+// its income spent its ore down below a Reactor's 120 every think cycle and never developed at
+// all. Measured: a Rusher world still on one industrial building after 60 sim-minutes, and Hard's
+// rusherGraduates landing ~30 minutes past its own 20-minute trigger
+// (docs/odyssey-ai-review.md §2.4).
+//
+// This mirrors ctx.foundryReserve exactly, including that it is BOUNDED: the power grid (every
+// archetype needs one) plus the first INDUSTRY_BOOTSTRAP chain buildings. Past that the reserve
+// is zero and the deep climb is bought from surplus, as before — the army is never frozen for the
+// length of an eight-building chain. Skirmish is a no-op, same endless gate as aiIndustry itself.
+/** @param {State} state @param {AiContext} ctx */
+export function aiIndustryReserve(state, ctx) {
+  ctx.industryReserve = 0;
+  if (!state.endless) return;
+  const { cc, barracks, buildings, archetype, strategy } = ctx;
+  if (!cc || !barracks || barracks.constructing) return;   // same preconditions aiIndustry itself waits on
+  const reactors = buildings.filter(b => b.type === "reactor");
+  if (!reactors.length) { ctx.industryReserve = BUILDINGS.reactor.cost.ore; return; }
+  if (reactors.some(b => b.constructing)) return;          // one already on the way — aiIndustry won't start a second
+  if (!wantsDeepIndustry(state, archetype, strategy)) return;
+  if (buildings.filter(b => INDUSTRY_CHAIN.includes(b.type)).length >= INDUSTRY_BOOTSTRAP) return;
+  const next = INDUSTRY_CHAIN.find(t => !buildings.some(b => b.type === t) && prereqsMet(state, "ai", BUILDINGS[t]));
+  if (next) ctx.industryReserve = BUILDINGS[next].cost.ore;
+}
+
 // Odyssey INDUSTRY: power the base and electrify it, then (a patient developer only) climb the
 // factory chain and research the tech tree — the AI using the new economy. Skirmish is a no-op (the
 // endless gate), so the byte-identical short game is untouched. Everything is APM-budgeted and
@@ -86,8 +127,7 @@ export function aiIndustry(state, ctx) {
   // of what can be an hours-long Odyssey session. Skirmish is untouched regardless — this whole
   // function already returned above on !state.endless, and a skirmish never runs this long anyway.
   // The chain needs the grid, so wait for the Reactor before starting it either way.
-  const graduated = !!difficultyFor(state).rusherGraduates && state.time > RUSHER_GRADUATE_TIME;
-  if (!(archetype.wantsRefinery || strategy.wantsIndustryAlways || graduated) || !hasReactor) return;
+  if (!wantsDeepIndustry(state, archetype, strategy) || !hasReactor) return;
 
   // FACTORY CHAIN: raise the next chain building whose prereqs (its earlier factory + its research
   // node) are met and that the AI doesn't already have, one per think cycle, reserve-aware. Spread

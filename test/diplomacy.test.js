@@ -7,6 +7,7 @@ import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { runAI } from "../engine/ai.js";
+import { GRACE_TIME, MIN_GRACE_FRAC, MAX_GRIEVANCE_MULT, effectiveDiplomacyMults } from "../engine/diplomacy.js";
 
 // Deploy the Odyssey start colony ships so a world has bases (the pre-colony-ship layout).
 function settle(state) {
@@ -187,13 +188,16 @@ test("sweepColonies reports a colony under attack, then lost, and drains its eve
 test("destroying the neighbour's ships sours the stance at once", () => {
   const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
   s.diplomacy = createDiplomacy();
+  // Real ships, not the seeded colony ship: that one is SPENT founding a base rather than killed,
+  // so it's excluded from the count the grievance reads (CONSUMED_ROLES — see the deploy test below).
+  for (let i = 0; i < 5; i++) { const u = makeUnit("skiff", "ai", 500 + i * 10, 500); s.units.set(u.id, u); }
   updateDiplomacy(s, 0.1);                    // establish the baseline unit count
   const before = s.diplomacy.stance;
-  const ai = [...s.units.values()].filter(u => u.owner === "ai");
+  const ai = [...s.units.values()].filter(u => u.owner === "ai" && u.type === "skiff");
   let removed = 0;
   for (const u of ai) { if (removed >= 5) break; s.units.delete(u.id); removed++; }
   updateDiplomacy(s, 0.1);
-  assert.ok(removed > 0);
+  assert.equal(removed, 5);
   assert.ok(s.diplomacy.stance < before, "each ship you destroy drops the stance");
 });
 
@@ -338,4 +342,125 @@ test("addPlanet gives every world a neighbour stance", () => {
   const other = g.worlds.find(w => w !== g.activeId);
   const s = addPlanet(g, other);
   assert.ok(s.diplomacy && typeof s.diplomacy.stance === "number", "the world has a diplomacy stance");
+});
+
+/* ---------- provocation: what a never-initiating neighbour is allowed to answer ---------- */
+
+// engine/aiMilitary.js reads this flag to decide whether a `neverInitiates` strategy may commit a
+// wave in Odyssey (docs/odyssey-ai-review.md §2.1). It must latch on a real player action — the
+// same unit-count delta the grievance already reads — and never on elapsed time, which is the bug
+// neverInitiates was introduced to fix in the first place.
+
+test("a fresh neighbour starts unprovoked", () => {
+  const s = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  s.diplomacy = createDiplomacy();
+  assert.equal(s.diplomacy.provoked, false, "createDiplomacy states the field, so the shape is complete for save/load");
+  updateDiplomacy(s, 1);
+  assert.ok(!s.diplomacy.provoked, "merely running the world doesn't provoke it");
+});
+
+test("destroying one of the neighbour's ships provokes it, and the flag latches", () => {
+  const s = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  s.diplomacy = createDiplomacy();
+  const doomed = makeUnit("skiff", "ai", 500, 500);
+  s.units.set(doomed.id, doomed);
+  updateDiplomacy(s, 1);                       // seeds lastAiUnits
+  assert.ok(!s.diplomacy.provoked, "still unprovoked while its ships are alive");
+  s.units.delete(doomed.id);                   // the player killed it
+  updateDiplomacy(s, 1);
+  assert.ok(s.diplomacy.provoked, "a destroyed ship is provocation");
+  for (let i = 0; i < 50; i++) updateDiplomacy(s, 1);
+  assert.ok(s.diplomacy.provoked, "…and it stays provoked — forgiveness is the stance's job, not this flag's");
+});
+
+test("the neighbour REBUILDING its fleet is not provocation", () => {
+  const s = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  s.diplomacy = createDiplomacy();
+  updateDiplomacy(s, 1);
+  for (let i = 0; i < 4; i++) { const u = makeUnit("skiff", "ai", 500, 500); s.units.set(u.id, u); }
+  updateDiplomacy(s, 1);
+  assert.ok(!s.diplomacy.provoked, "a rising unit count is the AI's own production, not an attack on it");
+});
+
+/* ---------- the three multiplier layers compose, but they don't compound without limit ---------- */
+
+// graceMult and grievanceMult each get a factor from the archetype's Odyssey overlay, the
+// player-picked strategy AND the difficulty, and they all MULTIPLY. On a reachable setup-screen
+// combination (Aggressive + Hard on a Rusher world) that took the documented 7-minute opening
+// grace — the window that exists so a player can establish before a world can turn — down to
+// 0.5 x 0.2 x 0.9 = 0.09, i.e. 37.8 seconds, and pushed grievance to 3.68x. Neither number was
+// designed; both are accidents of composition (docs/odyssey-ai-review.md §2.6). The layers still
+// compose — that's the whole design — they just can't compound past a floor/ceiling.
+
+test("the composed grace multiplier is floored, so the opening window can never collapse", () => {
+  const s = createGameState({ planetId: "korrath", endless: true, aiStrategy: "aggressive",
+                              difficulty: "hard", rng: () => 0.5 });
+  s.diplomacy = createDiplomacy();
+  const raw = 0.5 * 0.2 * 0.9;   // Rusher overlay x Aggressive x Hard
+  assert.ok(raw < MIN_GRACE_FRAC, "fixture really is the worst-case stack");
+  const { graceMult } = effectiveDiplomacyMults(s);
+  assert.equal(graceMult, MIN_GRACE_FRAC, "the stack is floored rather than multiplied out");
+  assert.ok(GRACE_TIME * graceMult >= 150,
+    `an established-by-then window survives (got ${(GRACE_TIME * graceMult).toFixed(0)}s)`);
+});
+
+test("the composed grievance multiplier is capped", () => {
+  const s = createGameState({ planetId: "korrath", endless: true, aiStrategy: "aggressive",
+                              difficulty: "hard", rng: () => 0.5 });
+  s.diplomacy = createDiplomacy();
+  assert.ok(2 * 1.6 * 1.15 > MAX_GRIEVANCE_MULT, "fixture really is the worst-case stack");
+  assert.equal(effectiveDiplomacyMults(s).grievanceMult, MAX_GRIEVANCE_MULT);
+});
+
+test("a stack that stays inside the bounds is passed through untouched — the layers still compose", () => {
+  const s = createGameState({ planetId: "korrath", endless: true, rng: () => 0.5 });   // Rusher overlay alone
+  s.diplomacy = createDiplomacy();
+  const m = effectiveDiplomacyMults(s);
+  assert.equal(m.graceMult, 0.5, "a Rusher world still turns hostile in half the grace window");
+  assert.equal(m.grievanceMult, 2, "…and still sours twice as fast — clamping only bites at the extremes");
+});
+
+test("a clamped Aggressive+Hard Rusher is still markedly more hostile than a patient world", () => {
+  // The point of the clamp is to bound an accident, not to flatten the difference the layers exist
+  // to express — so the extreme stack must still lose grace and gain grievance against a default one.
+  const worst = createGameState({ planetId: "korrath", endless: true, aiStrategy: "aggressive",
+                                  difficulty: "hard", rng: () => 0.5 });
+  const calm = createGameState({ planetId: "ferros", endless: true, rng: () => 0.5 });
+  for (const s of [worst, calm]) s.diplomacy = createDiplomacy();
+  const w = effectiveDiplomacyMults(worst), c = effectiveDiplomacyMults(calm);
+  assert.ok(w.graceMult < c.graceMult, "still a much shorter fuse");
+  assert.ok(w.grievanceMult > c.grievanceMult, "…and still far less forgiving");
+});
+
+// A colony ship and a Helium Bomb leave the world by being USED, not by dying — deployColonyShip
+// consumes the ship into a Command Center, and a triggered bomb consumes itself. The grievance
+// (and the provocation flag that now rides on it) reads a DROP in the neighbour's unit count, so
+// counting those two made the AI's own successful expansion read as the player having destroyed
+// something: it soured its own stance for founding a colony, and — once provocation latched on the
+// same signal — handed itself standing to attack a player who had done nothing at all.
+
+test("the neighbour deploying its own colony ship is neither a grievance nor a provocation", () => {
+  const s = createGameState({ planetId: "ferros", endless: true, rng: () => 0.5 });
+  s.diplomacy = createDiplomacy();
+  const ship = [...s.units.values()].find(u => u.owner === "ai" && u.type === "colonyship");
+  assert.ok(ship, "an Odyssey world seeds the AI a colony ship");
+  updateDiplomacy(s, 1);
+  const before = s.diplomacy.stance;
+  assert.ok(deployColonyShip(s, ship.id), "the ship deploys into a Command Center");
+  updateDiplomacy(s, 1);
+  assert.ok(s.diplomacy.stance >= before - 1e-9, "founding its own colony must not sour the neighbour against you");
+  assert.ok(!s.diplomacy.provoked, "…nor hand it standing to attack a player who has done nothing");
+});
+
+test("a destroyed WORKER is still a grievance — only self-consuming roles are exempt", () => {
+  const s = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  s.diplomacy = createDiplomacy();
+  const w = makeUnit("worker", "ai", 500, 500);
+  s.units.set(w.id, w);
+  updateDiplomacy(s, 1);
+  const before = s.diplomacy.stance;
+  s.units.delete(w.id);
+  updateDiplomacy(s, 1);
+  assert.ok(s.diplomacy.stance < before, "killing its workers still sours it");
+  assert.ok(s.diplomacy.provoked, "…and still provokes it");
 });

@@ -7,8 +7,8 @@ Two things live in this document:
 2. **A proposal for searching and testing better AI strategies** with Claude Code, and the
    tool that makes it runnable — `tools/ailab.js`.
 
-Nothing under `engine/` changed to produce this. The findings are reported, not fixed;
-fixing them is the first job the bench is for.
+Each finding in §2 carries a **Status**: what was done about it, or why it was left. §5 is the
+running ledger of experiments, including the ones that didn't work.
 
 ---
 
@@ -71,6 +71,12 @@ apart.
 
 ### 2.1 Half the galaxy's neighbours can never attack you
 
+**Status: fixed.** `neverInitiates` now means *unprovoked* in Odyssey — a neighbour still commits
+once the player has destroyed its ships or started charging a Gate (`engine/diplomacy.js`
+`provoked()`, read by `aiOffense`). The skirmish path keeps the flag absolute, which is where the
+original player report came from. `neighbourAiProfile`'s uniform sampling was deliberately left
+alone: with provocation in place it now produces variety rather than dead worlds.
+
 `STRATEGIES` has four rows; two of them (`economic`, `matching`) carry `neverInitiates: true`,
 which blocks **every** voluntary commit. `neighbourAiProfile` (`engine/galaxy.js`) picks a
 neighbour's strategy uniformly from `Object.keys(STRATEGIES)`, so in expectation **half the
@@ -101,11 +107,20 @@ node tools/ailab.js sweep --strategies economic,matching --minutes 40
 
 `neverInitiates` is absolute *on purpose* — see the comment in `aiStrategy.js`; it was made
 absolute to stop a passive player eating an unexplained all-in wave on the skirmish
-desperation timeout. The fix is therefore not to remove the flag but to give Odyssey its own
-provocation path, or to stop `neighbourAiProfile` sampling the non-initiating strategies
-uniformly.
+desperation timeout. So the flag stayed; what changed is what counts as *unprovoked*. Note the
+consequence for measurement: against the `passive` bot the non-initiating strategies still commit
+nothing, and that is now the contract working, not a defect — which is why `hostile-but-idle` and
+the `pressure` score component are gated on whether the AI was ever entitled to attack, and why
+the bench gained a `skirmisher` opponent that actually fights.
 
 ### 2.2 A hard production deadlock that freezes a developed AI permanently
+
+**Status: fixed**, in three parts — each of which re-froze production on its own once the one
+before it was cleared. (1) The Habitat margin is sized from the biggest supply cost the AI could
+actually try to pay (`maxSupplyDemand`), not a flat 2. (2) Supply already under construction is
+credited, so one Habitat per 10 s no longer throttles a scaled-up production line. (3) Habitats
+are placed at *any* of the AI's Command Centers — measured, a 70-building capital had no valid
+spot left while its own expansions had room to spare.
 
 The unit-mix cycle retries the same entry until it succeeds (`pickNextUnitType` indexes on
 `unitsBuilt`, which only increments on success). The Habitat trigger in `aiBaseAndTech` fires
@@ -134,6 +149,11 @@ node tools/ailab.js probe --world kybernet --opponent none --minutes 60 --sample
 
 ### 2.3 The build order terminates — and this is a play-forever mode
 
+**Status: fixed.** Two surplus sinks, both Odyssey-only. Sustained banked ore now opens extra
+Barracks (bounded), and — for the strategies that cap their standing army, whose banks were the
+four biggest in the roster — a surplus also funds a colony ship regardless of home depletion, so
+a rich neighbour grows instead of hoarding.
+
 Even without the deadlock, the AI's plan has an end: the factory chain, the tech order, one
 Star Dock, one Plasma Rig, one Helium Bomb. Once it's climbed them, there is nothing left in
 the script to buy. `INDUSTRY_CHAIN` and `RESEARCH_ORDER` are finite lists; `maxBarracks` is 1
@@ -148,6 +168,10 @@ across every world and every strategy. The single exception (glacius/aggressive)
 detector's 0.25 threshold by scoring 0.11 — it stalled too, just less often.
 
 ### 2.4 The Rusher never develops, and its Hard-only rescue lands ~30 minutes late
+
+**Status: fixed.** `aiIndustryReserve` banks for the power grid and the first two chain buildings
+before production can spend the ore, mirroring `ctx.foundryReserve`. Bounded to that bootstrap, so
+a long chain never freezes the army for its whole length.
 
 `rusherGraduates` (Hard) is meant to turn a Rusher into a developer after 20 minutes. On a
 korrath background world it does not visibly land until ~50:
@@ -176,27 +200,33 @@ the capability is there and reachable; it's the archetype path that can't get to
 node tools/ailab.js probe --world korrath --difficulty hard --opponent none --minutes 60 --sample 10
 ```
 
-### 2.5 A wiped neighbour is gone forever
+### 2.5 A wiped neighbour is gone forever — *withdrawn: this is by design*
 
-`aiFoundOrSurvive` can re-seat a razed base — but only from a colony ship in hand, and
-`aiExpand`'s Odyssey branch only *produces* one when a standing Command Center exists
-(`!colonyShip && cc && workers.length > 0`). Lose the CC without a ship in flight and the AI
-is permanently dead: no workers, no production, no recovery.
+**Originally filed as a defect; it isn't.** `aiFoundOrSurvive` re-seats a razed base only from a
+colony ship in hand, and `aiExpand`'s Odyssey branch only *produces* one when a standing Command
+Center exists — so an AI that loses its CC with no ship in flight is permanently out. Against the
+`turtle` bot an Aggressive Rusher on korrath threw itself away: base gone by minute 10, last
+worker by minute 20, and 1,143 ore banked forever after.
 
-Against the `turtle` sparring bot (a plain economy behind four turrets that never attacks),
-an Aggressive Rusher on korrath threw itself away: base gone by minute 10, last worker gone by
-minute 20, and for the remaining five minutes of the run — and every minute after it — no
-Command Center, no production, and 1,143 ore banked forever.
+But the second half of the original claim — "a background world can quietly die and stay dead" —
+does not hold. A background world has no player and no third party, so nothing can raze the
+neighbour's Command Center there; the AI cannot die unattended. The only way this state is
+reachable is the player razing it, and that is exactly `galaxy.pacified`: a permanent conquest
+milestone with its own toast, firework and domination counter. Letting the AI re-found would make
+a world read "pacified" on the starmap while a live neighbour rebuilt on it.
 
-For the *player's* conquest that's correct and intended (`galaxy.pacified` treats it as a
-milestone). For a world the player has never visited, it means a background world can quietly
-die and stay dead.
+Left as-is deliberately. The recoverable case (CC lost while an expansion ship is in flight) is
+already covered by `aiFoundOrSurvive`.
 
 ```
 node tools/ailab.js probe --world korrath --strategy aggressive --opponent turtle --minutes 25
 ```
 
 ### 2.6 The multiplicative layers have no clamp
+
+**Status: fixed.** `effectiveDiplomacyMults` floors the composed grace multiplier and caps the
+composed grievance one. The layers still compose — an Aggressive Hard Rusher is still much the
+shortest fuse in the galaxy — they just can't compound into numbers nobody chose.
 
 `graceMult` and `grievanceMult` multiply across all three layers with no bound:
 
@@ -214,6 +244,12 @@ and nothing in the tests notices.
 
 ### 2.7 The AI does not play the Odyssey
 
+**Status: deferred, deliberately.** This is a feature, not a defect: making the AI build
+Spaceports, jump, and settle other worlds is galaxy-layer design work with real gameplay
+consequences (what does a neighbour arriving on *your* world mean?), and it wants a decision from
+the designer before any code. The bench is ready for it — `--opponent none` measures exactly the
+background-world behaviour such a feature would change.
+
 The neighbour plays a skirmish with extra buildings. It never builds a Spaceport, never
 jumps, never settles another world, never trades for credits, never charges a Gate, never
 offers or demands tribute. `checkExpansion` gives the *appearance* of faction spread, but it
@@ -224,6 +260,10 @@ This is a design gap rather than a defect, and it's the largest single lever on 
 galaxy feels.
 
 ### 2.8 There is no AI-vs-AI, but there nearly is
+
+**Status: deferred, deliberately.** A contained refactor with no player-visible effect — it buys a
+better *evaluation signal*, not a better game. Worth doing before a serious dial-search campaign;
+not worth bundling into a defect-fix pass.
 
 `state.ai` is a single controller slot bound to owner `"ai"`. Across the AI modules
 there are only ~21 owner-literal references, and `engine/state.js` already keeps the

@@ -68,14 +68,20 @@ export const STRATEGIES = {
     // gone this long.
     warFootingMult: 5,
     warFootingTime: 75,
-    // OFFENSE: never volunteers into a fight on its own, PERIOD — neverInitiates
+    // OFFENSE: never volunteers into a fight on its own — neverInitiates
     // (engine/aiMilitary.js aiOffense) blocks every voluntary commit, including
     // the skirmish desperation timeout: a strategy whose whole point is "doesn't
     // attack unprovoked" has to mean that literally, or a genuinely passive
     // player eventually eats an unexplained all-in wave purely because enough
     // time passed. A mutual-turtle skirmish still resolves — victory.js's
     // score-based DEFAULT_MATCH_TIME_LIMIT (40 minutes) settles it without
-    // requiring combat from either side. It only ever fights defensively.
+    // requiring combat from either side.
+    //   ODYSSEY reads it as "doesn't START fights" rather than "never fights":
+    // there's no clock and no score there, so a neighbour dragged all the way to
+    // Hostile that could never answer just read as decoration. It commits only
+    // once the PLAYER has provoked it — destroyed its ships, or started charging
+    // a Gate (engine/diplomacy.js provoked()) — never on elapsed time, which is
+    // the bug above. Unprovoked, it still only ever fights defensively.
     neverInitiates: true,
     // A lighter static defense to match "minimal" (still real — cheap and
     // passive, unlike the standing army above).
@@ -100,7 +106,8 @@ export const STRATEGIES = {
     matchFloor: 3,
     // OFFENSE: purely reactive, like Economic — parity is a deterrent/defense
     // plan, not a wind-up to attack, and neverInitiates means that literally,
-    // with no timeout escape hatch (see the Economic entry above for why).
+    // with no timeout escape hatch (see the Economic entry above, including how
+    // Odyssey's provocation path narrows it to "doesn't start fights").
     neverInitiates: true,
   },
 };

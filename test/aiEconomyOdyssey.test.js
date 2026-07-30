@@ -168,3 +168,110 @@ test("expansion deadlock guard: with nothing discovered to expand to, the AI nev
   assert.ok(barracksCount >= 2,
     "ordinary infrastructure spend (a 2nd Barracks) still proceeds — the expansion reserve never walled off ore for a purchase that can never complete");
 });
+
+/* ---------- 5. the SURPLUS SINK: a play-forever AI must never run out of things to buy ---------- */
+
+// The AI's build order used to TERMINATE: a finite factory chain, a finite research order, one
+// Star Dock, one Plasma Rig — and a hard maxBarracks of 1 or 2. Once it had climbed all of that,
+// nothing in the script could absorb another unit of income, so a developed neighbour sat on a
+// rising pile of ore with a frozen army (measured: 30,000+ banked, army flat for 20 sim-minutes —
+// docs/odyssey-ai-review.md §2.3). In a mode with no end, an AI needs a terminal LOOP, not a
+// terminal list: sustained surplus now opens extra Barracks, which converts the pile back into
+// army. Odyssey only — a 40-minute skirmish never banks this much, and its barracks counts are
+// part of the archetype contract the skirmish suite pins.
+
+// A settled Odyssey Economist (maxBarracks 2) with its first two Barracks already standing.
+function richEconomist(ore) {
+  const s = seeded();
+  clearAiUnits(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  for (const [t, x, y] of [["barracks", 690, 410], ["barracks", 690, 590], ["habitat", 530, 590],
+                           ["habitat", 530, 410], ["habitat", 470, 500], ["refinery", 510, 470],
+                           ["foundry", 470, 590]]) {
+    const b = makeBuilding(t, "ai", x, y); s.buildings.set(b.id, b);
+  }
+  for (let i = 0; i < 14; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources = { ore, crystals: 0, radioactives: 0 };
+  return s;
+}
+const aiBarracks = s => [...s.buildings.values()].filter(b => b.owner === "ai" && b.type === "barracks");
+
+test("a hoarding Odyssey AI opens extra Barracks — the surplus turns back into army instead of piling up", () => {
+  const s = richEconomist(12000);
+  assert.equal(aiBarracks(s).length, 2, "starts at the Economist's archetype cap");
+  for (let i = 0; i < 8; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.ok(aiBarracks(s).length > 2,
+    `a 12,000-ore bank must buy more production, not sit there (got ${aiBarracks(s).length} Barracks)`);
+});
+
+test("the extra Barracks are BOUNDED — a rich AI scales up, it doesn't sprawl without limit", () => {
+  const s = richEconomist(1e6);
+  for (let i = 0; i < 40; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.ok(aiBarracks(s).length <= 6,
+    `the escalation is capped, not proportional to an unbounded bank (got ${aiBarracks(s).length})`);
+});
+
+test("an Odyssey AI that ISN'T rich still respects its archetype's Barracks cap", () => {
+  const s = richEconomist(600);   // comfortable, but nowhere near a surplus
+  for (let i = 0; i < 8; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.equal(aiBarracks(s).length, 2, "no escalation without a real surplus — the archetype contract still holds");
+});
+
+test("a SKIRMISH AI never escalates past its archetype cap, however much ore it is handed", () => {
+  const s = createGameState({ planetId: "ferros", endless: false, seed: 4242, rng: mulberry32(4242) });
+  for (const [id, u] of [...s.units]) if (u.owner === "ai") s.units.delete(id);
+  for (const [id, b] of [...s.buildings]) if (b.owner === "ai") s.buildings.delete(id);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  for (const [t, x, y] of [["barracks", 690, 410], ["barracks", 690, 590], ["habitat", 530, 590],
+                           ["habitat", 530, 410], ["habitat", 470, 500]]) {
+    const b = makeBuilding(t, "ai", x, y); s.buildings.set(b.id, b);
+  }
+  for (let i = 0; i < 14; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources = { ore: 12000, crystals: 0, radioactives: 0 };
+  for (let i = 0; i < 8; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.equal(aiBarracks(s).length, 2, "the skirmish keeps exactly the archetype's maxBarracks — this is an Odyssey rule");
+});
+
+// The Barracks escalation above is no help to a strategy that CAPS its standing army — Economic
+// and Force Parity keep 3–8 units by design, so extra production capacity sits idle and the ore
+// still piles up (the four biggest banks in the roster soak were all theirs: 36,207 · 30,785 ·
+// 30,679 · 28,678). Their in-character sink is the other direction: a neighbour with money it
+// can't spend GROWS — it settles another cluster rather than waiting for its home seam to thin.
+// Bounded for free by bestExpansionCluster, which returns null once the map is claimed.
+
+test("an Odyssey AI sitting on a surplus expands even though its home ore is untouched", () => {
+  const s = seeded();
+  clearAiUnits(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  const hab = makeBuilding("habitat", "ai", 600, 590); s.buildings.set(hab.id, hab);   // room for the ship's 3 supply
+  for (let i = 0; i < 8; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources = { ore: 6000, crystals: 0, radioactives: 0 };   // rich, and the world is barely mined
+  for (let i = 0; i < 4; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.ok(cc.queue.some(j => j.unitType === "colonyship"),
+    "money it has no other use for buys growth — not a rising pile of ore");
+});
+
+test("a modest bank does NOT trigger a surplus expansion — depletion is still the normal trigger", () => {
+  const s = seeded();
+  clearAiUnits(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  const hab = makeBuilding("habitat", "ai", 600, 590); s.buildings.set(hab.id, hab);
+  for (let i = 0; i < 8; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources = { ore: 900, crystals: 0, radioactives: 0 };
+  for (let i = 0; i < 4; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.ok(!cc.queue.some(j => j.unitType === "colonyship"),
+    "a comfortable bank is not a surplus — the AI doesn't expand for the sake of it");
+});
+
+test("a SKIRMISH AI never surplus-expands — it has no colony ships and its expansion rule is unchanged", () => {
+  const s = createGameState({ planetId: "ferros", endless: false, seed: 4242, rng: mulberry32(4242) });
+  for (const [id, u] of [...s.units]) if (u.owner === "ai") s.units.delete(id);
+  for (const [id, b] of [...s.buildings]) if (b.owner === "ai") s.buildings.delete(id);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  for (let i = 0; i < 8; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources = { ore: 6000, crystals: 0, radioactives: 0 };
+  for (let i = 0; i < 4; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.ok(!cc.queue.some(j => j.unitType === "colonyship"), "no colony ship in a skirmish");
+  const ccs = [...s.buildings.values()].filter(b => b.owner === "ai" && b.type === "command");
+  assert.equal(ccs.length, 1, "…and no second Command Center: the skirmish still expands only on depletion");
+});

@@ -102,3 +102,67 @@ test("every health check is well-formed and covers the whole Odyssey roster", ()
   }
   assert.equal(WORLDS.length, 11, "the lab sweeps the full Odyssey roster (nine skirmish worlds + two extras)");
 });
+
+/* ---------- the bench has to encode the CURRENT contract, not a stale one ---------- */
+
+// Odyssey now distinguishes "doesn't start fights" from "never fights": a neverInitiates strategy
+// is entitled to commit once the player has provoked it (engine/diplomacy.js provoked()). If the
+// bench kept scoring an unprovoked, quiet neighbour as a defect, the tuning loop would optimise
+// straight toward an AI that attacks players who have done nothing to it — the exact bug
+// neverInitiates exists to prevent. So "entitled" gates both the detector and the score component.
+
+test("an unprovoked never-initiating neighbour is NOT counted as hostile-but-idle", () => {
+  const r = run(short({ world: "korrath", strategy: "economic", opponent: "passive", minutes: 20 }));
+  assert.equal(r.waves, 0, "it correctly leaves a player who has done nothing to it alone");
+  assert.equal(r.entitledSamples, 0, "…so it never had standing to attack");
+  assert.equal(r.hostileIdleFrac, 0, "…and that must not read as a defect");
+  assert.ok(!CHECKS.find(c => c.id === "hostile-but-idle").hit(r), "the detector stays silent on correct behaviour");
+});
+
+test("pressure is dropped from the score when the AI never had standing to attack", () => {
+  const s = score(run(short({ world: "korrath", strategy: "economic", opponent: "passive", minutes: 20 })));
+  assert.ok(!("pressure" in s.parts), "an unanswerable question is dropped, not scored zero");
+});
+
+test("the skirmisher opponent actually fights — it is the bot that exercises provocation", () => {
+  // Contrasted against `passive` — the only bot that genuinely never draws blood. `turtle` is NOT
+  // the comparison to make: its turrets kill the AI's scouts, which is the player destroying the
+  // neighbour's ships however defensively it was meant, so it provokes too.
+  const fights = run(short({ world: "ferros", strategy: "economic", opponent: "skirmisher", minutes: 25 }));
+  const ignores = run(short({ world: "ferros", strategy: "economic", opponent: "passive", minutes: 25 }));
+  assert.ok(fights.curve.some(c => c.provokedAi), "the skirmisher draws blood, which is the whole point of it");
+  assert.ok(!ignores.curve.some(c => c.provokedAi), "…and a player who does nothing at all never does");
+  assert.ok(fights.curve.some(c => c.army > 0), "the AI it fights is a real opponent, not an empty world");
+});
+
+test("a provoked never-initiating neighbour DOES gain standing, and the bench sees it", () => {
+  // The end-to-end proof that engine and bench agree: against the one bot that draws blood, an
+  // Economic neighbour becomes entitled and commits — where against `passive` it never does.
+  const fought = run(short({ world: "korrath", strategy: "economic", opponent: "skirmisher", minutes: 30 }));
+  const ignored = run(short({ world: "korrath", strategy: "economic", opponent: "passive", minutes: 30 }));
+  assert.equal(ignored.entitledSamples, 0, "an untouched player is still left alone");
+  assert.ok(fought.entitledSamples > 0, "a player who attacks it earns a neighbour that may answer");
+});
+
+// Two detectors were rewritten after the first fix round, because scaling the AI up turned them
+// into false positives: "any Barracks idle while holding 400" fired on 42 of 44 HEALTHY runs once
+// surplus opened six Barracks, and a peak-based thrift measure scored a working economy (peaks
+// high, spends straight back down) the same as a stalled one. A metric that fires on correct
+// behaviour is worse than no metric — the tuning loop optimises against it.
+
+test("ordinary churn in a scaled-up production line is not a production stall", () => {
+  const healthy = { rax: 6, idleRax: 2, banked: 2200 };
+  const stalled = { rax: 6, idleRax: 6, banked: 12000 };
+  const frac = c => summarise([{ ...c, dev: 0, army: 0, waves: 0, hostility: 0, playerBuildings: 1,
+                                 entitled: true, banked: c.banked, armyValue: 0, workers: 0,
+                                 buildings: 0, supplyBlocked: false, aiAlive: true, t: 0 }]).idleRichFrac;
+  assert.equal(frac(healthy), 0, "two of six Barracks between jobs on a working balance is not a stall");
+  assert.equal(frac(stalled), 1, "every Barracks idle on a large bank is");
+});
+
+test("hoarding means a bank it never spent, not a bank it passed through", () => {
+  const hoard = CHECKS.find(c => c.id === "hoarding");
+  assert.ok(hoard.hit({ bankedFinal: 30000, armyGrowthTail: 0 }), "big final bank + a frozen army is hoarding");
+  assert.ok(!hoard.hit({ bankedFinal: 2200, armyGrowthTail: 51 }), "a working balance with a growing army is not");
+  assert.ok(!hoard.hit({ bankedFinal: 30000, armyGrowthTail: 40 }), "…nor is a big balance it's actively converting");
+});

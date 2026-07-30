@@ -46,7 +46,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createGameState } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { createDiplomacy, hostility, aiDevelopment } from "../engine/diplomacy.js";
+import { createDiplomacy, hostility, aiDevelopment, provoked } from "../engine/diplomacy.js";
+import { strategyFor } from "../engine/aiStrategy.js";
+import { issueAttackMove } from "../engine/commands.js";
 import { createMarket } from "../engine/market.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { findPlacement } from "../engine/colliders.js";
@@ -167,6 +169,9 @@ const OPPONENTS = {
   // Barracks, defenders, and turrets. The yardstick for "can the AI crack a defended base",
   // which is the question that actually matters for an Odyssey neighbour.
   turtle: {
+    // NB it can still provoke: its turrets kill the AI's scouts, which counts as the player
+    // destroying the neighbour's ships (engine/diplomacy.js). `passive` is the only bot that never
+    // draws blood at all.
     desc: "economy + static defence, never attacks (the base-cracking yardstick)",
     setup: seatBase,
     think(s) {
@@ -188,6 +193,22 @@ const OPPONENTS = {
       // hasn't built. Units hold at the rally point; the bot never issues an attack order.
       const idle = rax.find(b => b.queue.length === 0);
       if (idle && canAfford(res, UNITS.skiff.cost)) queueProduction(s, idle.id, "skiff");
+    },
+  },
+
+  // The only bot that PROVOKES. A `neverInitiates` neighbour is entitled to answer a player who
+  // has drawn blood (engine/diplomacy.js provoked()), so measuring whether Economic / Force Parity
+  // ever push back needs an opponent that actually fights — the other three never do, and against
+  // them those strategies are SUPPOSED to stay quiet. Deterministic: it commits whenever six idle
+  // combat units have accumulated, off the sim clock, with no randomness.
+  skirmisher: {
+    desc: "turtle economy that throws its army at the AI whenever it musters one (the only bot that provokes)",
+    setup: seatBase,
+    think(s) {
+      OPPONENTS.turtle.think(s);
+      const idle = [...s.units.values()].filter(u =>
+        u.owner === "player" && UNITS[u.type].role === "combat" && (!u.order || u.order.type === "move"));
+      if (idle.length >= 6) issueAttackMove(idle, s.map.bases.ai.x, s.map.bases.ai.y);
     },
   },
 };
@@ -233,6 +254,13 @@ function sample(s) {
     supplyFree: +(supplyCap(s, "ai") - supplyUsed(s, "ai")).toFixed(1),
     playerBuildings: playerBuildingsOf(s).length,
     aiAlive: done.some(b => b.type === "command"),
+    // ENTITLED to attack right now? Odyssey draws a line between a strategy that goes looking for
+    // a fight and one that only answers being provoked (engine/aiStrategy.js neverInitiates +
+    // engine/diplomacy.js provoked()). "Hostile and idle" is only a defect on the near side of
+    // that line — a neighbour leaving an unprovoked player alone is the contract working, and
+    // scoring it as a failure would push the tuning loop toward breaking it.
+    entitled: !strategyFor(s).neverInitiates || provoked(s),
+    provokedAi: provoked(s),   // has the player drawn blood / started a Gate? (diagnostic + the `entitled` input)
   };
 }
 
@@ -265,7 +293,8 @@ function summarise(curve) {
   const devGrowthTail = tail.length > 1 ? tail[tail.length - 1].dev - tail[0].dev : 0;
   const armyGrowthTail = tail.length > 1 ? tail[tail.length - 1].army - tail[0].army : 0;
   const firstWave = curve.find(c => c.waves > 0);
-  const hostileSamples = curve.filter(c => c.hostility >= 0.5 && c.playerBuildings > 0);
+  // Only samples where the AI was BOTH hostile and entitled to act on it (see sample().entitled).
+  const hostileSamples = curve.filter(c => c.hostility >= 0.5 && c.playerBuildings > 0 && c.entitled);
   return {
     devFinal: last.dev,
     devGrowthTail,
@@ -282,8 +311,15 @@ function summarise(curve) {
     // while never committing a wave. The single most player-visible AI failure in Odyssey.
     hostileIdleFrac: hostileSamples.length
       ? +(hostileSamples.filter(c => c.waves === 0).length / hostileSamples.length).toFixed(2) : 0,
-    // Fraction of samples where a Barracks stood idle on 400+ banked value.
-    idleRichFrac: +(curve.filter(c => c.rax > 0 && c.idleRax > 0 && c.banked > 400).length / curve.length).toFixed(2),
+    // How much of the run the AI actually had standing to attack. Zero means the question
+    // "did it apply pressure?" was never asked of it — scored the same way an opponent-less run is.
+    entitledSamples: hostileSamples.length,
+    // Fraction of samples where EVERY Barracks stood idle while the AI held real money — i.e. it
+    // had nothing left it knew how to buy. Deliberately "every", not "any": once surplus opens
+    // extra Barracks, one of six sitting between jobs is ordinary churn, and an "any" test fired on
+    // 42 of 44 healthy runs. This is the version that distinguishes a working production line from
+    // a stopped one.
+    idleRichFrac: +(curve.filter(c => c.rax > 0 && c.idleRax === c.rax && c.banked > 1000).length / curve.length).toFixed(2),
     supplyDeadlockFrac: +(curve.filter(c => c.supplyBlocked && c.banked > 400).length / curve.length).toFixed(2),
     stanceFinal: last.stance,
     playerBuildingsFinal: last.playerBuildings,
@@ -316,17 +352,22 @@ export function score(r) {
     develop: clamp01(r.devFinal / 20),                      // ~20 = the full chain + most of the tree
     keepGrowing: clamp01((r.devGrowthTail + Math.max(0, r.armyGrowthTail) / 5) / 4),
     pressure: r.hostileIdleFrac > 0 ? clamp01(1 - r.hostileIdleFrac) : clamp01(r.waves / 6),
-    thrift: clamp01(1 - r.bankedPeak / 4000),
+    // What it ENDED holding, not what it ever touched: a working economy peaks high and spends it
+    // straight back down, so a peak-based measure scored a healthy AI the same as a stalled one.
+    thrift: clamp01(1 - r.bankedFinal / 8000),
     liveness: clamp01(1 - Math.max(r.idleRichFrac, r.supplyDeadlockFrac)),
     survive: r.aiAlive ? 1 : 0,
   };
-  // Against the `none` opponent there is nobody to attack, so scoring pressure would just
-  // punish the setting that's RIGHT for measuring development. Drop that component and
-  // renormalise the remaining weights, rather than quietly scoring an unanswerable question.
-  const applicable = Object.keys(WEIGHTS).filter(k => !(k === "pressure" && r.opponent === "none"));
+  // "Did it apply pressure?" is only a fair question when it was ever ASKED — there was somebody
+  // to attack (not the `none` opponent) and the AI had standing to attack them (an initiating
+  // strategy, or a provoked one). Otherwise drop the component and renormalise the remaining
+  // weights, rather than quietly scoring an unanswerable question as a failure and pushing the
+  // tuning loop toward an AI that attacks players who have done nothing to it.
+  const askable = r.opponent !== "none" && r.entitledSamples > 0;
+  const applicable = Object.keys(WEIGHTS).filter(k => !(k === "pressure" && !askable));
   const wsum = applicable.reduce((a, k) => a + WEIGHTS[k], 0);
   const total = applicable.reduce((sum, k) => sum + (WEIGHTS[k] / wsum) * parts[k], 0);
-  if (r.opponent === "none") delete parts.pressure;
+  if (!askable) delete parts.pressure;
   return { total: +total.toFixed(3), parts };
 }
 
@@ -366,14 +407,16 @@ export const CHECKS = [
        + "while the Habitat trigger (used >= cap - 2) never fires for a 4- or 8-supply unit",
     hit: r => r.supplyDeadlockFrac > 0.1 },
   { id: "hoarding",
-    why: "banked resources the AI has no way to spend — income outruns its build order",
-    hit: r => r.bankedPeak > 4000 },
+    why: "it finished sitting on a large bank AND its army hadn't grown — money it has no way to "
+       + "spend, rather than a working balance in transit",
+    hit: r => r.bankedFinal > 5000 && r.armyGrowthTail <= 0 },
   { id: "dev-flatline",
     why: "the industry/tech climb stopped: no development gained in the last third of the run",
     hit: r => r.devGrowthTail === 0 && r.devFinal < 12 },
   { id: "hostile-but-idle",
-    why: "the HUD reads Hostile and the neighbour never commits a wave",
-    hit: r => r.hostileIdleFrac > 0.5 },
+    why: "the HUD reads Hostile, the neighbour is entitled to act on it, and it never commits a wave "
+       + "(samples where a never-initiating strategy was left unprovoked don't count — that's the contract)",
+    hit: r => r.entitledSamples > 0 && r.hostileIdleFrac > 0.5 },
   { id: "production-stall",
     why: "a completed Barracks stood idle while the AI held real money",
     hit: r => r.idleRichFrac > 0.25 },

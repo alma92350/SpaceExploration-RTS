@@ -240,3 +240,78 @@ test("the AI trains a Leviathan at a completed Star Dock (strategic goods on han
   for (let i = 0; i < 8 && !queued; i++) { runAI(s, 1.5); queued = leviQueued(); }
   assert.ok(queued, "the AI queued a Leviathan at its Star Dock");
 });
+
+/* ---------- the industry BOOTSTRAP reserve (docs/odyssey-ai-review.md §2.4) ---------- */
+
+// runAI's phase order is load-bearing and puts unit production BEFORE industry, with no holdback
+// between them. So an archetype whose units are cheap relative to its income spent its ore down
+// below a Reactor's 120 every think cycle and never developed: a Rusher world measured at one
+// industrial building after 60 sim-minutes, and Hard's rusherGraduates landing ~30 minutes past
+// its own 20-minute trigger. The Foundry and Refinery already solve exactly this with
+// ctx.foundryReserve / ctx.refineryReserve; industry now has the same, BOUNDED to the grid plus
+// the first couple of chain buildings so the army is never frozen for the whole climb.
+
+// Both modes auto-seed a side (Odyssey a colony ship, skirmish a CC + workers) — strip it, or the
+// fixture's supply and building counts aren't the ones the test is reasoning about.
+function clearAiSeed(s) {
+  for (const [id, u] of [...s.units]) if (u.owner === "ai") s.units.delete(id);
+  for (const [id, b] of [...s.buildings]) if (b.owner === "ai") s.buildings.delete(id);
+}
+
+// A Rusher (korrath) Odyssey base: no Foundry or Refinery reserve of its own (its mix wants
+// neither), so unit production is the ONLY thing competing for the ore — the exact shape that
+// starved the grid.
+function rusherBase(ore) {
+  const s = seeded("korrath");
+  clearAiSeed(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  const bar = makeBuilding("barracks", "ai", 664, 500); s.buildings.set(bar.id, bar);
+  for (let i = 0; i < 7; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources.ore = ore;   // enough for a Reactor (120) OR a Skiff (100) — not both
+  return s;
+}
+const aiOf = (s, type) => [...s.buildings.values()].filter(b => b.owner === "ai" && b.type === type);
+const aiBarracksQueue = s => aiOf(s, "barracks")[0].queue;
+
+test("an Odyssey AI banks for its Reactor instead of spending the ore on one more Skiff", () => {
+  const s = rusherBase(150);
+  runAI(s, 1.5);
+  assert.equal(aiOf(s, "reactor").length, 1, "the grid gets founded — without a reserve the unit cycle ate the ore first");
+  assert.equal(aiBarracksQueue(s).length, 0, "…and unit production is held back exactly while it banks, like the Foundry's reserve");
+});
+
+test("with the grid already up, a Rusher goes straight back to building units — the reserve is bounded", () => {
+  const s = rusherBase(150);
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  runAI(s, 1.5);
+  assert.ok(aiBarracksQueue(s).length > 0,
+    "a Rusher stops at power+electrify, so nothing further is reserved and the army keeps flowing");
+});
+
+test("a developer stops reserving once its bootstrap chain stands, so the deep climb is bought from surplus", () => {
+  const s = seeded("ferros");   // economist: wantsRefinery, so it does climb the chain
+  clearAiSeed(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  for (const [t, x, y] of [["barracks", 664, 500], ["reactor", 540, 560], ["smelter", 700, 560],
+                           ["datacenter", 700, 440], ["foundry", 510, 590], ["refinery", 510, 440]]) {
+    const b = makeBuilding(t, "ai", x, y); s.buildings.set(b.id, b);
+  }
+  for (let i = 0; i < 12; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  const hab = makeBuilding("habitat", "ai", 600, 590); s.buildings.set(hab.id, hab);
+  s.players.ai.resources.ore = 150;
+  runAI(s, 1.5);
+  assert.ok(aiBarracksQueue(s).length > 0,
+    "past INDUSTRY_BOOTSTRAP the reserve is off — a long chain must never freeze the army for its whole length");
+});
+
+test("a SKIRMISH AI reserves nothing for industry — it has no industry to build", () => {
+  const s = createGameState({ planetId: "korrath", endless: false, seed: 4242, rng: mulberry32(4242) });
+  clearAiSeed(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  const bar = makeBuilding("barracks", "ai", 664, 500); s.buildings.set(bar.id, bar);
+  for (let i = 0; i < 7; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources.ore = 150;
+  runAI(s, 1.5);
+  assert.equal(aiOf(s, "reactor").length, 0, "no Reactor in a skirmish (aiIndustry is endless-only)");
+  assert.ok(aiBarracksQueue(s).length > 0, "…so the skirmish unit cycle spends exactly as it always did");
+});

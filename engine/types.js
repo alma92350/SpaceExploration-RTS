@@ -336,6 +336,7 @@
  * @property {number} oreReserve
  * @property {number} foundryReserve
  * @property {number} refineryReserve
+ * @property {number} industryReserve   Odyssey: the grid / bootstrap-chain holdback (engine/aiIndustry.js aiIndustryReserve)
  */
 
 // ---- Odyssey galaxy -------------------------------------------------------------
