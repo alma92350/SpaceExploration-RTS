@@ -153,7 +153,12 @@ storage cascades to AI worker logic — the riskier half.
 **Balance note (both phases):** default caps are generous (80 / rig 120). Tune later —
 smaller = more logistics pressure, larger = less micro.
 
-**Phase C — Finite COLLECTION storage. ✅ DONE (player-only).**
+**Phase C — Finite COLLECTION storage. ⤺ REVERTED — Refinery/Foundry/Arsenal are no longer
+drop-offs.** The forward-collection capability described below shipped, then was later
+removed: the Refinery/Foundry/Arsenal no longer carry `dropOff`/`storeCap`, `isGatherDropOff`
+now resolves to the Command Center alone, and the AI's forward-Refinery placement logic
+(`aiEconomy.js`) was deleted along with it. Every gather/haul trip is a straight run to a
+Command Center again. Left below for the historical record of what Phase C built and why.
 - The forward drop-offs (Refinery/Foundry/Arsenal — the pure `dropOff` buildings, via
   the new `isGatherDropOff`) get a finite `storeCap` intake buffer. A PLAYER gatherer
   banks its haul into that buffer (capped); a full one is skipped by `nearestGatherDrop`
@@ -319,9 +324,10 @@ Closes the two items Phase E deliberately left for later.
 
 ## Outcome
 
-All six phases shipped. Storage is finite end-to-end — collection (forward drop-offs),
-production output (rig + factories), and factory inputs — and workers move every good
-between them (gather → drop-off → haul → CC → supply → factory → haul → CC). A landed
+All six phases shipped (Phase C was later reverted — see above: the Refinery/Foundry/Arsenal
+are no longer drop-offs, and all collection now runs straight to the Command Center). Storage
+is finite end-to-end — production output (rig + factories) and factory inputs — and workers
+move every good between them (gather → CC → supply → factory → haul → CC). A landed
 freighter now sits IN that chain too — a physical collection point workers can ferry to
 directly, or (once teched) a large-capacity autonomous hauler in its own right, paid for
 in AI Cores while it runs. Logistics is a standing demand on labour (and, for an automated

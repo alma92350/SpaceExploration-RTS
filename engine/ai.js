@@ -7,11 +7,9 @@
    repeated waves, once each wave is big enough (or the game's dragged on
    long enough that it should commit anyway). Along the way it fortifies
    with Sentinel Turrets on the approach vector, expands to a second
-   Command Center when its home ore runs thin, puts up a Refinery (and, on a
-   big map, plants extra Refineries forward as resource drop-offs to shorten a
-   long ore haul without a whole second CC), and researches both upgrades — so
-   the player isn't the only side that gets to use crystals/radioactives,
-   expansions, decentralized collection, or defenses.
+   Command Center when its home ore runs thin, puts up a Refinery, and
+   researches both upgrades — so the player isn't the only side that gets to
+   use crystals/radioactives, expansions, or defenses.
 
    The AI plays under its own fog of war (state.fogAI) — it is NOT omniscient.
    It keeps one unit out scouting (updateScout), and its intel-dependent moves

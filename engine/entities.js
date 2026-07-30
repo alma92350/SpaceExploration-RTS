@@ -33,8 +33,6 @@ export const BUILDINGS = {
     id: "refinery", name: "Refinery", hp: 400, radius: 18,
     cost: { ore: 200 }, buildTime: 16,
     sight: 140,
-    dropOff: true,   // doubles as a resource drop-off — see the dropOff note below
-    storeCap: 100,   // a PLAYER forward drop-off's finite intake buffer (engine/haul.js) — a full one reroutes gatherers
     // No `produces` — it researches upgrades instead of building units,
     // which is also what keeps it out of the rally-point UI (input.js
     // only offers that for buildings with a `produces` list).
@@ -63,28 +61,24 @@ export const BUILDINGS = {
   foundry: {
     id: "foundry", name: "Foundry", hp: 450, radius: 18,
     cost: { ore: 175 }, buildTime: 22, sight: 140,
-    dropOff: true,   // an industrial building doubles as a resource drop-off
-    storeCap: 100,   // a PLAYER forward drop-off's finite intake buffer (engine/haul.js)
     // The military tech gate: a pure prerequisite building (no `produces`, so
     // it stays out of the rally UI). It unlocks the Tier-2 combat units
     // (Lancer, Breacher) — the Barracks still trains them. Ore-only on purpose,
     // so the Tier-2 units stay reachable on every world (ore is guaranteed near
     // every base) rather than being walled off on a crystal-poor map.
     requires: ["barracks"],
-    // Category is "industrial" (not "military") despite gating Tier-2 combat units: it's also a
-    // forward drop-off (dropOff+storeCap above), same as the Refinery/Arsenal.
+    // Category is "industrial" (not "military") despite gating Tier-2 combat units —
+    // it groups with the other production-tech buildings in the build menu.
     category: "industrial",
   },
   arsenal: {
     id: "arsenal", name: "Arsenal", hp: 550, radius: 18,
     cost: { ore: 220 }, buildTime: 26, sight: 140,
-    dropOff: true,   // an industrial building doubles as a resource drop-off
-    storeCap: 100,   // a PLAYER forward drop-off's finite intake buffer (engine/haul.js)
     // The Tier-3 gate, one step past the Foundry: unlocks the Dreadnought
     // capital unit. Also a pure gate (no `produces`), ore-only so the tech path
     // stays reachable on every world.
     requires: ["foundry"],
-    category: "industrial",   // same reasoning as the Foundry above — dropOff+storeCap, not just a tech gate
+    category: "industrial",   // same reasoning as the Foundry above
   },
   spaceport: {
     id: "spaceport", name: "Spaceport", hp: 600, radius: 22,
@@ -304,22 +298,21 @@ export function prereqsMet(state, owner, def) {
   });
 }
 
-// A building is a resource drop-off if it's the Command Center or an industrial
-// building flagged `dropOff` (Refinery, Foundry, Arsenal). Workers deposit their
-// haul at the NEAREST drop-off (see gather.js), so planting one of these cheaper,
-// faster industrial buildings forward shortens a distant mining run without the
-// cost of a whole second Command Center — a decentralized economy where the CC
-// still keeps its unique roles (training workers, granting supply). Single source
-// of truth for the routing, tests, and any future UI.
+// A building is a resource drop-off if it's the Command Center or a building flagged
+// `dropOff` in its def (the Odyssey-only factory chain — smelter, assembler, chipfab,
+// etc. — flags this; no skirmish building besides the Command Center does). Workers
+// deposit their haul at the NEAREST drop-off (see gather.js). Single source of truth
+// for the routing, tests, and any future UI.
 export function isDropOff(type) {
   const def = BUILDINGS[type];
   return !!(def && (def.isCommandCenter || def.dropOff));
 }
 
-// Where a gatherer may DEPOSIT a raw haul: the Command Center or a pure forward drop-off
-// (Refinery/Foundry/Arsenal) — NOT a factory, which drops its raws-as-inputs elsewhere and
-// whose `store` is its refined OUTPUT buffer, not a raw-intake bin. So the gather loop and
-// the finite-intake logic (engine/gather.js) share one definition of a "collection point".
+// Where a gatherer may DEPOSIT a raw haul: the Command Center, or a `dropOff` building
+// with no `recipe` — NOT a factory, which drops its raws-as-inputs elsewhere and whose
+// `store` is its refined OUTPUT buffer, not a raw-intake bin. In practice every `dropOff`
+// building in the roster carries a `recipe` (the Odyssey factory chain), so this resolves
+// to the Command Center alone — there is no forward/decentralized collection point.
 export function isGatherDropOff(type) {
   const def = BUILDINGS[type];
   return !!(def && (def.isCommandCenter || (def.dropOff && !def.recipe)));
@@ -359,8 +352,8 @@ export function canLogisticsType(unitType) {
 // building that doesn't ALREADY live on the power economy (no recipe to run, no Power to grant,
 // no rig/wonder draw) and has something worth boosting (`produces` a unit, or `supplyGrants`).
 // So the factories (already power-hungry), Reactors/Generators (they GRANT power), turrets and
-// pure drop-offs are all excluded. Pure def predicate — deterministic, shared by the draw math,
-// the boost application, and the HUD toggle.
+// other non-producers (Refinery, Foundry, Arsenal, Datacenter) are all excluded. Pure def
+// predicate — deterministic, shared by the draw math, the boost application, and the HUD toggle.
 export function isElectrifiable(type) {
   const def = BUILDINGS[type];
   if (!def) return false;

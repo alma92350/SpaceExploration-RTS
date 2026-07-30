@@ -2,15 +2,15 @@
 /* ============================================================
    Worker gather/deposit loop: walk to node -> mine into cargo -> walk to
    the nearest completed drop-off -> deposit -> repeat until the node runs
-   dry. A drop-off is the Command Center OR any industrial building that
-   proxies it (Refinery, Foundry, Arsenal — see entities.js isDropOff), so
-   a forward industrial building shortens a distant haul without a full CC.
+   dry. A drop-off is the Command Center (see entities.js isGatherDropOff) —
+   there is no forward/decentralized collection point, so every haul goes
+   all the way back to a CC.
    ============================================================ */
 
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS, BUILDINGS, isGatherDropOff, storeRoom, upgradeMult } from "./entities.js";
+import { UNITS, BUILDINGS, isGatherDropOff, upgradeMult } from "./entities.js";
 import { sideMod } from "./map.js";
 import { hashStr } from "./rng.js";
 
@@ -77,7 +77,7 @@ export function updateGather(state, unit, dt) {
 
   if (order.phase === "toDrop") {
     const drop = nearestGatherDrop(state, unit.owner, unit.x, unit.y);
-    if (!drop) { unit.order = null; return; }   // no collection point with room (and no CC) → hold the load, idle
+    if (!drop) { unit.order = null; return; }   // no Command Center → hold the load, idle
     const dist = Math.hypot(drop.x - unit.x, drop.y - unit.y);
     if (dist <= DROP_REACH) {
       const player = state.players[unit.owner];
@@ -87,49 +87,28 @@ export function updateGather(state, unit, dt) {
       const banked = unit.cargo.qty
         * sideMod(state, unit.owner, "gatherMult", 1)
         * upgradeMult(player.upgrades, "gatherYieldMult");
-      // A PLAYER forward drop-off (Refinery/Foundry/Arsenal) has a FINITE intake buffer that
-      // workers must haul to the Command Center (engine/haul.js). Bank what fits into it; the
-      // Command Center (and every AI drop-off) is the bottomless treasury as before. Any
-      // overflow rides on in the cargo — the gatherer reroutes to another drop-off next tick.
-      if (unit.owner === "player" && !BUILDINGS[drop.type].isCommandCenter) {
-        const put = Math.min(banked, storeRoom(drop));
-        drop.store = drop.store || {};
-        drop.store[unit.cargo.com] = (drop.store[unit.cargo.com] || 0) + put;
-        unit.cargo.qty -= banked > 0 ? unit.cargo.qty * (put / banked) : unit.cargo.qty;
-        if (unit.cargo.qty <= 1e-6) unit.cargo.qty = 0;
-      } else {
-        player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + banked;
-        unit.cargo.qty = 0;
-      }
-      if (unit.cargo.qty <= 1e-6) {
-        order.phase = node.amount > 0 ? "toNode" : null;
-        if (!order.phase) unit.order = null;
-      }
-      // else: a partial deposit left cargo on board → stay in toDrop and reroute next tick.
+      player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + banked;
+      unit.cargo.qty = 0;
+      order.phase = node.amount > 0 ? "toNode" : null;
+      if (!order.phase) unit.order = null;
     } else {
       stepToward(state, unit, drop.x, drop.y, def.speed, dt);
     }
   }
 }
 
-// The nearest COMPLETED collection point a gatherer may bank a raw haul at: its own Command
-// Center or a pure forward drop-off (Refinery/Foundry/Arsenal — engine/entities.js
-// isGatherDropOff). A PLAYER's forward drop-off has a finite intake buffer, so a FULL one is
-// skipped and the gatherer reroutes to the next-nearest with room (the Command Center never
-// fills). AI drop-offs are the bottomless treasury as before — so AI gather routing is
-// byte-identical. Closest wins, deterministic Map order breaks ties. `excludeId`, when given,
-// skips that one building — a HAUL job's own source is ALSO a valid drop-off (a Foundry/Refinery/
-// Arsenal is both a haul-able collection point AND a forward drop-off), so without this a worker
-// standing right on it after loading would just find itself the nearest "drop", unload straight
-// back into the pile it just took the load from, and reload — never actually leaving (engine/
-// haul.js updateHaul passes its own source id here).
+// The nearest COMPLETED collection point a gatherer may bank a raw haul at (engine/entities.js
+// isGatherDropOff — today, always the Command Center; there is no forward/decentralized
+// collection point). Closest wins, deterministic Map order breaks ties. `excludeId`, when given,
+// skips that one building — a defensive guard against a worker finding its own HAUL source as its
+// drop target and looping (engine/haul.js updateHaul passes its own source id here); harmless
+// no-op while a Command Center can never itself be a HAUL source.
 /** @param {State} state @param {string} owner @param {number} x @param {number} y @param {string} [excludeId] @returns {Building|null} */
 export function nearestGatherDrop(state, owner, x, y, excludeId) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing || !isGatherDropOff(b.type)) continue;
     if (excludeId && b.id === excludeId) continue;
-    if (owner === "player" && !BUILDINGS[b.type].isCommandCenter && storeRoom(b) <= 0) continue;   // full forward buffer → skip
     const d = Math.hypot(b.x - x, b.y - y);
     if (d < bestD) { bestD = d; best = b; }
   }
@@ -137,8 +116,7 @@ export function nearestGatherDrop(state, owner, x, y, excludeId) {
 }
 
 // The nearest COMPLETED Command Center — the treasury/warehouse. Haulage delivers to it and
-// supply runs pick up from it (engine/haul.js), so goods flow through the CC, not sideways
-// between forward drop-offs. Null if the owner has no standing Command Center.
+// supply runs pick up from it (engine/haul.js). Null if the owner has no standing Command Center.
 /** @param {State} state @param {string} owner @param {number} x @param {number} y @returns {Building|null} */
 export function nearestCommandCenter(state, owner, x, y) {
   let best = null, bestD = Infinity;

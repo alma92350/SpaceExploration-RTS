@@ -157,21 +157,19 @@ test("the Command Center is buildable but steep: the priciest, slowest structure
   assert.ok(BUILDINGS.command.cost.ore > BUILDINGS.refinery.cost.ore, "an expansion should out-price every other building");
 });
 
-test("resource drop-offs are the Command Center and the industrial buildings that proxy it", () => {
-  // The CC and the industrial line (Refinery, Foundry, Arsenal) all bank hauls,
-  // so a forward industrial building shortens a distant mining run without a
-  // whole second Command Center.
+test("the Command Center is the only resource drop-off in the skirmish roster", () => {
+  // No forward/decentralized collection point: every haul goes all the way back to a CC.
   assert.equal(isDropOff("command"), true, "the CC is always a drop-off");
-  assert.equal(isDropOff("refinery"), true);
-  assert.equal(isDropOff("foundry"), true);
-  assert.equal(isDropOff("arsenal"), true);
-  // Troop, defense, and housing buildings are not collection points.
+  assert.equal(isDropOff("refinery"), false, "the Refinery is a research building only, not a collection point");
+  assert.equal(isDropOff("foundry"), false, "the Foundry is a tech gate only, not a collection point");
+  assert.equal(isDropOff("arsenal"), false, "the Arsenal is a tech gate only, not a collection point");
+  // Troop, defense, and housing buildings are not collection points either.
   assert.equal(isDropOff("barracks"), false, "the Barracks trains troops, it doesn't collect");
   assert.equal(isDropOff("turret"), false);
   assert.equal(isDropOff("habitat"), false);
   assert.equal(isDropOff("not-a-building"), false, "an unknown type is never a drop-off");
   // The flag is what the routing reads — keep def and predicate in sync.
-  for (const t of ["refinery", "foundry", "arsenal"]) assert.equal(BUILDINGS[t].dropOff, true, `${t} carries the dropOff flag`);
+  for (const t of ["refinery", "foundry", "arsenal"]) assert.equal(BUILDINGS[t].dropOff, undefined, `${t} no longer carries the dropOff flag`);
 });
 
 test("the Ranger is a Command-Center recon unit: cheap, fragile, all-terrain, far-sighted", () => {
@@ -308,12 +306,11 @@ test("canBuildCategory/canBuildType: Worker builds everything, a non-worker buil
 });
 
 test("Foundry and Arsenal are Industrial, not Military, despite gating combat tech", () => {
-  // Both double as forward drop-offs (dropOff+storeCap, same as Refinery) — they already
-  // participate in the haul/service logistics system, same as Refinery.
+  // They group with the Refinery in the build menu as production-tech buildings —
+  // neither trains nor fights, unlike the Barracks/Turret/Star Dock roster below.
   assert.equal(BUILDINGS.foundry.category, "industrial");
   assert.equal(BUILDINGS.arsenal.category, "industrial");
   assert.equal(BUILDINGS.refinery.category, "industrial");
-  assert.ok(BUILDINGS.foundry.dropOff && BUILDINGS.arsenal.dropOff);
   assert.equal(BUILDINGS.barracks.category, "military");
   assert.equal(BUILDINGS.turret.category, "military");
   assert.equal(BUILDINGS.stardock.category, "military");

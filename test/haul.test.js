@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "../engine/haul.js";
-import { storeTotal, storeCapOf, inputTotal, inputRoom, inputCapOf } from "../engine/entities.js";
+import { storeTotal, inputTotal, inputRoom, inputCapOf } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
@@ -41,70 +41,27 @@ test("a hauler carries a producer's buffered output to the Command Center and ba
     "the treasury gains exactly what the buffer held — no gather multiplier double-dips a rig's yield");
 });
 
-test("a hauler prefers a forward drop-off (Refinery/Foundry/Arsenal) over the Command Center when it's the closer place to deposit right now", () => {
+test("a hauler ignores a nearby Refinery/Foundry/Arsenal — the load always goes to the Command Center", () => {
   const { s, cc, workers } = base(1);
-  // The rig sits far from the CC, with a Refinery planted right next to it — the documented
-  // "forward drop-off shortens a distant mining run" pattern, now extended to a HAUL job.
-  const rig = makeBuilding("plasmarig", "player", cc.x + 900, cc.y);
-  rig.store = { ore: 60 };
+  const rig = plantRig(s, cc, { ore: 55 });
   rig.paused = true;
-  s.buildings.set(rig.id, rig);
+  // A Refinery planted right next to the rig — this used to be the "forward drop-off
+  // shortens a distant mining run" pattern; it no longer collects anything, for any owner.
   const refinery = makeBuilding("refinery", "player", rig.x + 20, rig.y);
   s.buildings.set(refinery.id, refinery);
   const w = workers[0];
   w.x = rig.x; w.y = rig.y;
   w.order = { type: "haul", buildingId: rig.id };
-  const ccOreBefore = s.players.player.resources.ore || 0;
-
-  for (let i = 0; i < 2000 && (storeTotal(rig) > 0 || (w.cargo && w.cargo.qty > 0)); i++) updateHaul(s, w, 0.05);
-
-  assert.equal(storeTotal(rig), 0, "the rig's whole buffer was hauled away");
-  assert.ok(storeTotal(refinery) > 0, "it landed in the much-closer Refinery's own buffer");
-  assert.equal(s.players.player.resources.ore || 0, ccOreBefore,
-    "not one trip detoured all the way to the distant Command Center while the Refinery had room");
-});
-
-test("a hauler whose SOURCE is itself a forward drop-off (Foundry/Refinery/Arsenal) doesn't loop delivering back to itself", () => {
-  // Regression: a Foundry/Refinery/Arsenal is both a haul-able collection point (workers dump raw
-  // gathers there) AND a valid drop-off in its own right. Once a worker loads a cargo right there,
-  // it used to be the NEAREST drop-off too (distance ~0, closer than the far-off CC) — so it
-  // "delivered" straight back into the very pile it just took from, then reloaded, forever, never
-  // making any progress toward the Command Center.
-  const { s, cc, workers } = base(1);
-  const foundry = makeBuilding("foundry", "player", cc.x + 900, cc.y);
-  foundry.store = { ore: 60 };
-  s.buildings.set(foundry.id, foundry);
-  const w = workers[0];
-  w.x = foundry.x; w.y = foundry.y;
-  w.order = { type: "haul", buildingId: foundry.id };
   const before = s.players.player.resources.ore || 0;
-
-  for (let i = 0; i < 6000 && (storeTotal(foundry) > 0 || (w.cargo && w.cargo.qty > 0)); i++) updateHaul(s, w, 0.05);
-
-  assert.equal(storeTotal(foundry), 0, "the foundry's whole buffer was hauled away instead of endlessly recycling");
-  assert.ok(near((s.players.player.resources.ore || 0) - before, 60, 1e-3), "and it actually reached the treasury");
-});
-
-test("a hauler falls back to the Command Center once the closer forward drop-off's buffer is full", () => {
-  const { s, cc, workers } = base(1);
-  const rig = makeBuilding("plasmarig", "player", cc.x + 900, cc.y);
-  rig.store = { ore: storeCapOf("refinery") + 40 };   // more than the Refinery can ever hold
-  rig.paused = true;
-  s.buildings.set(rig.id, rig);
-  const refinery = makeBuilding("refinery", "player", rig.x + 20, rig.y);
-  s.buildings.set(refinery.id, refinery);
-  const w = workers[0];
-  w.x = rig.x; w.y = rig.y;
-  w.order = { type: "haul", buildingId: rig.id };
 
   for (let i = 0; i < 6000 && (storeTotal(rig) > 0 || (w.cargo && w.cargo.qty > 0)); i++) updateHaul(s, w, 0.05);
 
-  assert.equal(storeTotal(rig), 0, "the whole (oversized) buffer eventually clears");
-  assert.equal(storeTotal(refinery), storeCapOf("refinery"), "the Refinery filled all the way up");
-  assert.ok((s.players.player.resources.ore || 0) > 0, "and the overflow still reached the treasury via the Command Center");
+  assert.equal(storeTotal(rig), 0, "the rig's whole buffer was hauled away");
+  assert.equal(storeTotal(refinery), 0, "the Refinery has no intake buffer — nothing landed there");
+  assert.ok(near((s.players.player.resources.ore || 0) - before, 55, 1e-3), "the full load reached the Command Center instead");
 });
 
-test("mid-trip re-route: a hauler already walking toward the Command Center switches to a nearer drop-off that completes along the way", () => {
+test("mid-trip: a hauler already walking toward the Command Center is unaffected by a Refinery completing nearby", () => {
   const { s, cc, workers } = base(1);
   const rig = makeBuilding("plasmarig", "player", cc.x + 900, cc.y);
   rig.store = { ore: 30 };
@@ -119,14 +76,14 @@ test("mid-trip re-route: a hauler already walking toward the Command Center swit
   assert.equal(w.order.phase, "toDrop");
   const midX = w.x;
 
-  // ...then a Refinery completes right where the worker already is, much closer than the CC.
+  // ...then a Refinery completes right where the worker already is.
   const refinery = makeBuilding("refinery", "player", w.x + 5, w.y);
   s.buildings.set(refinery.id, refinery);
 
-  for (let i = 0; i < 40 && w.order; i++) updateHaul(s, w, 0.05);
+  for (let i = 0; i < 40; i++) updateHaul(s, w, 0.05);
 
-  assert.ok(storeTotal(refinery) > 0, "it re-routed to the newly-completed, much closer Refinery instead of continuing on to the CC");
-  assert.ok(Math.abs(w.x - midX) < 50, "it didn't keep marching toward the distant CC first");
+  assert.equal(storeTotal(refinery), 0, "the newly-completed Refinery still isn't a valid drop — nothing lands there");
+  assert.ok(w.x < midX, "the worker kept walking toward the distant Command Center (lower x), unaffected");
 });
 
 test("auto haul/service offers go to Worker, never to a non-logistics unit", () => {
@@ -396,15 +353,15 @@ test("a manually-assigned worker keeps servicing its one building", () => {
   assert.ok((s.players.player.resources.metals || 0) > 0, "…and keeps the metals flowing back");
 });
 
-test("an AI-owned forward drop-off banks straight to the treasury — no buffer, no logistics (determinism)", () => {
+test("a Refinery near the AI's Command Center accumulates no buffer, and the AI never hauls or services (determinism)", () => {
   const { s, cc } = base(7);
   const aiCC = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
   const ref = makeBuilding("refinery", "ai", aiCC.x + 30, aiCC.y);
   s.buildings.set(ref.id, ref);
   for (let i = 0; i < 300; i++) tick(s, 0.1);
-  assert.equal(storeTotal(ref), 0, "the AI's Refinery buffer stays empty — AI banks to the treasury as before");
+  assert.equal(storeTotal(ref), 0, "a Refinery has no intake buffer for any owner — it's a pure tech/research building now");
   const aiLogi = [...s.units.values()].some(u => u.owner === "ai" && u.order && (u.order.type === "haul" || u.order.type === "service"));
-  assert.equal(aiLogi, false, "and no AI worker ever hauls or services");
+  assert.equal(aiLogi, false, "the AI builds no producers, so its workers never haul or service — determinism holds");
 });
 
 test("assignService is owner-scoped and skips a well-stocked, cleared factory", () => {
