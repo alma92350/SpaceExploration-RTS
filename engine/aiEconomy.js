@@ -36,6 +36,10 @@ const HABITAT_SEARCH_RADIUS = 360;   // wider than the default placement search 
 const SURPLUS_STEP = 2000;
 const SURPLUS_MAX_BARRACKS = 4;
 const SURPLUS_EXPAND_ORE = 2500;   // …and the bank at which it settles a fresh cluster regardless of depletion
+// SUPPLY RUSH (Odyssey and skirmish alike — see aiBaseAndTech): the bank at which a supply-blocked
+// AI starts raising Habitats in PARALLEL, and how many it will ever have in flight at once.
+const SUPPLY_RUSH_ORE = 800;
+const MAX_PENDING_HABITATS = 3;
 
 // Odyssey found/survive: no Command Center but a colony ship in hand -> deploy in place. Budget-exempt so even a 1-APM neighbour always seats a base (else it mis-reads as pacified). Skirmish: colonyShip is null -> no-op.
 /** @param {State} state @param {AiContext} ctx */
@@ -183,10 +187,22 @@ export function aiBaseAndTech(state, ctx) {
   // more than that, so the old guard throttled the AI into a permanent shortfall. Crediting
   // pending Habitats at their supplyGrants is the same rule expressed arithmetically — with none
   // in flight it reduces to exactly the condition above.
+  //
+  // …and when SUPPLY, not ore, is what's throttling the army, it raises them in PARALLEL. One
+  // Habitat at a time is 8 supply per 10 seconds, and production hard-blocked at the cap can never
+  // run far enough OVER it to trip the shortfall test — so a low-Barracks archetype was pinned to
+  // that rate for the whole game while its income piled up (measured: 40 sim-minutes to reach 37
+  // units, 3,900 ore banked, Barracks idle two samples in three). Ore it has nothing else to spend
+  // on buys headroom instead. Bounded by MAX_PENDING_HABITATS so a rich AI scales its supply, not
+  // its footprint.
   const used = supplyUsed(state, "ai"), cap = supplyCap(state, "ai");
-  const pending = buildings.filter(b => b.type === "habitat" && b.constructing).length
-    * (BUILDINGS.habitat.supplyGrants || 0);
-  if (cc && workers.length > 0 && used >= cap + pending - maxSupplyDemand(state, archetype)
+  const pendingCount = buildings.filter(b => b.type === "habitat" && b.constructing).length;
+  const pending = pendingCount * (BUILDINGS.habitat.supplyGrants || 0);
+  const margin = maxSupplyDemand(state, archetype);
+  const blocked = used >= cap - margin;                       // can't fit the unit it's about to build
+  const covered = used < cap + pending - margin;              // …but supply already on the way covers it
+  const rushSupply = ai.resources.ore >= SUPPLY_RUSH_ORE && pendingCount < MAX_PENDING_HABITATS;
+  if (cc && workers.length > 0 && blocked && (!covered || rushSupply)
       && canAfford(ai.resources, BUILDINGS.habitat.cost)) {
     // Try EVERY Command Center, with a wide search at each: a late-Odyssey capital packs 70+
     // buildings around it, and measured, every candidate spot near the home CC was taken while the

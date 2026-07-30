@@ -271,6 +271,7 @@ test("supply already on the way counts — one Habitat per cycle, but not one pe
   // now arithmetic: a Habitat under construction is credited at its supplyGrants, so a second only
   // goes up when the AI is short even after counting it.
   const state = aiOnTheSupplyEdge(0);      // right at the cap
+  state.players.ai.resources.ore = 600;    // lean: under SUPPLY_RUSH_ORE, so ore is the scarce thing, not supply
   runAI(state, THINK_INTERVAL);
   assert.equal(aiHabitats(state).filter(b => b.constructing).length, 1, "one goes up");
   state.ai.think = 0;
@@ -280,8 +281,30 @@ test("supply already on the way counts — one Habitat per cycle, but not one pe
 
   // Now put it genuinely far over the cap — more than the pending Habitat can absorb.
   for (let i = 0; i < 8; i++) { const u = makeUnit("bastion", "ai", 700, 500); state.units.set(u.id, u); }
+  state.players.ai.resources.ore = 700;   // topped up, still under SUPPLY_RUSH_ORE
   state.ai.think = 0;
   runAI(state, THINK_INTERVAL);
   assert.equal(aiHabitats(state).filter(b => b.constructing).length, 2,
     "a shortfall bigger than what's in flight does open a second");
+});
+
+test("when SUPPLY is the bottleneck and ore is piling up, the AI raises Habitats in parallel", () => {
+  // One Habitat at a time is 8 supply per 10 seconds. Production blocked at the cap can never run
+  // far enough OVER it to trip the shortfall test above, so a low-Barracks archetype was throttled
+  // to that rate for the whole game while its income piled up: measured, 40 sim-minutes to reach
+  // 37 units with 3,900 ore banked and its Barracks idle two samples in three. Ore it has nothing
+  // else to spend on should buy supply headroom instead.
+  const state = aiOnTheSupplyEdge(0);
+  state.players.ai.resources.ore = 6000;   // rich, and blocked
+  for (let i = 0; i < 3; i++) { state.ai.think = 0; runAI(state, THINK_INTERVAL); }
+  const pending = aiHabitats(state).filter(b => b.constructing).length;
+  assert.ok(pending > 1, `a rich, supply-blocked AI parallelises its Habitats (got ${pending})`);
+});
+
+test("…but never without limit — parallel Habitats are capped", () => {
+  const state = aiOnTheSupplyEdge(0);
+  state.players.ai.resources.ore = 1e6;
+  for (let i = 0; i < 30; i++) { state.ai.think = 0; runAI(state, THINK_INTERVAL); }
+  assert.ok(aiHabitats(state).filter(b => b.constructing).length <= 3,
+    "an unbounded bank must not turn the base into a Habitat farm");
 });
