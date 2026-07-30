@@ -67,7 +67,11 @@ than optimising the default and describing the result as an improvement.
   pressure ever arrive at all".
 - `--opponent turtle` — a real economy behind turrets that never attacks. Use for
   "can the AI crack a defended base", which is the question that decides whether an
-  Odyssey neighbour is threatening.
+  Odyssey neighbour is threatening. (Its turrets still kill the AI's scouts, so it *does*
+  provoke — `passive` is the only bot that never draws blood.)
+- `--opponent skirmisher` — a turtle that also throws its army at the AI. The only bot that
+  reliably provokes, so it is the one that answers "does a never-initiating neighbour push
+  back once it's entitled to?" and "does the AI hold up under sustained attack?".
 
 A result from one opponent says nothing about the others. State which one you used.
 
@@ -86,10 +90,19 @@ noisy mean and will happily overfit three worlds.
 - **Layers compose multiplicatively.** Archetype × strategy × difficulty all multiply
   (`graceMult`, `workerTargetMult`, …). A dial that looks mild in isolation can be a 3×
   swing on Hard + Aggressive + Rusher. Always sweep across difficulties when touching one.
-- **`neverInitiates` is absolute**, including the skirmish desperation timeout. It was made
-  absolute on purpose (see the comment in `engine/aiStrategy.js`) — a passive player was
-  eating unexplained all-in waves. Do not "fix" the Odyssey side of it by removing the flag;
-  add a separate Odyssey-only provocation path if that's the goal.
+- **`neverInitiates` means "doesn't start fights", and only in Odyssey.** In a skirmish it is
+  absolute, including the desperation timeout — made so on purpose, because a passive player
+  was eating unexplained all-in waves. In Odyssey a neighbour may still answer a player who
+  **provoked** it (`engine/diplomacy.js` `provoked()`: destroyed its ships, or is charging a
+  Gate). Never widen provocation to elapsed time or stance alone — that reintroduces the exact
+  bug. And note what it means for measurement: against `passive` and `none` those strategies
+  correctly commit nothing, so use `--opponent skirmisher` when the question is whether the AI
+  pushes back.
+- **A metric that fires on correct behaviour is worse than no metric.** Two detectors had to be
+  rewritten after they turned into false positives on a scaled-up AI. When a fix lands, re-read
+  the detectors before trusting the scoreboard — and if you change one, re-baseline the OLD
+  engine under the NEW metric (a `git worktree` at the pre-fix commit with the current
+  `tools/ailab.js` copied in) rather than comparing across metric definitions.
 - **Neighbour worlds pick their strategy uniformly at random** (`neighbourAiProfile` in
   `engine/galaxy.js`), so any change to the STRATEGIES table changes roughly a quarter of the
   galaxy. Weight the sweep accordingly.

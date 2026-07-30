@@ -20,11 +20,16 @@
      node tools/ailab.js probe   [--world ferros] [--strategy default] [--difficulty medium]
                                  [--opponent passive] [--minutes 40] [--sample 5]
      node tools/ailab.js sweep   [--worlds a,b] [--strategies a,b] [--difficulties a,b]
-                                 [--seeds 3] [--minutes 40] [--json out.json] [--csv out.csv]
+                                 [--seeds 3] [--minutes 40] [--json out.json] [--csv out.csv] [--full]
      node tools/ailab.js compare --baseline base.json --candidate cand.json
      node tools/ailab.js search  --strategy aggressive --dials 'attackTimeoutMult=0.3:1,garrisonMult=0:1'
-                                 [--trials 24] [--worlds a,b]
-     node tools/ailab.js check   [--worlds a,b] [--minutes 60]      # health checks (stall/hoard/flatline)
+                                 [--steps 4] [--worlds a,b]
+     node tools/ailab.js check   [--worlds a,b] [--minutes 60] [--exit-code]   # the named-defect list
+
+   Opponents (--opponent) decide what the AI is measured AGAINST, and the answer differs
+   completely between them: none (no player at all) · passive (seats a base, never acts — the
+   only bot that never draws blood) · turtle (economy behind turrets) · skirmisher (a turtle that
+   also attacks, so it is the one that provokes).
 
    Common flags
      --overrides f.json   inject rows into the AI tables before running, e.g.
@@ -251,6 +256,10 @@ function sample(s) {
     // and the Habitat trigger only fires within 2 supply of the cap, which doesn't cover the
     // 4- and 8-supply Odyssey units. That combination is a hard deadlock, so it's measured.
     supplyBlocked: !!next && supplyUsed(s, "ai") + (UNITS[next].supplyCost || 0) > supplyCap(s, "ai"),
+    // …and is it doing anything about it? A healthy AI at full tilt runs close to its cap and is
+    // momentarily blocked all the time — that's supply PRESSURE, not deadlock. The deadlock is
+    // being blocked with no Habitat on the way, which is the state that never resolves itself.
+    habitatPending: [...s.buildings.values()].some(b => b.owner === "ai" && b.type === "habitat" && b.constructing),
     supplyFree: +(supplyCap(s, "ai") - supplyUsed(s, "ai")).toFixed(1),
     playerBuildings: playerBuildingsOf(s).length,
     aiAlive: done.some(b => b.type === "command"),
@@ -260,6 +269,11 @@ function sample(s) {
     // that line — a neighbour leaving an unprovoked player alone is the contract working, and
     // scoring it as a failure would push the tuning loop toward breaking it.
     entitled: !strategyFor(s).neverInitiates || provoked(s),
+    // Is this strategy DELIBERATELY holding its army down (Economic's fixed cap, Force Parity's
+    // mirror)? Idle Barracks are the intended output of a standing-army cap, so the stall detector
+    // has to exclude them — the same principle as `entitled` above: a detector that fires on
+    // behaviour the design asks for teaches the tuning loop to break the design.
+    armyCapped: strategyFor(s).standingArmyCap != null || !!strategyFor(s).matchEnemyForce,
     provokedAi: provoked(s),   // has the player drawn blood / started a Gate? (diagnostic + the `entitled` input)
   };
 }
@@ -319,8 +333,10 @@ function summarise(curve) {
     // extra Barracks, one of six sitting between jobs is ordinary churn, and an "any" test fired on
     // 42 of 44 healthy runs. This is the version that distinguishes a working production line from
     // a stopped one.
-    idleRichFrac: +(curve.filter(c => c.rax > 0 && c.idleRax === c.rax && c.banked > 1000).length / curve.length).toFixed(2),
-    supplyDeadlockFrac: +(curve.filter(c => c.supplyBlocked && c.banked > 400).length / curve.length).toFixed(2),
+    idleRichFrac: +(curve.filter(c => !c.armyCapped && c.rax > 0 && c.idleRax === c.rax && c.banked > 1000)
+      .length / curve.length).toFixed(2),
+    supplyDeadlockFrac: +(curve.filter(c => c.supplyBlocked && !c.habitatPending && c.banked > 400)
+      .length / curve.length).toFixed(2),
     stanceFinal: last.stance,
     playerBuildingsFinal: last.playerBuildings,
     aiAlive: last.aiAlive,
@@ -403,8 +419,9 @@ export function applyOverrides(ov = {}) {
 
 export const CHECKS = [
   { id: "supply-deadlock",
-    why: "the mix cycle retries one unit forever because it doesn't fit under the supply cap, "
-       + "while the Habitat trigger (used >= cap - 2) never fires for a 4- or 8-supply unit",
+    why: "the mix cycle is stuck on a unit that won't fit under the supply cap, with no Habitat on "
+       + "the way to raise it — the state that never resolves itself (being momentarily blocked "
+       + "WITH one under construction is ordinary supply pressure on a busy AI, not a deadlock)",
     hit: r => r.supplyDeadlockFrac > 0.1 },
   { id: "hoarding",
     why: "it finished sitting on a large bank AND its army hadn't grown — money it has no way to "
@@ -418,7 +435,8 @@ export const CHECKS = [
        + "(samples where a never-initiating strategy was left unprovoked don't count — that's the contract)",
     hit: r => r.entitledSamples > 0 && r.hostileIdleFrac > 0.5 },
   { id: "production-stall",
-    why: "a completed Barracks stood idle while the AI held real money",
+    why: "every Barracks stood idle while the AI held real money, on a strategy that isn't "
+       + "deliberately capping its army — it had nothing left it knew how to buy",
     hit: r => r.idleRichFrac > 0.25 },
 ];
 

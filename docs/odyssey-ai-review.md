@@ -272,6 +272,41 @@ controller owner-parametric — `state.ais[owner]` — is a contained refactor, 
 unlock true self-play: the strongest possible evaluation signal, replacing the scripted
 sparring bots below.
 
+### 2.9 The AI cannot survive an early rush — *new, found while fixing the rest*
+
+Building a sparring bot that actually fights (`--opponent skirmisher`: a turtle economy that
+throws its army at the AI whenever it musters six units) opened a measurement none of the
+original findings covered, and the answer is stark. On ferros the neighbour is **dead by minute
+10** of a 40-minute run — no Command Center, no workers, and the world inert for the remaining
+thirty minutes:
+
+```
+time  wrk army  dev bldg   banked  waves
+  5m    7   1    3    7      494      0
+ 10m    0   0    0    0      662      0
+ 40m    0   0    0    0      662      0
+```
+
+It is not close, and it is not one world: the AI fails to survive on most of the roster. The
+bot is not cheating — it deploys the same opening colony ship, mines with its own workers, and
+pays for every unit.
+
+**Status: reported, not fixed — this one is a design decision, not a defect.** Razing a
+neighbour's Command Center is `galaxy.pacified`, an intended conquest milestone with its own
+firework and a domination counter, so "a determined player can kill a neighbour" is the *feature*.
+What the bench can say is that today the bar is very low and the same rush works everywhere.
+Whether that bar should move — and how far — is a call about the difficulty curve of the whole
+Odyssey, and it belongs to whoever owns that curve, not to a defect-fix pass.
+
+Worth knowing before deciding: **none of the five fixes above touch this.** They all improve the
+long game, and against a rushing opponent the long game never arrives. That is visible in the
+comparison table at the top of this section — the passive column moves a lot, the skirmisher
+column barely does.
+
+```
+node tools/ailab.js probe --world ferros --opponent skirmisher --minutes 40 --sample 5
+```
+
 ---
 
 ## 3. The proposal — searching for better AI with Claude Code
@@ -320,8 +355,9 @@ drives the player side with scripted bots through the engine's public command AP
 | bot | what it is | the question it answers |
 |---|---|---|
 | `none` | no player at all | how does the development curve look on a background world? |
-| `passive` | seats a base, never acts | does pressure ever arrive at all? |
+| `passive` | seats a base, never acts | does pressure ever arrive at all? the only bot that never draws blood |
 | `turtle` | economy behind turrets, never attacks | can the AI crack a defended base? |
+| `skirmisher` | turtle that also throws its army at the AI | does a provoked neighbour push back — and does the AI survive being rushed? |
 
 **Metrics and score.** Six components, weighted in `WEIGHTS` and printed individually:
 `develop` (climbs the chain), `keepGrowing` (still growing in the last third — the

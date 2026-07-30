@@ -166,3 +166,28 @@ test("hoarding means a bank it never spent, not a bank it passed through", () =>
   assert.ok(!hoard.hit({ bankedFinal: 2200, armyGrowthTail: 51 }), "a working balance with a growing army is not");
   assert.ok(!hoard.hit({ bankedFinal: 30000, armyGrowthTail: 40 }), "…nor is a big balance it's actively converting");
 });
+
+test("supply PRESSURE with a Habitat on the way is not a deadlock", () => {
+  // A healthy AI at full tilt lives close to its cap and is momentarily unable to fit the next
+  // unit all the time. A third detector had to learn that difference: measured, helix grew its army
+  // 75 -> 327 and drained a 10,000 bank to 854 while the old test still called it deadlocked.
+  const base = { dev: 0, army: 0, waves: 0, hostility: 0, playerBuildings: 1, entitled: true,
+                 armyValue: 0, workers: 0, buildings: 0, rax: 1, idleRax: 0, aiAlive: true, t: 0 };
+  const frac = c => summarise([{ ...base, ...c }]).supplyDeadlockFrac;
+  assert.equal(frac({ supplyBlocked: true, habitatPending: true, banked: 5000 }), 0,
+    "blocked, but a Habitat is already going up — it resolves itself");
+  assert.equal(frac({ supplyBlocked: true, habitatPending: false, banked: 5000 }), 1,
+    "blocked with nothing on the way is the state that never resolves");
+});
+
+test("a strategy that deliberately caps its army isn't reported as a production stall", () => {
+  // Economic keeps 3 units and Force Parity mirrors what it has seen — idle Barracks are the
+  // POINT of those strategies, and counting them made the detector fire on the design working.
+  const base = { dev: 0, army: 0, waves: 0, hostility: 0, playerBuildings: 1, entitled: true,
+                 armyValue: 0, workers: 0, buildings: 0, rax: 2, idleRax: 2, banked: 5000,
+                 supplyBlocked: false, habitatPending: false, aiAlive: true, t: 0 };
+  assert.equal(summarise([{ ...base, armyCapped: true }]).idleRichFrac, 0,
+    "an army-capped strategy sitting on idle Barracks is doing what it was asked to");
+  assert.equal(summarise([{ ...base, armyCapped: false }]).idleRichFrac, 1,
+    "…an uncapped one doing the same has run out of things to buy");
+});
