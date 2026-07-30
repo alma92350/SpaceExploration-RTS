@@ -14,12 +14,17 @@
    skirmish AI has no `state.diplomacy` and fights as before. Pure and
    deterministic (grievance is read from the change in the neighbour's unit count,
    so it's substep-safe — no double counting across catch-up ticks).
+
+   Both DIRECTIONS are personality-flavoured, and by separate dials: how fast a
+   world sours on you (grievanceMult) and how long it then holds the grudge
+   (forgiveness — the recovery drift plus the provocation memory). A Warlord world
+   turns on you twice as fast and lets go half as quickly as a patient trading one.
    ============================================================ */
 
 "use strict";
 
 import { chargingPlayerWonder } from "./wonder.js";
-import { BUILDINGS } from "./entities.js";
+import { BUILDINGS, UNITS } from "./entities.js";
 import { TECHS } from "./techtree.js";
 import { strategyFor } from "./aiStrategy.js";
 import { difficultyFor } from "./aiDifficulty.js";
@@ -57,6 +62,12 @@ const START_STANCE = 0.35;        // a new neighbour starts Cordial
 const DRIFT_RATE = 0.05;          // how fast stance chases its scarcity target (per second)
 const GRIEVANCE_PER_KILL = 0.04;  // stance lost per enemy ship you destroy on this world
 
+// Unit roles that leave the world by being SPENT rather than by dying — a colony ship consumed
+// founding a base (engine/colony.js), a Helium Bomb consumed being triggered (engine/bomb.js).
+// The grievance below reads a unit-count delta, so these must not be counted or the neighbour's
+// own expansion reads as your attack. See the comment at the count itself.
+const CONSUMED_ROLES = new Set(["colony", "bomb"]);
+
 // LATE-GAME CREEP (Tier 4): after the opening grace, a slow time-based resentment
 // that grows without bound, so hostility never plateaus — overstay anywhere and the
 // neighbour eventually turns, and a partly-mined world keeps sinking instead of
@@ -85,13 +96,78 @@ const TRIBUTE_COST_GROWTH = 1.55;     // each further tribute costs 1.55× more
 // world mine it to the old ~23%-depletion war threshold in ~4 minutes — far too
 // soon), and the target slope below is much gentler, so war arrives in the mid-game
 // and escalates toward the endgame instead of ending the run before it starts.
-const GRACE_TIME = 420;           // 7 minutes of guaranteed cordiality to establish an economy + defence
+export const GRACE_TIME = 420;    // 7 minutes of guaranteed cordiality to establish an economy + defence
 const GRACE_FLOOR = 0.2;          // the stance target can't fall below this during grace
+
+// COMPOSITION BOUNDS. graceMult and grievanceMult each collect a factor from the archetype's
+// Odyssey overlay, the player-picked strategy AND the difficulty, and all three MULTIPLY — which
+// is the intended design (an Aggressive Rusher on Hard should be the galaxy's shortest fuse), but
+// unbounded it stopped expressing that and started expressing an accident: 0.5 × 0.2 × 0.9 took
+// the documented 7-minute opening grace down to 37.8 seconds, on a combination the setup screen
+// hands out freely. The layers still compose; they just can't compound past these
+// (docs/odyssey-ai-review.md §2.6).
+export const MIN_GRACE_FRAC = 0.4;       // ≥ 168s of opening window, whatever the stack
+export const MAX_GRIEVANCE_MULT = 2.5;   // …and a hard ceiling on how fast losses sour a neighbour
+
+// FORGIVENESS — how long a neighbour holds a grudge, and the one part of its temperament the
+// diplomacy layer used to leave flat. Souring was already personality-flavoured (grievanceMult),
+// but COOLING OFF was identical everywhere: a Warlord world and a research capital recovered from
+// being bled at the same rate, and once provoked, every neighbour stayed provoked for ever. This
+// dial drives both halves of that cooldown — the drift back UP toward the scarcity target, and
+// how long the AI keeps treating you as an active aggressor (provoked(), below). Above 1 forgives
+// faster and forgets sooner; below 1 nurses the grudge. Composed across archetype × strategy ×
+// difficulty and bounded, exactly like the two above.
+export const MIN_FORGIVENESS = 0.3;
+export const MAX_FORGIVENESS = 2.5;
+
+// Seconds of quiet, at forgiveness 1, before a neighbour stops counting you as an active
+// aggressor. Scaled by 1/forgiveness, so a Warlord world remembers roughly twice as long as a
+// patient one. Long enough that it can't lapse mid-engagement: a wave cadence is tens of seconds,
+// so you have to genuinely stop fighting, not just pause between pushes.
+export const PROVOKE_MEMORY = 300;
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+// The composed-and-bounded grace/grievance multipliers for this world. Exported so the bounds are
+// testable directly rather than only through 40 minutes of drift.
+export function effectiveDiplomacyMults(state) {
+  const od = state.ai.archetype && state.ai.archetype.odyssey;
+  const st = strategyFor(state);
+  const df = difficultyFor(state);
+  return {
+    graceMult: Math.max(MIN_GRACE_FRAC,
+      ((od && od.graceMult) || 1) * (st.graceMult || 1) * (df.graceMult || 1)),
+    grievanceMult: Math.min(MAX_GRIEVANCE_MULT,
+      ((od && od.grievanceMult) || 1) * (st.grievanceMult || 1) * (df.grievanceMult || 1)),
+    forgiveness: clamp(((od && od.forgiveness) || 1) * (st.forgiveness || 1) * (df.forgiveness || 1),
+      MIN_FORGIVENESS, MAX_FORGIVENESS),
+  };
+}
+
 export function createDiplomacy() {
-  return { stance: START_STANCE, depletion: 0, tributes: 0 };
+  return { stance: START_STANCE, depletion: 0, tributes: 0, provokedAt: null };
+}
+
+// Has the PLAYER done something to this neighbour that a strategy which "never attacks
+// unprovoked" is entitled to answer? Two things count, both unambiguously the player's doing:
+// destroying its ships (dip.provoked, latched below by the same unit-count delta the grievance
+// reads) and charging an Antimatter Gate — a bid to win the whole galaxy.
+//
+// This is what makes engine/aiStrategy.js's `neverInitiates` mean "unprovoked" rather than
+// "never" in ODYSSEY. It has to stay strictly action-based: the bug that flag was introduced to
+// fix was an Economic AI raiding a player who had built nothing, purely because enough time had
+// passed, so elapsed time and stance alone must never appear here. A skirmish has no
+// state.diplomacy, so this is always false there and the flag keeps its original absolute
+// meaning on exactly the path the player report came from. See docs/odyssey-ai-review.md §2.1.
+export function provoked(state) {
+  const dip = state.diplomacy;
+  if (!dip) return false;
+  // A charging Gate is a STANDING provocation, not a memory — it provokes for as long as it
+  // charges, however long ago the last shot was fired.
+  if (chargingPlayerWonder(state)) return true;
+  if (dip.provokedAt == null) return false;
+  // …otherwise it's a memory that fades, at a rate this neighbour's temperament sets.
+  return (state.time - dip.provokedAt) < PROVOKE_MEMORY / effectiveDiplomacyMults(state).forgiveness;
 }
 
 // Cost of the NEXT tribute, escalating geometrically with how many you've already
@@ -140,11 +216,10 @@ export function updateDiplomacy(state, dt) {
   // a touch more patient/forgiving, Hard a touch less — deliberately mild since it's a THIRD
   // multiplicative layer on an already-composed number; GRACE_FLOOR still floors the opening window
   // regardless of how short these three combine to make it.
-  const od = state.ai.archetype && state.ai.archetype.odyssey;
-  const st = strategyFor(state);
-  const df = difficultyFor(state);
-  const graceMult = ((od && od.graceMult) || 1) * (st.graceMult || 1) * (df.graceMult || 1);
-  const grievanceMult = ((od && od.grievanceMult) || 1) * (st.grievanceMult || 1) * (df.grievanceMult || 1);
+  // …and BOUNDED (effectiveDiplomacyMults, above): three multiplicative layers stacking on the
+  // same dial produced numbers nobody designed — a 37.8-second opening grace on a combination the
+  // setup screen offers directly.
+  const { graceMult, grievanceMult, forgiveness } = effectiveDiplomacyMults(state);
   const grace = GRACE_TIME * graceMult;
   const grievance = GRIEVANCE_PER_KILL * grievanceMult;
   const creep = CREEP_RATE * grievanceMult;
@@ -158,10 +233,24 @@ export function updateDiplomacy(state, dt) {
   // from the count delta rather than kill events so multiple catch-up substeps
   // in one frame can't double-count. Rebuilding (count rising) grants nothing —
   // forgiveness comes only from the drift below.
+  //
+  // SELF-CONSUMING roles are excluded (CONSUMED_ROLES): a colony ship is spent founding a base
+  // and a Helium Bomb is spent being triggered, so both leave the world without anyone killing
+  // them. Counting them made the neighbour's own successful expansion read as an attack — it
+  // soured its own stance for settling, and (since provocation latches on this same signal) it
+  // handed itself standing to attack a player who had done nothing.
   let ai = 0;
-  for (const u of state.units.values()) if (u.owner === "ai") ai++;
+  for (const u of state.units.values()) {
+    if (u.owner !== "ai" || CONSUMED_ROLES.has(UNITS[u.type]?.role)) continue;
+    ai++;
+  }
   if (dip.lastAiUnits !== undefined && ai < dip.lastAiUnits) {
     dip.stance = clamp(dip.stance - (dip.lastAiUnits - ai) * grievance, -1, 1);
+    // …and stamp PROVOKED (see provoked() above): drawing blood is what entitles a
+    // never-initiating neighbour to answer in Odyssey. A timestamp rather than a latch, so the
+    // memory fades over a quiet spell — and every fresh loss re-arms it, so a running war never
+    // cools off underneath you. The stance still has to reach war on its own before a wave flies.
+    dip.provokedAt = state.time;
   }
   dip.lastAiUnits = ai;
 
@@ -203,7 +292,12 @@ export function updateDiplomacy(state, dt) {
   if (gate && state.time >= grace)
     target = Math.min(target, GATE_WAR_TARGET - GATE_WAR_SLOPE * gate.charge);
 
-  dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * DRIFT_RATE), -1, 1);
+  // ASYMMETRIC drift: souring runs at the stock rate (grievanceMult is what flavours THAT), while
+  // recovery — cooling off after you've bled them — runs at this neighbour's forgiveness. So the
+  // two directions are separate dials, and a temperament that forgives slowly doesn't also turn
+  // hostile slowly.
+  const rate = DRIFT_RATE * (target > dip.stance ? forgiveness : 1);
+  dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * rate), -1, 1);
 
   // The moment the neighbour crosses from peace into war, fire a one-time heads-up
   // (boot.js turns it into a toast) — the offensive ramp is silent otherwise, so a

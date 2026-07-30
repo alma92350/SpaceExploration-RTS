@@ -12,7 +12,7 @@
 import { UNITS } from "./entities.js";
 import { issueAttackMove, issueMove } from "./commands.js";
 import { isVisibleAt, isExploredAt, nearestUnexploredPoint } from "./fog.js";
-import { hostility } from "./diplomacy.js";
+import { hostility, provoked } from "./diplomacy.js";
 import { chargingPlayerWonder } from "./wonder.js";
 import { canAct, spend } from "./aiCommon.js";
 import { effectiveMix } from "./aiWorkers.js";
@@ -154,7 +154,14 @@ function aiOffense(state, ctx, nonScout) {
           strike = withoutHomeGuard(homeArmy, cc, timedOut ? 0 : effGarrison);
           desperate = timedOut;
         }
-      } else if (!strategy.neverInitiates && playerHasPresence(state)) {
+      } else if ((!strategy.neverInitiates || provoked(state)) && playerHasPresence(state)) {
+        // ODYSSEY only: neverInitiates means "doesn't START fights", not "never fights" — a
+        // neighbour the player has bled (or who can see a galaxy-winning Gate charging) answers
+        // once its stance has reached war on its own. Without this, two of the four strategies
+        // could never attack at all, and neighbourAiProfile hands one of those to roughly half
+        // the galaxy: worlds that read Hostile in the HUD and sent nothing, ever
+        // (docs/odyssey-ai-review.md §2.1). The skirmish branch above is untouched — it has no
+        // state.diplomacy, so provoked() is false there and the flag stays absolute.
         const h = hostility(state);
         const pm = (archetype.odyssey && archetype.odyssey.probeMin) || PROBE_MIN;   // archetype's Odyssey probe floor (Rusher 5 > Economist 4 > default 3)
         const muster = Math.max(pm, Math.round(effArmyAttackSize * h));

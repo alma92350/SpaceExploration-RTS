@@ -57,7 +57,7 @@ import { accrueActionBudget } from "./aiCommon.js";
 import { assignIdleWorkers } from "./aiWorkers.js";
 import { updateScout, aiMilitary, applyFocusFire, visibleThreatsNearHome } from "./aiMilitary.js";
 import { aiFoundOrSurvive, aiExpand, aiBaseAndTech, aiProduceAndFortify, aiResearch, aiMarketBarter } from "./aiEconomy.js";
-import { aiIndustry } from "./aiIndustry.js";
+import { aiIndustry, aiIndustryReserve } from "./aiIndustry.js";
 import { aiSuperweapon } from "./aiSuperweapon.js";
 import { strategyFor } from "./aiStrategy.js";
 
@@ -81,6 +81,7 @@ export function runAI(state, dt) {
   aiFoundOrSurvive(state, ctx);    // Odyssey: (re)seat a razed / opening base from a colony ship
   aiExpand(state, ctx);            // scout Ranger + found a second base once home ore thins (sets ctx.oreReserve)
   aiBaseAndTech(state, ctx);       // workers, supply, Barracks, the Foundry/Arsenal tech gates, the Mender
+  aiIndustryReserve(state, ctx);   // Odyssey: bank the grid + bootstrap chain BEFORE production can spend it (sets ctx.industryReserve)
   aiProduceAndFortify(state, ctx); // the shared unit-production cycle, Turrets, a 2nd Barracks, Refineries
   aiResearch(state, ctx);          // one doctrine upgrade per think cycle
   aiMarketBarter(state);           // Odyssey, Medium+/Hard only: convert a surplus into this cycle's bottleneck
@@ -131,6 +132,6 @@ function aiContext(state) {
     refinery: buildings.find(b => b.type === "refinery"),
     allBarracks: buildings.filter(b => b.type === "barracks"),
     threats,
-    oreReserve: 0, foundryReserve: 0, refineryReserve: 0,
+    oreReserve: 0, foundryReserve: 0, refineryReserve: 0, industryReserve: 0,
   };
 }

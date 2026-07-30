@@ -134,6 +134,28 @@ export function effectiveMix(state, archetype) {
   return mix.length ? mix : ["skiff"];
 }
 
+// The biggest SUPPLY cost the AI could actually try to pay next: the largest entry in this
+// world's effective mix, plus anything a completed Star Dock can build (Odyssey's 8-supply
+// Leviathan). aiEconomy's Habitat trigger is sized from this rather than from a flat 2, because
+// pickNextUnitType retries the SAME mix entry until it succeeds — so a free-supply gap that's
+// wide enough to skip the old `cap - 2` trigger but too narrow for a 4- or 8-supply unit is a
+// hard deadlock: production can't queue, and the Habitat that would unblock it never fires.
+// (Measured on a 50-minute Odyssey world — docs/odyssey-ai-review.md §2.2.) Floored at 2, so a
+// world whose mix is all 1- and 2-supply units keeps exactly its old timing.
+export function maxSupplyDemand(state, archetype) {
+  let max = 2;
+  for (const t of effectiveMix(state, archetype)) max = Math.max(max, UNITS[t].supplyCost || 0);
+  // A Star Dock's capital ships are queued by aiIndustry, which SKIPS rather than retrying when
+  // they don't fit — no deadlock there, but the headroom still has to arrive eventually or the
+  // deep-industry payoff is unreachable. Only counted once the Star Dock actually stands.
+  for (const b of state.buildings.values()) {
+    if (b.owner !== "ai" || b.type !== "stardock" || b.constructing) continue;
+    for (const t of BUILDINGS.stardock.produces || []) max = Math.max(max, UNITS[t]?.supplyCost || 0);
+    break;
+  }
+  return max;
+}
+
 // Can the AI pay for `unitType` from this world's STEADY income — i.e. does every
 // cost commodity have a non-hidden (surface) deposit somewhere on the map? Shared
 // by effectiveMix (which unit types actually cycle) and the Foundry/Arsenal

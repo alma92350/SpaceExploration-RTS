@@ -178,6 +178,9 @@ which is what that "whether it keeps your saves" note above is warning you about
 - `data.js` — pure content (factions, the commodity catalog, production recipes, the charted
   worlds).
 - `tools/serve.js` — the zero-dependency dev server behind `npm start`.
+- `tools/ailab.js` — a headless bench for measuring and tuning the Odyssey AI: it runs the sim
+  without a browser, scores the opponent over a long session, and A/B-tests candidate AIs supplied
+  as JSON. See [docs/odyssey-ai-review.md](docs/odyssey-ai-review.md).
 
 ## Background: why a separate repo
 

@@ -286,3 +286,65 @@ test("...while the default (Adaptive) strategy still leaves that same Rusher wor
   for (let i = 0; i < 10; i++) runAI(s, THINK_INTERVAL);
   assert.ok(!aiTypes(s).has("smelter"), "regression guard: Adaptive Rusher keeps its lean, no-chain temperament");
 });
+
+/* ---------- Odyssey PROVOCATION: neverInitiates means "unprovoked", not "never" ---------- */
+
+// neverInitiates was made absolute to fix a real player report (see the regression test above), and
+// in a SKIRMISH that's exactly right — the match resolves on score, so a passive player never needs
+// to be attacked. But Odyssey has no clock and no score: a neighbour whose stance had been dragged
+// all the way to fully Hostile still sat there forever, so half a galaxy's worlds (neighbourAiProfile
+// samples strategies uniformly, and two of four never initiate) read "Hostile" in the HUD and never
+// sent anything — 0 waves in all 22 such runs of a full-roster soak, docs/odyssey-ai-review.md §2.1.
+// The flag now means what it says: this AI does not START fights, but it does answer one. Provocation
+// is strictly things the PLAYER did — destroyed its ships, or is charging a galaxy-winning Gate —
+// never mere elapsed time, which is what the original bug was.
+
+// A fully hostile Odyssey world with a real home army for a never-initiating AI to commit.
+function hostileOdyssey(strategy) {
+  const state = createGameState({ planetId: "ferros", endless: true, aiStrategy: strategy,
+                                  seed: 4242, rng: mulberry32(4242) });
+  const cc = makeBuilding("command", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
+  state.buildings.set(cc.id, cc);
+  state.diplomacy = createDiplomacy();
+  state.diplomacy.stance = -1;         // fully hostile: hostility() === 1
+  homeSkiffs(state, 14);               // comfortably past the Economist's 9-unit muster
+  fundAll(state);
+  return state;
+}
+const aiAttacking = state =>
+  [...state.units.values()].some(u => u.owner === "ai" && u.order?.type === "attack-move");
+
+for (const strategy of ["economic", "matching"]) {
+  test(`an unprovoked ${strategy} neighbour still never attacks, however hostile the world has become`, () => {
+    const state = hostileOdyssey(strategy);
+    for (let i = 0; i < 5; i++) { state.ai.think = 0; runAI(state, THINK_INTERVAL); }
+    assert.ok(!aiAttacking(state), "a player who has done nothing to it is still left alone — the original fix holds");
+  });
+
+  test(`a ${strategy} neighbour DOES answer once the player has destroyed its ships`, () => {
+    const state = hostileOdyssey(strategy);
+    state.diplomacy.provokedAt = state.time;   // stamped by updateDiplomacy on a grievance — see diplomacy.test.js
+    for (let i = 0; i < 5; i++) { state.ai.think = 0; runAI(state, THINK_INTERVAL); }
+    assert.ok(aiAttacking(state), "a fully hostile neighbour that has been bled must eventually answer");
+  });
+}
+
+test("a charging player Gate provokes a never-initiating neighbour — the finale can't be waited out", () => {
+  const state = hostileOdyssey("economic");
+  const gate = makeBuilding("antimatter_gate", "player", state.map.bases.player.x, state.map.bases.player.y - 80);
+  gate.charge = 0.5;
+  state.buildings.set(gate.id, gate);
+  for (let i = 0; i < 5; i++) { state.ai.think = 0; runAI(state, THINK_INTERVAL); }
+  assert.ok(aiAttacking(state), "a bid to win the whole galaxy is provocation on its own");
+});
+
+test("provocation is ODYSSEY-only — a skirmish Economic AI stays absolutely non-initiating", () => {
+  // No state.diplomacy at all in a skirmish, so there is nothing to be provoked BY: the flag keeps
+  // its original, literal meaning on the path where the player report came from.
+  const state = createGameState({ planetId: "ferros", aiStrategy: "economic" });
+  state.time = state.ai.archetype.attackTimeout * 20;
+  homeSkiffs(state, 14);
+  fundAll(state);
+  for (let i = 0; i < 5; i++) { state.ai.think = 0; runAI(state, THINK_INTERVAL); }
+  assert.ok(!aiAttacking(state), "the skirmish desperation-timeout escape hatch stays closed");
+});
