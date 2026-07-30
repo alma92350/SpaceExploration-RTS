@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `tools/ailab.js` — a headless bench for the Odyssey AI. Runs the real sim for 30–60 sim-minutes
+  per world (seconds of wall clock), drives the player side with scripted sparring bots, and
+  scores the opponent on development / growth / pressure / thrift / liveness / survival. Candidate
+  AIs are injected as JSON into the archetype, strategy and difficulty tables (`--overrides`), so
+  the whole space can be searched without touching `engine/`. Subcommands: `probe`, `sweep`,
+  `compare`, `search`, `check`. No engine behaviour changed.
+- `docs/odyssey-ai-review.md` — a measured review of how the AI plays in Odyssey, with the
+  findings the bench turned up (a supply deadlock that permanently freezes a developed AI, a
+  terminating build order, a Rusher that never develops, and a non-initiating half of the galaxy),
+  plus the tuning loop to run against them.
+
 ### Changed
 
 - The Refinery, Foundry, and Arsenal no longer double as forward resource drop-offs — they're
