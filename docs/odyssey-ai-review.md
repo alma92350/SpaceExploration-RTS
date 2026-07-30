@@ -365,6 +365,13 @@ spread of roughly 8× between the most and least forgiving reachable combination
 In play: raid a Warlord world and it stays primed against you for most of a session; raid a
 trading world, leave it alone for a few minutes, and it goes back to business.
 
+Bench: the `passive` column is **byte-identical** across all five detectors (0.619 → 0.619), which
+is the right answer — a player who never draws blood never provokes anyone, so the dial is a no-op
+against that opponent. Against the `skirmisher` the mean rose 0.336 → 0.365 with `hostile-but-idle`
+falling 34/44 → 18/44, but most of that is the *metric* getting fairer rather than the AI playing
+better: a neighbour that has cooled off — or been killed — no longer counts as "hostile and
+refusing to attack", because it is no longer entitled to attack.
+
 ---
 
 ## 3. The proposal — searching for better AI with Claude Code
@@ -491,5 +498,5 @@ re-run.
 | 2026-07-30 | `rusherGraduates` needs retuning | — | **not needed.** The graduation gate was fine; the 30-minute lag was unit production eating the ore first. Fixing the reserve fixed the symptom, so the dial was left alone | no change |
 | 2026-07-30 | a wiped neighbour should be able to re-found (§2.5) | — | **rejected.** A background world has no player and no third party, so the AI cannot die unattended; the only path there is the player razing it, which is `galaxy.pacified` — permanent by design. A re-founding AI would show a world as "pacified" with a live neighbour rebuilding on it | no |
 | 2026-07-30 | the bench's own detectors are still valid after the fixes | — | **no** — three of five became false positives on the scaled-up AI. Rewritten and pinned with tests; the pre-fix baseline was re-measured under the new definitions rather than compared across them | corrected |
-| 2026-07-30 | temperament should govern the grievance/aggression COOLDOWN, not just the souring | `forgiveness` on archetype × strategy × difficulty, driving both the recovery drift and the provocation memory | a ~8× spread across reachable combinations (16.7 min of grudge down to 2.0). Souring deliberately left on the stock rate — pinned by a test, since the obvious implementation would have slowed it too | **yes** |
+| 2026-07-30 | temperament should govern the grievance/aggression COOLDOWN, not just the souring | `forgiveness` on archetype × strategy × difficulty, driving both the recovery drift and the provocation memory | a ~8× spread across reachable combinations (16.7 min of grudge down to 2.0). Bench: passive **0.619 → 0.619, byte-identical on all five detectors** (correct — a player who never draws blood never provokes anyone, so the dial is a no-op there); skirmisher **0.336 → 0.365**, `hostile-but-idle` 34/44 → 18/44. Read that second number carefully: most of it is the metric getting *fairer*, not the AI playing better — a neighbour that has cooled off, or died, no longer counts as "hostile and refusing to attack". Souring deliberately left on the stock rate, pinned by a test, since the obvious implementation would have slowed it too | **yes** |
 | 2026-07-30 | `production-stall` is one Habitat per 10 s throttling the army | parallel Habitats when supply, not ore, is the bottleneck | **no** — 18/44 before, 18/44 after. Probing the worlds it fires on shows the residue is the Rusher archetype's designed economy (six workers, one Barracks) on Medium, where `rusherGraduates` doesn't apply. Kept anyway: it is what moved supply-deadlock 4→1 | kept, but it did not fix what it was aimed at |
