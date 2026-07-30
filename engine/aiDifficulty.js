@@ -53,11 +53,12 @@
 
 export const DIFFICULTY_OPTIONS = [
   { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false,
-    workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85, researchPaceMult: 1.3 },
+    workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85, researchPaceMult: 1.3,
+    forgiveness: 1.25 },
   { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false, marketAccess: true },
   { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
     workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75,
-    marketAccess: true, rusherGraduates: true },
+    marketAccess: true, rusherGraduates: true, forgiveness: 0.8 },
 ];
 
 /** The active difficulty entry for this match — DIFFICULTY_OPTIONS' medium entry when

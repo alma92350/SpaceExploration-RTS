@@ -28,7 +28,11 @@ export const ARCHETYPES = {
     // Here it turns hostile in HALF the grace window, sours faster when you bleed it, sends
     // BIGGER early probes, and — crucially for a mode with no end — sustains an economy and
     // expands, so a "Warlord World" actually plays like the galaxy's most dangerous neighbour.
-    odyssey: { graceMult: 0.5, grievanceMult: 2, probeMin: 5, workerTarget: 6, expandWhenNodesBelow: 0.3 },
+    // …and it NURSES the grudge: `forgiveness` halves the rate its stance recovers once you've
+    // bled it, and doubles how long it keeps treating you as an active aggressor
+    // (engine/diplomacy.js). A Warlord world should be the one that doesn't let it go.
+    odyssey: { graceMult: 0.5, grievanceMult: 2, probeMin: 5, workerTarget: 6,
+               expandWhenNodesBelow: 0.3, forgiveness: 0.5 },
   },
   economist: {
     name: "Economist",
@@ -49,7 +53,9 @@ export const ARCHETYPES = {
     // long game — a fatter worker economy, earlier/greedier expansion, and probes that
     // start a touch larger, so a settled Economist neighbour steadily out-scales into a
     // real threat rather than sending the same 3-unit probe forever.
-    odyssey: { workerTarget: 11, expandWhenNodesBelow: 0.55, probeMin: 4 },
+    // …and forgives FAST: a trading world has a business reason to get back to coexistence, so its
+    // stance recovers half again as quickly and it forgets a skirmish sooner (engine/diplomacy.js).
+    odyssey: { workerTarget: 11, expandWhenNodesBelow: 0.55, probeMin: 4, forgiveness: 1.5 },
   },
   balanced: {
     name: "Balanced",

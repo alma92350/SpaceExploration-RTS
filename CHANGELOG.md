@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **How long a neighbour holds a grudge is now part of its personality.** Souring was already
+  flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but
+  *cooling off* was identical everywhere, and once you had drawn blood a neighbour stayed
+  primed against you for the rest of the session. A new `forgiveness` dial drives both halves of
+  that cooldown: how fast a soured stance drifts back up, and how long the world keeps treating
+  you as an active aggressor. It composes across world × AI Strategy × difficulty and is bounded,
+  so the spread runs from about 17 minutes of grudge on an Aggressive Warlord world at Hard down
+  to about 2 on a patient trading world with an Economic opponent on Easy. Souring is untouched —
+  a personality that forgives slowly does not also turn hostile slowly. A charging Antimatter Gate
+  still provokes for as long as it charges, whatever the memory says, and every fresh loss re-arms
+  the clock so a running war never quietly cools off underneath you.
+- The Refinery, Foundry, and Arsenal no longer double as forward resource drop-offs — they're
+  ore-tech buildings only now (Refinery for doctrine research, Foundry/Arsenal as Tier-2/Tier-3
+  gates). All gather and haul traffic runs straight to a Command Center; the AI no longer plants
+  additional Refineries out at far ore seams as decentralized collection points.
+
 ### Fixed
 
 - **The Odyssey AI no longer freezes solid in a long session.** Its Habitat trigger was sized for
@@ -46,13 +64,6 @@ All notable changes to this project are documented here. The format follows
   findings the bench turned up (a supply deadlock that permanently freezes a developed AI, a
   terminating build order, a Rusher that never develops, and a non-initiating half of the galaxy),
   plus the tuning loop to run against them.
-
-### Changed
-
-- The Refinery, Foundry, and Arsenal no longer double as forward resource drop-offs — they're
-  ore-tech buildings only now (Refinery for doctrine research, Foundry/Arsenal as Tier-2/Tier-3
-  gates). All gather and haul traffic runs straight to a Command Center; the AI no longer plants
-  additional Refineries out at far ore seams as decentralized collection points.
 
 ## [1.0.0] — 2026-07-22
 

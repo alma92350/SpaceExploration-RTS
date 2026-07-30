@@ -354,23 +354,24 @@ test("addPlanet gives every world a neighbour stance", () => {
 test("a fresh neighbour starts unprovoked", () => {
   const s = createGameState({ planetId: "ferros", rng: () => 0.5 });
   s.diplomacy = createDiplomacy();
-  assert.equal(s.diplomacy.provoked, false, "createDiplomacy states the field, so the shape is complete for save/load");
+  assert.equal(s.diplomacy.provokedAt, null, "createDiplomacy states the field, so the shape is complete for save/load");
   updateDiplomacy(s, 1);
-  assert.ok(!s.diplomacy.provoked, "merely running the world doesn't provoke it");
+  assert.ok(!provoked(s), "merely running the world doesn't provoke it");
 });
 
-test("destroying one of the neighbour's ships provokes it, and the flag latches", () => {
+test("destroying one of the neighbour's ships provokes it, and it stays provoked while the fight is live", () => {
   const s = createGameState({ planetId: "ferros", rng: () => 0.5 });
   s.diplomacy = createDiplomacy();
   const doomed = makeUnit("skiff", "ai", 500, 500);
   s.units.set(doomed.id, doomed);
   updateDiplomacy(s, 1);                       // seeds lastAiUnits
-  assert.ok(!s.diplomacy.provoked, "still unprovoked while its ships are alive");
+  assert.ok(!provoked(s), "still unprovoked while its ships are alive");
   s.units.delete(doomed.id);                   // the player killed it
   updateDiplomacy(s, 1);
-  assert.ok(s.diplomacy.provoked, "a destroyed ship is provocation");
+  assert.ok(provoked(s), "a destroyed ship is provocation");
+  assert.equal(s.diplomacy.provokedAt, s.time, "…stamped with when, so the memory can fade on its own clock");
   for (let i = 0; i < 50; i++) updateDiplomacy(s, 1);
-  assert.ok(s.diplomacy.provoked, "…and it stays provoked — forgiveness is the stance's job, not this flag's");
+  assert.ok(provoked(s), "…and it holds while the fight is still recent — see the cooldown tests below for the fade");
 });
 
 test("the neighbour REBUILDING its fleet is not provocation", () => {
@@ -379,7 +380,7 @@ test("the neighbour REBUILDING its fleet is not provocation", () => {
   updateDiplomacy(s, 1);
   for (let i = 0; i < 4; i++) { const u = makeUnit("skiff", "ai", 500, 500); s.units.set(u.id, u); }
   updateDiplomacy(s, 1);
-  assert.ok(!s.diplomacy.provoked, "a rising unit count is the AI's own production, not an attack on it");
+  assert.ok(!provoked(s), "a rising unit count is the AI's own production, not an attack on it");
 });
 
 /* ---------- the three multiplier layers compose, but they don't compound without limit ---------- */
@@ -449,7 +450,7 @@ test("the neighbour deploying its own colony ship is neither a grievance nor a p
   assert.ok(deployColonyShip(s, ship.id), "the ship deploys into a Command Center");
   updateDiplomacy(s, 1);
   assert.ok(s.diplomacy.stance >= before - 1e-9, "founding its own colony must not sour the neighbour against you");
-  assert.ok(!s.diplomacy.provoked, "…nor hand it standing to attack a player who has done nothing");
+  assert.ok(!provoked(s), "…nor hand it standing to attack a player who has done nothing");
 });
 
 test("a destroyed WORKER is still a grievance — only self-consuming roles are exempt", () => {
@@ -462,5 +463,104 @@ test("a destroyed WORKER is still a grievance — only self-consuming roles are 
   s.units.delete(w.id);
   updateDiplomacy(s, 1);
   assert.ok(s.diplomacy.stance < before, "killing its workers still sours it");
-  assert.ok(s.diplomacy.provoked, "…and still provokes it");
+  assert.ok(provoked(s), "…and still provokes it");
+});
+
+/* ---------- FORGIVENESS: how long a grudge lasts is part of the personality ---------- */
+
+// Souring was already flavoured by personality (grievanceMult — a Rusher world sours twice as fast
+// as a patient one). COOLING OFF was not: every neighbour recovered from being bled at exactly the
+// same rate, and once provoked, every neighbour stayed provoked for ever. So a Warlord world and a
+// research capital held a grudge identically, which is the one place the temperaments read the same.
+//
+// One dial, `forgiveness`, now drives both halves of the cooldown — the drift back up toward the
+// scarcity target, and how long the neighbour keeps treating you as an active aggressor. It
+// composes across archetype x strategy x difficulty and is bounded, exactly like graceMult.
+
+import { MIN_FORGIVENESS, MAX_FORGIVENESS, PROVOKE_MEMORY, provoked } from "../engine/diplomacy.js";
+
+const odyssey = (planetId, opts = {}) => {
+  const s = createGameState({ planetId, endless: true, rng: () => 0.5, ...opts });
+  s.diplomacy = createDiplomacy();
+  return s;
+};
+
+test("a Warlord world holds its grudge; a patient one gets back to business", () => {
+  const rusher = odyssey("korrath"), econ = odyssey("ferros");
+  for (const s of [rusher, econ]) {
+    for (const n of s.map.nodes) n.amount = n.max;   // full deposits ⇒ a cordial target to recover TOWARD
+    s.diplomacy.stance = -0.9;                        // …both freshly bled to the same depth
+    for (let i = 0; i < 200; i++) updateDiplomacy(s, 0.5);
+  }
+  assert.ok(econ.diplomacy.stance > rusher.diplomacy.stance,
+    `the Economist cools off faster (econ ${econ.diplomacy.stance.toFixed(3)} vs rusher ${rusher.diplomacy.stance.toFixed(3)})`);
+});
+
+test("forgiveness changes the cooling, NOT the souring — those are separate dials", () => {
+  // Drive both worlds DOWNWARD from a cordial stance on an identical, heavily-mined map, with the
+  // grievance multiplier equalised, so the only thing that could differ is the drift rate.
+  const mk = planetId => {
+    const s = odyssey(planetId);
+    for (const n of s.map.nodes) n.amount = 0;   // fully mined ⇒ a hostile target to sink TOWARD
+    s.diplomacy.stance = 0.5;
+    return s;
+  };
+  const rusher = mk("korrath"), econ = mk("ferros");
+  for (const s of [rusher, econ]) for (let i = 0; i < 60; i++) updateDiplomacy(s, 0.5);
+  assert.ok(Math.abs(rusher.diplomacy.stance - econ.diplomacy.stance) < 1e-9,
+    "a personality that forgives faster must not also turn hostile slower — souring is grievanceMult's job");
+});
+
+test("the composed forgiveness multiplier is bounded like the others", () => {
+  const s = odyssey("korrath", { aiStrategy: "aggressive", difficulty: "hard" });
+  const f = effectiveDiplomacyMults(s).forgiveness;
+  assert.ok(f >= MIN_FORGIVENESS && f <= MAX_FORGIVENESS, `composed forgiveness ${f} out of bounds`);
+  assert.ok(f < effectiveDiplomacyMults(odyssey("ferros", { aiStrategy: "economic" })).forgiveness,
+    "…and the extremes still order correctly: the vengeful stack forgives least");
+});
+
+/* ---------- the aggression cooldown: provocation is remembered, not latched for ever ---------- */
+
+function bleed(s) {                      // destroy one of the neighbour's ships
+  const u = makeUnit("skiff", "ai", 500, 500);
+  s.units.set(u.id, u);
+  updateDiplomacy(s, 0.1);
+  s.units.delete(u.id);
+  updateDiplomacy(s, 0.1);
+}
+
+test("a neighbour stops treating you as an aggressor after a long enough quiet spell", () => {
+  const s = odyssey("ferros");
+  bleed(s);
+  assert.ok(provoked(s), "freshly bled ⇒ provoked");
+  s.time += PROVOKE_MEMORY * 5;          // …then a long peace, comfortably past any personality's memory
+  assert.ok(!provoked(s), "it eventually stands down — provocation is a memory, not a permanent brand");
+});
+
+test("that memory is longer for a world that holds grudges than for one that doesn't", () => {
+  const rusher = odyssey("korrath"), econ = odyssey("ferros");
+  for (const s of [rusher, econ]) bleed(s);
+  // A quiet spell that the patient world has forgotten but the Warlord world has not.
+  for (const s of [rusher, econ]) s.time += PROVOKE_MEMORY;
+  assert.ok(provoked(rusher), "the Warlord world still remembers");
+  assert.ok(!provoked(econ), "…while the patient one has moved on");
+});
+
+test("fresh blood resets the clock — a running war never quietly cools off", () => {
+  const s = odyssey("vesper");   // Balanced: no forgiveness overlay, so its memory IS PROVOKE_MEMORY
+  bleed(s);
+  s.time += PROVOKE_MEMORY * 0.9;
+  bleed(s);                               // hit it again just before it would have forgotten
+  s.time += PROVOKE_MEMORY * 0.9;
+  assert.ok(provoked(s), "each new loss re-arms the memory");
+});
+
+test("a charging Gate provokes for as long as it charges, whatever the memory says", () => {
+  const s = odyssey("ferros");
+  s.time = PROVOKE_MEMORY * 10;           // nothing remembered
+  assert.ok(!provoked(s));
+  const gate = makeBuilding("antimatter_gate", "player", 400, 400);
+  gate.charge = 0.5;
+  s.buildings.set(gate.id, gate);
+  assert.ok(provoked(s), "a live bid to win the galaxy is a standing provocation, not a memory");
 });

@@ -135,13 +135,23 @@ test("the skirmisher opponent actually fights — it is the bot that exercises p
   assert.ok(fights.curve.some(c => c.army > 0), "the AI it fights is a real opponent, not an empty world");
 });
 
-test("a provoked never-initiating neighbour DOES gain standing, and the bench sees it", () => {
-  // The end-to-end proof that engine and bench agree: against the one bot that draws blood, an
-  // Economic neighbour becomes entitled and commits — where against `passive` it never does.
+test("for a never-initiating strategy, standing tracks provocation exactly — and provocation FADES", () => {
+  // The end-to-end proof that engine and bench agree. Deliberately an invariant rather than "it
+  // attacked by minute N": provocation is a memory that decays at a rate the world's temperament
+  // sets (engine/diplomacy.js PROVOKE_MEMORY / forgiveness), so whether any particular sample
+  // lands inside the window is a timing coincidence. What must ALWAYS hold is that a strategy
+  // which doesn't start fights has standing exactly when, and only when, it has been provoked.
   const fought = run(short({ world: "korrath", strategy: "economic", opponent: "skirmisher", minutes: 30 }));
   const ignored = run(short({ world: "korrath", strategy: "economic", opponent: "passive", minutes: 30 }));
-  assert.equal(ignored.entitledSamples, 0, "an untouched player is still left alone");
-  assert.ok(fought.entitledSamples > 0, "a player who attacks it earns a neighbour that may answer");
+  for (const r of [fought, ignored])
+    for (const c of r.curve)
+      assert.equal(c.entitled, c.provokedAi, "a never-initiating neighbour's standing IS its provocation");
+  assert.ok(fought.curve.some(c => c.provokedAi), "a player who attacks it earns a neighbour that may answer");
+  assert.ok(!ignored.curve.some(c => c.provokedAi), "…and one who never touches it does not");
+  // …and the memory really does fade: the fighting run must show provocation lapsing at some point,
+  // not staying branded on for the rest of the session.
+  const flips = fought.curve.filter((c, i) => i > 0 && !c.provokedAi && fought.curve[i - 1].provokedAi);
+  assert.ok(flips.length > 0, "provocation cools off once the shooting stops — it is not a permanent brand");
 });
 
 // Two detectors were rewritten after the first fix round, because scaling the AI up turned them

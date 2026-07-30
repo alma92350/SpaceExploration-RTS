@@ -14,6 +14,11 @@
    skirmish AI has no `state.diplomacy` and fights as before. Pure and
    deterministic (grievance is read from the change in the neighbour's unit count,
    so it's substep-safe — no double counting across catch-up ticks).
+
+   Both DIRECTIONS are personality-flavoured, and by separate dials: how fast a
+   world sours on you (grievanceMult) and how long it then holds the grudge
+   (forgiveness — the recovery drift plus the provocation memory). A Warlord world
+   turns on you twice as fast and lets go half as quickly as a patient trading one.
    ============================================================ */
 
 "use strict";
@@ -104,6 +109,23 @@ const GRACE_FLOOR = 0.2;          // the stance target can't fall below this dur
 export const MIN_GRACE_FRAC = 0.4;       // ≥ 168s of opening window, whatever the stack
 export const MAX_GRIEVANCE_MULT = 2.5;   // …and a hard ceiling on how fast losses sour a neighbour
 
+// FORGIVENESS — how long a neighbour holds a grudge, and the one part of its temperament the
+// diplomacy layer used to leave flat. Souring was already personality-flavoured (grievanceMult),
+// but COOLING OFF was identical everywhere: a Warlord world and a research capital recovered from
+// being bled at the same rate, and once provoked, every neighbour stayed provoked for ever. This
+// dial drives both halves of that cooldown — the drift back UP toward the scarcity target, and
+// how long the AI keeps treating you as an active aggressor (provoked(), below). Above 1 forgives
+// faster and forgets sooner; below 1 nurses the grudge. Composed across archetype × strategy ×
+// difficulty and bounded, exactly like the two above.
+export const MIN_FORGIVENESS = 0.3;
+export const MAX_FORGIVENESS = 2.5;
+
+// Seconds of quiet, at forgiveness 1, before a neighbour stops counting you as an active
+// aggressor. Scaled by 1/forgiveness, so a Warlord world remembers roughly twice as long as a
+// patient one. Long enough that it can't lapse mid-engagement: a wave cadence is tens of seconds,
+// so you have to genuinely stop fighting, not just pause between pushes.
+export const PROVOKE_MEMORY = 300;
+
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 // The composed-and-bounded grace/grievance multipliers for this world. Exported so the bounds are
@@ -117,11 +139,13 @@ export function effectiveDiplomacyMults(state) {
       ((od && od.graceMult) || 1) * (st.graceMult || 1) * (df.graceMult || 1)),
     grievanceMult: Math.min(MAX_GRIEVANCE_MULT,
       ((od && od.grievanceMult) || 1) * (st.grievanceMult || 1) * (df.grievanceMult || 1)),
+    forgiveness: clamp(((od && od.forgiveness) || 1) * (st.forgiveness || 1) * (df.forgiveness || 1),
+      MIN_FORGIVENESS, MAX_FORGIVENESS),
   };
 }
 
 export function createDiplomacy() {
-  return { stance: START_STANCE, depletion: 0, tributes: 0, provoked: false };
+  return { stance: START_STANCE, depletion: 0, tributes: 0, provokedAt: null };
 }
 
 // Has the PLAYER done something to this neighbour that a strategy which "never attacks
@@ -136,8 +160,14 @@ export function createDiplomacy() {
 // state.diplomacy, so this is always false there and the flag keeps its original absolute
 // meaning on exactly the path the player report came from. See docs/odyssey-ai-review.md §2.1.
 export function provoked(state) {
-  if (!state.diplomacy) return false;
-  return !!state.diplomacy.provoked || !!chargingPlayerWonder(state);
+  const dip = state.diplomacy;
+  if (!dip) return false;
+  // A charging Gate is a STANDING provocation, not a memory — it provokes for as long as it
+  // charges, however long ago the last shot was fired.
+  if (chargingPlayerWonder(state)) return true;
+  if (dip.provokedAt == null) return false;
+  // …otherwise it's a memory that fades, at a rate this neighbour's temperament sets.
+  return (state.time - dip.provokedAt) < PROVOKE_MEMORY / effectiveDiplomacyMults(state).forgiveness;
 }
 
 // Cost of the NEXT tribute, escalating geometrically with how many you've already
@@ -189,7 +219,7 @@ export function updateDiplomacy(state, dt) {
   // …and BOUNDED (effectiveDiplomacyMults, above): three multiplicative layers stacking on the
   // same dial produced numbers nobody designed — a 37.8-second opening grace on a combination the
   // setup screen offers directly.
-  const { graceMult, grievanceMult } = effectiveDiplomacyMults(state);
+  const { graceMult, grievanceMult, forgiveness } = effectiveDiplomacyMults(state);
   const grace = GRACE_TIME * graceMult;
   const grievance = GRIEVANCE_PER_KILL * grievanceMult;
   const creep = CREEP_RATE * grievanceMult;
@@ -216,10 +246,11 @@ export function updateDiplomacy(state, dt) {
   }
   if (dip.lastAiUnits !== undefined && ai < dip.lastAiUnits) {
     dip.stance = clamp(dip.stance - (dip.lastAiUnits - ai) * grievance, -1, 1);
-    // …and latch PROVOKED (see provoked() above): drawing blood is what entitles a
-    // never-initiating neighbour to answer in Odyssey. Latched, not decaying — forgiveness is the
-    // stance's job, and the stance still has to reach war on its own before any wave is sent.
-    dip.provoked = true;
+    // …and stamp PROVOKED (see provoked() above): drawing blood is what entitles a
+    // never-initiating neighbour to answer in Odyssey. A timestamp rather than a latch, so the
+    // memory fades over a quiet spell — and every fresh loss re-arms it, so a running war never
+    // cools off underneath you. The stance still has to reach war on its own before a wave flies.
+    dip.provokedAt = state.time;
   }
   dip.lastAiUnits = ai;
 
@@ -261,7 +292,12 @@ export function updateDiplomacy(state, dt) {
   if (gate && state.time >= grace)
     target = Math.min(target, GATE_WAR_TARGET - GATE_WAR_SLOPE * gate.charge);
 
-  dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * DRIFT_RATE), -1, 1);
+  // ASYMMETRIC drift: souring runs at the stock rate (grievanceMult is what flavours THAT), while
+  // recovery — cooling off after you've bled them — runs at this neighbour's forgiveness. So the
+  // two directions are separate dials, and a temperament that forgives slowly doesn't also turn
+  // hostile slowly.
+  const rate = DRIFT_RATE * (target > dip.stance ? forgiveness : 1);
+  dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * rate), -1, 1);
 
   // The moment the neighbour crosses from peace into war, fire a one-time heads-up
   // (boot.js turns it into a toast) — the offensive ramp is silent otherwise, so a

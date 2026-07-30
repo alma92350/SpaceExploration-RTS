@@ -47,6 +47,8 @@ export const STRATEGIES = {
     // default one would, on ANY world, not just a Rusher's.
     graceMult: 0.2,
     grievanceMult: 1.6,
+    // …and it lets go slowly: a grudge outlasts the fight that caused it (diplomacy.js forgiveness).
+    forgiveness: 0.6,
     // SUPERWEAPON (engine/aiSuperweapon.js): once a Helium Bomb is built, walk
     // it to the current attack target and trigger it there, rather than
     // leaving it as a purely defensive home trap (every strategy gets that
@@ -86,6 +88,9 @@ export const STRATEGIES = {
     // A lighter static defense to match "minimal" (still real — cheap and
     // passive, unlike the standing army above).
     turretCountMult: 0.6,
+    // …and it de-escalates readily: fighting is a cost centre, so it cools off fastest of the four
+    // once you stop shooting (engine/diplomacy.js forgiveness).
+    forgiveness: 1.4,
     // Leans further into economy than its archetype might on its own.
     workerTargetMult: 1.25,
     // INDUSTRY (engine/aiIndustry.js): always climbs the deep factory chain —
@@ -104,6 +109,9 @@ export const STRATEGIES = {
     matchEnemyForce: true,
     matchBuffer: 1.15,
     matchFloor: 3,
+    // Deterrence, not vengeance: it stands down a little faster than a default neighbour once the
+    // force it was mirroring stops appearing (engine/diplomacy.js forgiveness).
+    forgiveness: 1.2,
     // OFFENSE: purely reactive, like Economic — parity is a deterrent/defense
     // plan, not a wind-up to attack, and neverInitiates means that literally,
     // with no timeout escape hatch (see the Economic entry above, including how

@@ -323,7 +323,7 @@ for (const strategy of ["economic", "matching"]) {
 
   test(`a ${strategy} neighbour DOES answer once the player has destroyed its ships`, () => {
     const state = hostileOdyssey(strategy);
-    state.diplomacy.provoked = true;   // set by updateDiplomacy on a grievance — see diplomacy.test.js
+    state.diplomacy.provokedAt = state.time;   // stamped by updateDiplomacy on a grievance — see diplomacy.test.js
     for (let i = 0; i < 5; i++) { state.ai.think = 0; runAI(state, THINK_INTERVAL); }
     assert.ok(aiAttacking(state), "a fully hostile neighbour that has been bled must eventually answer");
   });

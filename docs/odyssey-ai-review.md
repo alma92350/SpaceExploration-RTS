@@ -334,6 +334,37 @@ column barely does.
 node tools/ailab.js probe --world ferros --opponent skirmisher --minutes 40 --sample 5
 ```
 
+### 2.10 Cooling off was the one part of temperament diplomacy left flat — *fixed*
+
+Not a defect from the original review; raised afterwards, and it's the right observation. The
+diplomacy layer flavoured how fast a neighbour *sours* (`grievanceMult`: a Warlord world at 2×, a
+patient one at 1×) but every world *recovered* at the same rate, and `provoked` — the flag that
+lets a never-initiating strategy answer back — latched permanently. So once you had fought anyone,
+every temperament held the grudge identically and for ever.
+
+**Status: fixed.** One `forgiveness` dial drives both halves of the cooldown:
+
+- **The stance drift is now asymmetric.** Recovery runs at `DRIFT_RATE × forgiveness`; souring
+  keeps the stock rate, because that direction is already `grievanceMult`'s job. A personality
+  that forgives slowly must not also turn hostile slowly — that's a separate test.
+- **Provocation is a timestamp, not a latch.** It fades after `PROVOKE_MEMORY / forgiveness`
+  seconds of quiet, each fresh loss re-arms the clock, and a charging Gate provokes for as long as
+  it charges regardless.
+
+It composes across archetype × strategy × difficulty and is bounded like `graceMult`, giving a
+spread of roughly 8× between the most and least forgiving reachable combinations:
+
+| world / strategy / difficulty | forgiveness | grudge memory |
+|---|---|---|
+| korrath (Rusher) / Aggressive / Hard | 0.30 | 16.7 min |
+| korrath (Rusher) / Adaptive / Medium | 0.50 | 10.0 min |
+| vesper (Balanced) / Adaptive / Medium | 1.00 | 5.0 min |
+| ferros (Economist) / Adaptive / Medium | 1.50 | 3.3 min |
+| ferros (Economist) / Economic / Easy | 2.50 | 2.0 min |
+
+In play: raid a Warlord world and it stays primed against you for most of a session; raid a
+trading world, leave it alone for a few minutes, and it goes back to business.
+
 ---
 
 ## 3. The proposal — searching for better AI with Claude Code
@@ -460,4 +491,5 @@ re-run.
 | 2026-07-30 | `rusherGraduates` needs retuning | — | **not needed.** The graduation gate was fine; the 30-minute lag was unit production eating the ore first. Fixing the reserve fixed the symptom, so the dial was left alone | no change |
 | 2026-07-30 | a wiped neighbour should be able to re-found (§2.5) | — | **rejected.** A background world has no player and no third party, so the AI cannot die unattended; the only path there is the player razing it, which is `galaxy.pacified` — permanent by design. A re-founding AI would show a world as "pacified" with a live neighbour rebuilding on it | no |
 | 2026-07-30 | the bench's own detectors are still valid after the fixes | — | **no** — three of five became false positives on the scaled-up AI. Rewritten and pinned with tests; the pre-fix baseline was re-measured under the new definitions rather than compared across them | corrected |
+| 2026-07-30 | temperament should govern the grievance/aggression COOLDOWN, not just the souring | `forgiveness` on archetype × strategy × difficulty, driving both the recovery drift and the provocation memory | a ~8× spread across reachable combinations (16.7 min of grudge down to 2.0). Souring deliberately left on the stock rate — pinned by a test, since the obvious implementation would have slowed it too | **yes** |
 | 2026-07-30 | `production-stall` is one Habitat per 10 s throttling the army | parallel Habitats when supply, not ore, is the bottleneck | **no** — 18/44 before, 18/44 after. Probing the worlds it fires on shows the residue is the Rusher archetype's designed economy (six workers, one Barracks) on Medium, where `rusherGraduates` doesn't apply. Kept anyway: it is what moved supply-deadlock 4→1 | kept, but it did not fix what it was aimed at |
