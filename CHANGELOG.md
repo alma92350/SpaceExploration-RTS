@@ -64,6 +64,16 @@ All notable changes to this project are documented here. The format follows
   findings the bench turned up (a supply deadlock that permanently freezes a developed AI, a
   terminating build order, a Rusher that never develops, and a non-initiating half of the galaxy),
   plus the tuning loop to run against them.
+- `docs/improvement-proposals.md` — a full-game improvement catalog from a fanned-out review
+  team: 71 proposals across nine dimensions (combat, economy, tech/industry, defense/victory,
+  AI, Odyssey meta, worlds, UX, presentation/platform), each anchored to the game's progression
+  ladder (T1 Opening → T2 Developed → T3 Advanced → Strategic Endgame, plus cross-tier), graded
+  by effort and impact, and grounded in the exact files and functions a change would start from.
+  A critic's pass over the whole set closes it out: duplicate proposals to merge, collisions to
+  decide before scheduling (three dimensions independently patching `counterToPlayerArmy`, the
+  free-vs-paid world-intel doctrine, Gate-charge economics), coverage gaps no dimension owned
+  (scenarios, replays, post-match debrief, accessibility, audio, modding-by-data), and a
+  twelve-item shortlist ranked on player impact per unit of effort.
 
 ## [1.0.0] — 2026-07-22
 
