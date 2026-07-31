@@ -50,15 +50,38 @@ export function checkEndlessLoss(state) {
   if (!hasCommandCenter(state, "player") && !hasColonyShip(state, "player")) finish(state, "ai");
 }
 
-// Standalone-endless WIN check — an Antimatter Gate finishing at full charge. In an actual
-// Odyssey GALAXY there are NO wins (the play-forever sandbox): a completed Gate is a
-// milestone firework, not a victory (engine/galaxy.js checkGalaxyProgress), so this is
-// suppressed for galaxy states (state.inGalaxy) and only ever resolves a standalone endless
-// state — a test fixture, and the twin of checkEndlessLoss. Skirmishes use checkWinCondition.
+// Standalone-endless WIN check — an Antimatter Gate finishing at full charge, PLUS (in an actual
+// Odyssey GALAXY) the signal for a completed AI-owned rival Gate (docs/improvement-proposals.md
+// "the rival Gate", merged Defense+AI twins). Both branches read the same wonder-charge scan:
+//
+//   • PLAYER-owned, OUTSIDE a galaxy: an outright win (finish()) — the twin of checkEndlessLoss,
+//     a standalone-endless test fixture's own terminal state.
+//   • PLAYER-owned, INSIDE a galaxy: no win at all — a completed Gate is a milestone firework
+//     (engine/galaxy.js checkGalaxyProgress), not a victory. The play-forever sandbox.
+//   • AI-owned, INSIDE a galaxy: an 'ascension', NEVER a defeat — the play-forever invariant
+//     holds even at the galaxy's OWN endgame bid. Pushes a one-time event (latched on the
+//     building via `rivalAscended` so this scan, which runs every tick, can't re-fire it) for
+//     engine/galaxy.js's throttled rival-gate scan to consume into the actual consequence
+//     (claims burst, hardEdge, a permanent stance ceiling, the "rival-gate" milestone) —
+//     victory.js only ever signals here, it never resolves the galaxy-side effect itself, so the
+//     engine stays exactly as DOM-free/galaxy-agnostic as it already was.
+//   • AI-owned, OUTSIDE a galaxy: never happens (a skirmish AI never builds a wonder at all, and
+//     a bare standalone-endless test fixture has no galaxy to signal into), so this branch is
+//     simply never reached there — nothing to suppress.
 export function checkEndlessWin(state) {
-  if (state.over || state.inGalaxy) return;
-  for (const b of state.buildings.values())
-    if (b.owner === "player" && BUILDINGS[b.type]?.wonder && (b.charge || 0) >= 1) { finish(state, "player"); return; }
+  if (state.over) return;
+  for (const b of state.buildings.values()) {
+    if (!BUILDINGS[b.type]?.wonder || (b.charge || 0) < 1) continue;
+    if (b.owner === "player") {
+      if (state.inGalaxy) continue;   // a galaxy Gate online is a milestone, never a win — play forever
+      finish(state, "player");
+      return;
+    }
+    if (state.inGalaxy && !b.rivalAscended) {
+      b.rivalAscended = true;
+      state.events.push({ type: "rivalGateComplete", owner: "ai", buildingId: b.id, x: b.x, y: b.y });
+    }
+  }
 }
 
 // `reason` is only ever supplied by checkWinCondition's three branches above — the skirmish clock

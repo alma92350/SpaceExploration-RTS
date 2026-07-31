@@ -6,6 +6,7 @@ import { createGalaxy, addPlanet, stepGalaxy, ODYSSEY_WORLDS, createLane, assign
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
 import { setColonyPolicy } from "../engine/colonyPolicy.js";
+import { BUILDINGS } from "../engine/entities.js";
 import { mulberry32, entitySnapshot, galaxySnapshot } from "./_helpers.js";
 
 // The headline determinism test (determinism.test.js) proves same-seed replays match on ONE
@@ -91,4 +92,35 @@ test("two galaxies from the same seed, with an active Freight Lane and colony st
   assert.ok(destA.players.player.resources.ore > 700, "worker-sustain actually spent ore at the CC");
 
   assert.equal(galaxySnapshot(a), galaxySnapshot(b), "same seed + same setup ⇒ byte-identical galaxies, lanes/policies included");
+});
+
+// Phase 7's rival Gate (engine/galaxy.js checkRivalGate + engine/aiIndustry.js's own build
+// step): same risk class as the colony-economy machinery above — a background-world building
+// mid-charge, advanced through stepGalaxy's own scheduling, tracked and (potentially) ascended
+// by a throttled scan. entitySnapshot's own `builds` tuple now carries a wonder's `charge`
+// (test/_helpers.js), so a charge-path float divergence would actually surface here, not just
+// in the coarser rounded-count galaxy-persist checks.
+test("two galaxies from the same seed, with an in-progress rival Gate on a background world, replay byte-identical", () => {
+  const build = seed => {
+    const g = createGalaxy({ seed });
+    const w = g.worlds.find(x => x !== g.activeId);
+    const s = addPlanet(g, w, { unsettled: true });
+    s.background = true;
+    s.ai.difficulty = "hard";
+    s.ai.archetype = { ...s.ai.archetype, wantsRefinery: true };   // deterministic trigger, any roster world
+    const gate = makeBuilding("antimatter_gate", "ai", 700, 500);
+    s.buildings.set(gate.id, gate);
+    for (const com in BUILDINGS.antimatter_gate.feed) {
+      s.players.ai.resources[com] = BUILDINGS.antimatter_gate.feed[com] * BUILDINGS.antimatter_gate.chargeTime * 1.5;
+    }
+    for (let i = 0; i < 400; i++) stepGalaxy(g, 0.1);
+    return g;
+  };
+
+  const a = build(90210), b = build(90210);
+  const gateA = [...a.planets.get(a.worlds.find(x => x !== a.activeId)).buildings.values()]
+    .find(bl => bl.type === "antimatter_gate");
+  assert.ok(gateA && gateA.charge > 0, "the rival Gate actually charged, so this is a real replay comparison");
+
+  assert.equal(galaxySnapshot(a), galaxySnapshot(b), "same seed + same setup ⇒ byte-identical galaxies, the rival Gate's charge included");
 });

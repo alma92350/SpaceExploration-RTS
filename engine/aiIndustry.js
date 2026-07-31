@@ -20,6 +20,8 @@ import { researchTech } from "./techtree.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
 import { wantsDeepIndustry } from "./aiWorkers.js";
+import { difficultyFor } from "./aiDifficulty.js";
+import { strategyFor } from "./aiStrategy.js";
 
 // The industrial build order the AI climbs (Odyssey), lowest tier first. prereqsMet gates each on
 // its `requires` (an earlier factory + a research node), so the AI can only raise the next one once
@@ -52,6 +54,54 @@ const INDUSTRY_CHAIN = ["smelter", "datacenter", "chemplant", "assembler", "fabr
 const RESEARCH_ORDER = ["metallurgy", "chemistry", "consumerfab", "reactors", "electronics",
                         "automation", "heavyalloys", "machining", "antimatter", "aicores"];
 
+// EASY STRATEGIC CEILING (engine/aiDifficulty.js strategicCeiling; docs/improvement-proposals.md
+// "An Easy strategic ceiling"): sliced ONCE off the same two flat lists everyone else climbs —
+// everything up to and including Machine Works/Precision Machining stays open (the full T2/T3
+// factory economy), but antimatterforge/'antimatter' Containment onward never appear as a
+// candidate. That transitively withholds the Star Dock, the Leviathan, the Helium Bomb, the
+// Plasma Rig (it needs the AI Foundry, itself past the cut) and — Phase 7 — a rival Antimatter
+// Gate, since every one of those sits downstream of this same chain. Medium/Hard read the
+// untouched arrays back by identity (no strategicCeiling flag ⇒ no slice), so they're byte-
+// identical to before this feature. Fixed array indices, no clock/RNG — deterministic.
+const EASY_INDUSTRY_CHAIN = INDUSTRY_CHAIN.slice(0, INDUSTRY_CHAIN.indexOf("antimatterforge"));
+const EASY_RESEARCH_ORDER = RESEARCH_ORDER.slice(0, RESEARCH_ORDER.indexOf("antimatter"));
+const industryChainFor = state => difficultyFor(state).strategicCeiling ? EASY_INDUSTRY_CHAIN : INDUSTRY_CHAIN;
+const researchOrderFor = state => difficultyFor(state).strategicCeiling ? EASY_RESEARCH_ORDER : RESEARCH_ORDER;
+
+// THE RIVAL GATE (docs/improvement-proposals.md "the galaxy's strongest faction races its own
+// wonder" + "a fully-teched neighbour races its own Antimatter Gate", merged per the Phase 7
+// plan). RECONCILED TRIGGER — both twins' conditions, combined with AND: the concrete,
+// testable half from the AI twin (the Strategic tier standing — antimatter_gate's own
+// `requires`, exactly what prereqsMet already checks — plus a genuine strategic-goods
+// investment banked, not just the tier existing for an instant) AND the pacing gate both
+// twins agree on in different words (the Defense twin's "once its strategic chain stands" is
+// already only ever true for a wantsDeepIndustry world by construction — the deep-industry
+// block above returns before this is ever reached otherwise — while the AI twin spells out
+// the SAME idea explicitly plus a Hard-difficulty alternative, "so it stays an event, not a
+// default"). Exported so engine/galaxy.js's rival-gate scan (selection/tracking) and this
+// file's own tests can evaluate the trigger standalone, without needing "already inside the
+// deep-industry block" to hold — a correct, self-contained predicate in ANY calling context.
+//
+// The Easy strategicCeiling flag (engine/aiDifficulty.js) is checked here explicitly too, not
+// just relied on transitively: an Easy neighbour's own INDUSTRY_CHAIN slice already can never
+// reach antimatterforge/aifoundry/torpedoworks in the first place, so prereqsMet below would
+// already fail for it — but the explicit check makes the invariant hold BY CONSTRUCTION of
+// this function, not merely by the accident of an upstream gate never having been bypassed.
+export const RIVAL_GATE_BUFFER = 30;   // ai + antimatter + plasmatorp combined, in stock (~1/3 of a full 150s charge)
+
+/** @param {State} state */
+export function rivalGateEligible(state) {
+  if (!state.endless) return false;
+  const df = difficultyFor(state);
+  if (df.strategicCeiling) return false;
+  if (!prereqsMet(state, "ai", BUILDINGS.antimatter_gate)) return false;
+  const res = state.players.ai.resources;
+  let banked = 0;
+  for (const com in BUILDINGS.antimatter_gate.feed) banked += res[com] || 0;
+  if (banked < RIVAL_GATE_BUFFER) return false;
+  return df.mult === "hard" || wantsDeepIndustry(state, state.ai.archetype, strategyFor(state));
+}
+
 // How many chain buildings get a BANKING reserve before the AI is expected to fund the rest from
 // genuine surplus (aiIndustryReserve, below). Two — the Smelter and the Datacenter — is the set
 // that opens the tree; past them the AI has industrial income and a longer reserve would just
@@ -80,8 +130,9 @@ export function aiIndustryReserve(state, ctx) {
   if (!reactors.length) { ctx.industryReserve = BUILDINGS.reactor.cost.ore; return; }
   if (reactors.some(b => b.constructing)) return;          // one already on the way — aiIndustry won't start a second
   if (!wantsDeepIndustry(state, archetype, strategy)) return;
-  if (buildings.filter(b => INDUSTRY_CHAIN.includes(b.type)).length >= INDUSTRY_BOOTSTRAP) return;
-  const next = INDUSTRY_CHAIN.find(t => !buildings.some(b => b.type === t) && prereqsMet(state, "ai", BUILDINGS[t]));
+  const chain = industryChainFor(state);
+  if (buildings.filter(b => chain.includes(b.type)).length >= INDUSTRY_BOOTSTRAP) return;
+  const next = chain.find(t => !buildings.some(b => b.type === t) && prereqsMet(state, "ai", BUILDINGS[t]));
   if (next) ctx.industryReserve = BUILDINGS[next].cost.ore;
 }
 
@@ -136,8 +187,9 @@ export function aiIndustry(state, ctx) {
   // FACTORY CHAIN: raise the next chain building whose prereqs (its earlier factory + its research
   // node) are met and that the AI doesn't already have, one per think cycle, reserve-aware. Spread
   // in a spiral around the CC so its efficiency grid stays tight (findPlacement slides off collisions).
-  const industryCount = buildings.filter(b => INDUSTRY_CHAIN.includes(b.type) || b.type === "reactor").length;
-  const nextFactory = INDUSTRY_CHAIN.find(t => !buildings.some(b => b.type === t) && prereqsMet(state, "ai", BUILDINGS[t]));
+  const chain = industryChainFor(state);
+  const industryCount = buildings.filter(b => chain.includes(b.type) || b.type === "reactor").length;
+  const nextFactory = chain.find(t => !buildings.some(b => b.type === t) && prereqsMet(state, "ai", BUILDINGS[t]));
   if (nextFactory && canAffordKeeping(ai.resources, BUILDINGS[nextFactory].cost, ctx.oreReserve) && canAct(state)) {
     const ang = industryCount * 2.4, rad = 120 + 18 * industryCount;
     const spot = findPlacement(state, nextFactory, cc.x + Math.cos(ang) * rad, cc.y + Math.sin(ang) * rad);
@@ -149,7 +201,7 @@ export function aiIndustry(state, ctx) {
   // stop at the first that takes — one purchase per think cycle, paid in gathered crystals/radioactives.
   const datacenter = buildings.find(b => b.type === "datacenter" && !b.constructing);
   if (datacenter && canAct(state)) {
-    for (const techId of RESEARCH_ORDER) {
+    for (const techId of researchOrderFor(state)) {
       if (ai.upgrades[techId]) continue;
       if (researchTech(state, datacenter.id, techId)) { spend(state); break; }
     }
@@ -198,5 +250,19 @@ export function aiIndustry(state, ctx) {
       && canAffordKeeping(ai.resources, BUILDINGS.plasmarig.cost, ctx.oreReserve) && canAct(state)) {
     const spot = findPlacement(state, "plasmarig", cc.x - 120, cc.y - 90);
     if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "plasmarig", spot.x, spot.y)) spend(state);
+  }
+
+  // THE RIVAL GATE: once rivalGateEligible (above) — the Strategic tier standing, a real
+  // strategic-goods buffer banked, and Hard difficulty or a wantsDeepIndustry temperament — the
+  // AI races its OWN Antimatter Gate, the merged Defense+AI twin proposal (docs/improvement-
+  // proposals.md lines 667-675, 689-697). One Gate, reserve-aware, from surplus, spaced away from
+  // the rest of the base like every other factory here. engine/wonder.js's updateWonder is
+  // already owner-generic (it reads building.owner's own resources), so charging it afterward
+  // needs no code here at all — this is the only place the AI's own Gate gets founded.
+  const hasGate = buildings.some(b => b.type === "antimatter_gate");
+  if (!hasGate && rivalGateEligible(state)
+      && canAffordKeeping(ai.resources, BUILDINGS.antimatter_gate.cost, ctx.oreReserve) && canAct(state)) {
+    const spot = findPlacement(state, "antimatter_gate", cc.x - 150, cc.y + 150);
+    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "antimatter_gate", spot.x, spot.y)) spend(state);
   }
 }

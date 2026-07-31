@@ -741,6 +741,13 @@ export function deserializeGalaxy(input) {
     Object.assign(state.market.pressure, P.market.pressure); // ...then overlay the saved running pressure...
     if (P.market.glut) Object.assign(state.market.glut, P.market.glut);   // ...and the slow produced-goods glut
     state.diplomacy = { ...createDiplomacy(), ...P.diplomacy };
+    // DOMINATION WITH TEETH (engine/galaxy.js checkDomination): an old save's `galaxy.pacified`
+    // (rebuilt above) can already list this world from before the diplomacy-side floor flag
+    // existed. Re-stamp it here so updateDiplomacy's floor applies to every already-conquered
+    // world on load, not just ones conquered after this feature shipped. Additive; no
+    // GALAXY_SAVE_VERSION bump — a save that already carries the flag (P.diplomacy.pacified) is
+    // unaffected, this only fills the gap for one that predates it.
+    if (galaxy.pacified.has(P.planetId)) state.diplomacy.pacified = true;
     // dip.request (engine/diplomacy.js) carries a commodity id and three numbers straight off
     // untrusted save data — validate the shape (the same rule cargo/resources get elsewhere in
     // this file: `if (!COM[com]) …`) rather than trust it verbatim. An invalid/corrupt request is

@@ -439,3 +439,74 @@ test("a skirmish Rusher AI on Hard, however long the game runs, still never want
   for (let i = 0; i < 10; i++) runAI(s, 1.5);
   assert.ok(!aiTypes(s).has("foundry"), "skirmish never extends the mix — the Foundry gate stays untouched behind state.endless");
 });
+
+/* ---------- Tier 6: strategicCeiling (docs/improvement-proposals.md "An Easy strategic ceiling") —
+   engine/aiDifficulty.js's table-shape is covered in test/aiDifficulty.test.js; this is the actual
+   chain-find/RESEARCH_ORDER slicing behavior. DECISION-level, matching the trade-industry tests
+   just above: every prereq an antimatterforge/'antimatter' would need is pre-set, so the ONLY thing
+   standing between the AI and the Strategic tier is the ceiling itself. */
+
+// Every T2/T3 chain building an Easy neighbour should still be free to raise, standing so the
+// ONLY remaining chain entry is antimatterforge — and 'antimatter' Containment researched, so
+// prereqsMet(antimatterforge) is genuinely satisfied and only the ceiling itself can be withholding it.
+function preStrategicTierBase(planetId, difficulty) {
+  const s = aiBase(planetId);
+  s.ai.difficulty = difficulty;
+  for (const [t, x, y] of [["reactor", 540, 560], ["smelter", 620, 540], ["datacenter", 620, 620],
+                           ["chemplant", 680, 620], ["assembler", 680, 540], ["fabricator", 740, 620],
+                           ["chipfab", 740, 540], ["machineworks", 800, 540]]) {
+    const b = makeBuilding(t, "ai", x, y); s.buildings.set(b.id, b);
+  }
+  Object.assign(s.players.ai.upgrades, {
+    metallurgy: true, chemistry: true, consumerfab: true, reactors: true, electronics: true,
+    automation: true, heavyalloys: true, machining: true, antimatter: true,
+  });
+  s.players.ai.resources.ore = 6000;
+  return s;
+}
+
+test("an Easy developer AI never raises the Antimatter Forge, even with every prereq already satisfied", () => {
+  const s = preStrategicTierBase("ferros", "easy");
+  for (let i = 0; i < 15; i++) runAI(s, 1.5);
+  assert.ok(!aiTypes(s).has("antimatterforge"), "strategicCeiling withholds the Strategic tier outright");
+  assert.ok(aiTypes(s).has("machineworks"), "…but the T2/T3 factory economy up to Machine Works is untouched");
+});
+
+test("a Medium developer AI in the identical setup DOES raise the Antimatter Forge — the ceiling is Easy-only", () => {
+  const s = preStrategicTierBase("ferros", "medium");
+  for (let i = 0; i < 15; i++) runAI(s, 1.5);
+  assert.ok(aiTypes(s).has("antimatterforge"), "Medium climbs the whole chain, exactly as before this feature");
+});
+
+test("an Easy developer AI never researches Antimatter Containment, even with every earlier node done", () => {
+  const s = aiBase("ferros");
+  s.ai.difficulty = "easy";
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  const dc = makeBuilding("datacenter", "ai", 560, 540); s.buildings.set(dc.id, dc);
+  Object.assign(s.players.ai.upgrades, {
+    metallurgy: true, chemistry: true, consumerfab: true, reactors: true, electronics: true,
+    automation: true, heavyalloys: true, machining: true,
+  });
+  s.players.ai.resources.crystals = 3000; s.players.ai.resources.radioactives = 3000;
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(!s.players.ai.upgrades.antimatter && !(dc.researchQueue || []).some(j => j.techId === "antimatter"),
+    "the research ladder stops at 'machining' — 'antimatter' is never even queued");
+});
+
+test("a Medium developer AI in the identical research setup DOES queue Antimatter Containment", () => {
+  const s = aiBase("ferros");
+  s.ai.difficulty = "medium";
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  const dc = makeBuilding("datacenter", "ai", 560, 540); s.buildings.set(dc.id, dc);
+  Object.assign(s.players.ai.upgrades, {
+    metallurgy: true, chemistry: true, consumerfab: true, reactors: true, electronics: true,
+    automation: true, heavyalloys: true, machining: true,
+  });
+  s.players.ai.resources.crystals = 3000; s.players.ai.resources.radioactives = 3000;
+  let queued = false;
+  for (let i = 0; i < 10 && !queued; i++) {
+    runAI(s, 1.5);
+    queued = s.players.ai.upgrades.antimatter || (dc.researchQueue || []).some(j => j.techId === "antimatter");
+  }
+  assert.ok(queued, "Medium researches on past 'machining', exactly as before this feature");
+});

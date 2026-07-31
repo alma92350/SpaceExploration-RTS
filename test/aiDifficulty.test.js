@@ -60,6 +60,14 @@ test("rusherGraduates is Hard-only — the one identity-level dial, not just a n
   assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "hard").rusherGraduates, true);
 });
 
+/* ---------- Tier 6: strategicCeiling (table-shape here; behavior in test/aiIndustry.test.js) ---------- */
+
+test("strategicCeiling is Easy-only — the second identity-level dial", () => {
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "easy").strategicCeiling, true);
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "medium").strategicCeiling, undefined);
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "hard").strategicCeiling, undefined);
+});
+
 /* ---------- Tier 5: counter-pick cadence (table-shape here; behavior in test/ai.test.js) ---------- */
 
 test("counterEvery is 0 on Easy (never counter-picks), 2 on Hard (reacts half again as fast); Medium carries none of it", () => {

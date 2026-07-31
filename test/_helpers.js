@@ -42,7 +42,7 @@ export function entitySnapshot(state) {
   ).sort();
   const builds = [...state.buildings.values()].map(b =>
     [b.id, b.type, b.owner, b.hp, b.buildProgress ?? "-", b.constructing ? 1 : 0,
-     (b.queue || []).length, b.tier || 0].join("|")
+     (b.queue || []).length, b.tier || 0, b.charge ?? "-"].join("|")
   ).sort();
   const res = JSON.stringify(state.players.player.resources) + "/" + JSON.stringify(state.players.ai.resources);
   const fog = state.fog.explored.reduce((a, v) => a + v, 0);

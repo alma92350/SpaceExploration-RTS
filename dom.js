@@ -29,6 +29,7 @@ export const gameOverEl = byId("gameOver");
 export const mapSelectEl = byId("mapSelect");
 export const muteBtn = byId("muteBtn");
 export const underAttackEl = byId("underAttackAlert");
+export const gateChipEl = byId("gateChip");
 export const seedChipEl = byId("seedChip");
 export const factionChipEl = byId("factionChip");
 export const sheetToggleEl = byId("sheetToggle");

@@ -25,7 +25,7 @@ test("dom.js exports the full roster of element handles this suite expects", () 
     `expected at least 20 element-handle exports, found ${elementHandleNames.length}: ${elementHandleNames.join(", ")}`);
   // A few load-bearing ones by name, so a typo'd/renamed export fails loudly here instead of
   // only showing up as a mysterious null deref somewhere deep in the UI layer.
-  for (const name of ["canvas", "ctx", "minimapCanvas", "minimapCtx", "resourcesEl", "saveBtn", "loadBtn"]) {
+  for (const name of ["canvas", "ctx", "minimapCanvas", "minimapCtx", "resourcesEl", "saveBtn", "loadBtn", "underAttackEl", "gateChipEl"]) {
     assert.ok(elementHandleNames.includes(name), `expected dom.js to export "${name}"`);
   }
 });

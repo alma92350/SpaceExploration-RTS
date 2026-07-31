@@ -226,6 +226,37 @@ Three teams worked concurrently in one shared tree with real, sustained file ove
 touched starmap.js; two touched hudSelection.js) and every team isolated its own commits with
 `git add -p` rather than a broad add. No regressions surfaced this round.
 
+### Added
+
+- **A rival faction can now race its own Antimatter Gate.** Until now the galaxy-win threat only
+  ever pointed at the player — a neighbour that reaches the Strategic tier and banks a real
+  goods buffer (gated to Hard difficulty, or a patient temperament, so it stays an event) can now
+  raise and charge a Gate of its own. Razing it mid-charge costs them the whole investment, same
+  as it would you; letting it finish doesn't end the game (nothing does) but marks the galaxy as
+  changed — that faction claims its unclaimed neighbours in one burst and its worlds turn
+  permanently colder toward you.
+- **Conquest finally means something.** Pacifying a neighbour by razing its capital now actually
+  sticks — a "Conquered" world can rebuild and defend itself, but it can never be dragged back to
+  war again, and it quietly pays a small tribute for as long as you hold it. Domination sprees
+  also have a cost: pacifying one world of a faction echoes a bounded, temporary chill onto its
+  unpacified faction-mates, while an Allied world warms its faction-mates' standing a little in
+  return — the "living galaxy" reacts as a body politic for the first time.
+- **A persistent Gate charge strip** shows your charging Antimatter Gate's progress right on the
+  HUD at all times, warming in color as it climbs and flipping to a stalled look the moment
+  something (starved feed goods, throttled power) stops it from advancing — no more finding out
+  only from a 25%-milestone toast, or by keeping the Gate selected.
+- **An Easy-difficulty neighbour now stays gentle at the endgame.** Its industry climb stops
+  before the Strategic tier, so a long Odyssey session on Easy never ends with a 900hp Leviathan
+  and a doomsday bomb from a neighbour who was supposed to be the forgiving one.
+
+Four proposals from `docs/improvement-proposals.md` shipped in this batch (per
+`docs/improvement-roadmap.md`'s Phase 7) — a deliberately curated slice of the catalog's
+Gate-adjacent proposals rather than all of them, per the roadmap's own monoculture warning. The
+Rival Gate merges two independently-written proposals that converged on the same feature from
+different angles; integration caught and fixed one real interaction between it and Domination's
+new pacification floor (an ascended-then-conquered world could get stuck fighting itself between
+the two effects forever) before either shipped.
+
 - **How long a neighbour holds a grudge is now part of its personality.** Souring was already
   flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but
   *cooling off* was identical everywhere, and once you had drawn blood a neighbour stayed

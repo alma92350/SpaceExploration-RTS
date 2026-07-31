@@ -12,7 +12,7 @@ import { game } from "./session.js";
 import {
   resourcesEl, clockEl, scoreBarEl, idleWorkersEl, idleProductionEl,
   scenarioBarEl, scenarioBannerEl, scenarioStatusEl, repairBtn, departBtn,
-  starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
+  starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn, gateChipEl, canvas,
 } from "./dom.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
@@ -21,6 +21,7 @@ import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
 import { playerScore, DEFAULT_MATCH_TIME_LIMIT } from "./engine/victory.js";
 import { COM } from "./data.js";
+import { clampCamera } from "./camera.js";
 // The per-selection button/row subsystem lives in hudSelection.js (this file drives
 // the topbar / scenario bar / group chips and orchestrates the tick); renderHUD calls
 // renderSelectionPanel each frame, and resetPanelSignature clears both guards on boot.
@@ -36,6 +37,21 @@ import { updateObjectives } from "./overlays.js";
 repairBtn.addEventListener("click", () => { if (game.state && repairConvoy(game.state)) renderHUD(); });
 departBtn.addEventListener("click", () => { if (game.state) { departNow(game.state); renderHUD(); } });
 
+// The Gate charge chip's click-to-jump — mirrors boot.js's underAttackEl listener exactly
+// (getCamera() -> set x/y -> clampCamera against the current viewport). Unlike an under-attack
+// PING (a transient event whose coordinates have to be remembered because the thing itself is
+// long gone by click time), the Gate is a stationary building that's still sitting in
+// state.buildings when this fires, so its position is looked up live rather than cached.
+gateChipEl.addEventListener("click", () => {
+  if (!game.input || !game.state) return;
+  const wonder = [...game.state.buildings.values()].find(b => BUILDINGS[b.type]?.wonder && b.owner === "player" && !b.constructing);
+  if (!wonder) return;
+  const cam = game.input.getCamera();
+  cam.x = wonder.x;
+  cam.y = wonder.y;
+  clampCamera(cam, game.state.map, canvas.clientWidth, canvas.clientHeight);
+});
+
 // How far from the end the clock flips from elapsed time to a countdown + score bar (see
 // renderHUD's clock block below) — 5 minutes, matching the proposal's own spec.
 const ENDGAME_WINDOW = 300;
@@ -45,7 +61,11 @@ const ENDGAME_WINDOW = 300;
 // boot.js clears BOTH via resetPanelSignature() when a new game boots so the first
 // frame rebuilds fresh.
 let lastTopbarSignature = null;
-export function resetPanelSignature() { lastTopbarSignature = null; resetSelectionSignature(); }
+export function resetPanelSignature() {
+  lastTopbarSignature = null;
+  game.lastGateCharge = null;   // don't compare a new world's Gate against the previous one's charge history
+  resetSelectionSignature();
+}
 
 export function renderHUD() {
   const { state } = game;
@@ -71,6 +91,32 @@ export function renderHUD() {
     const blocked = performance.now() < game.supplyBlockedUntil;
     const pCap = game.galaxy ? powerCap(state, "player") : 0, pDraw = game.galaxy ? powerDraw(state, "player") : 0;
     const stance = game.galaxy && state.diplomacy ? state.diplomacy.stance : null;
+
+    // Persistent Antimatter Gate charge strip (docs/improvement-proposals.md lines 745-753):
+    // gated on game.galaxy only, the same Odyssey idiom the Power readout above already uses
+    // (antimatter_gate is odysseyOnly, so `wonder` is always null in a skirmish regardless).
+    // `state.buildings` is the ACTIVE planet's roster — like hudSelection.js's own wonder panel,
+    // this only finds the Gate while physically on its world (a background colony's Gate keeps
+    // charging per stepGalaxy, just off-screen here — same as that panel today). Constructing
+    // excluded to match chargingWonderOf/the wonder panel's own precedent: a building site isn't
+    // charging or provoking anyone yet.
+    const wonder = game.galaxy
+      ? [...state.buildings.values()].find(b => BUILDINGS[b.type]?.wonder && b.owner === "player" && !b.constructing)
+      : null;
+    let gatePct = 0, gateStalled = false;
+    if (wonder) {
+      const charge = wonder.charge || 0;
+      gatePct = Math.round(charge * 100);   // matches hudSelection.js's own wonder-panel rounding, so the two readouts never disagree
+      const prev = game.lastGateCharge;
+      // Stalled = no progress since the last tick THIS SAME wonder was observed (see
+      // game.lastGateCharge's own comment for why the id has to match too) — OR sitting at
+      // exactly 0%, which engine/wonder.js's chargingWonderOf treats as not-yet-charging
+      // (c > 0 required) and diplomacy.js's GATE_WAR_TARGET never provokes for, so "provoking
+      // neighbours" would be a lie before the first drop of antimatter is fed in.
+      gateStalled = charge <= 0 || (!!prev && prev.id === wonder.id && charge <= prev.charge);
+      game.lastGateCharge = { id: wonder.id, charge };
+    }
+
     // Signature-guard the topbar exactly like the selection panel: this whole readout was torn
     // down and rebuilt (~8 createElement/appendChild) every 150 ms even when nothing changed.
     // Skip the rebuild unless a displayed value actually moved. (The clock + idle count below
@@ -78,7 +124,8 @@ export function renderHUD() {
     const sig = Object.entries(res).map(([c, q]) => `${c}${Math.floor(q)}`).join("|")
       + `|s${used}/${cap}${used >= cap ? "C" : ""}${blocked ? "B" : ""}`
       + (game.galaxy ? `|◈${Math.floor(game.galaxy.credits)}|p${Math.round(pDraw)}/${pCap}` : "")
-      + (stance !== null ? `|r${stance.toFixed(2)}` : "");
+      + (stance !== null ? `|r${stance.toFixed(2)}` : "")
+      + (wonder ? `|gate${gatePct}${gateStalled ? "!" : ""}` : "");
     if (sig !== lastTopbarSignature) {
       lastTopbarSignature = sig;
       resourcesEl.innerHTML = "";
@@ -135,6 +182,20 @@ export function renderHUD() {
           relSpan.title = "Your neighbour's stance — it turns hostile as this world's deposits run scarce";
           resourcesEl.appendChild(relSpan);
         }
+      }
+
+      // The Gate chip itself: hidden with no player wonder on this world, otherwise the
+      // percentage + provoking/stalled copy the proposal calls for, color tier warming with
+      // progress and flipping to the dedicated stalled look regardless of tier once charge
+      // stops climbing (a near-full Gate that stalls must still read as stalled, not "hot").
+      if (wonder) {
+        gateChipEl.textContent = `🌀 Gate ${gatePct}% · ${gateStalled ? "stalled" : "provoking neighbours"}`;
+        gateChipEl.classList.remove("hidden");
+        gateChipEl.classList.toggle("stalled", gateStalled);
+        gateChipEl.classList.toggle("hot", !gateStalled && gatePct >= 75);
+        gateChipEl.classList.toggle("warm", !gateStalled && gatePct >= 50 && gatePct < 75);
+      } else {
+        gateChipEl.classList.add("hidden");
       }
     }
 

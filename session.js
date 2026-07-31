@@ -29,6 +29,18 @@ export const game = {
   // handler. Kept here, next to supplyBlockedUntil above, for the same reason: it crosses that
   // same module boundary.
   lastAttackAt: null,
+  // { id, charge } of the player's Antimatter Gate as last observed by hud.js's renderHUD (P7
+  // "Persistent Gate charge strip"), or null before the first sighting — lets the chip tell
+  // "charge climbed since the last tick" from "charge is stalled" without engine/ carrying
+  // UI-only comparison state (the engine side only ever knows the CURRENT charge, on the
+  // building itself). Keyed by wonder id, not just the charge float, so a Gate razed mid-charge
+  // and rebuilt (engine/wonder.js's own header documents that risk) starts its own clean
+  // comparison instead of reading as stalled against the dead Gate's final charge. Reset by
+  // hud.js's resetPanelSignature() — the same per-boot/per-jump reset the topbar signature
+  // itself already goes through, so a new world's Gate never inherits the old one's charge
+  // history (the exact bug class boot.js's resetWorldUiBookkeeping comment documents for
+  // gateMilestone/lastAttackAt).
+  lastGateCharge: null,
   // Live per-world alert badges for the Odyssey starmap (P6 "Starmap live colony ledger"):
   // planetId -> {type, at}, written by boot.js's notifyColony for every attack/hostile/lost
   // notification a background colony raises (engine/galaxy.js sweepColonies) — the SAME trigger
