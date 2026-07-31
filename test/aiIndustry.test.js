@@ -383,6 +383,50 @@ test("a graduated Hard Rusher now wants (and starts) the Foundry its extended mi
     "…but the unit cycle stays Tier-1 until that Foundry actually completes — effectiveMix's existing prereq filter keeps this deadlock-free");
 });
 
+/* ---------- the trade-industry branch (docs/improvement-proposals.md "Promote the legacy
+   consumer-goods recipes into a trade-industry branch") — the optional half of that proposal:
+   INDUSTRY_CHAIN/RESEARCH_ORDER extended so a developer AI can also walk this branch, not just the
+   existing military/Gate spine. Tested at the same DECISION level the rest of this file already
+   uses (prereqs pre-set, a handful of think cycles) — fast, and robust to map timing. */
+
+test("a developer AI researches chemistry once Metallurgy is already done — the off-spine branch isn't left permanently unresearched", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  const dc = makeBuilding("datacenter", "ai", 560, 540); s.buildings.set(dc.id, dc);
+  s.players.ai.upgrades.metallurgy = true;
+  s.players.ai.resources.crystals = 500;
+  let researching = false;
+  for (let i = 0; i < 8 && !researching; i++) {
+    runAI(s, 1.5);
+    researching = s.players.ai.upgrades.chemistry || (dc.researchQueue || []).some(j => j.techId === "chemistry");
+  }
+  assert.ok(researching, "the AI picks up chemistry once metallurgy is already researched");
+});
+
+test("once chemistry is researched the AI climbs to the Chemical Plant — with metallurgy never researched at all", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  const dc = makeBuilding("datacenter", "ai", 560, 540); s.buildings.set(dc.id, dc);
+  const sm = makeBuilding("smelter", "ai", 620, 540); s.buildings.set(sm.id, sm);   // earlier in the chain's priority order, already standing
+  s.players.ai.upgrades.chemistry = true;   // the off-spine root — deliberately NOT metallurgy
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(aiTypes(s).has("chemplant"), "the AI built the Chemical Plant its research unlocked, with metallurgy never researched");
+});
+
+test("once consumerfab is researched (and both branches are already standing) the AI climbs to the Fabricator", () => {
+  const s = aiBase("ferros");
+  const r = makeBuilding("reactor", "ai", 540, 560); s.buildings.set(r.id, r);
+  const dc = makeBuilding("datacenter", "ai", 560, 540); s.buildings.set(dc.id, dc);
+  const sm = makeBuilding("smelter", "ai", 620, 540); s.buildings.set(sm.id, sm);
+  const as = makeBuilding("assembler", "ai", 680, 540); s.buildings.set(as.id, as);
+  const cp = makeBuilding("chemplant", "ai", 620, 620); s.buildings.set(cp.id, cp);
+  s.players.ai.upgrades.metallurgy = true;
+  s.players.ai.upgrades.chemistry = true;
+  s.players.ai.upgrades.consumerfab = true;
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(aiTypes(s).has("fabricator"), "the AI built the Fabricator once both branches (alloys + chemicals) and its own tech were in place");
+});
+
 test("a skirmish Rusher AI on Hard, however long the game runs, still never wants a Foundry", () => {
   const s = createGameState({ planetId: "korrath", endless: false, seed: 4242, rng: mulberry32(4242) });
   s.ai.difficulty = "hard";

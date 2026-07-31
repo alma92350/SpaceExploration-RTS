@@ -25,15 +25,32 @@ import { wantsDeepIndustry } from "./aiWorkers.js";
 // its `requires` (an earlier factory + a research node), so the AI can only raise the next one once
 // the chain and the tech beneath it are in place — a Smelter and a Datacenter open the tree, then
 // each research node unlocks its factory. Deterministic first-buildable pick each think cycle.
-const INDUSTRY_CHAIN = ["smelter", "datacenter", "assembler", "chipfab", "machineworks",
-                        "antimatterforge", "aifoundry", "torpedoworks"];
+//
+// 'chemplant'/'fabricator' (docs/improvement-proposals.md "Promote the legacy consumer-goods
+// recipes into a trade-industry branch") are folded into this SAME flat, world-independent
+// priority order — same as every other entry here (a Reactor is always raised regardless of local
+// deposits too) — so a developer AI CAN walk the new branch, not just the existing military/Gate
+// spine. chemplant sits right after 'datacenter' (it needs no Smelter/metallurgy at all — see its
+// own `requires` in entities.js — so prereqsMet alone decides whether it's actually reachable
+// yet); fabricator sits right after 'assembler' (its own recipe needs alloys, so it can only ever
+// win this priority race once the metallurgy branch has already supplied one). This does NOT bias
+// the AI toward biomass-rich worlds specifically — a per-world "lean into this branch when biomass
+// is abundant" heuristic is a reasonable follow-up, left out here since every other entry in this
+// array is equally world-blind.
+const INDUSTRY_CHAIN = ["smelter", "datacenter", "chemplant", "assembler", "fabricator", "chipfab",
+                        "machineworks", "antimatterforge", "aifoundry", "torpedoworks"];
 
 // The tech path the AI's Datacenter works through, lowest tier first: the passives that lift its
 // industry (Fusion Containment power, Factory Automation rate, Heavy Alloys yield) interleaved with
 // the unlock nodes that open the next factory (Metallurgy→Assembler, Microelectronics→Chip Fab,
 // Precision Machining→Machine Works, Antimatter Containment→Forge, Machine Minds→AI Foundry).
-const RESEARCH_ORDER = ["metallurgy", "reactors", "electronics", "automation", "heavyalloys",
-                        "machining", "antimatter", "aicores"];
+//
+// 'chemistry'/'consumerfab' slot in right after 'metallurgy': a genuinely separate branch (per
+// engine/techtree.js, chemistry has no requires of its own) that a developer AI now researches
+// early rather than only after the whole existing spine — mirroring INDUSTRY_CHAIN's placement
+// of chemplant/fabricator just above.
+const RESEARCH_ORDER = ["metallurgy", "chemistry", "consumerfab", "reactors", "electronics",
+                        "automation", "heavyalloys", "machining", "antimatter", "aicores"];
 
 // How many chain buildings get a BANKING reserve before the AI is expected to fund the rest from
 // genuine surplus (aiIndustryReserve, below). Two — the Smelter and the Datacenter — is the set
