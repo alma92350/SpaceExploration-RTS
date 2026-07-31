@@ -4,7 +4,7 @@ import { createGameState } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { drawBuildGhost, drawEffects, TRACER_STYLE } from "../renderEffects.js";
-import { addTracer, addUnderAttackPing, activePings, resetEffects } from "../effects.js";
+import { addTracer, addUnderAttackPing, addDeathFlash, activeEffects, activePings, resetEffects, DEATH_BASE_RADIUS } from "../effects.js";
 
 // A stub 2D context that no-ops any method the drawing code happens to call, instead of
 // hand-enumerating the canvas API — keeps this test robust to unrelated rendering changes.
@@ -300,4 +300,84 @@ test("activePings still reports a ping as alive well past the world-space ping's
   const pings = activePings();
   assert.equal(pings.length, 1, "a ping barely 60ms old must still be alive for the minimap, same as for the world-space ping");
   assert.ok(pings[0].age > 0, "age should have advanced off exactly zero");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Tiered destruction (docs/improvement-proposals.md "Tiered destruction: deaths scale with what
+   died"): addDeathFlash now carries the killed entity's own radius + kind, so the death ring's
+   size/lifetime, a big hull's debris shards, and a building's slower double-ring collapse all
+   scale off what actually died instead of drawing every death identically.
+   --------------------------------------------------------------------------------------------- */
+
+test("addDeathFlash defaults to a small-hull radius and unit kind for a bare (x, y) call — back-compat with any pre-existing call site", () => {
+  resetEffects();
+  addDeathFlash(10, 20);
+  const { deaths } = activeEffects();
+  assert.equal(deaths.length, 1);
+  assert.equal(deaths[0].radius, DEATH_BASE_RADIUS);
+  assert.equal(deaths[0].kind, "unit");
+});
+
+test("a bigger hull's death ring draws at a larger radius than a smaller hull's, at the same age", () => {
+  resetEffects();
+  const small = arcRecordingCtx();
+  addDeathFlash(0, 0, 6, "unit");
+  drawEffects(small.ctx);
+
+  resetEffects();
+  const big = arcRecordingCtx();
+  addDeathFlash(0, 0, 20, "unit");
+  drawEffects(big.ctx);
+
+  assert.ok(Math.max(...big.radii()) > Math.max(...small.radii()),
+    `expected the radius-20 death to draw a bigger ring than the radius-6 one (small=${small.radii()}, big=${big.radii()})`);
+});
+
+test("a building-kind death draws a second (inner) ring on top of the outer one — a unit-kind death of the same radius draws only one", () => {
+  resetEffects();
+  const unitDeath = arcRecordingCtx();
+  addDeathFlash(0, 0, 8, "unit");
+  drawEffects(unitDeath.ctx);
+
+  resetEffects();
+  const buildingDeath = arcRecordingCtx();
+  addDeathFlash(0, 0, 8, "building");
+  drawEffects(buildingDeath.ctx);
+
+  assert.ok(buildingDeath.radii().length > unitDeath.radii().length,
+    "the building's collapse draws strictly more ring arcs than the equivalent unit death");
+});
+
+test("a hull at or above the debris threshold (radius 10) also flings outward shards; a smaller hull does not", () => {
+  resetEffects();
+  const small = arcRecordingCtx();
+  addDeathFlash(0, 0, 6, "unit");   // below the debris threshold
+  drawEffects(small.ctx);
+
+  resetEffects();
+  const big = arcRecordingCtx();
+  addDeathFlash(0, 0, 12, "unit");   // a Dreadnought/Colossus-scale hull, above it
+  drawEffects(big.ctx);
+
+  assert.ok(big.radii().length > small.radii().length,
+    "the big hull's death draws extra debris-shard arcs the small hull's doesn't");
+});
+
+test("drawEffects does not throw across a death's whole lifetime, for a unit or a building", () => {
+  resetEffects();
+  addDeathFlash(50, 60, 14, "unit");
+  addDeathFlash(80, 90, 22, "building");
+  assert.doesNotThrow(() => drawEffects(fakeCtx()), "drawEffects threw for a fresh tiered death");
+});
+
+test("a building-kind death lingers longer than a same-radius unit-kind one — the slower collapse gets more time", async () => {
+  resetEffects();
+  addDeathFlash(0, 0, DEATH_BASE_RADIUS, "unit");
+  addDeathFlash(100, 100, DEATH_BASE_RADIUS, "building");
+
+  await new Promise(r => setTimeout(r, 320));   // past the unit's base ~280ms lifetime, short of the building's longer one
+
+  const { deaths } = activeEffects();
+  assert.equal(deaths.length, 1, `expected only the building's death to still be alive, got ${JSON.stringify(deaths)}`);
+  assert.equal(deaths[0].kind, "building");
 });

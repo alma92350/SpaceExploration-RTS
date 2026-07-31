@@ -14,7 +14,14 @@
 "use strict";
 
 const TRACER_LIFETIME_MS = 120;
+// Tiered destruction (docs/improvement-proposals.md "Tiered destruction: deaths scale with what
+// died"): DEATH_LIFETIME_MS is the BASE lifetime, tuned against DEATH_BASE_RADIUS (a small,
+// Skiff-scale hull) — deathLifeMs below stretches it for anything bigger, and again for a
+// building's slower double-ring collapse (renderEffects.js's own drawing scales the same way off
+// the death's `radius`/`kind`, via the exported DEATH_BASE_RADIUS so the two files share one
+// baseline instead of two independently-tuned literals).
 const DEATH_LIFETIME_MS = 280;
+export const DEATH_BASE_RADIUS = 8;
 const PING_LIFETIME_MS = 3000;
 // How long an under-attack ping stays alive for the MINIMAP's own alert ring (minimap.js,
 // activePings() below) — deliberately much longer than the world-space ping's PING_LIFETIME_MS
@@ -46,8 +53,20 @@ export function addTracer(fromX, fromY, toX, toY, unitType, bonus = false, splas
   tracers.push({ fromX, fromY, toX, toY, unitType, bonus, splashRadius, born: performance.now() });
 }
 
-export function addDeathFlash(x, y) {
-  deaths.push({ x, y, born: performance.now() });
+// How long one death flash lives: scaled up for a bigger hull (clamped so a Worker's flick and a
+// titan's collapse both stay sane — 0.7x..2.2x the base), and again for a building's slower
+// double-ring collapse, which is animating two rings instead of one and needs the extra time to
+// read as a collapse rather than a blink.
+function deathLifeMs(d) {
+  const scale = Math.max(0.7, Math.min(2.2, d.radius / DEATH_BASE_RADIUS));
+  return DEATH_LIFETIME_MS * scale * (d.kind === "building" ? 1.6 : 1);
+}
+
+// `radius`/`kind` (def.radius, "unit"|"building" — engine/combat.js's entityKilled event, added
+// alongside the pre-existing x/y/owner) default to a small unit-scale hull, so a hypothetical
+// stray 2-arg call site still reads exactly as it did before tiered destruction landed.
+export function addDeathFlash(x, y, radius = DEATH_BASE_RADIUS, kind = "unit") {
+  deaths.push({ x, y, radius, kind, born: performance.now() });
 }
 
 // A longer-lived pulsing marker for the under-attack alert, so the
@@ -119,7 +138,7 @@ export function activeFireworks() {
 export function activeEffects() {
   const now = performance.now();
   tracers = tracers.filter(t => now - t.born < TRACER_LIFETIME_MS);
-  deaths = deaths.filter(d => now - d.born < DEATH_LIFETIME_MS);
+  deaths = deaths.filter(d => now - d.born < deathLifeMs(d));
   // Pruned against the LONGER minimap lifetime, not the short PING_LIFETIME_MS used for the
   // world-space age below — this is the same shared array activePings() (just past this
   // function) reads for the minimap's own alert ring, and it must never lose an entry the
@@ -131,7 +150,7 @@ export function activeEffects() {
   fuseWarnings = fuseWarnings.filter(f => now - f.born < f.life);
   return {
     tracers: tracers.map(t => ({ ...t, age: (now - t.born) / TRACER_LIFETIME_MS })),
-    deaths: deaths.map(d => ({ ...d, age: (now - d.born) / DEATH_LIFETIME_MS })),
+    deaths: deaths.map(d => ({ ...d, age: (now - d.born) / deathLifeMs(d) })),
     pings: pings.map(p => ({ ...p, age: (now - p.born) / PING_LIFETIME_MS })),
     explosions: explosions.map(e => ({ ...e, age: (now - e.born) / EXPLOSION_LIFETIME_MS })),
     fuseWarnings: fuseWarnings.map(f => ({ ...f, age: (now - f.born) / f.life })),

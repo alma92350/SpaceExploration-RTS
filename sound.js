@@ -106,8 +106,16 @@ export function playHeavyHit(pan = 0) {
   throttled("heavyHit", 120, () => tone({ freq: 90, duration: 0.14, type: "sawtooth", gain: 0.11, sweep: -40, pan }));
 }
 
-export function playEntityKilled(pan = 0) {
-  throttled("kill", 150, () => tone({ freq: 140, duration: 0.28, type: "sawtooth", gain: 0.13, sweep: -100, pan }));
+// `size` (docs/improvement-proposals.md "Tiered destruction"; boot.js's processFrameEvents passes
+// the killed entity's def.radius / a small-hull baseline) scales the tone the same way
+// playHeavyHit sits below playAttackHit just above: a BIGGER kill drops the base frequency and
+// stretches the decay, so a Dreadnought's death lands as a deep boom while a Worker still just
+// pops. size=1 (the default) reproduces the original flat tone exactly, so any pre-existing call
+// site is untouched; clamped to a sane floor so a tiny/zero radius can never invert the scaling
+// into a HIGHER pitch than the baseline.
+export function playEntityKilled(pan = 0, size = 1) {
+  const s = Math.max(1, size);
+  throttled("kill", 150, () => tone({ freq: 140 / s, duration: 0.28 * s, type: "sawtooth", gain: 0.13, sweep: -100 / s, pan }));
 }
 
 // The Helium Bomb's detonation (engine/bomb.js): a deep, long sub-bass boom —
