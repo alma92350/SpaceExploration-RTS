@@ -65,13 +65,18 @@ export function neighbourAiProfile(seed, planetId) {
 }
 
 // Create an Odyssey galaxy. Phase 1: a single active planet (the player's
-// randomly-chosen starting world) plus the meta-fields (credits, activeId, the
-// world roster) the later phases grow into.
+// randomly-chosen — or explicitly PICKED — starting world) plus the meta-fields
+// (credits, activeId, the world roster) the later phases grow into.
 export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
-  resourceMult = 1, playerFaction = "frontier", aiApm, aiMicro, aiStrategy } = {}) {
+  resourceMult = 1, playerFaction = "frontier", aiApm, aiMicro, aiStrategy, startId: startIdOpt } = {}) {
   seed = seed >>> 0;
   const pick = mulberry32(seed);
-  const startId = ODYSSEY_WORLDS[Math.floor(pick() * ODYSSEY_WORLDS.length)];
+  // Always draw, even when the caller supplies an explicit startId: consuming this draw keeps
+  // every OTHER seed-derived RNG stream byte-identical whether the player picked a world or left
+  // it to chance (CONTRIBUTING.md's determinism guarantee) — skipping the draw on the "explicit
+  // pick" path would silently shift whatever a later change might draw from this same `pick`.
+  const drawnId = ODYSSEY_WORLDS[Math.floor(pick() * ODYSSEY_WORLDS.length)];
+  const startId = (startIdOpt != null && ODYSSEY_WORLDS.includes(startIdOpt)) ? startIdOpt : drawnId;
 
   const galaxy = {
     seed,
@@ -79,7 +84,10 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     activeId: startId,          // the world the player is currently on
     worlds: ODYSSEY_WORLDS.slice(),
     planets: new Map(),         // planetId -> engine game state
-    settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro, aiStrategy },
+    // `startId` records which world was actually landed on (the player's pick, or the seed's own
+    // draw) — informational, not read back to reconstruct anything (activeId already IS that
+    // world, and persists on its own); rides along for free since `settings` is saved whole.
+    settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro, aiStrategy, startId },
     tick: 0,                    // integer galaxy-tick counter (drives the background-world schedule)
     time: 0,                    // galaxy-wide sim clock (seconds) — monotonic across jumps; keys the relief cooldown
     entitySeq: 0,               // fresh-id counter for entities relocated across worlds by a jump
