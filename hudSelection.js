@@ -22,9 +22,9 @@ import {
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
-import { issueSetAILogistics, issueSetCollectPoint, issueRecycle, issueCancelRecycle } from "./engine/commands.js";
+import { issueSetAILogistics, issueSetCollectPoint, issueSetLogiPriority, issueRecycle, issueCancelRecycle } from "./engine/commands.js";
 import { canRecycle, recycleFrac, recycleValue } from "./engine/recycle.js";
-import { FREIGHTER_AI_TECH, aiUpkeepRate } from "./engine/haul.js";
+import { FREIGHTER_AI_TECH, aiUpkeepRate, LOGI_PRIORITIES } from "./engine/haul.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER, iceCoolantMult } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
@@ -176,10 +176,12 @@ function factorySignature(sel) {
   if (!f) return "";
   // Include the grid-efficiency tier (rebuilds the "Grid: …" line when a Reactor is built/razed
   // nearby), the input/output buffer levels (so the larder + output lines stay live as workers
-  // carry goods in and out, quantised so it doesn't rebuild every frame), and whether ice coolant
-  // is banked (so the Ice Coolant row flips the instant the treasury's ice crosses zero either way).
+  // carry goods in and out, quantised so it doesn't rebuild every frame), whether ice coolant
+  // is banked (so the Ice Coolant row flips the instant the treasury's ice crosses zero either way),
+  // and the Logistics Priority cycle button's own label (high/normal/low).
   return factoryStatus(state, f, recipeOf(f)).cls + ":" + powerEfficiency(state, f.owner, f.x, f.y).name
-    + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4) + ":" + (iceCoolantMult(state, f.owner) < 1);
+    + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4) + ":" + (iceCoolantMult(state, f.owner) < 1)
+    + ":" + (f.logiPriority || "normal");
 }
 
 export function renderSelectionPanel() {
@@ -314,7 +316,7 @@ export function renderSelectionPanel() {
         const gen = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.combust && !e.constructing);
         if (!gen) return "";
         const fuels = BUILDINGS[gen.type].combust.fuels.map(f => Math.round((gen.input?.[f] || 0) / 4)).join(",");
-        return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}:${iceCoolantMult(state, gen.owner) < 1}`;
+        return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}:${iceCoolantMult(state, gen.owner) < 1}:${gen.logiPriority || "normal"}`;
       })()
     // Rebuild the Mender panel when its auto-repair toggle or on-grid power state flips.
     + "|" + (() => {
@@ -731,6 +733,22 @@ function iceCoolantRow(state, owner) {
   return row;
 }
 
+// A factory/power-station's per-building LOGISTICS PRIORITY (engine/commands.js
+// issueSetLogiPriority, engine/haul.js priorityWeight): a cycle button, high -> normal -> low ->
+// high on each click — "keep the Reactor fed before the Smelter" without dedicating a
+// permanently-manual worker to it. Shared by the factory and fuel-burning power-station panels
+// below, same idiom as gridEfficiencyRow/iceCoolantRow just above.
+const LOGI_PRIORITY_NEXT = { high: "low", normal: "high", low: "normal" };
+const LOGI_PRIORITY_LABEL = { high: "▲ High", normal: "● Normal", low: "▽ Low" };
+function renderLogiPriority(state, b) {
+  const cur = LOGI_PRIORITIES.includes(b.logiPriority) ? b.logiPriority : "normal";
+  panelEl.appendChild(makeButton(`Logistics priority: ${LOGI_PRIORITY_LABEL[cur]}`,
+    () => { issueSetLogiPriority(state, b.id, LOGI_PRIORITY_NEXT[cur]); renderHUD(); },
+    { tip: cur === "high" ? "Draws haulers from further away and gets one extra hauler/server slot — click to drop to Low"
+        : cur === "low" ? "Only served once nothing higher-priority needs the worker — click to reset to Normal"
+        : "Even weight with every other building — click to raise to High" }));
+}
+
 // The Odyssey diplomacy panel, under the Command Center's market: pay universal
 // credits to appease the neighbour for a while (engine/diplomacy.js offerTribute).
 // The cost escalates per tribute and the truce decays, so it's a stopgap — buy time
@@ -1144,6 +1162,7 @@ function rebuildSelectionPanel(sel) {
 
     panelEl.appendChild(gridEfficiencyRow(state, factory));
     panelEl.appendChild(iceCoolantRow(state, factory.owner));
+    renderLogiPriority(state, factory);
 
     // Pause toggle: stop this factory drawing down its inputs — the way to keep a hungry
     // Smelter from eating all your ore, or to free most of the grid for the Gate (a paused
@@ -1228,6 +1247,7 @@ function rebuildSelectionPanel(sel) {
       + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's input, or pause it.`;
     panelEl.appendChild(note);
     panelEl.appendChild(iceCoolantRow(state, gen.owner));
+    renderLogiPriority(state, gen);
     panelEl.appendChild(makeButton(gen.paused ? "▶ Resume" : "⏸ Pause",
       () => { gen.paused = !gen.paused; },
       { tip: gen.paused ? "Bring it back online, feeding the grid again" : "Take it off the grid until resumed, without demolishing it" }));

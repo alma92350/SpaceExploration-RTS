@@ -228,6 +228,30 @@ function layout(members, cx, cy, headingX, headingY, shape, leaderPos, spacingOf
   });
 }
 
+// Resolve the SAME travel heading `formationSlots` itself orients a shape around, for `units` ->
+// (destX,destY) with `opts` ({originX,originY,headingX,headingY} — see formationSlots' own doc
+// comment for the precedence): an explicit opts.headingX/headingY always wins; otherwise it's the
+// vector from an explicit opts.originX/originY (or, lacking that, the group's own centroid) to the
+// destination — defaulting to facing +x (the same fallback `layout` applies internally) when that
+// vector is degenerate (near-zero, e.g. a stationary hold where origin===dest), so a caller gets
+// the shape's REAL orientation, not a meaningless zero vector. Deliberately NOT unit-normalized —
+// a positive scalar multiple never changes which of two points has the larger dot product against
+// it, so a caller that only needs RELATIVE order (dispatchFormation's range-layered ranking,
+// engine/commands.js) can use this directly. Exported so ranking never has to duplicate — and risk
+// drifting from — this exact precedence.
+/** @param {Unit[]} units @param {number} destX @param {number} destY @param {{originX?:number, originY?:number, headingX?:number, headingY?:number}} [opts] @returns {{x:number, y:number}} */
+export function resolveHeading(units, destX, destY, opts = {}) {
+  const headingX = opts?.headingX, headingY = opts?.headingY;
+  if ((headingX || 0) || (headingY || 0)) return { x: headingX, y: headingY };
+  let { originX, originY } = opts || {};
+  if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
+    const c = centroid(units);
+    originX = c.x; originY = c.y;
+  }
+  const hx = destX - originX, hy = destY - originY;
+  return Math.hypot(hx, hy) < 1e-6 ? { x: 1, y: 0 } : { x: hx, y: hy };
+}
+
 /**
  * Where each unit in `units` should stand for a move to (destX,destY) — or, for a stationary
  * hold, where the group's own current centroid already is (pass it as both the destination AND
@@ -251,15 +275,8 @@ export function formationSlots(units, destX, destY, opts = {}) {
   const { shape = "grid", leaderPos = "front" } = opts || {};
   if (n === 1) return [{ x: destX, y: destY }];
 
-  let headingX = opts?.headingX, headingY = opts?.headingY;
-  if (!((headingX || 0) || (headingY || 0))) {
-    let { originX, originY } = opts || {};
-    if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
-      const c = centroid(units);
-      originX = c.x; originY = c.y;
-    }
-    headingX = destX - originX; headingY = destY - originY;
-  }
+  const heading = resolveHeading(units, destX, destY, opts);
+  const headingX = heading.x, headingY = heading.y;
 
   const clusters = clusterUnits(units);
   if (clusters.length <= 1) {

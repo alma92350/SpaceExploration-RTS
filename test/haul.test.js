@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "../engine/haul.js";
+import { issueSetLogiPriority } from "../engine/commands.js";
 import { storeTotal, inputTotal, inputRoom, inputCapOf } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
@@ -374,6 +375,130 @@ test("assignService is owner-scoped and skips a well-stocked, cleared factory", 
   countLogistics(s);
   assignService(s, w);
   assert.equal(w.order, null, "a fed, cleared factory pulls no worker");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Per-building logistics priority (docs/improvement-proposals.md): a three-state per-building
+   priority (high/normal/low, engine/commands.js issueSetLogiPriority) that weights the SAME
+   distance-then-id nearest-first scans nearestBacklogProducer/assignService's scanFor already use
+   — "keep the Reactor fed before the Smelter" without a permanently-dedicated (order.manual)
+   worker. HIGH halves effective distance and lifts the assignment cap by +1; LOW quadruples
+   effective distance. Deterministic: a pure weight on the existing distance-then-id scoring, no
+   clock/RNG.
+   --------------------------------------------------------------------------------------------- */
+
+test("a HIGH-priority producer's effective distance is halved, winning out over a physically nearer NORMAL one", () => {
+  const { s, cc, workers } = base(1);
+  const near = plantRig(s, cc, { ore: 90 });                          // cc.x+50 — physically closer, normal priority
+  const far = makeBuilding("plasmarig", "player", cc.x + 80, cc.y);   // physically farther (raw 80 > 50)...
+  far.store = { crystals: 90 };
+  far.logiPriority = "high";                                          // ...but HIGH halves it to 40, beating near's 50
+  s.buildings.set(far.id, far);
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = null;
+  countLogistics(s);
+  assignHaul(s, w);
+  assert.equal(w.order.buildingId, far.id, "HIGH priority's halved effective distance beats the nearer normal producer");
+});
+
+test("a LOW-priority producer's effective distance is quadrupled, losing out to a physically farther NORMAL one", () => {
+  const { s, cc, workers } = base(1);
+  const near = plantRig(s, cc, { ore: 90 });                          // cc.x+50 — physically closest...
+  near.logiPriority = "low";                                          // ...but LOW quadruples it to 200
+  const far = makeBuilding("plasmarig", "player", cc.x + 90, cc.y);   // physically farther (raw 90), normal priority
+  far.store = { crystals: 90 };
+  s.buildings.set(far.id, far);
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = null;
+  countLogistics(s);
+  assignHaul(s, w);
+  assert.equal(w.order.buildingId, far.id, "LOW priority's quadrupled effective distance loses to a farther-but-normal producer (90 < 200)");
+});
+
+test("HIGH priority lifts a producer's hauler cap from MAX_HAULERS to MAX_HAULERS + 1", () => {
+  const { s, cc } = base(3);
+  const rig = plantRig(s, cc, { ore: 500 });   // full buffer -> maximum pull, same fixture the sibling cap test uses
+  rig.logiPriority = "high";
+  for (let i = 0; i < 8; i++) {
+    const w = makeUnit("worker", "player", rig.x, rig.y);
+    s.units.set(w.id, w);
+  }
+  countLogistics(s);
+  for (const w of [...s.units.values()].filter(u => u.owner === "player" && u.type === "worker")) {
+    if (!w.order) assignHaul(s, w);
+  }
+  const onRig = [...s.units.values()].filter(u => u.order && u.order.type === "haul" && u.order.buildingId === rig.id).length;
+  assert.equal(onRig, 3, "MAX_HAULERS(2) + 1 for a HIGH-priority producer = 3 haulers accepted, not the usual 2");
+});
+
+test("a plain NORMAL-priority producer still caps at MAX_HAULERS, unaffected by the new field's presence", () => {
+  const { s, cc } = base(3);
+  const rig = plantRig(s, cc, { ore: 500 });
+  rig.logiPriority = "normal";   // explicit, not just absent — must behave identically to unset
+  for (let i = 0; i < 8; i++) {
+    const w = makeUnit("worker", "player", rig.x, rig.y);
+    s.units.set(w.id, w);
+  }
+  countLogistics(s);
+  for (const w of [...s.units.values()].filter(u => u.owner === "player" && u.type === "worker")) {
+    if (!w.order) assignHaul(s, w);
+  }
+  const onRig = [...s.units.values()].filter(u => u.order && u.order.type === "haul" && u.order.buildingId === rig.id).length;
+  assert.equal(onRig, 2, "an explicit 'normal' priority is the same as no priority at all — the usual MAX_HAULERS cap");
+});
+
+test("HIGH priority lifts a factory's server cap from MAX_SERVERS to MAX_SERVERS + 1", () => {
+  const { s, cc } = base(4);
+  const sm = plantFactory(s, cc);
+  sm.logiPriority = "high";
+  s.players.player.resources.ore = 100000;   // deep stock — every candidate worker's scan keeps seeing "needs an input"
+  for (let i = 0; i < 8; i++) {
+    const w = makeUnit("worker", "player", sm.x, sm.y);
+    s.units.set(w.id, w);
+  }
+  countLogistics(s);
+  for (const w of [...s.units.values()].filter(u => u.owner === "player" && u.type === "worker")) {
+    if (!w.order) assignService(s, w);
+  }
+  const onSm = [...s.units.values()].filter(u => u.order && u.order.type === "service" && u.order.buildingId === sm.id).length;
+  assert.equal(onSm, 3, "MAX_SERVERS(2) + 1 for a HIGH-priority factory = 3 servers accepted, not the usual 2");
+});
+
+test("a HIGH-priority SERVICE target is preferred over a nearer NORMAL one, the same as a HAUL producer", () => {
+  const { s, cc, workers } = base(2);
+  const near = plantFactory(s, cc, "smelter");                              // cc.x+55 — physically closer
+  const far = makeBuilding("assembler", "player", cc.x + 100, cc.y);         // physically farther
+  far.logiPriority = "high";
+  s.buildings.set(far.id, far);
+  s.players.player.resources.ore = 500;
+  s.players.player.resources.metals = 500;   // feeds the Assembly Plant's "alloy" recipe input
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = null;
+  countLogistics(s);
+  assignService(s, w);
+  assert.equal(w.order.buildingId, far.id, "the farther but HIGH-priority factory wins the assignment");
+});
+
+test("issueSetLogiPriority sets a building's priority field, coercing an unrecognised value to 'normal'", () => {
+  const { s, cc } = base(1);
+  const rig = plantRig(s, cc, { ore: 10 });
+
+  issueSetLogiPriority(s, rig.id, "high");
+  assert.equal(rig.logiPriority, "high");
+
+  issueSetLogiPriority(s, rig.id, "low");
+  assert.equal(rig.logiPriority, "low");
+
+  issueSetLogiPriority(s, rig.id, "not-a-real-priority");
+  assert.equal(rig.logiPriority, "normal", "an unrecognised value collapses to normal, never left as garbage");
+});
+
+test("issueSetLogiPriority silently no-ops for an unknown building id", () => {
+  const { s } = base(1);
+  assert.doesNotThrow(() => issueSetLogiPriority(s, "not-a-real-building", "high"));
 });
 
 // ---- fuel-burning power stations: a worker SERVICE run refills the larder, same as a factory --

@@ -260,6 +260,108 @@ test("issueMove on owner-less units (a bare test double) also skips the squad me
   units.forEach(u => assert.equal(u.order.type, "move"));
 });
 
+// ---- range-layered formation ranks: brawlers screen, artillery trails (engine/commands.js
+// dispatchFormation) -------------------------------------------------------------------------
+// Within an opt-in SHAPED formation (not the legacy grid spread), dispatchFormation re-pairs the
+// followers with their slots by weapon range instead of raw selection-array order: shortest-ranged
+// (Bastion range 44, Skiff range 40) take the most forward slots, longest-ranged (Breacher range
+// 150, Lancer range 55) the rearmost. Only the PLAYER leader/follower path does this (the AI/
+// owner-less path above already returned before any of it runs), so every follower here ends up
+// with a "follow-leader" order whose offsetX/offsetY IS its position relative to the leader —
+// and since every unit starts co-located and travels straight along +x, offsetX alone measures
+// forwardness (see engine/formation.js layout()'s hx=1,hy=0 basis for a pure +x heading).
+
+test("a wedge formation ranks followers by weapon range — short-ranged Bastions screen ahead of long-ranged Breachers", () => {
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  // Interleaved (not grouped by type) in the selection array, and the long-ranged Breachers listed
+  // BEFORE the short-ranged Bastions — so a pass can only be explained by the RANGE-based reorder,
+  // never by a coincidence of array order.
+  const r1 = fakePlayerUnit("R1", "breacher", 0, 0);   // range 150
+  const b1 = fakePlayerUnit("B1", "bastion", 0, 0);    // range 44
+  const r2 = fakePlayerUnit("R2", "breacher", 0, 0);
+  const b2 = fakePlayerUnit("B2", "bastion", 0, 0);
+  const units = [leader, r1, b1, r2, b2];
+
+  issueMove(units, 1000, 0, false, { shape: "wedge", leaderPos: "front" });
+
+  for (const u of [r1, b1, r2, b2]) assert.equal(u.order.type, "follow-leader", "sanity: a real squad formed");
+  const bastionFwd = [b1, b2].map(u => u.order.offsetX);
+  const breacherFwd = [r1, r2].map(u => u.order.offsetX);
+  assert.ok(Math.min(...bastionFwd) > Math.max(...breacherFwd),
+    "every short-ranged Bastion sits strictly ahead of every long-ranged Breacher");
+});
+
+test("issueHoldFormation (origin === destination) also range-ranks — the near-zero heading still resolves to a real forward axis", () => {
+  // issueHoldFormation forms up right where the group already stands (origin===dest), the one
+  // case where the origin-derived heading is degenerate (0,0) — engine/formation.js resolveHeading
+  // must still fall back to a real orientation (facing +x) for the ranking to mean anything. Same
+  // 4-follower wedge shape as the test above (a "line", or a 1-follower-per-side wedge, ties every
+  // follower's forwardness exactly — see engine/formation.js lineOffsets/wedgeOffsets — so this
+  // needs the same two-rank wedge to actually exercise a real forward/rear split).
+  const leader = fakePlayerUnit("L", "skiff", 500, 500);
+  const r1 = fakePlayerUnit("R1", "breacher", 500, 500);
+  const b1 = fakePlayerUnit("B1", "bastion", 500, 500);
+  const r2 = fakePlayerUnit("R2", "breacher", 500, 500);
+  const b2 = fakePlayerUnit("B2", "bastion", 500, 500);
+  const units = [leader, r1, b1, r2, b2];
+
+  issueHoldFormation(units, "wedge", "front");
+
+  const bastionFwd = [b1, b2].map(u => u.order.offsetX);
+  const breacherFwd = [r1, r2].map(u => u.order.offsetX);
+  assert.ok(Math.min(...bastionFwd) > Math.max(...breacherFwd),
+    "even holding in place, the short-ranged Bastions still screen ahead of the long-ranged Breachers");
+});
+
+test("a wedge formation still keeps the leader at slot 0, whatever the leader's own weapon range", () => {
+  // The leader is a documented player choice (engine/formation.js header) — never re-picked by a
+  // stat like range, even when the leader itself happens to be the longest-ranged unit present.
+  const leader = fakePlayerUnit("L", "breacher", 0, 0);   // long range, but listed first -> stays leader
+  const follower = fakePlayerUnit("F", "skiff", 0, 0);    // short range
+  const units = [leader, follower];
+
+  issueMove(units, 1000, 0, false, { shape: "wedge", leaderPos: "front" });
+
+  assert.equal(leader.order.type, "move", "the leader always gets its own real order, never a follow-leader offset");
+  assert.equal(follower.order.type, "follow-leader");
+});
+
+test("a grid-shaped formation is never range-reordered, even for a player squad with mixed ranges — the legacy path stays byte-identical", () => {
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  // Long-range Breacher listed BEFORE the short-range Bastion — a range-based reorder would put
+  // the Bastion ahead; the plain grid spread must not.
+  const breacher = fakePlayerUnit("R", "breacher", 0, 0);
+  const bastion = fakePlayerUnit("B", "bastion", 0, 0);
+  const units = [leader, breacher, bastion];
+
+  // What formationSlots itself produces, unmodified — dispatchFormation must pass this straight
+  // through for a "grid" shape, with no range-based re-pairing at all.
+  const rawSpots = formationSlots(units, 1000, 0, { shape: "grid" });
+
+  issueMove(units, 1000, 0, false, { shape: "grid" });
+
+  assert.deepEqual({ x: breacher.order.offsetX, y: breacher.order.offsetY },
+    { x: rawSpots[1].x - rawSpots[0].x, y: rawSpots[1].y - rawSpots[0].y },
+    "the breacher (listed first among followers) keeps formationSlots' own raw slot 1");
+  assert.deepEqual({ x: bastion.order.offsetX, y: bastion.order.offsetY },
+    { x: rawSpots[2].x - rawSpots[0].x, y: rawSpots[2].y - rawSpots[0].y },
+    "the bastion keeps formationSlots' own raw slot 2");
+});
+
+test("issueMove with no formation at all is never range-reordered either — the AI's plain call path", () => {
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  const breacher = fakePlayerUnit("R", "breacher", 0, 0);
+  const bastion = fakePlayerUnit("B", "bastion", 0, 0);
+  const units = [leader, breacher, bastion];
+
+  const rawSpots = formationSlots(units, 1000, 0);   // no opts at all -> formationSlots' own "grid" default
+
+  issueMove(units, 1000, 0);   // no formation argument
+
+  assert.deepEqual({ x: breacher.order.offsetX, y: breacher.order.offsetY },
+    { x: rawSpots[1].x - rawSpots[0].x, y: rawSpots[1].y - rawSpots[0].y });
+});
+
 // ---- issueHoldFormation / the leader-follow squad (engine/commands.js) -------
 
 test("issueHoldFormation makes units[0] the leader (anchored near the group's own centroid) and everyone else a follower", () => {

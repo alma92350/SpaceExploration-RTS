@@ -480,6 +480,29 @@ test("a non-finite facing is deleted on load (never coerced to a fallback number
   assert.ok(!("facing" in st.units.get(u1.id)), "facing is still absent after ticking — nothing re-adds or NaNs it in");
 });
 
+test("a building's logiPriority (engine/commands.js issueSetLogiPriority) is coerced on load — a real enum value round-trips, a bogus one is dropped", () => {
+  // Two separate fixtures (same idiom as the facing test above) rather than requiring two
+  // pre-existing player buildings in one save — a fresh skirmish only seeds a single Command
+  // Center (see freshSkirmishSave's own doc comment on this file's other tests).
+  const save = freshSkirmishSave(73);
+  const cc = save.buildings.find(b => b.owner === "player");
+  cc.logiPriority = "high";   // a real enum value must round-trip untouched
+
+  const st = deserializeGame(save);
+  const loadedCC = st.buildings.get(cc.id);
+  assert.equal(loadedCC.logiPriority, "high", "a real enum value survives load unchanged");
+
+  const save2 = freshSkirmishSave(74);
+  const cc2 = save2.buildings.find(b => b.owner === "player");
+  cc2.logiPriority = "not-a-real-value";   // a bogus one must be dropped, not silently kept or crash-coerced
+  const st2 = deserializeGame(save2);
+  const loadedCC2 = st2.buildings.get(cc2.id);
+  assert.ok(!("logiPriority" in loadedCC2), "an unrecognised value is dropped entirely, reading as the default 'normal' via engine/haul.js priorityWeight");
+
+  assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) tick(st, 0.1); }, "the loaded game ticks cleanly either way");
+  assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) tick(st2, 0.1); });
+});
+
 test("an unrecognised planetId inside save.planets is skipped cleanly on galaxy load — never added, no other planet affected", () => {
   const g = createGalaxy({ seed: 81 });
   const save = JSON.parse(JSON.stringify(serializeGalaxy(g)));
