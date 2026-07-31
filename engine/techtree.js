@@ -80,6 +80,21 @@ export const TECHS = {
   // gates recycleFrac's research bonus directly by id, same as freighterai above.
   recycling: { id: "recycling", name: "Reclamation Engineering", ico: "♻️", cost: { crystals: 140, radioactives: 40 }, time: 30, requires: ["automation"],
     desc: "+30% of a recycled unit/building's cost reclaimed (up to an 80% cap)." },
+  // Promote the legacy consumer-goods recipes into a trade-industry branch (docs/improvement-
+  // proposals.md lines 443-451): data.js RECIPES already carries 'chem' (biomass+power ->
+  // chemicals) and 'consumer' (alloys+chemicals+power -> goods) as documented legacy — "no
+  // producer". These two nodes are the exact "tech + wiring" promotion path its own LIVE-vs-LEGACY
+  // comment reserves. `chemistry` is deliberately a ROOT node — no `requires` at all, the same
+  // shape as `metallurgy` above — so it opens a genuinely SEPARATE branch off the Datacenter
+  // (biomass/spice worlds get an industrial identity of their own) rather than a leaf hanging off
+  // the existing ore->metals->alloys spine. `consumerfab` is gated on `chemistry` alone (its own
+  // branch's root, not metallurgy) — see engine/entities.js BUILDINGS.chemplant/fabricator for
+  // where the two branches actually MEET (the Fabricator building itself needs an Assembly Plant
+  // for alloys), and note this against data.js's LIVE-vs-LEGACY comment.
+  chemistry: { id: "chemistry", name: "Industrial Chemistry", ico: "⚗️", cost: { crystals: 80 }, time: 20,
+    desc: "Unlock the Chemical Plant — refine biomass into chemicals." },
+  consumerfab: { id: "consumerfab", name: "Consumer Fabrication", ico: "📦", cost: { crystals: 150, radioactives: 60 }, time: 36, requires: ["chemistry"],
+    desc: "Unlock the Fabricator — combine alloys and chemicals into consumer goods." },
 };
 
 // Research develops faster on a high-tech world (data.js PLANETS.tech, 1..10) and

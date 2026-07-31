@@ -362,6 +362,48 @@ export const BUILDINGS = {
     powerDraw: 8,   // a charging Gate loads the grid — it competes with your factories for Reactor Power
     category: "infrastructure",
   },
+
+  /* ---- TRADE INDUSTRY (Odyssey only): a genuinely SEPARATE branch off the Datacenter, not a
+     continuation of the ore -> metals -> alloys -> machinery -> antimatter spine above (docs/
+     improvement-proposals.md "Promote the legacy consumer-goods recipes into a trade-industry
+     branch"). data.js RECIPES documents 'chem'/'consumer' as legacy — "no producer" — reserved
+     for exactly this promotion; the recipes themselves are untouched, only wired here (see
+     engine/techtree.js TECHS.chemistry/consumerfab for the tech-gate half).
+
+     The Chemical Plant needs NO metallurgy/Smelter prereq at all — `chemistry` is a second ROOT
+     tech, the same shape as `metallurgy` itself — so a biomass/spice world that never touches
+     ore/crystals still gets a real industrial identity of its own. The Fabricator is where the
+     two spines actually MEET: its recipe (alloys + chemicals -> goods) needs an Assembly Plant's
+     alloys the same way the Machine Works needs one for its own alloys+electronics merge, so it
+     converges on the metallurgy branch without ever touching the antimatter/military one — no
+     Foundry, Arsenal, Barracks, machining, or antimatter token anywhere in this branch. A
+     genuinely different way up the tree: a credits engine for fuel/tribute/freight (finished
+     goods sell dear on a low-industry world, engine/aiArchetypes.js "Verdani the low-industry
+     agri contrast") rather than strategic goods. Ore-costed like every other factory (the
+     reachability convention — ore is guaranteed near every base, regardless of what the recipe
+     itself consumes), odysseyOnly, and dropOff/recipe/prodRate follow the Smelter/Assembly Plant
+     idiom exactly. ---- */
+  chemplant: {
+    id: "chemplant", name: "Chemical Plant", hp: 420, radius: 16,
+    cost: { ore: 165 }, buildTime: 18, sight: 140,
+    dropOff: true,
+    recipe: "chem", prodRate: 2,   // biomass + power → chemicals (data.js RECIPES.chem)
+    requires: ["chemistry"],       // tech-gated only — no Smelter, no metallurgy: a true off-spine root
+    odysseyOnly: true,
+    category: "industrial",
+  },
+  fabricator: {
+    id: "fabricator", name: "Fabricator", hp: 450, radius: 17,
+    cost: { ore: 200 }, buildTime: 21, sight: 140,
+    dropOff: true,
+    recipe: "consumer", prodRate: 1,   // alloys + chemicals + power → goods (data.js RECIPES.consumer)
+    // The merge point: needs the metallurgy branch's Assembly Plant (alloys) AND this branch's own
+    // Chemical Plant (chemicals), plus its own unlock tech — the same two-supplying-buildings-
+    // plus-tech shape Machine Works uses for its own alloys+electronics merge.
+    requires: ["assembler", "chemplant", "consumerfab"],
+    odysseyOnly: true,
+    category: "industrial",
+  },
 };
 
 // Prerequisites are satisfied for `owner` when: every building-type token in

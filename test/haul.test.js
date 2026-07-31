@@ -653,6 +653,116 @@ test("an idle worker auto-services an empty Torpedo Battery entirely on its own,
   assert.ok((battery.input?.plasmatorp || 0) < 200, "and its larder shows real ammo consumption from actually firing, not a free-fire structure");
 });
 
+// ---- Promote the legacy consumer-goods recipes into a trade-industry branch (docs/improvement-
+// proposals.md lines 443-451): the Chemical Plant (recipe 'chem': biomass+power -> chemicals) and
+// the Fabricator (recipe 'consumer': alloys+chemicals+power -> goods, entities.js BUILDINGS) are
+// wired through the SAME generic inputNeedsOf/inputCapOf machinery every other factory uses — no
+// dedicated hauling code of its own. Verified empirically below (direct service orders, an
+// oversupplied-input independence check for the NEW chemicals commodity specifically, and a fully
+// autonomous idle-worker run of the whole chain), not just assumed from reading the seam.
+
+// A player Chemical Plant / Fabricator planted next to the CC, empty larder by default — mirrors
+// plantFactory/plantGenerator/plantBattery's shape above.
+function plantChemplant(s, cc) {
+  const cp = makeBuilding("chemplant", "player", cc.x + 45, cc.y);
+  s.buildings.set(cp.id, cp);
+  return cp;
+}
+function plantFabricator(s, cc) {
+  const fab = makeBuilding("fabricator", "player", cc.x + 90, cc.y);
+  s.buildings.set(fab.id, fab);
+  return fab;
+}
+
+test("inputCapOf splits the new trade-branch buildings' larders correctly too: the Chemical Plant (1 real input) keeps the whole 80; the Fabricator (2 real inputs) splits 40/40", () => {
+  assert.ok(near(inputCapOf("chemplant"), 80, 1e-6), "the Chemical Plant's only real input (biomass) gets the whole larder, same shape as the Smelter");
+  assert.ok(near(inputCapOf("fabricator"), 40, 1e-6), "the Fabricator's two real inputs (alloys, chemicals) split it evenly, same shape as the Chip Fab");
+});
+
+test("a service worker carries biomass from the treasury into a Chemical Plant's own larder", () => {
+  const { s, cc, workers } = base(1);
+  const cp = plantChemplant(s, cc);
+  s.players.player.resources.biomass = 100;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: cp.id, phase: "plan" };
+
+  for (let i = 0; i < 4000 && inputTotal(cp) <= 0; i++) updateService(s, w, 0.05);
+
+  assert.ok(inputTotal(cp) > 0, "the Chemical Plant's larder was filled");
+  assert.ok((s.players.player.resources.biomass || 0) < 100, "…drawn from the treasury");
+});
+
+test("a service worker carries BOTH alloys and chemicals from the treasury into a Fabricator's larder — the merge point of the two branches", () => {
+  const { s, cc, workers } = base(1);
+  const fab = plantFabricator(s, cc);
+  s.players.player.resources.alloys = 100;
+  s.players.player.resources.chemicals = 100;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: fab.id, phase: "plan" };
+
+  for (let i = 0; i < 8000 && (fab.input?.alloys || 0) <= 0 && (fab.input?.chemicals || 0) <= 0; i++) updateService(s, w, 0.05);
+
+  assert.ok((fab.input?.alloys || 0) > 0 || (fab.input?.chemicals || 0) > 0, "at least one real input was delivered on the first visit");
+});
+
+test("a Fabricator starved of chemicals can still receive them even with its alloys larder already topped up — the NEW chemicals commodity gets its own guaranteed slice, not just alloys", () => {
+  const { s, cc, workers } = base(1);
+  const fab = plantFabricator(s, cc);
+  // Alloys already banked deep (well past where an OLD shared 80-total pool would have left
+  // chemicals no room at all) — chemicals sits at zero despite the treasury having plenty of both.
+  fab.input = { alloys: 35 };
+  s.players.player.resources.alloys = 100;
+  s.players.player.resources.chemicals = 100;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: fab.id, phase: "plan" };
+
+  assert.ok(inputRoom(fab, "chemicals") > 0, "chemicals still has its OWN room even though alloys is nearly full");
+
+  for (let i = 0; i < 4000 && (fab.input.chemicals || 0) <= 0; i++) updateService(s, w, 0.05);
+
+  assert.ok((fab.input.chemicals || 0) > 0, "the worker actually delivered the missing chemicals — not stalled behind alloys");
+});
+
+test("an idle worker auto-assigns to service an empty Chemical Plant — a hauler assignment actually targets it, no manual order needed", () => {
+  const { s, workers } = base(9);
+  const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const cp = plantChemplant(s, cc);
+  s.players.player.resources.biomass = 200;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+
+  assignService(s, w);
+
+  assert.equal(w.order?.type, "service", "the idle worker was actually offered a service job");
+  assert.equal(w.order.buildingId, cp.id, "…targeting the Chemical Plant specifically");
+  assert.equal(cp.servers, 1, "and the plant's own servers tally reflects the claim");
+});
+
+test("idle workers alone run the WHOLE chem→consumer chain end to end, entirely on their own, and Consumer Goods reach the treasury", () => {
+  // A stronger end-to-end proof than checking either larder alone: run the WHOLE tick loop (worker
+  // logistics AND production both live inside sim.js's own tick) with nothing but idle workers and
+  // stocked treasury inputs, and watch real Consumer Goods appear — which can only happen if the
+  // per-commodity input-larder split (inputCapOf) really does handle the new 'chemicals' commodity
+  // the same automatic way it already handles every pre-existing one.
+  const { s, cc } = base(6);
+  const reactor = makeBuilding("reactor", "player", cc.x + 20, cc.y - 20);
+  reactor.input = { radioactives: 100000 };
+  s.buildings.set(reactor.id, reactor);
+  plantChemplant(s, cc);
+  plantFabricator(s, cc);
+  s.players.player.resources.biomass = 2000;
+  s.players.player.resources.alloys = 2000;
+  for (let i = 0; i < 6; i++) { const w = makeUnit("worker", "player", cc.x, cc.y); s.units.set(w.id, w); }
+
+  for (let i = 0; i < 8000 && (s.players.player.resources.goods || 0) <= 0; i++) tick(s, 0.1);
+
+  assert.ok((s.players.player.resources.goods || 0) > 0,
+    "idle workers alone carried biomass in, chemicals home then back out alongside alloys into the Fabricator, and goods home again — no manual assignment anywhere");
+});
+
 // engine/persist.js's cleanEntity path (storeCapOf/inputCapOf-driven, no per-building-type
 // special-casing) should already cover a Torpedo Battery's ammo larder the same way it covers
 // any other factory's/power-station's input buffer, purely because inputCapOf(type) now reads

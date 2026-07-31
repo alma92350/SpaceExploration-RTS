@@ -309,3 +309,65 @@ test("cancelResearch also refunds a Refinery's queued doctrine research (the sam
   assert.equal(state.players.player.resources.crystals, 1000 + UPGRADES.reinforcedPlating.cost.crystals,
     "refunds the Refinery upgrade's own cost, resolved against UPGRADES instead of TECHS");
 });
+
+/* ---------- Promote the legacy consumer-goods recipes into a trade-industry branch
+   (docs/improvement-proposals.md lines 443-451) ----------
+   data.js RECIPES carries 'chem' (biomass+power -> chemicals) and 'consumer' (alloys+chemicals+power
+   -> goods) as documented legacy — "no producer". This wires the exact promotion path data.js's own
+   LIVE-vs-LEGACY comment reserves: a `chemistry` tech node unlocking the Chemical Plant as a true
+   OFF-SPINE branch (no metallurgy prereq — a second ROOT, same shape as metallurgy itself), and a
+   `consumerfab` node unlocking the Fabricator, which is where the branch MEETS the metallurgy spine
+   (it needs alloys) without ever touching the antimatter/military one. See engine/entities.js for the
+   building defs themselves (BUILDINGS.chemplant/fabricator) and test/industry.test.js /
+   test/haul.test.js / test/market.test.js / test/galaxy-persist.test.js for the production/logistics/
+   market/persistence proof. */
+
+test("chemistry is a genuine second ROOT of the tech tree — no requires at all, exactly like metallurgy itself", () => {
+  assert.equal(TECHS.chemistry.requires, undefined, "chemistry has no prereq — a true off-spine root, not a leaf off metallurgy");
+  assert.ok(TECHS.chemistry.cost && Object.keys(TECHS.chemistry.cost).length > 0, "still paid in gathered commodities");
+});
+
+test("consumerfab (which unlocks the Fabricator) is gated on chemistry — its OWN branch's root — not on metallurgy", () => {
+  assert.deepEqual(TECHS.consumerfab.requires, ["chemistry"]);
+});
+
+test("the Chemical Plant is reachable from chemistry ALONE — no Smelter, no metallurgy, no completed building of any kind", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  assert.equal(prereqsMet(state, "player", BUILDINGS.chemplant), false, "locked before chemistry is researched");
+  state.players.player.upgrades.chemistry = true;
+  assert.equal(prereqsMet(state, "player", BUILDINGS.chemplant), true,
+    "unlocked by the chemistry tech ALONE — proves this genuinely branches rather than accidentally chaining onto the metallurgy/military spine");
+});
+
+test("the Fabricator is where the trade branch MEETS the metallurgy spine: it needs an Assembly Plant's alloys, a Chemical Plant, and its own tech", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  state.players.player.upgrades.chemistry = true;
+  state.players.player.upgrades.consumerfab = true;
+  state.buildings.set("cp1", makeBuilding("chemplant", "player", 600, 500));
+  assert.equal(prereqsMet(state, "player", BUILDINGS.fabricator), false, "chemplant + tech alone isn't enough — still needs alloys");
+  state.players.player.upgrades.metallurgy = true;
+  state.buildings.set("as1", makeBuilding("assembler", "player", 660, 500));
+  assert.equal(prereqsMet(state, "player", BUILDINGS.fabricator), true, "unlocked once BOTH branches (alloys + chemicals) and its own tech are in place");
+});
+
+test("the trade-industry branch (chemistry/consumerfab, Chemical Plant/Fabricator) never requires anything from the antimatter/military spine", () => {
+  // "This is meant to be a genuinely different way up the tree ... so make sure the two new
+  // buildings don't require anything from the antimatter/military spine" — verified by enumerating
+  // every requires[] token the whole branch carries and asserting none of them names a military
+  // building, the Strategic-tier factories, or the deep antimatter/aicores research.
+  const militarySpine = new Set([
+    "barracks", "foundry", "arsenal", "stardock",
+    "antimatterforge", "aifoundry", "torpedoworks", "torpedobattery", "antimatter_gate",
+    "machining", "antimatter", "aicores", "freighterai",
+  ]);
+  const allRequires = [
+    ...(TECHS.chemistry.requires || []),
+    ...(TECHS.consumerfab.requires || []),
+    ...(BUILDINGS.chemplant.requires || []),
+    ...(BUILDINGS.fabricator.requires || []),
+  ];
+  assert.ok(allRequires.length > 0, "sanity check: the branch actually has some gating to check");
+  for (const token of allRequires) {
+    assert.ok(!militarySpine.has(token), `"${token}" is part of the antimatter/military spine — the trade branch must not require it`);
+  }
+});

@@ -143,6 +143,41 @@ test("a cancelled research job's shrunk queue and refund survive a save/load", (
   assert.equal(rs.players.player.upgrades.metallurgy, undefined, "the cancelled node never landed as researched");
 });
 
+// Promote the legacy consumer-goods recipes into a trade-industry branch (docs/improvement-
+// proposals.md lines 443-451): the new research nodes (chemistry/consumerfab) and the new
+// buildings' input/output buffers (Chemical Plant, Fabricator) need to survive a save/load round
+// trip the same way the existing Datacenter/factory-buffer tests above already prove for the
+// military/Gate spine.
+test("the trade-industry branch (chemistry/consumerfab research, Chemical Plant/Fabricator buildings and buffers) survives a galaxy save/load", () => {
+  const g = createGalaxy({ seed: 11 });
+  const s = activeState(g);
+  s.players.player.upgrades.chemistry = true;
+  s.players.player.upgrades.consumerfab = true;
+  const cp = makeBuilding("chemplant", "player", 620, 480);
+  cp.input = { biomass: 12.5 };
+  cp.store = { chemicals: 7.25 };
+  s.buildings.set(cp.id, cp);
+  const fab = makeBuilding("fabricator", "player", 660, 480);
+  fab.input = { alloys: 5, chemicals: 3 };
+  fab.store = { goods: 2 };
+  s.buildings.set(fab.id, fab);
+
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  const rs = activeState(restored);
+
+  assert.equal(rs.players.player.upgrades.chemistry, true, "the chemistry research node persists (rides in player.upgrades)");
+  assert.equal(rs.players.player.upgrades.consumerfab, true, "the consumerfab research node persists too");
+  const rcp = [...rs.buildings.values()].find(b => b.type === "chemplant");
+  const rfab = [...rs.buildings.values()].find(b => b.type === "fabricator");
+  assert.ok(rcp, "the Chemical Plant survives the round trip");
+  assert.ok(Math.abs(rcp.input.biomass - 12.5) < 1e-9, "…with its biomass larder intact");
+  assert.ok(Math.abs(rcp.store.chemicals - 7.25) < 1e-9, "…and its chemicals output buffer intact");
+  assert.ok(rfab, "the Fabricator survives the round trip");
+  assert.ok(Math.abs(rfab.input.alloys - 5) < 1e-9, "…with its alloys larder intact");
+  assert.ok(Math.abs(rfab.input.chemicals - 3) < 1e-9, "…and its chemicals larder intact — the NEW commodity round-trips, not just alloys");
+  assert.ok(Math.abs(rfab.store.goods - 2) < 1e-9, "…and its goods output buffer intact");
+});
+
 test("the galaxy save is seed+delta (no terrain), and guards its version", () => {
   const json = JSON.stringify(serializeGalaxy(evolved(1)));
   assert.ok(!/"terrain"/.test(json), "terrain arrays regenerate from the seed, not stored");
