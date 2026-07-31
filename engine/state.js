@@ -80,7 +80,7 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
  * Build a fresh simulation world. A pure function of its inputs (seed + options): the map
  * regenerates deterministically from the seed, so two same-option runs are identical.
  * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
- *   resourceMult?: number, endless?: boolean, aiApm?: number, aiMicro?: boolean,
+ *   resourceMult?: number, swapAsym?: boolean, endless?: boolean, aiApm?: number, aiMicro?: boolean,
  *   aiStrategy?: string, difficulty?: string, playerFaction?: string, aiFaction?: string }} [opts]
  * @returns {State}
  */
@@ -94,6 +94,7 @@ export function createGameState(opts = {}) {
   const map = generateMap(planetId, opts.rng || Math.random, {   // deterministic-exempt: unseeded default rng
     sizeMult: opts.sizeMult || 1,
     resourceMult: opts.resourceMult || 1,
+    swapAsym: !!opts.swapAsym,
   });
 
   // The sides in this world. Today always exactly the human "player" and the AI
@@ -131,6 +132,11 @@ export function createGameState(opts = {}) {
     planetId,
     sizeMult: opts.sizeMult || 1,
     resourceMult: opts.resourceMult || 1,
+    // Pick your side of an asymmetric matchup (Oort, Nimbus, engine/map.js): additive, next to
+    // sizeMult/resourceMult — a generation input kept so a save can regenerate the map with the
+    // same swap honored, not just replay the bare boolean. Defaults false (unswapped, today's
+    // long-standing assignment).
+    swapAsym: !!opts.swapAsym,
     // Odyssey (open-world) mode: no skirmish victory — the match never ends by
     // razing the enemy, only when the player loses their single Command Center
     // (see engine/victory.js checkEndlessLoss + engine/galaxy.js).

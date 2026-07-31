@@ -119,3 +119,14 @@ test("the galaxy save is seed+delta (no terrain), and guards its version", () =>
   assert.ok(!/"terrain"/.test(json), "terrain arrays regenerate from the seed, not stored");
   assert.throws(() => deserializeGalaxy({ v: 999, planets: [] }), /unsupported galaxy save/);
 });
+
+// Additive per-planet field (engine/persist.js, next to sizeMult/resourceMult) — confirms the
+// GALAXY save wrapper (serPlanet/rehydratePlanet, shared with the skirmish save path — see
+// test/persist.test.js for the full round-trip including the regenerated map) doesn't drop it.
+test("swapAsym survives a galaxy save/load", () => {
+  const g = createGalaxy({ seed: 15 });
+  const s = activeState(g);
+  s.swapAsym = true;
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  assert.equal(activeState(restored).swapAsym, true, "the flag persists through a galaxy save/load");
+});

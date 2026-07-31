@@ -5,6 +5,7 @@ import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
 import { issuePatrol } from "../engine/commands.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
+import { sideMod, PLANET_MODIFIERS } from "../engine/map.js";
 
 // The sim-owned facts, sorted by id so Map order can't matter — plus node
 // amounts (mining) and fog memory, the dynamic bits a save has to preserve.
@@ -47,6 +48,31 @@ test("a loaded game continues identically to the original — determinism surviv
 
 test("deserializeGame rejects an unknown save version", () => {
   assert.throws(() => deserializeGame({ v: 999 }), /unsupported save version/);
+});
+
+// Pick your side of the Oort/Nimbus asymmetric matchups (docs/improvement-proposals.md): an
+// additive per-state field next to sizeMult/resourceMult (engine/state.js, engine/persist.js) —
+// default false, no SAVE_VERSION bump. Proves the flag round-trips AND that the RELOADED map
+// (rehydratePlanet re-runs generateMap from the seed) still carries the swapped assignment, not
+// just a bare boolean disconnected from the map it's supposed to describe.
+test("swapAsym round-trips through save/load with its swapped map modifiers intact", () => {
+  const a = createGameState({ planetId: "oort", seed: 55, rng: mulberry32(55), swapAsym: true });
+  assert.equal(sideMod(a, "player", "buildTimeMult"), PLANET_MODIFIERS.oort.asym.ai.buildTimeMult,
+    "sanity: swapAsym really did exchange the asym halves on the fresh state");
+
+  const b = deserializeGame(JSON.parse(JSON.stringify(serializeGame(a))));
+  assert.equal(b.swapAsym, true, "the flag itself round-trips");
+  assert.equal(sideMod(b, "player", "buildTimeMult"), PLANET_MODIFIERS.oort.asym.ai.buildTimeMult,
+    "the reloaded map was regenerated WITH the swap honored, not the unswapped default");
+});
+
+test("swapAsym defaults to false, and a save from before this field existed loads as unswapped", () => {
+  const a = createGameState({ planetId: "oort", seed: 56, rng: mulberry32(56) });
+  assert.equal(a.swapAsym, false, "swapAsym defaults false when not requested");
+  const save = serializeGame(a);
+  delete save.swapAsym;   // simulate a pre-this-feature save
+  const b = deserializeGame(save);
+  assert.equal(b.swapAsym, false, "an old save without the field loads as unswapped, not throwing/undefined");
 });
 
 // Patrol (docs/improvement-proposals.md "Patrol: looping attack-move waypoints"): the order's

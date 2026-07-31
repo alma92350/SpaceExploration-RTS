@@ -134,13 +134,21 @@ export function sampleTerrain(terrain, x, y) {
  * Deterministically generate a world's map (deposits, bases, terrain) from a seeded rng.
  * @param {string} [planetId]
  * @param {() => number} [rng]
- * @param {{ sizeMult?: number, resourceMult?: number }} [opts]
+ * @param {{ sizeMult?: number, resourceMult?: number, swapAsym?: boolean }} [opts]
  * @returns {GameMap}
  */
 export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {   // deterministic-exempt: unseeded default rng
   const planet = PLANETS.find(p => p.id === planetId);
   if (!planet) throw new Error(`Unknown planet: ${planetId}`);
-  const modifiers = PLANET_MODIFIERS[planetId] || {};
+  const worldModifiers = PLANET_MODIFIERS[planetId] || {};
+  // Pick your side of an asymmetric matchup (Oort, Nimbus): opts.swapAsym exchanges the
+  // player/ai halves of `asym`. Attach a shallow COPY — never mutate `worldModifiers` in
+  // place, since it's the SAME object every game on this planet reads by reference
+  // (PLANET_MODIFIERS[planetId]); mutating it would corrupt the next game that reads it.
+  // Consumes no rng draw, so the map layout below is byte-identical either way.
+  const modifiers = (opts.swapAsym && worldModifiers.asym)
+    ? { ...worldModifiers, asym: { player: worldModifiers.asym.ai, ai: worldModifiers.asym.player } }
+    : worldModifiers;
 
   const sizeMult = opts.sizeMult || 1;
   const resourceMult = opts.resourceMult || 1;

@@ -344,7 +344,9 @@ function serPlayer(p) {
 function serPlanet(state) {
   return {
     seed: state.seed, planetId: state.planetId,
-    sizeMult: state.sizeMult, resourceMult: state.resourceMult, endless: !!state.endless,
+    sizeMult: state.sizeMult, resourceMult: state.resourceMult,
+    swapAsym: !!state.swapAsym,   // additive: which side plays which half of an asym world's matchup (engine/map.js) — default false, no version bump
+    endless: !!state.endless,
     time: state.time, tick: state.tick, over: state.over, winner: state.winner,
     // One entry per side, in state.owners order — for the player-vs-ai pair this
     // serialises as { player, ai }, byte-identical to the old literal. The save
@@ -452,8 +454,11 @@ function rehydratePlanet(P) {
   // further down, so the map's real dimensions and the state's reported multiplier can never disagree.
   const sizeMult = Math.max(0.1, num(P.sizeMult, 1));
   const resourceMult = Math.max(0.1, num(P.resourceMult, 1));
+  // Additive, coerced to a real boolean like every other untrusted save flag: a save from before
+  // this field existed (or a tampered non-boolean) reads as unswapped, not throwing/undefined.
+  const swapAsym = !!P.swapAsym;
   const map = generateMap(P.planetId, mulberry32((P.seed ?? 0) >>> 0),
-    { sizeMult, resourceMult });
+    { sizeMult, resourceMult, swapAsym });
   const amounts = new Map(P.nodes.map(n => [n.id, n.amount]));
   for (const n of map.nodes) if (amounts.has(n.id)) n.amount = amounts.get(n.id);
   // A crater node (engine/bomb.js) never comes back from the seed regeneration above — it
@@ -549,7 +554,7 @@ function rehydratePlanet(P) {
 
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
-    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult,
+    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult, swapAsym,
     endless: !!P.endless,
     map,
     owners,

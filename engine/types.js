@@ -283,6 +283,7 @@
  * @property {string} planetId
  * @property {number} sizeMult
  * @property {number} resourceMult
+ * @property {boolean} swapAsym   which side plays which half of an asymmetric world's matchup (engine/map.js) — default false
  * @property {boolean} endless
  * @property {GameMap} map
  * @property {string[]} owners   the world's side ids in iteration order (["player","ai"]) — drives the owner-generic scaffold
