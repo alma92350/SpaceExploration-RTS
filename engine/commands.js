@@ -75,10 +75,13 @@ function groupSpeedCap(units) {
 // SAME heading formationSlots itself just oriented the shape around (resolveHeading, engine/
 // formation.js — deliberately not unit-normalized, which is fine: a positive scalar multiple never
 // changes which of two spots projects further forward, only relative order matters here). Units
-// are sorted by (UNITS[type].range ?? -1) ascending, id tie-break (deterministic — a string
+// are sorted by (UNITS[type].range ?? Infinity) ascending, id tie-break (deterministic — a string
 // comparison, unlike object/Map iteration order); slots are sorted by forwardness descending; the
 // two lists are zipped index-for-index — so the shortest-ranged unit (Bastion, Skiff) lands on the
-// most forward slot and the longest-ranged (Lancer, Breacher, Colossus) on the rearmost. Returns a
+// most forward slot, the longest-ranged (Lancer, Breacher, Colossus) trail behind, and any unarmed
+// unit (Mender, a freighter caught in a squad select) sinks to the rearmost slot of all — the
+// missing-range fallback has to sort LAST, not first, or an unarmed support unit would rank as the
+// single shortest range in the group and lead the charge. Returns a
 // new spots array, same length and leader-first as the input, so callers keep reading `spots[i]`
 // exactly as before; `spots[0]` (the leader's own slot) passes through untouched — the leader is a
 // documented player choice (engine/formation.js header), never re-picked by a stat.
@@ -86,7 +89,7 @@ function rankSlotsByRange(units, spots, x, y, formation) {
   const leaderSpot = spots[0];
   const heading = resolveHeading(units, x, y, formation);
   const byRange = units.slice(1).sort((a, b) => {
-    const ra = UNITS[a.type]?.range ?? -1, rb = UNITS[b.type]?.range ?? -1;
+    const ra = UNITS[a.type]?.range ?? Infinity, rb = UNITS[b.type]?.range ?? Infinity;
     return ra !== rb ? ra - rb : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   });
   const byForwardness = spots.slice(1).sort((s1, s2) => {

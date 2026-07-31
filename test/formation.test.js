@@ -291,6 +291,28 @@ test("a wedge formation ranks followers by weapon range — short-ranged Bastion
     "every short-ranged Bastion sits strictly ahead of every long-ranged Breacher");
 });
 
+test("an unarmed support unit (Mender) sinks to the rear of a shaped formation, not the front", () => {
+  // UNITS[type].range is undefined for the Mender (role:"support", unarmed) — the proposal's own
+  // Problem/Change text says "support (Mender) and unarmed units innermost/rear", so the missing-
+  // range fallback must sort LAST (rearmost), not first. A bare `?? -1` would make it the single
+  // lowest key in the whole army and put it on the MOST forward slot instead — exactly backwards.
+  // Same two-rank-wedge shape (4 followers, 2 per type) as the Bastion/Breacher test above: a
+  // 1-follower-per-side wedge ties every follower's forwardness, so this needs real depth to split.
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  const m1 = fakePlayerUnit("M1", "mender", 0, 0);   // no range field at all
+  const b1 = fakePlayerUnit("B1", "bastion", 0, 0);  // range 44 — the shortest armed range in the roster
+  const m2 = fakePlayerUnit("M2", "mender", 0, 0);
+  const b2 = fakePlayerUnit("B2", "bastion", 0, 0);
+  const units = [leader, m1, b1, m2, b2];
+
+  issueMove(units, 1000, 0, false, { shape: "wedge", leaderPos: "front" });
+
+  const menderFwd = [m1, m2].map(u => u.order.offsetX);
+  const bastionFwd = [b1, b2].map(u => u.order.offsetX);
+  assert.ok(Math.max(...menderFwd) < Math.min(...bastionFwd),
+    "the unarmed Menders sit strictly behind every armed unit, including the shortest-ranged Bastion");
+});
+
 test("issueHoldFormation (origin === destination) also range-ranks — the near-zero heading still resolves to a real forward axis", () => {
   // issueHoldFormation forms up right where the group already stands (origin===dest), the one
   // case where the origin-derived heading is degenerate (0,0) — engine/formation.js resolveHeading
