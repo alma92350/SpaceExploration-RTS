@@ -121,6 +121,7 @@ const { queueProduction, researchUpgrade } = await import("../engine/production.
 const { UNITS, UPGRADES } = await import("../engine/entities.js");
 const { createMarket, TRADE_LOT, quoteSell, updateMarket } = await import("../engine/market.js");
 const { researchTech, TECHS } = await import("../engine/techtree.js");
+const { createDiplomacy, GOODWILL_CAP } = await import("../engine/diplomacy.js");
 
 // Mirrors hudSelection.js's own module-private costText() (hudSelection.js:1509) — kept local so
 // a button's label is matched against UNITS' REAL cost, not a hand-typed "50 ore" that could
@@ -959,4 +960,126 @@ test("the aggregated row's counter suffix survives the live hp-only patch too, n
   assert.ok(skiffRow, "expected the live-patched Skiff row");
   assert.ok(skiffRow.textContent.includes("▼ falls to Bastion"),
     `expected the live-patched row to still carry the counter suffix, got: ${skiffRow.textContent}`);
+});
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 9 — Gifts and favor requests: an actual road to Allied (docs/improvement-proposals.md):
+   the Diplomacy panel now stays visible across the WHOLE stance range (not just Neutral-or-worse
+   — gifts/favors are exactly what a comfortably-Cordial-or-better player would use, pushing toward
+   Allied), and grows a gift picker (one row per held commodity, engine/diplomacy.js offerGift) and
+   a favor-request row (fulfillRequest) alongside the pre-existing, still-conditional tribute button.
+   --------------------------------------------------------------------------------------------- */
+
+function setupDiplomacy(seed, stance = 0.35) {
+  const { state, cc } = setup(seed);
+  state.diplomacy = createDiplomacy();
+  state.diplomacy.stance = stance;
+  state.market = createMarket(state);
+  game.galaxy = { credits: 1e9 };
+  return { state, cc };
+}
+
+function diplomacyHead() {
+  return panelEl.children.find(c => c.tagName === "div" && (c.textContent || "").startsWith("Diplomacy —"));
+}
+function giftRow(com) {
+  return panelEl.querySelectorAll(".market-row").find(r => r.dataset.com === com);
+}
+
+test("the Diplomacy panel stays visible even when the neighbour is comfortably Cordial or Allied", () => {
+  setupDiplomacy(601, 0.9);   // deep into Allied — the old gate (stance < 0.25) used to hide the whole panel here
+  renderSelectionPanel();
+  assert.ok(diplomacyHead(), "expected the Diplomacy panel to render regardless of how friendly the neighbour already is");
+});
+
+test("the tribute button itself still only shows once the neighbour has cooled to Neutral-or-worse", () => {
+  const { state } = setupDiplomacy(602, 0.5);   // Cordial — comfortably at peace
+  renderSelectionPanel();
+  assert.ok(!findButton("Send tribute"), "no point paying tribute while comfortably cordial");
+
+  state.diplomacy.stance = 0.1;   // Neutral
+  renderSelectionPanel();
+  assert.ok(findButton("Send tribute"), "the tribute lever reappears once the stance actually cools");
+});
+
+test("the gift picker offers a row per held commodity, and gifting deducts stock and raises goodwill", () => {
+  const { state } = setupDiplomacy(603, 0.35);
+  state.players.player.resources.metals = 100;
+  renderSelectionPanel();
+
+  const row = giftRow("metals");
+  assert.ok(row, "expected a gift row for the held metals");
+  const giftBtn = row.querySelector(".market-btn");
+  assert.ok(giftBtn, "expected a Gift button in the row");
+  assert.equal(giftBtn.textContent, `Gift ${TRADE_LOT}`);
+
+  const goodwillBefore = state.diplomacy.goodwill || 0;
+  giftBtn.click();
+  assert.equal(state.players.player.resources.metals, 100 - TRADE_LOT, "the gift left the stockpile");
+  assert.ok((state.diplomacy.goodwill || 0) > goodwillBefore, "the gift raised the goodwill pool");
+  assert.ok(state.diplomacy.goodwill <= GOODWILL_CAP, "…without exceeding the pool's own cap");
+});
+
+test("a commodity short of a full lot gets no gift row", () => {
+  const { state } = setupDiplomacy(604, 0.35);
+  state.players.player.resources.metals = TRADE_LOT - 1;
+  renderSelectionPanel();
+  assert.equal(giftRow("metals"), undefined, "nothing to gift below one lot");
+});
+
+test("no favor row appears without a pending request", () => {
+  setupDiplomacy(605, 0.35);
+  renderSelectionPanel();
+  assert.ok(!panelEl.querySelector(".favor-progress"), "no live request ⇒ no favor row");
+});
+
+test("a pending favor request shows a Fulfill button that pays the reward and clears the request", () => {
+  const { state } = setupDiplomacy(606, 0.35);
+  state.players.player.resources.ore = 200;
+  state.diplomacy.request = { com: "ore", qty: 50, until: state.time + 60, reward: 321 };
+  renderSelectionPanel();
+
+  const progress = panelEl.querySelector(".favor-progress");
+  assert.ok(progress, "expected a live favor-progress row");
+  assert.equal(progress.textContent, "⭐ Favor requested — 60s left");
+
+  const btn = findButton("Fulfill:");
+  assert.ok(btn, "expected a Fulfill button");
+  assert.ok(!btn.classList.contains("disabled"), "affordable ⇒ not locked");
+
+  const creditsBefore = game.galaxy.credits;
+  btn.click();
+  assert.equal(state.players.player.resources.ore, 150, "the exact requested qty is deducted");
+  assert.equal(game.galaxy.credits, creditsBefore + 321, "the reward is paid");
+  assert.ok(!panelEl.querySelector(".favor-progress"), "the favor row disappears once fulfilled");
+});
+
+test("the Fulfill button is disabled and inert without enough stock to cover the ask", () => {
+  const { state } = setupDiplomacy(607, 0.35);
+  state.players.player.resources.ore = 10;   // short of the 50 asked
+  state.diplomacy.request = { com: "ore", qty: 50, until: state.time + 60, reward: 321 };
+  renderSelectionPanel();
+
+  const btn = findButton("Fulfill:");
+  assert.ok(btn, "expected a Fulfill button even though it's locked");
+  assert.ok(btn.classList.contains("disabled"));
+
+  const creditsBefore = game.galaxy.credits;
+  btn.click();
+  assert.equal(state.players.player.resources.ore, 10, "a locked Fulfill click must never spend stock");
+  assert.equal(game.galaxy.credits, creditsBefore, "…or pay out a reward");
+});
+
+test("the favor countdown live-patches across an unrelated renderSelectionPanel tick", () => {
+  const { state } = setupDiplomacy(608, 0.35);
+  state.players.player.resources.ore = 200;
+  state.time = 0;
+  state.diplomacy.request = { com: "ore", qty: 50, until: 60, reward: 321 };
+  renderSelectionPanel();
+  const before = panelEl.querySelector(".favor-progress").textContent;
+
+  state.time = 30;   // 30s closer to the deadline — nothing else about the selection changed
+  renderSelectionPanel();
+  const after = panelEl.querySelector(".favor-progress").textContent;
+  assert.notEqual(after, before, "the countdown must not freeze at whatever it read on the panel's last rebuild");
 });

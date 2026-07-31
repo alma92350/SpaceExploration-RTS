@@ -40,7 +40,8 @@ import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, space
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip, packCommandCenter, PACK_COST } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT, quoteSell } from "./engine/market.js";
-import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
+import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME,
+         offerGift, fulfillRequest, GOODWILL_CAP } from "./engine/diplomacy.js";
 import { initiateJump } from "./boot.js";
 import { FORMATION_SHAPES } from "./engine/formation.js";
 import { flashHint } from "./overlays.js";
@@ -238,11 +239,17 @@ export function renderSelectionPanel() {
           const node = state.map.nodesById ? state.map.nodesById.get(e.order.nodeId) : state.map.nodes.find(n => n.id === e.order.nodeId);
           return node ? node.miners || 0 : "";
         }).join(",")
-    // Rebuild when the Odyssey diplomacy panel would appear/disappear (stance crossing
-    // the 0.25 band) or its tribute button's cost/affordability would flip — so the
-    // appease lever surfaces the moment the neighbour cools, without a per-tick rebuild.
+    // Rebuild when the Odyssey diplomacy panel's tribute button would appear/disappear (stance
+    // crossing the 0.25 band) or its cost/affordability would flip, a favor request appears/
+    // expires/becomes (un)affordable, or the gift picker's own row set would change — so every
+    // lever surfaces the moment it applies, without a per-tick rebuild. (The favor countdown's
+    // seconds-left text is NOT here on purpose — it's patched every tick further below instead,
+    // same split refreshMarketRows already draws for the market's own live price.)
     + "|" + (game.galaxy && state.diplomacy
         ? `${state.diplomacy.stance < 0.25}:${tributeCost(state.diplomacy)}:${game.galaxy.credits >= tributeCost(state.diplomacy)}`
+          + `:${!!state.diplomacy.request}:${state.diplomacy.request
+              ? Math.floor(state.players.player.resources[state.diplomacy.request.com] || 0) >= state.diplomacy.request.qty : ""}`
+          + `:${Object.keys(COM).filter(c => Math.floor(state.players.player.resources[c] || 0) >= TRADE_LOT).join(",")}`
         : "")
     // Rebuild when the Capital state changes (a CC upgraded to Capital → anchored note), a
     // staged colony ship appears/vanishes (the jump panel's "ship loaded?" hint), or the
@@ -398,6 +405,14 @@ export function renderSelectionPanel() {
   // refreshMarketRows (above renderMarket) for why trading can't just rely on the rebuild
   // signature the patches above lean on.
   if (game.galaxy && state.market) refreshMarketRows(state);
+
+  // Same live patch for a pending favor request's "Xs left" countdown — it ticks down every
+  // second, and (deliberately, see the signature comment above) isn't part of the rebuild
+  // signature, so a rendered row would otherwise freeze at whatever it read on the last rebuild.
+  if (game.galaxy && state.diplomacy && state.diplomacy.request) {
+    const row = panelEl.querySelector(".favor-progress");
+    if (row) row.textContent = favorRowText(state, state.diplomacy.request);
+  }
 }
 
 // "♻ Recycling Plasma Rig — 42%" — shared by the rebuild and the live patch so they never drift.
@@ -867,26 +882,110 @@ function renderLogiPriority(state, b) {
         : "Even weight with every other building — click to raise to High" }));
 }
 
-// The Odyssey diplomacy panel, under the Command Center's market: pay universal
-// credits to appease the neighbour for a while (engine/diplomacy.js offerTribute).
-// The cost escalates per tribute and the truce decays, so it's a stopgap — buy time
-// to weather a wave or finish a jump, not a permanent peace. A charging Antimatter
-// Gate is unappeasable, by design. Credit-gated via locked/lockTip (NOT makeButton's
-// `cost`, which checks the LOCAL economy), the same idiom as the Spaceport jump.
+// The Odyssey diplomacy panel, under the Command Center's market. Three independent levers:
+// tribute (brake — appease a cooling-or-worse neighbour with credits), gifts (accelerator — hand
+// over local goods to build goodwill toward Allied) and favor requests (an occasional bespoke ask
+// that pays a premium). Unlike tribute, gifts/favors are useful precisely once the neighbour is
+// ALREADY comfortably cordial — pushing further, toward Allied — so this panel (unlike tribute's
+// own button below) stays visible across the whole stance range, not just once it's cooled.
 function renderDiplomacy(state) {
-  const cost = tributeCost(state.diplomacy);
-  const afford = game.galaxy.credits >= cost;
+  const dip = state.diplomacy;
 
   const head = document.createElement("div");
   head.className = "market-head";
-  head.textContent = `Diplomacy — ${stanceLabel(state.diplomacy.stance)} neighbour`;
+  head.textContent = `Diplomacy — ${stanceLabel(dip.stance)} neighbour`;
   panelEl.appendChild(head);
 
-  panelEl.appendChild(makeButton(`Send tribute (◈${cost})`,
-    () => { offerTribute(game.galaxy, state); },   // makeButton adds renderHUD() on the affordable path
-    { tip: `Buy ~${APPEASE_TIME}s of peace — the neighbour stands down, but the truce decays and each tribute costs more. A charging Gate can't be bought off.`,
+  // Tribute: pay universal credits to appease the neighbour for a while (engine/diplomacy.js
+  // offerTribute). The cost escalates per tribute and the truce decays, so it's a stopgap — buy
+  // time to weather a wave or finish a jump, not a permanent peace. A charging Antimatter Gate is
+  // unappeasable, by design. Credit-gated via locked/lockTip (NOT makeButton's `cost`, which
+  // checks the LOCAL economy), the same idiom as the Spaceport jump. Shown only once the stance
+  // has cooled to Neutral-or-worse — no point paying to appease while comfortably cordial.
+  if (dip.stance < 0.25) {
+    const cost = tributeCost(dip);
+    const afford = game.galaxy.credits >= cost;
+    panelEl.appendChild(makeButton(`Send tribute (◈${cost})`,
+      () => { offerTribute(game.galaxy, state); },   // makeButton adds renderHUD() on the affordable path
+      { tip: `Buy ~${APPEASE_TIME}s of peace — the neighbour stands down, but the truce decays and each tribute costs more. A charging Gate can't be bought off.`,
+        locked: !afford,
+        lockTip: `Need ◈${cost} — you have ◈${Math.floor(game.galaxy.credits)}` }));
+  }
+
+  renderFavorRequest(state);
+  renderGiftPicker(state);
+}
+
+// "⭐ Favor requested — 42s left" plus a Fulfill button, shown only while dip.request is live
+// (engine/diplomacy.js updateDiplomacy rolls one every few minutes for a peaceful neighbour, and
+// clears it on its own once the deadline passes). Fulfilling pays the exact ask in full — no
+// partial credit, this is a favor, not a market trade — for a credit reward plus a goodwill bump.
+// The countdown text carries its own ".favor-progress" class so renderSelectionPanel's per-tick
+// patch (right after refreshMarketRows) can keep it live without a full rebuild, same reasoning
+// as the market rows' price patch.
+function renderFavorRequest(state) {
+  const req = state.diplomacy.request;
+  if (!req || state.time >= req.until) return;
+  const meta = COM[req.com];
+  const have = Math.floor(state.players.player.resources[req.com] || 0);
+  const afford = have >= req.qty;
+
+  const head = document.createElement("div");
+  head.className = "market-head favor-progress";
+  head.textContent = favorRowText(state, req);
+  panelEl.appendChild(head);
+
+  panelEl.appendChild(makeButton(
+    `Fulfill: ${req.qty} ${meta?.ico ? meta.ico + " " : ""}${meta?.name || req.com} (◈${req.reward})`,
+    () => { fulfillRequest(game.galaxy, state); },
+    { tip: `The neighbour needs ${req.qty} ${meta?.name || req.com} — bring it before the deadline for ◈${req.reward} credits and a goodwill bump toward Allied`,
       locked: !afford,
-      lockTip: `Need ◈${cost} — you have ◈${Math.floor(game.galaxy.credits)}` }));
+      lockTip: `Need ${req.qty} ${meta?.name || req.com} — you have ${have}` }));
+}
+
+// "⭐ Favor requested — 42s left" — shared by renderFavorRequest (the initial build) and the
+// per-tick live patch below so the two can never drift apart, same rule researchRowText/
+// recycleRowText already follow for their own progress rows.
+function favorRowText(state, req) {
+  return `⭐ Favor requested — ${Math.max(0, Math.ceil(req.until - state.time))}s left`;
+}
+
+// One row per commodity the player currently holds at least a full lot of (engine/market.js
+// TRADE_LOT — the same increment Gift hands over): a Gift button that calls offerGift, reusing
+// the market row's own styling. No afford-gating needed beyond that filter — every row shown is
+// already gift-able for the full TRADE_LOT. Silent (no header, no rows) once nothing qualifies,
+// so a bare-stockpile early game doesn't clutter the panel with an empty picker.
+function renderGiftPicker(state) {
+  const res = state.players.player.resources;
+  const held = Object.keys(COM).filter(c => Math.floor(res[c] || 0) >= TRADE_LOT);
+  if (!held.length) return;
+
+  const pct = Math.round(((state.diplomacy.goodwill || 0) / GOODWILL_CAP) * 100);
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = `Gift goods — raise goodwill toward Allied (${pct}% banked)`;
+  panelEl.appendChild(head);
+
+  for (const com of held) {
+    const meta = COM[com];
+    const row = document.createElement("div");
+    row.className = "market-row";
+    row.dataset.com = com;
+
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com}`;
+    row.appendChild(label);
+
+    const giftBtn = document.createElement("button");
+    giftBtn.className = "market-btn";
+    giftBtn.textContent = `Gift ${TRADE_LOT}`;
+    giftBtn.title = `Hand over ${TRADE_LOT} ${meta?.name || com} (~◈${Math.round(TRADE_LOT * unitPrice(state.market, com, "sell"))} of local value) to build goodwill toward Allied`;
+    giftBtn.addEventListener("click", () => { offerGift(state, com, TRADE_LOT); renderHUD(); });
+    row.appendChild(giftBtn);
+
+    panelEl.appendChild(row);
+  }
 }
 
 // The Odyssey Capital control on a Command Center: this CC is already the anchored
@@ -1094,9 +1193,11 @@ function rebuildSelectionPanel(sel) {
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
-    // Odyssey diplomacy: appease the neighbour with credits — shown only once the
-    // stance has cooled to Neutral-or-worse (no point paying while comfortably cordial).
-    if (game.galaxy && state.diplomacy && state.diplomacy.stance < 0.25) renderDiplomacy(state);
+    // Odyssey diplomacy: tribute (appease), gifts, and favor requests — the panel itself always
+    // shows once there's a neighbour to have one with; renderDiplomacy gates its OWN tribute
+    // button to Neutral-or-worse, but gifts/favors matter across the whole stance range (they're
+    // the lever that pushes an already-cordial world on toward Allied).
+    if (game.galaxy && state.diplomacy) renderDiplomacy(state);
   }
 
   const market = sel.find(e => e.kind === "building" && e.type === "market" && !e.constructing);
