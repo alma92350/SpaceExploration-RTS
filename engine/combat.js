@@ -265,7 +265,8 @@ function isAlive(state, id) {
 function stillEngageable(state, unit, def, id) {
   const e = getEntity(state, id);
   if (!e || e.hp <= 0) return false;
-  const aggro = def.aggroRange * sideMod(state, unit.owner, "sightMult");
+  const terrainMult = state.map?.terrain ? sampleTerrain(state.map.terrain, unit.x, unit.y).sightMult : 1;
+  const aggro = def.aggroRange * sideMod(state, unit.owner, "sightMult") * terrainMult;
   return Math.hypot(e.x - unit.x, e.y - unit.y) <= aggro;
 }
 
@@ -316,7 +317,14 @@ function acquireTarget(state, unit, def) {
   // The same sight modifier that scales fog reveal also scales how far a unit
   // (or turret) reaches out to acquire — so a storm-shortened world bites both
   // sides' aggro symmetrically. Optional-chained for map-less test states.
-  const aggro = def.aggroRange * sideMod(state, unit.owner, "sightMult");
+  // Terrain folds in the same way fog.js's updateFog scales reveal by the source
+  // tile's sightMult (srcMult there): a unit standing on high ground acquires (and,
+  // via stillEngageable below, holds) targets out to the same extended radius it can
+  // see, not just the flat aggroRange — a held mesa is dangerous to approach, not just
+  // hard to sneak up on. Turrets share this path (updateBuildingCombat calls this too),
+  // so a Sentinel Turret on high ground gets the same reach.
+  const terrainMult = state.map?.terrain ? sampleTerrain(state.map.terrain, unit.x, unit.y).sightMult : 1;
+  const aggro = def.aggroRange * sideMod(state, unit.owner, "sightMult") * terrainMult;
   // Units through the broad-phase grid (there can be hundreds); buildings stay a
   // straight scan since there are only ever a handful. Full-scan fallback when
   // no grid is present (direct combat tests).
