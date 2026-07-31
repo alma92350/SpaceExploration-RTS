@@ -555,6 +555,19 @@ body.paused::after {
    line warns amber like every other "this changes the rules" cue. */
 .map-card .ai-note { display: block; margin-top: 8px; font-size: 0.78rem; color: var(--accent-2); }
 .map-card .mod-note { display: block; margin-top: 4px; font-size: 0.78rem; color: var(--warn); }
+/* Odyssey's start-world picker: the same card, just narrower — 11 worlds + Random need to fit
+   without the long desc paragraph (setup.js's renderMapSelect Odyssey branch omits it). */
+.map-card.map-card-compact { width: 168px; padding: 12px 14px; }
+.map-card.map-card-compact .sm-stats { display: block; margin-top: 6px; font-size: 0.72rem; color: var(--muted); }
+/* Pick your side of an asymmetric matchup (Oort, Nimbus): a small pill INSIDE the card, not a
+   nested button (invalid — a button can't contain another interactive control) — see setup.js. */
+.map-card-swap {
+  display: block; margin-top: 10px; padding: 5px 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  font-size: 0.74rem; text-align: center; cursor: pointer;
+}
+.map-card-swap:hover { border-color: var(--accent-2); color: var(--text); }
+.map-card-swap.active { border-color: var(--accent); color: var(--accent); background: var(--panel-2); }
 
 /* ---- splash-screen game setup (AI speed / map size / resources) ---- */
 .map-select h3.cards-heading {

@@ -11,7 +11,7 @@
 import { mapSelectEl } from "./dom.js";
 import { PLANETS } from "./data.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
-import { archetypeFor, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
+import { archetypeFor, PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { STRATEGIES } from "./engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "./engine/aiDifficulty.js";
 export { DIFFICULTY_OPTIONS };   // re-exported: boot.js and a few tests still import it from here
@@ -24,6 +24,12 @@ import * as sound from "./sound.js";
 // The curated roster and its order both come from the AI archetype table, so
 // the picker, the opponent temperament, and the tests all agree on one list.
 const MAP_CHOICES = Object.keys(PLANET_ARCHETYPE);
+
+// Every world an Odyssey can start on: the skirmish nine PLUS the two Odyssey-only extras
+// (engine/galaxy.js ODYSSEY_WORLDS builds the identical list the same way — kept independent
+// here rather than imported, since setup.js is a UI-layer module and this is purely about
+// which cards to draw, not the engine roster itself).
+const ODYSSEY_START_CHOICES = [...MAP_CHOICES, ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 
 // Splash-screen game setup, carried across "choose another battlefield"
 // restarts. sizeMult scales the map (map.js); resourceMult scales every
@@ -59,7 +65,9 @@ export const STRATEGY_OPTIONS = [
   { label: "Economic", mult: "economic", note: "turtles, then rearms if hit" },
   { label: "Force Parity", mult: "matching", note: "mirrors your army size" },
 ];
-export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontier", aiStrategy: "default", sizeMult: 1, resourceMult: 1, seed: null };
+export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontier", aiStrategy: "default", sizeMult: 1, resourceMult: 1, seed: null,
+  startWorld: null,    // Odyssey: explicit start-world pick (a planet id), or null for the seed's own random draw
+  swapAsym: false };   // skirmish: play the swapped half of an asymmetric world's matchup (Oort, Nimbus) — see engine/map.js opts.swapAsym
 
 // The game modes the splash toggles between.
 const MODES = [
@@ -275,8 +283,10 @@ export function renderMapSelect() {
 
   mapSelectEl.appendChild(renderSetupPanel(setup.mode));
 
-  // Odyssey lands on a random world — one Begin button instead of the card grid,
-  // plus a Resume button when a saved galaxy exists.
+  // Odyssey: a Resume button when a saved galaxy exists, then a compact world-card row — the
+  // game's first real decision, previously withheld ("land on a random world" was the only
+  // affordance). A default "Random" card preserves today's seed-derived draw exactly (same seed,
+  // same world) for anyone who doesn't care to pick.
   if (odyssey) {
     if (hasOdysseySave()) {
       const resume = document.createElement("button");
@@ -286,15 +296,45 @@ export function renderMapSelect() {
       resume.addEventListener("click", () => { sound.unlockAudio(); mapSelectEl.classList.add("hidden"); loadOdyssey(); });
       mapSelectEl.appendChild(resume);
     }
-    const begin = document.createElement("button");
-    begin.className = "btn resume-btn";
-    begin.textContent = "⏵ Begin Odyssey — land on a random world";
-    begin.addEventListener("click", () => {
-      sound.unlockAudio();
+
+    const subtitle = document.createElement("h3");
+    subtitle.className = "cards-heading";
+    subtitle.textContent = "Choose your starting world — or land at random";
+    mapSelectEl.appendChild(subtitle);
+
+    // One click both picks the world (or Random) AND begins, mirroring the skirmish cards below
+    // instead of adding a separate "confirm" step.
+    const beginOn = startId => {
+      sound.unlockAudio();   // a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
+      setup.startWorld = startId;   // null -> createGalaxy draws its own seed-derived world, exactly as before
       startOdyssey();
+    };
+
+    const cards = document.createElement("div");
+    cards.className = "cards";
+
+    const randomCard = document.createElement("button");
+    randomCard.className = "map-card map-card-compact";
+    randomCard.innerHTML = `<span class="name">🎲 Random</span><span class="tag">Land on a random world</span>`;
+    randomCard.addEventListener("click", () => beginOn(null));
+    cards.appendChild(randomCard);
+
+    ODYSSEY_START_CHOICES.forEach(id => {
+      const planet = PLANETS.find(p => p.id === id);
+      const mod = PLANET_MODIFIERS[id];
+      const card = document.createElement("button");
+      card.className = "map-card map-card-compact";
+      // Reuses exactly the skirmish card's own data fields (name, deposits tag, archetype
+      // doctrine, industry/tech) — just a smaller layout for the wider 11-world roster.
+      card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span>`
+        + `<span class="ai-note">${archetypeFor(id).name} neighbour</span>`
+        + `<span class="sm-stats">⚙ ${planet.industry} · 🔬 ${planet.tech}</span>`
+        + (mod ? `<span class="mod-note">${mod.label}</span>` : "");
+      card.addEventListener("click", () => beginOn(id));
+      cards.appendChild(card);
     });
-    mapSelectEl.appendChild(begin);
+    mapSelectEl.appendChild(cards);
     return;
   }
 
@@ -315,9 +355,29 @@ export function renderMapSelect() {
     card.innerHTML = `<span class="name">${planet.name}</span><span class="tag">${planet.tag}</span><span class="desc">${planet.desc}</span>`
       + (isScenario ? "" : `<span class="ai-note">Opponent doctrine: ${archetypeFor(id).name}</span>`)
       + (mod ? `<span class="mod-note">${mod.label}</span>` : "");
+    // Pick your side of an ASYMMETRIC matchup (Oort, Nimbus): a plain `<span>`, not a nested
+    // `<button>` — a button can't validly contain another interactive control — styled
+    // clickable and stopping its own click from bubbling up into the card's start-the-game
+    // handler. A per-card LOCAL pick (not shared setup state): toggling one card's swap can
+    // never leak onto a different card you click instead — only wired for skirmish, since the
+    // scripted scenarios (setupEscort/Raider/Bounty) don't consume swapAsym.
+    let swapped = false;
+    if (mod && mod.asym && !isScenario) {
+      const swapBtn = document.createElement("span");
+      swapBtn.className = "map-card-swap";
+      swapBtn.textContent = "⇄ Swap sides";
+      swapBtn.addEventListener("click", e => {
+        e.stopPropagation();
+        swapped = !swapped;
+        swapBtn.classList.toggle("active", swapped);
+        swapBtn.textContent = swapped ? "⇄ Swapped — playing the other side" : "⇄ Swap sides";
+      });
+      card.appendChild(swapBtn);
+    }
     card.addEventListener("click", () => {
       sound.unlockAudio();   // this click is a real user gesture, so it's safe to start the AudioContext here
       mapSelectEl.classList.add("hidden");
+      setup.swapAsym = swapped;
       if (isScenario) SCENARIO_START[setup.mode](id); else startGame(id);
     });
     cards.appendChild(card);
