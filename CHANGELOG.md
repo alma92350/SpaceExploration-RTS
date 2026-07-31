@@ -184,6 +184,17 @@ additions, keeping one balance invariant intact throughout: every siege unit sti
 out-ranges every static-defense structure (with the Torpedo Battery's out-ranging-the-Breacher-
 specifically as the one documented, deliberate exception). No regressions surfaced this round.
 
+### Changed
+
+- **The Assault and Bulwark doctrines now go three tiers deep, matching Logistics.** Both used to
+  plateau at Tier 2 as a repeated flat percentage with no new decision attached. Assault's Tier 2
+  now also grants a "combat drive" — armies close distance on a fleeing target 10% faster — and
+  its new Arsenal-gated Tier-3 capstone, Overdrive Actuators, adds a distinct tempo identity on
+  top (10% faster attacks). Bulwark's Tier 2 now heals role:combat units out of combat once
+  they've gone unhit for a while, and its capstone, Self-Sealing Plating, doesn't just repeat that
+  grant — it heals faster and kicks in sooner, a genuine deepening rather than the same number
+  again. A unit under continuous fire still never benefits from either tier, so nothing about
+  existing combat balance changed.
 
 - **How long a neighbour holds a grudge is now part of its personality.** Souring was already
   flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but
