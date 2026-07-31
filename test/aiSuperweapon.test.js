@@ -11,6 +11,8 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 import { mulberry32 } from "../engine/rng.js";
+import { BOMB_CORE_RADIUS } from "../engine/bomb.js";
+import { BUILDINGS } from "../engine/entities.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -97,6 +99,33 @@ test("Aggressive strategy arms and triggers a Helium Bomb immediately once it's 
 
   assert.ok(bomb.armed, "close enough to the target on the very first cycle — arms right away");
   assert.ok(bomb.fuseUntil != null, "…and lights the fuse immediately too — the same lightFuse() the player's own Detonate Now calls");
+});
+
+test("the offensive bomb no longer arms at the old flat ARRIVE_RADIUS (70) — it waits for the target's own rim-based kill-band", () => {
+  const state = createGameState({ planetId: "ferros", endless: true, aiStrategy: "aggressive" });
+  const base = state.map.bases.ai;
+  const cc = makeBuilding("command", "ai", base.x, base.y); state.buildings.set(cc.id, cc);
+  const bomb = makeUnit("heliumbomb", "ai", base.x, base.y); state.units.set(bomb.id, bomb);
+  // The Antimatter Gate (radius 28): its real per-target threshold is radius + BOMB_CORE_RADIUS =
+  // 43 — well short of the old flat 70 this used to arm at, where bombDamageAt(70) is only
+  // ~138hp against a 1200hp Gate, nowhere near the documented one-shot (engine/bomb.js). Placed at
+  // the midpoint between the two thresholds: inside the old flat radius (would have armed under
+  // the bug) but outside the new, correct one.
+  const threshold = BUILDINGS.antimatter_gate.radius + BOMB_CORE_RADIUS;
+  assert.ok(threshold < 70, "sanity check: the new per-target threshold really is tighter than the old flat radius");
+  const dist = (threshold + 70) / 2;
+  const gate = makeBuilding("antimatter_gate", "player", base.x + dist, base.y); state.buildings.set(gate.id, gate);
+  // A committed wave (order.type 'attack-move'), so the walk itself isn't held home by the
+  // separate "travels with the wave" fix (engine/aiSuperweapon.js) — isolates this test to the
+  // arrival-threshold question alone.
+  const raider = makeUnit("skiff", "ai", base.x + 10, base.y);
+  raider.order = { type: "attack-move", x: gate.x, y: gate.y };
+  state.units.set(raider.id, raider);
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.ok(!bomb.armed, "inside the old flat ARRIVE_RADIUS but outside the Gate's real kill-band — must not arm here");
+  assert.equal(bomb.order?.type, "move", "still closing the last distance to the Gate's rim");
 });
 
 test("Aggressive strategy walks a Helium Bomb (unarmed) toward a distant target instead of arming on the spot", () => {

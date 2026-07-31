@@ -23,11 +23,21 @@
 "use strict";
 
 import { issueMove } from "./commands.js";
-import { lightFuse } from "./bomb.js";
+import { lightFuse, BOMB_CORE_RADIUS } from "./bomb.js";
 import { chooseAttackTarget, DEFEND_RADIUS } from "./aiMilitary.js";
 import { canAct, spend } from "./aiCommon.js";
+import { UNITS } from "./entities.js";
 
-const ARRIVE_RADIUS = 70;   // close enough to a building target to arm + trigger (clears typical building/bomb radii)
+// The target's own radius, so the walk-in arm/trigger threshold scales to what it's actually
+// closing on (a squat Sentinel Turret vs a broad Command Center or Gate) instead of one flat
+// guess for every target — a building carries `.radius` on the instance (state.js's
+// makeBuilding); a unit's lives on its UNITS definition instead (makeUnit never copies it over,
+// same asymmetry engine/bomb.js's own radius lookup deals with); the plain-{x,y}-point fallback
+// chooseAttackTarget hands back when nothing is in sight yet (state.map.bases.player, or a raw
+// unexplored point) has neither, so 0 — arriving at all is "close enough" to a bare point.
+function targetRadius(target) {
+  return UNITS[target.type]?.radius ?? target.radius ?? 0;
+}
 
 /** @param {State} state @param {AiContext} ctx */
 export function aiSuperweapon(state, ctx) {
@@ -56,8 +66,13 @@ export function aiSuperweapon(state, ctx) {
   if (!ctx.strategy.useBombOffensively) return;
   const target = chooseAttackTarget(state, ctx.cc);
   if (!target) return;
+  // Per-target threshold, not one flat guess: the target's own radius plus BOMB_CORE_RADIUS (the
+  // blast's peak-damage band, measured to the RIM — engine/bomb.js) so arming here is geometrically
+  // guaranteed to land the peak hit, instead of the old flat 70 that left the bomb well short of
+  // the peak band against anything bigger than a bare point (bombDamageAt(70) is only ~138hp).
+  const arriveRadius = targetRadius(target) + BOMB_CORE_RADIUS;
   const d = Math.hypot(bomb.x - target.x, bomb.y - target.y);
-  if (d <= ARRIVE_RADIUS) {
+  if (d <= arriveRadius) {
     if (canAct(state)) { bomb.armed = true; lightFuse(state, bomb); spend(state); }
   } else if (!bomb.order && canAct(state)) {
     issueMove([bomb], target.x, target.y);

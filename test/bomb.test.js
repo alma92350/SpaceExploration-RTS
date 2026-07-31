@@ -151,7 +151,9 @@ test("an ARMED bomb does NOT light its fuse from an enemy just outside BOMB_DETE
   const bomb = makeUnit("heliumbomb", "player", 2000, 2000);
   bomb.armed = true;
   state.units.set(bomb.id, bomb);
-  const enemy = makeUnit("worker", "ai", 2000 + BOMB_DETECT_RANGE + 5, 2000);   // just outside
+  // Measured to the enemy's own RIM (engine/bomb.js), so "just outside" has to clear its own
+  // radius too, not just BOMB_DETECT_RANGE from the bomb's bare center.
+  const enemy = makeUnit("worker", "ai", 2000 + BOMB_DETECT_RANGE + UNITS.worker.radius + 5, 2000);   // just outside
   state.units.set(enemy.id, enemy);
 
   assert.equal(checkBombProximity(state, bomb), false);
@@ -321,6 +323,24 @@ test("ground zero (within BOMB_CORE_RADIUS) still kills everything outright, ANY
   assert.ok(!state.buildings.has(enemyBuilding.id));
 });
 
+test("a bomb detonated at a Command Center's wall (physical contact) kills it outright — the documented one-shot, now geometrically reachable", () => {
+  // engine/bomb.js's own header claims the peak blast "one-shots even the toughest building in
+  // the game (the Antimatter Gate, 1200hp)". At physical contact, the bomb's own footprint
+  // (radius 10) and the CC's (radius 26) are touching — 36 apart center-to-center — which used to
+  // sit well outside BOMB_CORE_RADIUS (15) measured from the bomb's bare center. Rim-measured, the
+  // CC's own radius is subtracted back off, landing it inside the core after all.
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const bomb = makeUnit("heliumbomb", "player", 4000, 4000);
+  state.units.set(bomb.id, bomb);
+  const wallContact = UNITS.heliumbomb.radius + BUILDINGS.command.radius;   // 10 + 26 = 36
+  const cc = makeBuilding("command", "ai", 4000 + wallContact, 4000);
+  state.buildings.set(cc.id, cc);
+
+  detonateBomb(state, bomb);
+
+  assert.ok(!state.buildings.has(cc.id), "a bomb touching the Command Center's wall now lands in the peak band and one-shots it");
+});
+
 test("further from ground zero, damage falls off — a fragile unit dies where a tough building only takes a scratch", () => {
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 4000, 4000);
@@ -328,10 +348,13 @@ test("further from ground zero, damage falls off — a fragile unit dies where a
 
   const dist = 90;
   const worker = makeUnit("worker", "ai", 4000 + dist, 4000);            // 40hp
-  const command = makeBuilding("command", "ai", 4000, 4000 + dist);      // 1000hp, same distance
+  const command = makeBuilding("command", "ai", 4000, 4000 + dist);      // 1000hp, same CENTER distance
   state.units.set(worker.id, worker);
   state.buildings.set(command.id, command);
-  const expectedDmg = bombDamageAt(dist);
+  // Damage is measured to each victim's RIM, not its center (engine/bomb.js) — the command
+  // building's own 26-radius footprint eats into that 90, so its ACTUAL damage differs from a
+  // same-center-distance worker's, even though both were placed the same 90 from the bomb's center.
+  const expectedDmg = bombDamageAt(dist - command.radius);
 
   detonateBomb(state, bomb);
 
@@ -345,7 +368,9 @@ test("something well past the blast radius survives completely untouched", () =>
   const state = createGameState({ planetId: "ferros", endless: true });
   const bomb = makeUnit("heliumbomb", "player", 4000, 4000);
   state.units.set(bomb.id, bomb);
-  const safe = makeUnit("worker", "ai", 4000 + BOMB_BLAST_RADIUS + 5, 4000);
+  // Measured to the worker's own RIM (engine/bomb.js), so "past the blast radius" has to clear
+  // its own radius too, not just BOMB_BLAST_RADIUS from the bomb's bare center.
+  const safe = makeUnit("worker", "ai", 4000 + BOMB_BLAST_RADIUS + UNITS.worker.radius + 5, 4000);
   state.units.set(safe.id, safe);
 
   detonateBomb(state, bomb);
@@ -361,7 +386,8 @@ test("right at the ragged edge of the blast radius, a fragile unit only takes a 
   const dist = BOMB_BLAST_RADIUS - 5;
   const edge = makeUnit("worker", "ai", 4000 + dist, 4000);
   state.units.set(edge.id, edge);
-  const expectedDmg = bombDamageAt(dist);
+  // Rim distance, not center — the worker's own (small) radius still shaves a bit off dist.
+  const expectedDmg = bombDamageAt(dist - UNITS.worker.radius);
 
   detonateBomb(state, bomb);
 
