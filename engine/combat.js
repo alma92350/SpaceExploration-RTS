@@ -140,26 +140,34 @@ function nearestEnemyUnitWithin(state, unit, radius) {
 // upgrade multipliers and kill/event bookkeeping stay in exactly one place.
 // The attackHit event carries both endpoints and the attacker's type so
 // render.js can draw a tracer from shooter to target (a turret reads as
-// its own "turret" type), `heavy` so a siege hit thumps deeper, and `bonus`
+// its own "turret" type), `heavy` so a siege hit thumps deeper, `bonus`
 // so a counter-triangle hit (Skiff catching a Lancer, etc.) telegraphs too —
 // scoped to the per-type hard counter (bonusVs) only, distinct from `heavy`'s
 // class-wide siege bonus (bonusVsBuildings), since there's no specific
-// matchup to telegraph there. Zero sim effect — the flag is read only by the
-// UI layer (effects.js/renderEffects.js, hudSelection.js derives its "strong
-// vs / falls to" text straight from the same bonusVs tables independently).
+// matchup to telegraph there — and `splashRadius` (def.splash's radius, when
+// the attacker carries one) so renderEffects.js can draw an impact ring.
+// Zero sim effect — the flags are read only by the UI layer (effects.js/
+// renderEffects.js, hudSelection.js derives its "strong vs / falls to" text
+// straight from the same bonusVs tables independently).
 function performAttack(state, attacker, def, target) {
   // An ARMED Helium Bomb doesn't take damage from a hit — it detonates instead,
   // dealing distance-falloff blast damage to everything (attacker included)
   // within its blast radius. Checked before the normal damage/death path,
   // which never runs for it.
   if (detonateIfAttacked(state, target)) return true;
-  target.hp -= attackDamage(state, attacker, def, target);
+  const dmg = attackDamage(state, attacker, def, target);
+  target.hp -= dmg;
   state.events.push({
     type: "attackHit", x: target.x, y: target.y,
     fromX: attacker.x, fromY: attacker.y, unitType: attacker.type, owner: attacker.owner,
     heavy: !!(def.bonusVsBuildings && target.kind === "building"),
     bonus: !!(def.bonusVs && def.bonusVs[target.type]),
+    splashRadius: def.splash ? def.splash.radius : undefined,
   });
+  // Splash (def.splash = {radius, frac}, Colossus first): after the primary hit above, rattle
+  // any enemy UNITS caught near the impact point too — see applySplash's own header comment for
+  // why this can never touch a building or the attacker's own side.
+  if (def.splash) applySplash(state, attacker, target, dmg, def.splash);
   if (target.hp <= 0) {
     // Nothing is really destroyed: ~80% of whatever was spent building this thing
     // reappears as a minable wreck site a short delay later (engine/wreckage.js) —
@@ -171,6 +179,44 @@ function performAttack(state, attacker, def, target) {
     return true;
   }
   return false;
+}
+
+// def.splash's implementation (Colossus first): enemy units of attacker.owner within
+// `splash.radius` of the primary target's own position (the impact point) take
+// dmg*splash.frac*(1 - d/splash.radius) falloff damage — the mechanical punishment for a packed,
+// same-owner formation (separation.js's own packing behavior). The primary target itself is
+// excluded: it already took the full, unmitigated `dmg` hit above, so splash is purely what
+// happens to everyone ELSE caught nearby, not a second helping for the thing actually hit.
+//
+// Mirrors acquireTarget's own grid/full-scan idiom (queryNeighbors when state.unitGrid exists,
+// else a plain scan over state.units.values() for the many direct-call tests that never build a
+// grid) — and by walking only state.unitGrid/state.units, this can never reach a building no
+// matter how close one stands to the impact (buildUnitGrid only ever indexes units; see
+// engine/grid.js), so "buildings never take splash damage" holds by construction, not by a
+// proximity check that could drift out of sync with colliders.js's placement rules.
+//
+// HP subtraction happens for every caught unit in one pass BEFORE any of them is checked for
+// death (a second pass over the same `hit` list) — so the outcome can never depend on the order
+// queryNeighbors happens to return candidates in. Each splash death still funnels through the
+// same depositWreckage/removeEntity/entityKilled path as an ordinary kill.
+function applySplash(state, attacker, target, dmg, splash) {
+  const cands = state.unitGrid
+    ? queryNeighbors(state.unitGrid, target.x, target.y, splash.radius)
+    : state.units.values();
+  const hit = [];
+  for (const e of cands) {
+    if (e.id === target.id || e.owner === attacker.owner || e.hp <= 0) continue;   // never the primary target, never friendly, never an already-dead grid straggler
+    const d = Math.hypot(e.x - target.x, e.y - target.y);
+    if (d > splash.radius) continue;   // queryNeighbors is a padded superset — the exact-distance check is still ours to make
+    e.hp -= dmg * splash.frac * (1 - d / splash.radius);
+    hit.push(e);
+  }
+  for (const e of hit) {
+    if (e.hp > 0) continue;
+    depositWreckage(state, e);
+    removeEntity(state, e.id);
+    state.events.push({ type: "entityKilled", x: e.x, y: e.y, owner: e.owner });
+  }
 }
 
 // Workers can fight, but only on an explicit 'attack' order — they never

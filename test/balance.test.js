@@ -178,6 +178,17 @@ test("the Colossus's declared counteredBy (Skiff) actually wins at supply parity
   assert.ok(r.a > r.b, "mass Skiff overwhelms the fragile, slow-firing artillery piece at equal supply");
 });
 
+// Colossus splash (docs/improvement-proposals.md "Colossus splash: def-driven area damage as
+// the T3 anti-mass verb"): splash is meant to punish a packed formation caught near the impact
+// point, not to make the Colossus itself a stronger single-target duelist — so its already-
+// certified counteredBy:"skiff" above must hold at plain COST parity too, splash included. If
+// tuning splash's radius/frac ever flips this, that's the signal the numbers are miscalibrated,
+// not something to just accept (see the tuning comment on UNITS.colossus.splash in entities.js —
+// radius/frac were swept against this exact duel, the same way SALVAGE_FRAC once was).
+test("the Colossus's declared counteredBy (Skiff) still wins head-on at cost parity, splash included", () => {
+  assert.ok(beats("skiff", "colossus"), "a cost-parity Skiff swarm still beats a Colossus army head-on with splash added");
+});
+
 test("the Aegis's declared counteredBy (Lancer) actually wins at supply parity", () => {
   // Cost parity actually favours the Aegis — its huge hp pool buys more survivability
   // per ore than the Lancer's — but armies are supply-capped, not cost-capped, in the

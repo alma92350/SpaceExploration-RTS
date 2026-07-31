@@ -38,10 +38,12 @@ let fuseWarnings = [];
 
 // `bonus` (engine/combat.js's attackHit event field) marks a counter-triangle hit — a Skiff
 // catching a Lancer, etc. — so renderEffects.js can telegraph it hotter and thicker instead of
-// drawing it identically to a futile plink. Defaults falsy, so every pre-existing call keeps its
-// plain look.
-export function addTracer(fromX, fromY, toX, toY, unitType, bonus = false) {
-  tracers.push({ fromX, fromY, toX, toY, unitType, bonus, born: performance.now() });
+// drawing it identically to a futile plink. `splashRadius` (same event, def.splash's radius —
+// Colossus first) lets renderEffects.js draw a fading impact ring at the true blast radius, on
+// top of the plain impact spark every tracer already gets. Both default falsy, so every
+// pre-existing call (and every event that never sets them) keeps its plain look.
+export function addTracer(fromX, fromY, toX, toY, unitType, bonus = false, splashRadius = 0) {
+  tracers.push({ fromX, fromY, toX, toY, unitType, bonus, splashRadius, born: performance.now() });
 }
 
 export function addDeathFlash(x, y) {

@@ -36,6 +36,21 @@ function recordingCtx() {
   return { ctx, maxLineWidth: () => Math.max(0, ...widths), colors: () => colors.slice() };
 }
 
+// Like fakeCtx, but records every ctx.arc(x, y, radius, ...) call's radius — lets a test assert
+// the exact radius an impact ring was drawn at (the Colossus splash ring, below), not just "some
+// extra drawing happened".
+function arcRecordingCtx() {
+  const radii = [];
+  const ctx = new Proxy({ lineWidth: 1, strokeStyle: "", fillStyle: "" }, {
+    get: (t, p) => {
+      if (p === "arc") return (x, y, r) => radii.push(r);
+      return p in t ? t[p] : (p === "measureText" ? () => ({ width: 10 }) : () => {});
+    },
+    set: (t, p, v) => { t[p] = v; return true; },
+  });
+  return { ctx, radii: () => radii.slice() };
+}
+
 // Regression test for a live, reported bug: renderBuildings.js's POWER_TIER_COLOR and
 // drawReactorBands were never exported (a leftover from the render.js god-file split —
 // see git history around "Split render.js god file into cohesive render modules"), but
@@ -191,6 +206,58 @@ test("drawEffects does not throw once a tracer has aged past its muzzle-flash wi
     await new Promise(r => setTimeout(r, 45));   // > 0.3 * TRACER_LIFETIME_MS (120ms) — flash is long gone, tracer still fading
     assert.doesNotThrow(() => drawEffects(fakeCtx()), `drawEffects threw for an aged ${type} tracer`);
   }
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Colossus splash impact ring (docs/improvement-proposals.md "Colossus splash: def-driven area
+   damage as the T3 anti-mass verb"): engine/combat.js's attackHit event carries a new, purely
+   additive `splashRadius` field for a splash hit — plumbed through effects.js's addTracer (same
+   pattern the counter-triangle `bonus` flag already established) so renderEffects.js can draw an
+   impact ring at the true blast radius, distinct from the plain single-target impact spark every
+   tracer already draws.
+   --------------------------------------------------------------------------------------------- */
+
+test("a splash hit draws an impact ring at the exact splash radius, on top of the plain impact spark", () => {
+  resetEffects();
+  const rec = arcRecordingCtx();
+  addTracer(0, 0, 100, 0, "colossus", false, 26);
+
+  drawEffects(rec.ctx);
+
+  assert.ok(rec.radii().includes(26), `expected a drawn arc at radius 26 (the splash ring), got radii ${JSON.stringify(rec.radii())}`);
+});
+
+test("a plain tracer with no splashRadius argument draws no impact ring at all", () => {
+  resetEffects();
+  const rec = arcRecordingCtx();
+  addTracer(0, 0, 100, 0, "colossus");   // splashRadius omitted — must default to "no ring"
+
+  drawEffects(rec.ctx);
+
+  // Every OTHER arc this tracer draws (the impact spark, the muzzle flash's polygon uses
+  // lineTo/moveTo not arc) is small and fixed — nothing here should draw at a splash-sized radius.
+  assert.ok(!rec.radii().some(r => r >= 20), `expected no large-radius ring, got radii ${JSON.stringify(rec.radii())}`);
+});
+
+test("splashRadius:0 (an explicit falsy value) also draws no impact ring, same as omitting it", () => {
+  resetEffects();
+  const rec = arcRecordingCtx();
+  addTracer(0, 0, 100, 0, "colossus", false, 0);
+
+  drawEffects(rec.ctx);
+
+  assert.ok(!rec.radii().some(r => r >= 20), `expected no large-radius ring, got radii ${JSON.stringify(rec.radii())}`);
+});
+
+test("drawEffects does not throw for a splash-carrying tracer, freshly fired or aged past the muzzle-flash window", async () => {
+  resetEffects();
+  addTracer(100, 100, 260, 180, "colossus", true, 26);
+  assert.doesNotThrow(() => drawEffects(fakeCtx()), "drawEffects threw for a fresh splash tracer");
+
+  resetEffects();
+  addTracer(100, 100, 260, 180, "colossus", false, 26);
+  await new Promise(r => setTimeout(r, 45));
+  assert.doesNotThrow(() => drawEffects(fakeCtx()), "drawEffects threw for an aged splash tracer");
 });
 
 /* ---------------------------------------------------------------------------------------------

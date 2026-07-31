@@ -948,3 +948,205 @@ test("the Aegis's aura doesn't shield itself — the source's explicit exclusion
   assert.equal(startHp - aegis.hp, UNITS.skiff.attack,
     "full damage landed — an Aegis standing inside its own aura radius doesn't reduce its own damage taken");
 });
+
+// ---- Colossus splash (docs/improvement-proposals.md "Colossus splash: def-driven area damage
+// as the T3 anti-mass verb"): a generic def.splash = {radius, frac} mechanic, shipped on the
+// Colossus first. After the primary hit lands, enemy units near the impact point (the primary
+// target's own position) take dmg*frac*(1 - d/radius) falloff damage — punishing exactly the
+// clumped, same-owner-packed formations separation.js produces. Enemy-only (never the attacker's
+// own side) and units-only (never a building, however close one stands to the impact).
+
+test("a splash attack damages a nearby enemy unit around the impact point, on top of the primary target's own hit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);   // the primary hit, within weapon range
+  const nearby = makeUnit("skiff", "ai", target.x + 10, target.y);              // 10 away from the impact — inside splash radius
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(nearby.id, nearby);
+  // Pin the primary target explicitly: with two enemies now in aggro range, the ordinary
+  // dispersed auto-acquire (spreadEnemy) could otherwise fan onto either one — irrelevant to
+  // what this test checks (splash's own falloff math), so an explicit order removes the ambiguity.
+  colossus.order = { type: "attack", targetId: target.id };
+  const targetStartHp = target.hp, nearbyStartHp = nearby.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  const { radius, frac } = UNITS.colossus.splash;
+  const expectedSplash = UNITS.colossus.attack * frac * (1 - 10 / radius);
+  assert.ok(expectedSplash > 0, "sanity: 10 units is inside the tuned splash radius");
+  assert.ok(Math.abs((nearbyStartHp - nearby.hp) - expectedSplash) < 1e-9,
+    `expected splash damage ${expectedSplash}, got ${nearbyStartHp - nearby.hp}`);
+  assert.equal(targetStartHp - target.hp, UNITS.colossus.attack,
+    "the primary target itself takes only its plain direct hit — splash punishes units caught nearby, not a double-dip on the target");
+});
+
+test("splash damage falls off linearly with distance from the impact point", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const near = makeUnit("skiff", "ai", target.x + 5, target.y);
+  const far = makeUnit("skiff", "ai", target.x - 20, target.y);   // farther, but still inside the splash radius
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(near.id, near);
+  state.units.set(far.id, far);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const nearStartHp = near.hp, farStartHp = far.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  const nearDamage = nearStartHp - near.hp, farDamage = farStartHp - far.hp;
+  assert.ok(farDamage > 0, "the farther bystander still takes some splash damage");
+  assert.ok(nearDamage > farDamage, "the closer bystander takes strictly more splash damage than the farther one");
+});
+
+test("splash never reaches an enemy unit outside the splash radius", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const { radius } = UNITS.colossus.splash;
+  const outside = makeUnit("skiff", "ai", target.x + radius + 5, target.y);   // just past the splash radius
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(outside.id, outside);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const outsideHp = outside.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(outside.hp, outsideHp, "an enemy outside the splash radius takes no splash damage at all");
+});
+
+test("splash never damages the attacker's own side, even standing right next to the impact point", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const friendly = makeUnit("skiff", "player", target.x + 5, target.y);   // player-owned, well inside the blast
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(friendly.id, friendly);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const friendlyHp = friendly.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(friendly.hp, friendlyHp, "a friendly unit inside the blast radius takes zero splash damage — no friendly fire");
+});
+
+test("splash never damages a building, even one standing well within the splash radius of a unit impact", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  // A building parked essentially on top of the impact point — colliders.js's canPlaceBuilding
+  // only ever gates a BUILDING's placement against other buildings/nodes, never against units
+  // ("Deliberately ignores units: they move"), so a unit standing this close to an enemy
+  // building is a real in-game configuration, not a contrived one.
+  const barracks = makeBuilding("barracks", "ai", target.x + 2, target.y);
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.buildings.set(barracks.id, barracks);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const barracksHp = barracks.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(barracks.hp, barracksHp, "a building must never take splash damage, however close it stands to the impact");
+});
+
+test("a splash death still leaves battle wreckage and pushes its own entityKilled event, same as an ordinary kill", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const nearby = makeUnit("skiff", "ai", target.x + 5, target.y);
+  nearby.hp = 1;   // its share of splash is easily enough to kill it outright
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(nearby.id, nearby);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(state.units.has(nearby.id), false, "the splash-killed bystander is removed from state");
+  assert.ok(state.events.some(e => e.type === "entityKilled" && e.x === nearby.x && e.y === nearby.y),
+    "the splash kill pushes its own entityKilled event");
+  assert.equal(state.wrecks.length, 1, "the splash kill deposits battle wreckage through the same depositWreckage path");
+});
+
+test("multiple nearby enemies each take independently-computed splash damage from one primary hit — order-independent", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const doomed = makeUnit("skiff", "ai", target.x + 5, target.y);    // close — dies to its share of splash
+  const far = makeUnit("skiff", "ai", target.x - 20, target.y);      // farther — survives with a smaller hit
+  doomed.hp = 5;
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(doomed.id, doomed);
+  state.units.set(far.id, far);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const farStartHp = far.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(state.units.has(doomed.id), false, "the closer, low-hp bystander dies to splash");
+  const { radius, frac } = UNITS.colossus.splash;
+  const expectedFarDamage = UNITS.colossus.attack * frac * (1 - 20 / radius);
+  assert.ok(Math.abs((farStartHp - far.hp) - expectedFarDamage) < 1e-9,
+    "the surviving bystander's own damage is unaffected by the other bystander dying in the same splash pass");
+});
+
+test("splash finds nearby enemies through the populated broad-phase grid too, not just the no-grid fallback", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 1000, 500);         // grid column ~10
+  const target = makeUnit("skiff", "ai", 1000 + UNITS.colossus.range - 1, 500);
+  const nearby = makeUnit("skiff", "ai", target.x + 10, target.y);
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(nearby.id, nearby);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  state.unitGrid = buildUnitGrid(state);   // the real per-tick broad-phase index (engine/grid.js), same as sim.js builds every tick
+  const nearbyHp = nearby.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.ok(nearby.hp < nearbyHp, "splash should find and damage the nearby enemy through the grid path too");
+});
+
+test("a non-splash attacker never applies any splash damage — def.splash is opt-in per unit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  const bystander = makeUnit("skiff", "ai", b.x + 5, b.y);   // right next to the plain Skiff's own target
+  state.units.set(bystander.id, bystander);
+  a.order = { type: "attack", targetId: b.id };   // pin the target — two enemies now in aggro, and this test cares
+                                                    // only about splash, not which one the plain dispersed pick lands on
+  const bystanderHp = bystander.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.equal(bystander.hp, bystanderHp, "a Skiff (no def.splash) never applies splash damage to anything nearby");
+});
+
+test("performAttack stamps splashRadius on the attackHit event for a splash attacker, and leaves it falsy for a plain one", () => {
+  const splashState = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  splashState.units.set(colossus.id, colossus);
+  splashState.units.set(target.id, target);
+
+  updateCombat(splashState, colossus, UNITS.colossus.cooldown);
+
+  const splashHit = splashState.events.find(e => e.type === "attackHit");
+  assert.ok(splashHit, "expected an attackHit event");
+  assert.equal(splashHit.splashRadius, UNITS.colossus.splash.radius);
+
+  const plainState = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(plainState);
+
+  updateCombat(plainState, a, UNITS.skiff.cooldown);
+
+  const plainHit = plainState.events.find(e => e.type === "attackHit");
+  assert.ok(plainHit, "expected an attackHit event");
+  assert.ok(!plainHit.splashRadius, "a non-splash attacker's attackHit event carries no splashRadius");
+});
+

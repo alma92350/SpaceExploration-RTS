@@ -855,6 +855,17 @@ export const UNITS = {
     // be screened or it's sniped/rushed down. A flat structure bonus makes it a
     // base-cracker. Relics (ancient tech) are its ammunition.
     bonusVsBuildings: 25,
+    // The T3 anti-mass verb (docs/improvement-proposals.md "Colossus splash"): the primary hit
+    // also rattles enemy units caught within `radius` of the impact point, for `frac` of this
+    // hit's damage, falling off linearly to zero at the edge (engine/combat.js performAttack).
+    // This is the mechanical answer to "spread out vs artillery" — a packed formation (exactly
+    // what separation.js's own same-owner packing produces) eats real splash; a spread one barely
+    // does. Enemy-only and units-only by construction (performAttack only ever walks
+    // state.unitGrid/state.units, never state.buildings) — never the Colossus's own side, and
+    // never a building, however close one stands to the impact. Tuned against
+    // test/balance.test.js the same way SALVAGE_FRAC once was: the Skiff counter (below) must
+    // still win head-on, cost-parity, splash included.
+    splash: { radius: 26, frac: 0.5 },
     // "must be screened or it's sniped/rushed down" above, certified by
     // test/balance.test.js's supply-parity duel: fragile and slow-firing, it
     // folds to a mass it can't kill fast enough.
