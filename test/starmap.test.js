@@ -89,11 +89,13 @@ await import("../boot.js");
 globalThis.window = { addEventListener() {}, removeEventListener() {} };
 
 const { game } = await import("../session.js");
-const { createGalaxy, galaxyStatus } = await import("../engine/galaxy.js");
+const { createGalaxy, galaxyStatus, addPlanet, createLane, activeState } = await import("../engine/galaxy.js");
 const { PLANETS, COM } = await import("../data.js");
 const { PLANET_MODIFIERS } = await import("../engine/map.js");
 const { renderStarmap } = await import("../starmap.js");
 const { starmapEl } = await import("../dom.js");
+const { makeBuilding, makeUnit } = await import("../engine/state.js");
+const { getColonyPolicy } = await import("../engine/colonyPolicy.js");
 
 // The world-node button for `id`, in the exact order renderStarmap built the field (mirrors
 // galaxyStatus's own world order, so this never depends on matching by rendered text).
@@ -164,4 +166,289 @@ test("the dossier line shows even for a still-unexplored world — charted geogr
 test("renderStarmap is a no-op with no galaxy — never throws", () => {
   game.galaxy = null;
   assert.doesNotThrow(() => renderStarmap());
+});
+
+// A `.starmap-side` section, found by its market-head text (the section's first child) — the
+// same reusable idiom renderColonyOrders/renderLaneOverlay both use.
+function sideSection(label) {
+  return starmapEl.children.find(c => c._classes?.has("starmap-side") && c.children[0]?.textContent === label);
+}
+
+test("a held colony gets a standing-orders row on the starmap, toggleable without jumping back", () => {
+  const g = createGalaxy({ seed: 7 });
+  const destId = g.worlds.find(w => w !== g.activeId);
+  const colony = addPlanet(g, destId, { unsettled: true });
+  colony.background = true;
+  const cc = makeBuilding("command", "player", colony.map.bases.player.x, colony.map.bases.player.y);
+  colony.buildings.set(cc.id, cc);
+  g.discovered.add(destId);
+  game.galaxy = g;
+
+  renderStarmap();
+
+  const section = sideSection("Colony standing orders");
+  assert.ok(section, "a standing-orders section is rendered for the held colony");
+  const row = section.children.find(c => c._classes?.has("market-row"));
+  assert.ok(row, "one row for the colony");
+  const toggle = row.children.find(c => c.tagName === "button" && c.textContent.startsWith("Auto-sell"));
+  assert.ok(toggle, "an auto-sell toggle is present");
+  assert.equal(toggle.textContent, "Auto-sell: OFF", "off by default");
+
+  toggle.click();
+  assert.equal(getColonyPolicy(g, destId).autoSell.enabled, true, "clicking the starmap toggle actually flips the policy");
+
+  game.galaxy = null;
+});
+
+test("an active Freight Lane gets a summary line on the starmap", () => {
+  const g = createGalaxy({ seed: 8 });
+  const destId = g.worlds.find(w => w !== g.activeId);
+  addPlanet(g, destId, { unsettled: true });
+  createLane(g, g.activeId, destId, ["metals"]);
+  game.galaxy = g;
+
+  renderStarmap();
+
+  const section = sideSection("Freight Lanes");
+  assert.ok(section, "a Freight Lanes section is rendered");
+  const row = section.children.find(c => c._classes?.has("market-row"));
+  assert.ok(row, "one row for the lane");
+  assert.ok(row.children[0].textContent.includes("▸"), "shows the source ▸ destination route");
+
+  game.galaxy = null;
+});
+
+test("no colonies and no lanes ⇒ neither starmap-side section renders", () => {
+  const g = createGalaxy({ seed: 9 });
+  game.galaxy = g;
+  renderStarmap();
+  assert.equal(starmapEl.children.filter(c => c._classes?.has("starmap-side")).length, 0);
+  game.galaxy = null;
+});
+
+/* ============================================================
+   P6 "Starmap live colony ledger and alert badges" (docs/improvement-proposals.md lines
+   573-581): renderStarmap reads game.colonyAlerts[planetId] = {type, at} (written by boot.js's
+   notifyColony — test/boot.test.js covers that WRITING side, plus focusActivePlanet's clear-on-
+   revisit) to badge a world's node — CSS class + sub-label — and, for a world actually held right
+   now, a garrison line (CC count + combat-unit supply, read off g.planets.get(id) directly). These
+   tests set game.colonyAlerts directly: renderStarmap only cares what's THERE, not how it arrived.
+   ============================================================ */
+
+// A background colony on a fresh world: one finished player Command Center, discovered (so
+// galaxyStatus reads it "colony", not "unexplored") — the shared shape every alert-badge test
+// below needs, mirroring "a held colony gets a standing-orders row" above.
+function heldColony(g) {
+  const destId = g.worlds.find(w => w !== g.activeId);
+  const colony = addPlanet(g, destId, { unsettled: true });
+  colony.background = true;
+  const cc = makeBuilding("command", "player", colony.map.bases.player.x, colony.map.bases.player.y);
+  colony.buildings.set(cc.id, cc);
+  g.discovered.add(destId);
+  return { destId, colony };
+}
+
+test("a fresh 'attacked' alert badges the world under-attack — CSS class and sub-label", () => {
+  const g = createGalaxy({ seed: 21 });
+  const { destId } = heldColony(g);
+  game.galaxy = g;
+  game.colonyAlerts = { [destId]: { type: "attacked", at: performance.now() } };
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(node.className.includes("alert-attack"), `expected an alert-attack class, got "${node.className}"`);
+  const sub = node.querySelector(".sm-sub");
+  assert.ok(sub.textContent.startsWith("⚔ under attack"), `sub-label should lead with the badge, got "${sub.textContent}"`);
+
+  game.galaxy = null;
+  game.colonyAlerts = {};
+});
+
+test("a fresh 'hostile' alert ALSO badges the world under-attack, within the same window", () => {
+  const g = createGalaxy({ seed: 22 });
+  const { destId } = heldColony(g);
+  game.galaxy = g;
+  game.colonyAlerts = { [destId]: { type: "hostile", at: performance.now() } };
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(node.className.includes("alert-attack"), "a hostile declaration reads as the same live-trouble badge as an attack");
+
+  game.galaxy = null;
+  game.colonyAlerts = {};
+});
+
+test("the under-attack badge fades once the alert is older than ~30s", () => {
+  const g = createGalaxy({ seed: 23 });
+  const { destId } = heldColony(g);
+  game.galaxy = g;
+  game.colonyAlerts = { [destId]: { type: "attacked", at: performance.now() - 31000 } };   // 31s old
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(!node.className.includes("alert-attack"), "a 31s-old attack alert must no longer badge the world");
+  const sub = node.querySelector(".sm-sub");
+  assert.ok(!sub.textContent.includes("under attack"), "the sub-label falls back to the plain colony line");
+  assert.ok(sub.textContent.startsWith("your colony"), `expected the plain colony sub-label, got "${sub.textContent}"`);
+
+  game.galaxy = null;
+  game.colonyAlerts = {};
+});
+
+test("a just-under-30s-old attack alert still badges the world (the window is inclusive, not a hair-trigger)", () => {
+  const g = createGalaxy({ seed: 24 });
+  const { destId } = heldColony(g);
+  game.galaxy = g;
+  game.colonyAlerts = { [destId]: { type: "attacked", at: performance.now() - 29000 } };   // 29s old
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(node.className.includes("alert-attack"), "a 29s-old alert is still within the ~30s window");
+
+  game.galaxy = null;
+  game.colonyAlerts = {};
+});
+
+test("a 'lost' alert badges the world as fallen, with the exact click-to-retake sub-label", () => {
+  const g = createGalaxy({ seed: 25 });
+  const destId = g.worlds.find(w => w !== g.activeId);
+  addPlanet(g, destId, { unsettled: true });   // it fell — no player building left standing
+  g.discovered.add(destId);
+  game.galaxy = g;
+  game.colonyAlerts = { [destId]: { type: "lost", at: performance.now() } };
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(node.className.includes("alert-fallen"), `expected an alert-fallen class, got "${node.className}"`);
+  const sub = node.querySelector(".sm-sub");
+  assert.equal(sub.textContent, "☠ fallen — click to retake");
+
+  game.galaxy = null;
+  game.colonyAlerts = {};
+});
+
+test("a 'lost' alert's fallen badge never expires on its own — it persists until explicitly cleared", () => {
+  const g = createGalaxy({ seed: 26 });
+  const destId = g.worlds.find(w => w !== g.activeId);
+  addPlanet(g, destId, { unsettled: true });
+  g.discovered.add(destId);
+  game.galaxy = g;
+  game.colonyAlerts = { [destId]: { type: "lost", at: performance.now() - 10 * 60 * 1000 } };   // 10 minutes old
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(node.className.includes("alert-fallen"), "unlike the attack badge, a fallen badge has no time window");
+
+  game.galaxy = null;
+  game.colonyAlerts = {};
+});
+
+test("no recorded alert ⇒ no badge class, plain sub-label", () => {
+  const g = createGalaxy({ seed: 27 });
+  const { destId } = heldColony(g);
+  game.galaxy = g;
+  game.colonyAlerts = {};   // nothing was ever recorded for this world
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(!/\balert-(attack|fallen)\b/.test(node.className), `expected no alert badge class, got "${node.className}"`);
+  const sub = node.querySelector(".sm-sub");
+  assert.ok(sub.textContent.startsWith("your colony"), `expected the plain colony sub-label, got "${sub.textContent}"`);
+
+  game.galaxy = null;
+});
+
+test("garrison line: player CC count and combat-unit supply on a held world, read from g.planets.get(id)", () => {
+  const g = createGalaxy({ seed: 28 });
+  const { destId, colony } = heldColony(g);   // already carries one finished player CC
+  const cc2 = makeBuilding("command", "player", colony.map.bases.player.x + 60, colony.map.bases.player.y);
+  const ccBuilding = makeBuilding("command", "player", colony.map.bases.player.x + 120, colony.map.bases.player.y, { constructing: true });
+  const aiCc = makeBuilding("command", "ai", colony.map.bases.ai.x, colony.map.bases.ai.y);
+  colony.buildings.set(cc2.id, cc2);
+  colony.buildings.set(ccBuilding.id, ccBuilding);   // still under construction — must not count
+  colony.buildings.set(aiCc.id, aiCc);               // the neighbour's CC — must not count
+  const skiff = makeUnit("skiff", "player", cc2.x, cc2.y);       // role combat, supplyCost 1
+  const bastion = makeUnit("bastion", "player", cc2.x, cc2.y);   // role combat, supplyCost 2
+  const worker = makeUnit("worker", "player", cc2.x, cc2.y);     // role worker — must not count toward supply
+  const aiSkiff = makeUnit("skiff", "ai", cc2.x, cc2.y);         // wrong owner — must not count
+  colony.units.set(skiff.id, skiff);
+  colony.units.set(bastion.id, bastion);
+  colony.units.set(worker.id, worker);
+  colony.units.set(aiSkiff.id, aiSkiff);
+  game.galaxy = g;
+  game.colonyAlerts = {};
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  const garrison = node.querySelector(".sm-garrison");
+  assert.ok(garrison, "a held world shows a garrison line");
+  assert.equal(garrison.textContent, "🛡 2 CC · 3 supply",
+    "2 finished player CCs (the constructing one and the AI's excluded) · 1+2 supply from the skiff+bastion (the worker and the AI's skiff excluded)");
+
+  game.galaxy = null;
+});
+
+test("the active seat also shows its own garrison line", () => {
+  const g = createGalaxy({ seed: 29 });
+  // An Odyssey world starts with an UNDEPLOYED colony ship, not a built base (engine/state.js
+  // seedPlayer: state.endless skips straight past the skirmish's finished-CC seeding) — so the
+  // active seat needs its own Command Center built by hand here, same as heldColony() does for a
+  // background world above.
+  const active = activeState(g);
+  const cc = makeBuilding("command", "player", active.map.bases.player.x, active.map.bases.player.y);
+  active.buildings.set(cc.id, cc);
+  const skiff = makeUnit("skiff", "player", active.map.bases.player.x, active.map.bases.player.y);
+  active.units.set(skiff.id, skiff);
+  game.galaxy = g;
+  game.colonyAlerts = {};
+
+  renderStarmap();
+
+  const node = worldNode(g, g.activeId);
+  assert.ok(node.className.includes("seat"), "sanity: this is the active seat");
+  const garrison = node.querySelector(".sm-garrison");
+  assert.ok(garrison, "the active seat shows a garrison line too");
+  assert.equal(garrison.textContent, "🛡 1 CC · 1 supply");
+
+  game.galaxy = null;
+});
+
+test("no garrison line for a contested world you no longer hold", () => {
+  const g = createGalaxy({ seed: 30 });
+  const destId = g.worlds.find(w => w !== g.activeId);
+  addPlanet(g, destId, { unsettled: true });   // no player buildings ⇒ status "contested", not "colony"
+  g.discovered.add(destId);
+  game.galaxy = g;
+  game.colonyAlerts = {};
+
+  renderStarmap();
+
+  const node = worldNode(g, destId);
+  assert.ok(node.className.includes("contested"), "sanity: this world reads contested");
+  assert.equal(node.querySelector(".sm-garrison"), null, "no garrison line for a world you don't currently hold");
+
+  game.galaxy = null;
+});
+
+test("no garrison line for a still-unexplored world", () => {
+  const g = createGalaxy({ seed: 31 });
+  game.galaxy = g;
+  game.colonyAlerts = {};
+
+  renderStarmap();
+
+  const unexplored = g.worlds.find(w => w !== g.activeId);
+  const node = worldNode(g, unexplored);
+  assert.ok(node.className.includes("unexplored"), "sanity: this world really is unexplored");
+  assert.equal(node.querySelector(".sm-garrison"), null, "no garrison line for a world with no foothold");
+
+  game.galaxy = null;
 });

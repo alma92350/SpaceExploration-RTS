@@ -196,6 +196,36 @@ specifically as the one documented, deliberate exception). No regressions surfac
   again. A unit under continuous fire still never benefits from either tier, so nothing about
   existing combat balance changed.
 
+### Added
+
+- **Freight Lanes**: assign parked freighters at a Spaceport to standing shipping routes between
+  held worlds, and they move goods on a schedule from then on — no more personally flying every
+  load between colonies. A lane-assigned ship is physically present and raidable, not free
+  teleportation; it can't jump-board with the rest of the fleet while committed to its route.
+- **Colony standing orders**: set a policy on a Command Center before you jump away from it —
+  auto-sell surplus above a floor into that world's own market (priced with real slippage and
+  glut, on top of the existing flat background income, never replacing it), and sustain the
+  colony's own workforce so an unattended world's idle workers keep gathering and its population
+  keeps growing instead of the queue running dry the moment you leave.
+- **Spaceport tiers now discount new-world jump fuel** (up to 30% at Tier 3), not just the supply
+  a jump can carry — upgrading the pad is a genuine choice now, not a niche army-ferry knob.
+- **A trade-industry branch** opens a second, genuinely independent path up the Odyssey tech
+  tree: a Chemical Plant (biomass → chemicals, no ore or Smelter needed at all) and a Fabricator
+  (alloys + chemicals → consumer goods) turn agri-world deposits into a real credits engine for
+  fuel, tribute, and freight — an alternative to climbing the strategic-goods spine, not a
+  detour off it.
+- **The starmap now shows which colonies need attention.** Worlds badge as under attack or
+  fallen based on real, recent events instead of a toast you might have missed, and every world
+  you hold shows a live garrison line (Command Centers and army supply) right on the map.
+
+Four proposals from the Odyssey/Economy/Tech dimensions of `docs/improvement-proposals.md` shipped
+in this batch (per `docs/improvement-roadmap.md`'s Phase 6) — the largest and most
+determinism-sensitive workstream in the roadmap, since Freight Lanes and Colony standing orders
+both run inside the background galaxy simulation the determinism suite replays byte-for-byte.
+Three teams worked concurrently in one shared tree with real, sustained file overlap (all three
+touched starmap.js; two touched hudSelection.js) and every team isolated its own commits with
+`git add -p` rather than a broad add. No regressions surfaced this round.
+
 - **How long a neighbour holds a grudge is now part of its personality.** Souring was already
   flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but
   *cooling off* was identical everywhere, and once you had drawn blood a neighbour stayed

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST, loadFreighter, unloadFreighter } from "../engine/galaxy.js";
+import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST, loadFreighter, unloadFreighter, stepGalaxy } from "../engine/galaxy.js";
 import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT, aiBarter, quoteSell } from "../engine/market.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
@@ -109,6 +109,73 @@ test("finished goods are dearer on a low-industry world than a high-industry one
 test("a produced good at an industry-5 world matches the old flat 1.5× ceiling (continuity)", () => {
   const m = createMarket({ planetId: "vesper", map: { nodes: [] } });   // industry 5 pivot
   assert.equal(m.base.alloys, 120, "alloys base 80 × 1.5 = 120 — continuous with the pre-Phase-4 flat price");
+});
+
+// ---- Promote the legacy consumer-goods recipes into a trade-industry branch (docs/improvement-
+// proposals.md lines 443-451): market.js already prices and gluts the WHOLE catalog (PRODUCED
+// covers every non-Raw commodity, including 'chemicals' and 'goods') — these confirm that claim
+// empirically for the new branch's actual output, rather than just trusting the generic rule.
+
+test("Consumer Goods from the new trade-industry branch sell for real credits at the world's live per-world price, and dumping them gluts it like any other produced good", () => {
+  const g = createGalaxy({ seed: 3 });
+  const s = activeState(g);
+  s.players.player.resources.goods = 100;
+  const price0 = unitPrice(s.market, "goods", "sell");
+  assert.ok(price0 > 0, "Consumer Goods carry a real, live per-world sell price (base 130, industry-scaled — market.js PRODUCED)");
+
+  const before = g.credits;
+  const proceeds = sell(g, s, "goods", 50);
+
+  assert.ok(proceeds > 0, "goods sell for real credits, not a dead-end good");
+  assert.equal(g.credits, before + proceeds, "credits banked the sale");
+  assert.equal(Math.floor(s.players.player.resources.goods), 50, "stock went down by what was sold");
+  assert.ok(unitPrice(s.market, "goods", "sell") < price0, "dumping goods on this world nudges its price down — the same glut treatment every other produced good gets");
+});
+
+test("Chemicals (the new branch's first hop) are tradeable and priced too, not just the finished goods at the end of it", () => {
+  const g = createGalaxy({ seed: 3 });
+  const s = activeState(g);
+  s.players.player.resources.chemicals = 40;
+  const proceeds = sell(g, s, "chemicals", 25);
+  assert.ok(proceeds > 0, "chemicals — the Chemical Plant's own output — already sell for real credits, even before reaching the Fabricator");
+});
+
+test("goods sell dearer on a low-industry agri world like Verdani than on a high-industry one like Forge — the branch's designed niche", () => {
+  // engine/aiArchetypes.js: "Verdani the low-industry agri contrast where finished goods sell dear" —
+  // the whole point of promoting this branch is to give a biomass/spice world an industrial identity
+  // whose payoff is exactly this price gap.
+  const forge = createMarket({ planetId: "forge", map: { nodes: [] } });     // industry 10 — floods its own market
+  const verdani = createMarket({ planetId: "verdani", map: { nodes: [] } }); // industry 3 — can't make them itself
+  assert.ok(verdani.base.goods > forge.base.goods, "a low-industry agri world pays more for the consumer goods it can't make");
+});
+
+test("end-to-end: idle workers run the whole chem→consumer chain, and the resulting goods sell for real credits", () => {
+  const g = createGalaxy({ seed: 3 });
+  const s = activeState(g);
+  for (const u of [...s.units.values()]) if (u.type === "colonyship") deployColonyShip(s, u.id);
+  const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  s.players.player.upgrades.chemistry = true;
+  s.players.player.upgrades.metallurgy = true;
+  s.players.player.upgrades.consumerfab = true;
+  // Plant the whole branch, completed, next to the capital — biomass and alloys ready in the
+  // treasury so this is about the chem->consumer->market loop, not the ore->metals->alloys chain
+  // (that's industry.test.js's own end-to-end coverage).
+  for (const [type, dx] of [["reactor", 40], ["chemplant", 74], ["fabricator", 108]]) {
+    const b = makeBuilding(type, "player", cc.x + dx, cc.y + 40);
+    if (type === "reactor") b.input = { radioactives: 100000 };
+    s.buildings.set(b.id, b);
+  }
+  s.players.player.resources.biomass = 5000;
+  s.players.player.resources.alloys = 5000;
+  for (let i = 0; i < 8; i++) { const w = makeUnit("worker", "player", cc.x + 20, cc.y + 20); s.units.set(w.id, w); }
+
+  for (let i = 0; i < 5000 && (s.players.player.resources.goods || 0) < 5; i++) stepGalaxy(g, 0.1);
+
+  assert.ok((s.players.player.resources.goods || 0) > 0, "workers fed the WHOLE new branch and hauled Consumer Goods back to the treasury");
+  const creditsBefore = g.credits;
+  const proceeds = sell(g, s, "goods", 1);
+  assert.ok(proceeds > 0, "the credits engine actually pays out — goods sell for real money");
+  assert.equal(g.credits, creditsBefore + proceeds, "credits banked the sale");
 });
 
 // ---- exact-value pins on the tuning constants themselves --------------------------------------

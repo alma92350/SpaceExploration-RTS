@@ -552,6 +552,52 @@ test("canGatherType/canLogisticsType: only Worker gathers, only Worker runs haul
   assert.equal(canLogisticsType("skiff"), false);
 });
 
+// ---- Promote the legacy consumer-goods recipes into a trade-industry branch (docs/improvement-
+// proposals.md lines 443-451): data.js RECIPES carries 'chem' (biomass+power -> chemicals) and
+// 'consumer' (alloys+chemicals+power -> goods) as documented legacy. These two odysseyOnly
+// buildings wire them up, following the Smelter/Assembly Plant recipe/dropOff/prodRate idiom
+// exactly — see test/techtree.test.js for the tech-gating/branching semantics.
+
+test("the Chemical Plant follows the Smelter/Assembly Plant idiom: ore-costed, a drop-off, runs data.js's 'chem' recipe, Odyssey-only", () => {
+  const cp = BUILDINGS.chemplant;
+  assert.ok(cp, "chemplant exists in BUILDINGS");
+  assert.equal(cp.recipe, "chem", "runs the legacy 'chem' recipe data.js already carries (biomass+power -> chemicals)");
+  assert.ok(cp.prodRate > 0, "produces at a real rate");
+  assert.equal(cp.dropOff, true, "an industrial building doubles as a resource drop-off, same as every other factory");
+  assert.equal(cp.odysseyOnly, true, "never appears in a skirmish build menu, like the rest of the industry chain");
+  assert.equal(cp.category, "industrial");
+  assert.deepEqual(Object.keys(cp.cost), ["ore"], "ore-costed per the reachability convention — the branch stays reachable on any world");
+  assert.deepEqual(cp.requires, ["chemistry"], "tech-gated only — no Smelter, no metallurgy: a true off-spine root");
+});
+
+test("the Fabricator follows the same idiom: ore-costed, a drop-off, runs data.js's 'consumer' recipe, Odyssey-only", () => {
+  const fab = BUILDINGS.fabricator;
+  assert.ok(fab, "fabricator exists in BUILDINGS");
+  assert.equal(fab.recipe, "consumer", "runs the legacy 'consumer' recipe data.js already carries (alloys+chemicals+power -> goods)");
+  assert.ok(fab.prodRate > 0, "produces at a real rate");
+  assert.equal(fab.dropOff, true);
+  assert.equal(fab.odysseyOnly, true);
+  assert.equal(fab.category, "industrial");
+  assert.deepEqual(Object.keys(fab.cost), ["ore"], "ore-costed per the reachability convention");
+  // The merge point: needs the METALLURGY branch's alloys (Assembly Plant) AND this branch's own
+  // chemicals (Chemical Plant), plus its own tech — the same two-supplying-buildings-plus-tech
+  // shape Machine Works uses for its own alloys+electronics merge.
+  assert.ok(fab.requires.includes("assembler"), "needs the Assembly Plant for alloys");
+  assert.ok(fab.requires.includes("chemplant"), "needs the Chemical Plant for chemicals");
+  assert.ok(fab.requires.includes("consumerfab"), "needs its own unlock tech");
+  assert.equal(fab.requires.length, 3, "exactly these three — nothing from the antimatter/military spine");
+});
+
+test("the two new trade-industry buildings carry a sight radius, a build time, and a footprint radius, like every other building", () => {
+  for (const type of ["chemplant", "fabricator"]) {
+    const def = BUILDINGS[type];
+    assert.ok(def.sight > 0, `${type} needs a sight radius`);
+    assert.ok(def.buildTime > 0, `${type} needs a build time`);
+    assert.ok(def.hp > 0, `${type} needs hp`);
+    assert.equal(def.radius > 0, true, `${type} needs a footprint radius`);
+  }
+});
+
 test("every unit carries a supply cost, and the Command Center and Habitat are the supply grantors", () => {
   for (const def of Object.values(UNITS)) assert.ok(def.supplyCost >= 1, `${def.id} needs a supply cost`);
   assert.equal(BUILDINGS.command.supplyGrants, 10, "the seeded CC houses the starting workers with room to grow");

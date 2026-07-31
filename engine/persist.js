@@ -36,6 +36,7 @@ import { UNITS, BUILDINGS, UPGRADES, storeCapOf, inputCapOf } from "./entities.j
 import { TECHS } from "./techtree.js";   // known research nodes — to sanitise a Datacenter's untrusted researchQueue on load
 import { COM } from "../data.js";
 import { ODYSSEY_WORLDS } from "./galaxy.js";
+import { sanitizePolicy } from "./colonyPolicy.js";
 
 export const SAVE_VERSION = 1;
 export const GALAXY_SAVE_VERSION = 1;
@@ -659,6 +660,13 @@ function galaxyPayload(galaxy) {
     reached: [...(galaxy.reached || [])],                                  // progress milestones already celebrated — so a reload doesn't replay their fireworks
     discovered: [...(galaxy.discovered || [])],                            // living galaxy: worlds the player has REACHED (starmap "explored" + free return-jump)
     claims: [...(galaxy.claims || [])],                                     // faction spread: [worldId, faction] pairs (checkExpansion) — the galactic politics on the starmap
+    // Colony standing orders (engine/colonyPolicy.js): [worldId, {autoSell, workerTarget}] pairs —
+    // additive (a save that predates this feature simply has none, and every colony defaults off).
+    colonyPolicies: [...(galaxy.colonyPolicies || [])],
+    // Freight Lanes (engine/galaxy.js runLanes): standing shipping routes between held worlds —
+    // additive (default []).
+    lanes: (galaxy.lanes || []).map(l => ({ id: l.id, from: l.from, to: l.to, commodities: [...l.commodities], shipIds: [...l.shipIds] })),
+    laneSeq: galaxy.laneSeq ?? 0,
     nextEntityId: peekEntityId(),                 // the ONE global entity counter, saved once
     planets: [...galaxy.planets.values()].map(state => ({
       ...serPlanet(state),
@@ -715,6 +723,15 @@ export function deserializeGalaxy(input) {
     claims: new Map((Array.isArray(save.claims) ? save.claims : [])
       .filter(e => Array.isArray(e) && ODYSSEY_WORLDS.includes(e[0]) && typeof e[1] === "string")),
     expansionNotes: [],   // transient UI queue — re-derived, never persisted
+    // Colony standing orders (engine/colonyPolicy.js). Additive — an old save simply has none, and
+    // every colony reads back as the fully-off default (sanitizePolicy(null)) via getColonyPolicy.
+    // Every stored policy is run through the SAME sanitizePolicy a live edit uses, so a hand-edited
+    // or corrupt entry (an unknown commodity, a negative floor, a garbage workerTarget) can't slip
+    // untrusted values into the sim.
+    colonyPolicies: new Map((Array.isArray(save.colonyPolicies) ? save.colonyPolicies : [])
+      .filter(e => Array.isArray(e) && known.has(e[0]))
+      .map(([id, p]) => [id, sanitizePolicy(p)])),
+    laneSeq: num(save.laneSeq, 0),
   };
   let maxId = 0;
   for (const P of save.planets) {
@@ -741,6 +758,28 @@ export function deserializeGalaxy(input) {
   if (!galaxy.planets.has(galaxy.activeId)) throw new Error("galaxy save has no active planet");
   const active = galaxy.planets.get(galaxy.activeId);
   active.background = false;                                // the seat is never a background world
+
+  // Freight Lanes (engine/galaxy.js runLanes). Reconstructed AFTER every planet is loaded (a
+  // lane's shipIds reference units on its `from` world) — kept only when the lane's worlds are
+  // both real AND recognised, its commodity filter is real commodities, and each shipId is still
+  // a live player freighter physically on the source world. Anything else (a hand-edited save, a
+  // ship that got dropped by load-time entity coercion) is silently trimmed, exactly like
+  // runLanes' own per-cycle validation does at runtime — this is just that same check run once at
+  // load instead of waiting for the next scheduled lane tick.
+  galaxy.lanes = [];
+  for (const rl of (Array.isArray(save.lanes) ? save.lanes : [])) {
+    if (!rl || typeof rl !== "object" || !known.has(rl.from) || !known.has(rl.to)) continue;
+    const from = galaxy.planets.get(rl.from);
+    if (!from) continue;
+    const commodities = Array.isArray(rl.commodities) ? rl.commodities.filter(c => COM[c]) : [];
+    const shipIds = Array.isArray(rl.shipIds) ? rl.shipIds.filter(id => {
+      const u = from.units.get(id);
+      return !!u && u.owner === "player" && !!(UNITS[u.type] && UNITS[u.type].cargoHold);
+    }) : [];
+    const lane = { id: typeof rl.id === "string" ? rl.id : "lane" + (++galaxy.laneSeq), from: rl.from, to: rl.to, commodities, shipIds };
+    for (const id of shipIds) from.units.get(id).laneId = lane.id;
+    galaxy.lanes.push(lane);
+  }
   // The galaxy `entitySeq` is the SEPARATE "g"-id counter — ids minted as "g"+entitySeq in
   // engine/galaxy.js for entities that cross worlds (jump riders, relief + colony ships). Unlike the
   // u/b counter (hardened above via maxOwnEntityId), it was restored as num(save.entitySeq,0) with NO

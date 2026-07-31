@@ -31,6 +31,7 @@ import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
 import { DIFFICULTY_OPTIONS } from "./aiDifficulty.js";
 import { STRATEGIES } from "./aiStrategy.js";
+import { runColonyPolicies } from "./colonyPolicy.js";
 import { PLANETS, COM } from "../data.js";
 
 // The worlds an Odyssey can settle: the skirmish nine PLUS the Odyssey-only extras
@@ -100,6 +101,8 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     discovered: new Set([startId]),   // LIVING GALAXY: worlds the player has actually reached (starmap "explored" + free return-jump). Every world SIMULATES from the start, but the player only SEES a world once they've been there.
     claims: new Map(),          // faction spread: worldId → controlling faction (checkExpansion), shown on the starmap
     expansionNotes: [],         // freshly-claimed/expanded worlds awaiting a UI toast (transient, drained by boot.js)
+    lanes: [],                  // Freight Lanes (runLanes below): standing shipping routes between held worlds
+    laneSeq: 0,                 // fresh lane-id counter (createLane)
   };
   addPlanet(galaxy, startId);
   // LIVING GALAXY: every other world already exists and simulates in the background from turn one —
@@ -289,6 +292,10 @@ export function stepGalaxy(galaxy, dt) {
     if (id === galaxy.activeId || !state.background) continue;
     if (t % BG_STEP === worldIndex.get(id) % BG_STEP) tick(state, dtBg);
   }
+  // Freight Lanes: a standing shipping drip, on its own integer-tick schedule (LANE_PERIOD) —
+  // independent of the ~1/sec scan below (lanes move real cargo, so they're worth their own,
+  // coarser cadence rather than piggybacking on a scan meant for cheap galaxy-wide bookkeeping).
+  if (t % LANE_PERIOD === 0) runLanes(galaxy);
   // These galaxy-wide scans (conquest progress, milestones, no-foothold relief) all change on a
   // minutes timescale, so running them every frame (20 Hz) is wasted work that grows with the
   // colony count. Throttle to ~1/sec on the same deterministic integer schedule the BG round-
@@ -300,6 +307,7 @@ export function stepGalaxy(galaxy, dt) {
     checkExpansion(galaxy);       // faction spread: developed AI worlds claim + colonise across the starmap
     checkGalaxyProgress(galaxy);  // milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
     checkGalaxyRescue(galaxy);    // NEVER auto-defeat: a total wipeout sends a relief colony ship so life goes on
+    runColonyPolicies(galaxy);    // colony standing orders (engine/colonyPolicy.js): auto-sell + sustain workers, background worlds only
   }
 }
 const PROGRESS_CHECK_EVERY = 20;   // galaxy-wide scans run ~once per second (20 Hz sim), not every frame
@@ -622,12 +630,21 @@ export function canJumpTo(galaxy, destId) {
 
 const planetX = id => PLANETS.find(p => p.id === id)?.x ?? 0;
 
+// The Spaceport's tier doesn't just lift more fleet per jump (SPACEPORT_CAPACITY) — a bigger
+// pad also burns new-world fuel more efficiently. Indexed by tier (1..3) like SPACEPORT_CAPACITY;
+// index 0 (no completed pad at all) is the same x1.0 as a fresh Tier-1 pad, so building the FIRST
+// Spaceport is a pure capability unlock and never itself a hidden fuel bump.
+export const FUEL_DISCOUNT_BY_TIER = [1, 1, 0.85, 0.7];
+
 // The fuel a jump to `destId` costs: FREE to a world you already hold (any world you've
 // visited — a colony you're returning to, reinforcing, or re-settling), so bouncing between
 // your own worlds to defend or ferry a colony ship stays friction-free. Reaching a NEW world
 // costs fuel that SCALES WITH DISTANCE across the frontier (data.js planet x, 0..~18): a near
 // hop is close to the base fee, settling a distant world is a real, growing credit sink and a
 // strategic choice — so exploration spend isn't the old flat, quickly-capped ~4,000 lifetime.
+// The origin's best COMPLETED Spaceport tier (playerSpaceports(from), not the jump's actual
+// destination pad — this is about YOUR launch infrastructure) cuts that distance-scaled fuel by
+// FUEL_DISCOUNT_BY_TIER, so upgrading the pad is a real economic choice, not just a capacity knob.
 export function jumpCost(galaxy, destId) {
   // Free to a world you've already REACHED (a colony you're returning to, reinforcing, or
   // re-settling). Since the living galaxy instantiates every world up front, "reached" is the
@@ -636,7 +653,9 @@ export function jumpCost(galaxy, destId) {
   const known = galaxy.discovered ? galaxy.discovered.has(destId) : galaxy.planets.has(destId);
   if (known || playerFoothold(galaxy.planets.get(destId))) return 0;   // reached before, or a base you still hold → free
   const dist = Math.abs(planetX(destId) - planetX(galaxy.activeId));
-  return Math.round(JUMP_COST * (0.8 + dist / 18));   // ~340 next-door … ~720 across the map
+  const tier = playerSpaceports(activeState(galaxy)).reduce((max, sp) => Math.max(max, spaceportTier(sp)), 0);
+  const discount = FUEL_DISCOUNT_BY_TIER[tier] ?? 1;
+  return Math.round(JUMP_COST * discount * (0.8 + dist / 18));   // ~340 next-door … ~720 across the map, before the pad discount
 }
 
 // The player units staged near a Spaceport — the expedition that rides along on a
@@ -645,7 +664,10 @@ export function jumpCost(galaxy, destId) {
 export function stagedRiders(state, spaceport) {
   const out = [];
   for (const u of state.units.values())
-    if (u.owner === "player" && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS) out.push(u);
+    // A ship assigned to a Freight Lane (u.laneId, see runLanes below) is physically parked here
+    // as a STANDING investment, not a free ride — excluded so it never gets swept off-world on the
+    // next jump out from under its lane.
+    if (u.owner === "player" && !u.laneId && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS) out.push(u);
   return out;
 }
 
@@ -690,7 +712,10 @@ export function jumpManifestAll(state) {
   // never be double-counted across two overlapping catchment radii.
   const byNearestPad = new Map(spaceports.map(sp => [sp.id, []]));
   for (const u of state.units.values()) {
-    if (u.owner !== "player") continue;
+    // A Freight Lane's assigned ship is busy standing infrastructure, not a jump rider — see
+    // stagedRiders' identical exclusion above; jumpManifestAll can't just call stagedRiders (it
+    // needs the nearest-pad tagging below), so the check is repeated here.
+    if (u.owner !== "player" || u.laneId) continue;
     let nearest = null, nearestD = Infinity;
     for (const sp of spaceports) {
       const d = Math.hypot(u.x - sp.x, u.y - sp.y);
@@ -726,7 +751,10 @@ export function jumpManifestAll(state) {
 // alloys 80 > spice 34 > metals 22). spice is here so Verdani's agri surplus can be exported and
 // sold dear on an industrial world (it's cheap where it's mined, precious where it isn't); cheaper
 // raws aren't worth a cargo slot and strategic goods stay put.
-const CARGO_GOODS = ["machinery", "electronics", "alloys", "spice", "metals"];
+// Exported so runLanes' commodity-filter fallback (below) and any future caller can share the
+// exact same default ordering cargoManifest already uses — one most-valuable-first list, not two
+// that could drift.
+export const CARGO_GOODS = ["machinery", "electronics", "alloys", "spice", "metals"];
 
 // The freight capacity a set of riders provides — the summed cargoHold of the cargo ships among
 // them (anything without a cargoHold carries nothing). Pure.
@@ -738,17 +766,126 @@ export function freightCapacity(riders) {
 
 // What `capacity` units of hold would haul from `from`, as { good: qty } — most-valuable-first, for
 // the HUD preview and the jump itself (so the shown manifest and the moved goods can never
-// disagree). capacity 0 (no cargo ship staged) → an empty hold.
-export function cargoManifest(from, capacity = 0) {
+// disagree). capacity 0 (no cargo ship staged) → an empty hold. `goods` lets a caller restrict the
+// pick to a subset (runLanes' commodity filter, below) while walking CARGO_GOODS' own
+// most-valuable-first order; omitted, it's the exact same list every existing caller already got.
+export function cargoManifest(from, capacity = 0, goods = CARGO_GOODS) {
   let room = Math.max(0, capacity | 0);
   const src = from.players.player.resources;
   const manifest = {};
-  for (const com of CARGO_GOODS) {
+  for (const com of goods) {
     if (room <= 0) break;
     const move = Math.min(Math.floor(src[com] || 0), room);
     if (move > 0) { manifest[com] = move; room -= move; }
   }
   return manifest;
+}
+
+/* ---------- Freight Lanes: standing shipping between held worlds ---------- */
+
+// How often (in galaxy ticks) an active lane moves cargo — an integer schedule keyed on
+// galaxy.tick, exactly like BG_STEP/PROGRESS_CHECK_EVERY above, so it's deterministic and
+// independent of frame dt. A lane is a slow drip (real sim minutes, at the 20Hz cadence the rest
+// of this scheduler assumes), not an instant transfer — it's standing infrastructure, not a
+// one-off haul.
+export const LANE_PERIOD = 200;   // ~10 sim-seconds at 20Hz
+
+// Create a standing lane from `from` to `to`, filtered to `commodities` (empty/omitted = every
+// CARGO_GOODS commodity, most-valuable-first — see runLanes). Refused for a same-world "lane" or
+// an unrecognised world on either end. Returns the new lane (also pushed onto galaxy.lanes), or
+// null on refusal.
+export function createLane(galaxy, from, to, commodities = []) {
+  if (from === to || !galaxy.planets.has(from) || !galaxy.planets.has(to)) return null;
+  const lanes = galaxy.lanes || (galaxy.lanes = []);
+  const lane = { id: "lane" + (galaxy.laneSeq = (galaxy.laneSeq || 0) + 1), from, to, commodities: [...commodities], shipIds: [] };
+  lanes.push(lane);
+  return lane;
+}
+
+// Disband a lane and free every ship it held busy (clears their laneId flag). Returns whether a
+// lane with that id existed.
+export function deleteLane(galaxy, laneId) {
+  const lanes = galaxy.lanes;
+  if (!lanes) return false;
+  const idx = lanes.findIndex(l => l.id === laneId);
+  if (idx < 0) return false;
+  const lane = lanes[idx];
+  const from = galaxy.planets.get(lane.from);
+  if (from) for (const id of lane.shipIds) { const u = from.units.get(id); if (u) delete u.laneId; }
+  lanes.splice(idx, 1);
+  return true;
+}
+
+// Assign a player freighter parked on the lane's SOURCE world to it — it must be a real cargo
+// ship (UNITS[type].cargoHold) and currently standing within JUMP_LOAD_RADIUS of one of that
+// world's own completed Spaceports (reusing the exact same catchment jumpVessel/stagedRiders use
+// — this is deliberately the same "at the pad" test, not a new one). A ship already on another
+// lane is moved over rather than double-booked. Returns whether the assignment happened.
+export function assignShipToLane(galaxy, laneId, unitId) {
+  const lane = (galaxy.lanes || []).find(l => l.id === laneId);
+  if (!lane) return false;
+  const from = galaxy.planets.get(lane.from);
+  const u = from && from.units.get(unitId);
+  if (!u || u.owner !== "player" || !UNITS[u.type]?.cargoHold) return false;
+  const pads = playerSpaceports(from);
+  if (!pads.length || !pads.some(p => Math.hypot(u.x - p.x, u.y - p.y) <= JUMP_LOAD_RADIUS)) return false;
+  if (u.laneId && u.laneId !== laneId) unassignShipFromLane(galaxy, u.laneId, unitId);
+  if (!lane.shipIds.includes(unitId)) lane.shipIds.push(unitId);
+  u.laneId = laneId;
+  return true;
+}
+
+// Pull a ship off a lane, freeing it for jumps/other orders again. Returns whether it was found.
+export function unassignShipFromLane(galaxy, laneId, unitId) {
+  const lane = (galaxy.lanes || []).find(l => l.id === laneId);
+  if (!lane) return false;
+  const idx = lane.shipIds.indexOf(unitId);
+  if (idx < 0) return false;
+  lane.shipIds.splice(idx, 1);
+  const from = galaxy.planets.get(lane.from);
+  const u = from && from.units.get(unitId);
+  if (u && u.laneId === laneId) delete u.laneId;
+  return true;
+}
+
+// Run every standing lane one delivery cycle: revalidate its assigned ships (still alive, still a
+// player freighter, still parked near one of the source world's own Spaceports — exactly
+// assignShipToLane's own test, run again every cycle so a ship that wandered off, died, or was
+// reassigned quietly drops out rather than silently keep "shipping" from wherever it ended up),
+// then move min(the survivors' combined cargoHold, the filtered stock on hand) straight from the
+// source world's treasury to the destination's — a lane never touches a ship's own .freight hold,
+// it's a capacity NUMBER standing in for "how much this route can carry today", not a physical
+// load/unload cycle. Called from stepGalaxy on the LANE_PERIOD schedule. Deterministic: galaxy.lanes
+// and each lane's shipIds are plain arrays in insertion order, and cargoManifest's own commodity
+// walk is a fixed list — nothing here reads a clock, RNG, or Map/Set iteration order.
+export function runLanes(galaxy) {
+  const lanes = galaxy.lanes;
+  if (!lanes || !lanes.length) return;
+  for (const lane of lanes) {
+    const from = galaxy.planets.get(lane.from);
+    const to = galaxy.planets.get(lane.to);
+    if (!from || !to) continue;
+    const pads = playerSpaceports(from);
+    const kept = [];
+    for (const id of lane.shipIds) {
+      const u = from.units.get(id);
+      const valid = u && u.owner === "player" && UNITS[u.type]?.cargoHold
+        && pads.some(p => Math.hypot(u.x - p.x, u.y - p.y) <= JUMP_LOAD_RADIUS);
+      if (valid) { u.laneId = lane.id; kept.push(id); }
+      else if (u) delete u.laneId;
+    }
+    lane.shipIds = kept;
+    if (!kept.length) continue;
+    const capacity = kept.reduce((sum, id) => sum + (UNITS[from.units.get(id).type]?.cargoHold || 0), 0);
+    if (capacity <= 0) continue;
+    const goods = lane.commodities && lane.commodities.length ? lane.commodities : CARGO_GOODS;
+    const manifest = cargoManifest(from, capacity, goods);
+    const src = from.players.player.resources, dst = to.players.player.resources;
+    for (const com in manifest) {
+      src[com] -= manifest[com];
+      dst[com] = (dst[com] || 0) + manifest[com];
+    }
+  }
 }
 
 // freightUsed/freightRoom (how full a freighter's hold is, and its remaining room) now live in

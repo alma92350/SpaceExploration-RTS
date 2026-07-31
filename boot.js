@@ -254,6 +254,11 @@ function focusActivePlanet() {
   resetFacing();
   resetPanelSignature();
   resetWorldUiBookkeeping();   // don't carry the previous world's Gate%, under-attack hit, or supply window
+  // The player is physically here now — any starmap alert badge for THIS world is stale. Only
+  // this one entry: game.colonyAlerts tracks every held colony at once (unlike the per-world
+  // bookkeeping resetWorldUiBookkeeping just cleared above), so a jump here must never blow away
+  // what's still burning on a world the player hasn't looked at yet.
+  delete game.colonyAlerts[state.planetId];
   showSeedChip(state.seed);
   showFactionChip(state);
   renderHUD();
@@ -294,6 +299,7 @@ export function bootState(newState, { intro }) {
 
   game.galaxy = null;   // cleared by default; startOdyssey re-sets it right after this returns
   game.groups = {};     // fresh game → fresh control groups (entity ids reset per game, so stale groups would mis-select)
+  game.colonyAlerts = {};   // fresh game → fresh starmap alert ledger (a previous game's background-colony alerts are meaningless here)
   game.state = newState;
   const state = newState;   // alias for the synchronous setup below (identical to the original)
   // A scenario shows the scenario bar at the top-center; the body class drops the
@@ -383,26 +389,49 @@ export function bootState(newState, { intro }) {
 
 // Background-colony notifications from galaxy.sweepColonies. "Under attack" is
 // throttled per planet so a sustained raid pings occasionally rather than every
-// tick; "lost" fires once (sweepColonies only reports it once). Both toasts are
-// clickable — clicking jumps straight to that world to defend or retake it (a
-// free hop, since it's a world you've held). If no Spaceport stands on the world
-// you're currently on, the jump can't launch, so the click explains why instead.
+// tick; "lost" fires once per loss (sweepColonies only reports each transition once —
+// retaking and losing a world again re-arms it). Both toasts are clickable — clicking
+// jumps straight to that world to defend or retake it (a free hop, since it's a world
+// you've held). If no Spaceport stands on the world you're currently on, the jump can't
+// launch, so the click explains why instead.
+//
+// Every notification here ALSO lands on game.colonyAlerts[planetId] = {type, at}
+// (session.js) — the starmap's live ledger (starmap.js renderStarmap reads it for a badge
+// + garrison line, P6 "Starmap live colony ledger"), so a multi-colony empire can see
+// "where's the fire" on the map itself instead of from memory of whichever toast scrolled
+// by. Written unconditionally for all three types, independent of the toast throttle below
+// — the badge should track the freshest real event even while the TOAST itself stays quiet
+// mid-siege — and cleared per-world by boot.js's focusActivePlanet the instant the player
+// actually arrives there. The throttle itself is untouched: it still only ever compares
+// against THIS world's own previous ATTACKED alert (never a hostile/lost one that might
+// have just landed on the same record), so a hostile-declaration toast can never suppress
+// the very next under-attack toast.
 const COLONY_NOTE_THROTTLE_MS = 9000;
-const lastColonyNote = {};
-function notifyColony(n) {
+export function notifyColony(n) {
   const name = planetName(n.planetId);
   const jumpThere = () => {
     if (!initiateJump(n.planetId))
       showGalaxyToast(`Build a Spaceport on your current world to jump to ${name}.`, "warn");
   };
-  if (n.type === "lost") { showGalaxyToast(`⚠ Your colony on ${name} has fallen — click to retake ▸`, "bad", jumpThere); return; }
+  const now = performance.now();
+  const prevAlert = game.colonyAlerts[n.planetId];
+  if (n.type === "lost") {
+    game.colonyAlerts[n.planetId] = { type: n.type, at: now };
+    showGalaxyToast(`⚠ Your colony on ${name} has fallen — click to retake ▸`, "bad", jumpThere);
+    return;
+  }
   // A background world's neighbour has just declared war (fires once — diplomacy latches it).
   // Surface it so the first warning isn't the colony already dying; clicking jumps to reinforce.
-  if (n.type === "hostile") { showGalaxyToast(`⚔ The neighbour on ${name} has turned hostile — click to reinforce ▸`, "warn", jumpThere); return; }
-  const now = performance.now();
-  const last = lastColonyNote[n.planetId];
-  if (last !== undefined && now - last < COLONY_NOTE_THROTTLE_MS) return;   // undefined ⇒ first alert always fires
-  lastColonyNote[n.planetId] = now;
+  if (n.type === "hostile") {
+    game.colonyAlerts[n.planetId] = { type: n.type, at: now };
+    showGalaxyToast(`⚔ The neighbour on ${name} has turned hostile — click to reinforce ▸`, "warn", jumpThere);
+    return;
+  }
+  // "attacked": throttle against this world's own previous ATTACKED record specifically — NOT
+  // whatever prevAlert holds if the last write here was actually the hostile/lost branch above.
+  const lastAttackAt = prevAlert && prevAlert.type === "attacked" ? prevAlert.at : undefined;
+  game.colonyAlerts[n.planetId] = { type: n.type, at: now };
+  if (lastAttackAt !== undefined && now - lastAttackAt < COLONY_NOTE_THROTTLE_MS) return;   // undefined ⇒ first alert always fires
   showGalaxyToast(`⚔ Your colony on ${name} is under attack — click to defend ▸`, "warn", jumpThere);
 }
 

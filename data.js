@@ -92,13 +92,18 @@ export const TIERS = ["Raw", "Refined", "Component", "Finished", "Luxury", "Stra
 
    LIVE vs LEGACY: the Odyssey RTS wires factories to a subset of these by id
    (engine/entities.js BUILDINGS[].recipe → smelt/alloy/chipfab/machine/antifab/
-   plasmafab/aifab, plus reactor/gasgen for power). The rest are carried-over
-   turn-based data and are UNREACHABLE in the RTS: their `req` tokens (gasfuel,
-   biotech, weapontech, dronetech) are NOT nodes in engine/techtree.js TECHS, no
-   building runs them, and engine/industry.js never even reads `recipe.req`. Their
-   outputs (chemicals, goods, weapons, drones, medicine, luxury) have no consumer
-   or market listing. Treat anything not on the wired list above as legacy — do NOT
-   assume `req` gates a new factory (it won't) without adding the tech + wiring.
+   plasmafab/aifab/chem/consumer, plus reactor/gasgen for power). 'chem'/'consumer'
+   were promoted off this legacy list into the trade-industry branch (docs/
+   improvement-proposals.md "Promote the legacy consumer-goods recipes into a
+   trade-industry branch") — engine/techtree.js TECHS.chemistry/consumerfab gate
+   engine/entities.js BUILDINGS.chemplant/fabricator, the exact "tech + wiring"
+   promotion path this comment reserves. The rest are carried-over turn-based data
+   and are still UNREACHABLE in the RTS: their `req` tokens (gasfuel, biotech,
+   weapontech, dronetech) are NOT nodes in engine/techtree.js TECHS, no building
+   runs them, and engine/industry.js never even reads `recipe.req`. Their outputs
+   (weapons, drones, medicine, luxury) have no consumer or market listing. Treat
+   anything not on the wired list above as legacy — do NOT assume `req` gates a
+   new factory (it won't) without adding the tech + wiring.
 */
 export const RECIPES = [
   { id: "smelt",   out: "metals",      qty: 2, in: { ore: 2, energy: 2 },                         kind: "refine" },

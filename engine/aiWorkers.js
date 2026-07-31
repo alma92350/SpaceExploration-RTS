@@ -53,15 +53,15 @@ export function assignAiLogistics(state, workers) {
   }
 }
 
-export function assignIdleWorkers(state, workers) {
-  // ODYSSEY: the AI runs REAL logistics like the player — dedicate a bounded share of workers to
-  // feeding/clearing its factories and rig (finite buffers, stalls and all) before the gather pass, so
-  // its industry pays the same labour cost the player's does. Skirmish has no factories → no-op there.
-  if (state.endless) assignAiLogistics(state, workers);
-  // Only nodes the AI actually knows about: charted surface deposits (always)
-  // plus any hidden cache it has scouted. It can't send workers to a cache it
-  // hasn't discovered any more than the player can.
-  const live = state.map.nodes.filter(n => n.amount > 0 && isNodeDiscovered(state.fogAI, n));
+// The node-picking half of idle-gather assignment, generalised over OWNER (the AI's own fog,
+// state.fogAI, vs the player's, state.fog) — see assignIdleWorkers (AI) and assignIdlePlayerGather
+// (a background colony's worker-sustain policy, engine/colonyPolicy.js) below, the two thin
+// owner-specific wrappers. Kept as one function so the node-picking logic (soft-cap spreading,
+// the secondary-commodity trickle cap) can never drift between the two callers.
+function idleGatherAssign(state, fog, workers) {
+  // Only nodes this owner actually knows about: charted surface deposits (always) plus any
+  // hidden cache they've scouted.
+  const live = state.map.nodes.filter(n => n.amount > 0 && isNodeDiscovered(fog, n));
   if (!live.length) return;
   const oreLive = live.filter(n => n.com === "ore");
   const otherLive = live.filter(n => n.com !== "ore" && SPENDABLE.has(n.com));
@@ -81,7 +81,7 @@ export function assignIdleWorkers(state, workers) {
   // onto crystals and starving the ore the army needs.
   const secondaryCap = Math.min(2, Math.floor(workers.length / 3));
 
-  // Projected miner tally per node, so the AI fills a node to the soft cap and
+  // Projected miner tally per node, so the assignment fills a node to the soft cap and
   // then hops to the next-nearest instead of piling everyone on one seam (which
   // saturation would drop to ~0.7 efficiency, slowing the tuned economy). Seeds
   // from workers already on a gather order, and counts each assignment made in
@@ -114,6 +114,23 @@ export function assignIdleWorkers(state, workers) {
       projected.set(best.id, (projected.get(best.id) || 0) + 1);
     }
   });
+}
+
+export function assignIdleWorkers(state, workers) {
+  // ODYSSEY: the AI runs REAL logistics like the player — dedicate a bounded share of workers to
+  // feeding/clearing its factories and rig (finite buffers, stalls and all) before the gather pass, so
+  // its industry pays the same labour cost the player's does. Skirmish has no factories → no-op there.
+  if (state.endless) assignAiLogistics(state, workers);
+  idleGatherAssign(state, state.fogAI, workers);
+}
+
+// The PLAYER-side twin of assignIdleWorkers' gather half — reused by a background colony's
+// worker-sustain standing order (engine/colonyPolicy.js), which re-tasks idle player workers on a
+// world nobody's driving. Reads the PLAYER's own fog (state.fog), not the AI's, and deliberately
+// skips assignAiLogistics (haul/service/repair): sustaining workers just means putting idle hands
+// back on a node, not opting a colony into the AI's own factory-servicing behaviour.
+export function assignIdlePlayerGather(state, workers) {
+  idleGatherAssign(state, state.fog, workers);
 }
 
 // Tier 4 (engine/aiDifficulty.js rusherGraduates, Hard only): how long into an Odyssey world a

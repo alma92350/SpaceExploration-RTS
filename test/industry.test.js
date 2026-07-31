@@ -29,6 +29,8 @@ const assembler = (o = {}) => ({ type: "assembler", ...o });
 const chipfab = (o = {}) => ({ type: "chipfab", ...o });
 const plasmarig = (o = {}) => ({ type: "plasmarig", ...o });
 const substation = (o = {}) => ({ type: "substation", ...o });
+const chemplant = (o = {}) => ({ type: "chemplant", ...o });
+const fabricator = (o = {}) => ({ type: "fabricator", ...o });
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
 test("powerCap sums Reactors' grants; a constructing Reactor grants nothing", () => {
@@ -273,6 +275,30 @@ test("each hop runs on its own larder: the Smelter banks metals, the Assembly Pl
   assert.ok(sm.store.metals > 0, "the Smelter banked metals from its ore larder");
   assert.ok(as.store.alloys > 0, "the Assembly Plant banked alloys from its metals larder");
   assert.ok(as.input.metals < 40, "…consuming the metals workers carried into its larder");
+});
+
+// ---- Promote the legacy consumer-goods recipes into a trade-industry branch (docs/improvement-
+// proposals.md lines 443-451): the SAME chain-production pattern as the Smelter -> Assembly Plant
+// pair above, but for the new trade-industry branch — Chemical Plant (recipe 'chem': biomass+power
+// -> chemicals) into Fabricator (recipe 'consumer': alloys+chemicals+power -> goods).
+
+test("the trade-industry branch chains too: the Chemical Plant banks chemicals, the Fabricator banks goods", () => {
+  const s = stub([reactor(), chemplant({ input: { biomass: 1000 } }), fabricator({ input: { alloys: 1000, chemicals: 1000 } })], {});
+  const cp = [...s.buildings.values()].find(b => b.type === "chemplant");
+  const fab = [...s.buildings.values()].find(b => b.type === "fabricator");
+  for (let i = 0; i < 100; i++) { updateProduction(s, cp, 0.1); updateProduction(s, fab, 0.1); }
+  assert.ok(cp.store.chemicals > 0, "the Chemical Plant banked chemicals from its biomass larder");
+  assert.ok(fab.store.goods > 0, "the Fabricator banked consumer goods from its alloys+chemicals larder");
+  assert.ok(fab.input.alloys < 1000, "…consuming the alloys workers carried into its larder");
+  assert.ok(fab.input.chemicals < 1000, "…and the chemicals too — both real inputs of the merge recipe");
+});
+
+test("the Chemical Plant runs on biomass + power alone — no ore, no metals, no alloys chain needed", () => {
+  const s = stub([reactor(), chemplant({ input: { biomass: 1000 } })], {});
+  const cp = [...s.buildings.values()].find(b => b.type === "chemplant");
+  updateProduction(s, cp, 0.1);
+  assert.ok(cp.store.chemicals > 0, "chemicals banked from biomass + power alone");
+  assert.equal(s.players.player.resources.ore || 0, 0, "no ore was ever touched — the off-spine root branch needs none");
 });
 
 test("production is deterministic — identical setups fill identical buffers", () => {

@@ -63,19 +63,35 @@ function makeClassList() {
   };
 }
 
-const stubEl = () => ({
-  addEventListener() {},
-  removeEventListener() {},
-  classList: makeClassList(),
-  style: {},
-  dataset: {},
-  getContext() { return null; },
-  appendChild() {},
-  // Needed once startGame() is driven for real, below (P1 finding #8) — overlays.js's
-  // showObjectives() calls objectivesEl.querySelector(".obj-close").addEventListener(...). See
-  // that section's own header comment for the full empirical trace of what else this required.
-  querySelector() { return stubEl(); },
-});
+const stubEl = () => {
+  const el = {
+    // Real (if shallow) children/appendChild/remove — beyond the original inert no-op — needed
+    // once the P6 colony-alert tests below drive notifyColony() for real: it unconditionally
+    // calls overlays.js's showGalaxyToast, which reads `stack.children.length` and, at cap, calls
+    // `.remove()` on an evicted child (overlays.js — same real-DOM surface test/overlays.test.js's
+    // own FakeElement already tracks, for the identical reason). Harmless to every earlier test
+    // above, none of which ever inspected a stub's children.
+    children: [],
+    addEventListener() {},
+    removeEventListener() {},
+    classList: makeClassList(),
+    style: {},
+    dataset: {},
+    getContext() { return null; },
+    appendChild(c) { c._parent = el; el.children.push(c); return c; },
+    remove() {
+      if (!el._parent) return;
+      const i = el._parent.children.indexOf(el);
+      if (i !== -1) el._parent.children.splice(i, 1);
+      el._parent = null;
+    },
+    // Needed once startGame() is driven for real, below (P1 finding #8) — overlays.js's
+    // showObjectives() calls objectivesEl.querySelector(".obj-close").addEventListener(...). See
+    // that section's own header comment for the full empirical trace of what else this required.
+    querySelector() { return stubEl(); },
+  };
+  return el;
+};
 
 globalThis.document = {
   getElementById() { return stubEl(); },
@@ -85,11 +101,13 @@ globalThis.document = {
   removeEventListener() {},
 };
 
-const { pauseLoop, resumeLoop, togglePause, startGame, startOdyssey, initiateJump } = await import("../boot.js");
+const { pauseLoop, resumeLoop, togglePause, startGame, startOdyssey, initiateJump, notifyColony } = await import("../boot.js");
 // dom.js is already loaded (boot.js imports it statically) — re-importing it here just returns
 // the SAME cached module, i.e. the SAME `pauseBtn` object boot.js's syncPause() mutates. A
 // second, independent observable of the same `manual` boolean: the topbar button's label.
-const { pauseBtn } = await import("../dom.js");
+// galaxyToastEl is the same reasoning — the P6 colony-alert tests below need it to clean up
+// after notifyColony's real showGalaxyToast calls (see resetToasts near those tests).
+const { pauseBtn, galaxyToastEl } = await import("../dom.js");
 
 // The only observable signal of pause state from outside boot.js — pauseReasons is private and
 // boot.js exports no paused-query, so this (or pauseBtn's label, checked separately below) is it.
@@ -534,5 +552,154 @@ test("initiateJump: a destination with no player Spaceport, origin launch-ready,
 
   resumeLoop("landing-pick");   // this test never drives the picker's own onPick/onCancel, so clear the pause it opened
   game.galaxy = null;
+  resetPause();
+});
+
+/* ============================================================
+   P6 "Starmap live colony ledger and alert badges" (docs/improvement-proposals.md lines
+   573-581): notifyColony used to timestamp a private, module-scope lastColonyNote[planetId]
+   purely to throttle its own "under attack" toast. That record now lives on the session instead
+   — game.colonyAlerts[planetId] = {type, at} — so starmap.js's renderStarmap can badge a world
+   with its live trouble (test/starmap.test.js covers that reading side) instead of the player
+   having to remember whichever toast scrolled by. This section covers the WRITING side: every
+   notification type lands a record, and boot.js's focusActivePlanet clears the one world the
+   player actually revisits (and only that one — an empire's other still-burning colonies must
+   survive an unrelated jump).
+
+   notifyColony is now exported (previously private, reached only via the loop's own update()
+   callback pumping sweepColonies' output every frame) specifically so this can be driven
+   directly with a constructed notification, the same "direct state construction, no mocks" idiom
+   CONTRIBUTING.md's TDD section asks for — a full engine-tick simulation of a real background
+   raid would test sweepColonies' own triggering logic (already covered in test/galaxy.test.js)
+   far more than notifyColony's record-writing itself.
+   ============================================================ */
+
+// notifyColony unconditionally calls overlays.js's showGalaxyToast for all three alert types,
+// which (see this file's own header comment on the 30-second showObjectives timer) arms a REAL
+// 5s/8s setTimeout per toast — a live timer that would keep `node --test` from exiting promptly
+// after this file's last test. Cleared + emptied at the start of every test below, so a failing
+// test can never leak a live timer OR a stale toast (MAX_TOASTS=3 eviction, overlays.js) into a
+// later one's assertions.
+function resetToasts() {
+  for (const c of [...galaxyToastEl.children]) clearTimeout(c._timer);
+  galaxyToastEl.children.length = 0;
+}
+
+test("notifyColony records an 'attacked' alert onto game.colonyAlerts with a fresh timestamp", () => {
+  resetToasts();
+  game.colonyAlerts = {};
+
+  const before = performance.now();
+  notifyColony({ type: "attacked", planetId: "ferros" });
+  const after = performance.now();
+
+  const alert = game.colonyAlerts.ferros;
+  assert.ok(alert, "a notification for ferros must land a record under its own planet id");
+  assert.equal(alert.type, "attacked");
+  assert.ok(alert.at >= before && alert.at <= after, "the timestamp is a fresh performance.now() taken during this call, not stale/frozen");
+
+  game.colonyAlerts = {};
+  resetToasts();
+});
+
+test("notifyColony records a 'hostile' alert onto game.colonyAlerts", () => {
+  resetToasts();
+  game.colonyAlerts = {};
+
+  notifyColony({ type: "hostile", planetId: "korrath" });
+
+  assert.equal(game.colonyAlerts.korrath?.type, "hostile");
+  assert.equal(typeof game.colonyAlerts.korrath.at, "number");
+
+  game.colonyAlerts = {};
+  resetToasts();
+});
+
+test("notifyColony records a 'lost' alert onto game.colonyAlerts", () => {
+  resetToasts();
+  game.colonyAlerts = {};
+
+  notifyColony({ type: "lost", planetId: "vesper" });
+
+  assert.equal(game.colonyAlerts.vesper?.type, "lost");
+  assert.equal(typeof game.colonyAlerts.vesper.at, "number");
+
+  game.colonyAlerts = {};
+  resetToasts();
+});
+
+test("notifyColony overwrites a world's alert with whichever notification landed most recently", () => {
+  resetToasts();
+  game.colonyAlerts = {};
+
+  notifyColony({ type: "hostile", planetId: "oort" });
+  assert.equal(game.colonyAlerts.oort.type, "hostile");
+
+  notifyColony({ type: "lost", planetId: "oort" });
+  assert.equal(game.colonyAlerts.oort.type, "lost", "a later notification for the same world replaces the earlier one — the badge tracks the freshest truth");
+
+  game.colonyAlerts = {};
+  resetToasts();
+});
+
+test("notifyColony's under-attack toast throttle survives the move to game.colonyAlerts unchanged: a 'hostile' write doesn't suppress the very next 'attacked' toast", () => {
+  resetToasts();
+  game.colonyAlerts = {};
+
+  // A hostile declaration and a raid landing within the same ~9s window on the same world — the
+  // hostile write must not be mistaken for a prior ATTACKED alert and swallow this toast.
+  notifyColony({ type: "hostile", planetId: "korrath" });
+  assert.equal(galaxyToastEl.children.length, 1, "the hostile toast fired");
+
+  notifyColony({ type: "attacked", planetId: "korrath" });
+  assert.equal(galaxyToastEl.children.length, 2, "the very next attacked toast must still fire — it has no PRIOR attacked alert to throttle against");
+  assert.equal(game.colonyAlerts.korrath.type, "attacked", "and the record now reflects the fresher, attacked notification");
+
+  game.colonyAlerts = {};
+  resetToasts();
+});
+
+test("bootState resets game.colonyAlerts to a fresh, empty ledger for every new game", () => {
+  resetPause();
+  resetToasts();
+  game.colonyAlerts = { ferros: { type: "lost", at: 0 } };   // a stale alert as if carried over from a previous game
+
+  startGame("ferros");
+
+  assert.deepEqual(game.colonyAlerts, {}, "a fresh game must not carry over a previous game's colony alerts");
+
+  hideObjectives();
+  game.state = null;
+  resetPause();
+});
+
+test("a real jump (focusActivePlanet) clears only the destination world's colony alert — an unrelated world's alert survives", () => {
+  resetPause();
+  resetToasts();
+  game.input = null;
+  const g = jumpReadyGalaxy(201);
+  const destId = g.worlds.find(w => w !== g.activeId);
+  const dest = g.planets.get(destId);
+  // A Spaceport already standing at the destination -> needsPick is false -> jumps immediately,
+  // same fixture shape as the "needs no pick" test above — no landing-picker DOM needed here.
+  const destPad = makeBuilding("spaceport", "player", dest.map.bases.player.x + 40, dest.map.bases.player.y);
+  dest.buildings.set(destPad.id, destPad);
+  const otherId = g.worlds.find(w => w !== g.activeId && w !== destId);
+  game.colonyAlerts = {
+    [destId]: { type: "attacked", at: performance.now() },
+    [otherId]: { type: "lost", at: performance.now() },
+  };
+  game.galaxy = g;
+
+  const result = initiateJump(destId);
+  assert.ok(result && typeof result === "object", "sanity: the jump actually launched immediately");
+
+  assert.equal(game.colonyAlerts[destId], undefined, "arriving at the destination clears its own alert — the player has now revisited it");
+  assert.equal(game.colonyAlerts[otherId]?.type, "lost", "an unrelated held world's alert must survive a jump that isn't to IT");
+
+  game.galaxy = null;
+  game.state = null;
+  game.input = null;
+  game.colonyAlerts = {};
   resetPause();
 });

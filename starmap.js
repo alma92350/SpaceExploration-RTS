@@ -13,13 +13,50 @@
 
 import { starmapEl, starmapBtn } from "./dom.js";
 import { game } from "./session.js";
-import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost } from "./engine/galaxy.js";
+import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost, playerSpaceports, spaceportTier,
+         FUEL_DISCOUNT_BY_TIER } from "./engine/galaxy.js";
 import { initiateJump, surrenderOdyssey, pauseLoop, resumeLoop } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
 import { planetName as worldName, LORE_FACTIONS, PLANETS, COM } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { stanceLabel } from "./engine/diplomacy.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
+import { getColonyPolicy, setColonyPolicy } from "./engine/colonyPolicy.js";
+import { UNITS } from "./engine/entities.js";
+
+// Live colony alert badges (P6 "Starmap live colony ledger and alert badges"): boot.js's
+// notifyColony stamps game.colonyAlerts[planetId] = {type, at} for every attack/hostile/lost
+// notification a background colony raises (engine/galaxy.js sweepColonies) — the same trigger
+// that already fires the transient toast, just remembered here too so a world reads its own
+// trouble at a glance. A "lost" alert badges the world until the player actually revisits (boot.js
+// focusActivePlanet clears that one planet's entry on arrival); an attack/hostile alert only reads
+// as live for ATTACK_ALERT_WINDOW_MS after it fired, so a raid from ten minutes ago doesn't still
+// flag the world red forever.
+const ATTACK_ALERT_WINDOW_MS = 30000;
+function alertBadge(planetId) {
+  const alert = game.colonyAlerts[planetId];
+  if (!alert) return null;
+  if (alert.type === "lost") return "fallen";
+  return performance.now() - alert.at <= ATTACK_ALERT_WINDOW_MS ? "attack" : null;
+}
+
+// This held world's own defence at a glance: your Command Center count (a razed CC drops this to
+// zero even while other buildings still stand) and the supply committed to COMBAT units here —
+// workers/freighters/colony ships don't count, since the question is "how much of a fight can
+// this world put up", not its whole population (that's the topbar's job, engine/supply.js
+// supplyUsed). Reads `state.buildings`/`state.units` directly off g.planets.get(id) (the State
+// shape, engine/types.js) rather than any cached snapshot — cheap enough to run only when the
+// starmap actually (re)renders: it opens paused (openStarmap calls pauseLoop('starmap')) and this
+// is never on a per-frame path (confirmed by reading every renderStarmap call site: the topbar
+// button/M-key open and this file's own standing-order/lane-toggle re-renders, nothing periodic).
+function garrisonOf(state) {
+  let cc = 0, supply = 0;
+  for (const b of state.buildings.values())
+    if (b.owner === "player" && b.type === "command" && !b.constructing) cc++;
+  for (const u of state.units.values())
+    if (u.owner === "player" && UNITS[u.type]?.role === "combat") supply += UNITS[u.type].supplyCost || 0;
+  return { cc, supply };
+}
 
 export function renderStarmap() {
   const g = game.galaxy;
@@ -28,10 +65,17 @@ export function renderStarmap() {
   const canLaunch = canJump(activeState(g));
   starmapEl.innerHTML = "";
 
+  // The origin's best completed Spaceport tier discounts new-world fuel (FUEL_DISCOUNT_BY_TIER,
+  // engine/galaxy.js jumpCost) — surfaced here too, since this hint is the other cost-preview
+  // call site jumpCost feeds.
+  const padTier = playerSpaceports(activeState(g)).reduce((max, sp) => Math.max(max, spaceportTier(sp)), 0);
+  const fuelMult = FUEL_DISCOUNT_BY_TIER[padTier] ?? 1;
+
   const head = document.createElement("div");
   head.className = "starmap-head";
   const hint = canLaunch
-    ? "Click a world to jump — free to a colony you hold, fuel scaled by distance to settle a new one"
+    ? `Click a world to jump — free to a colony you hold, fuel scaled by distance to settle a new one`
+      + (fuelMult < 1 ? ` (×${fuelMult} at your Tier ${padTier} pad)` : "")
     : "No Spaceport here — click a colony you already hold to fall back to it (build a Spaceport to reach new worlds)";
   // textContent, not innerHTML: `status` counts and credits derive from a (possibly
   // hand-edited) save, and building them as text can't inject markup even if a value
@@ -49,10 +93,11 @@ export function renderStarmap() {
   status.worlds.forEach((w, i) => {
     const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
     const node = document.createElement("button");
-    node.className = "starmap-world " + w.status;
+    const badge = alertBadge(w.id);   // 'attack' | 'fallen' | null — this world's live alert state
+    node.className = "starmap-world " + w.status + (badge ? ` alert-${badge}` : "");
     node.style.left = `${50 + Math.cos(ang) * 38}%`;
     node.style.top = `${50 + Math.sin(ang) * 40}%`;
-    const sub = w.status === "seat" ? (w.pacified ? "◉ you are here · pacified" : "◉ you are here")
+    const baseSub = w.status === "seat" ? (w.pacified ? "◉ you are here · pacified" : "◉ you are here")
       : w.status === "pacified" ? "⚔ conquered"
       : w.status === "colony" ? `your colony · +${w.income} ◈/min`
       : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
@@ -60,6 +105,15 @@ export function renderStarmap() {
       // sphere — so you watch factions spread across the frontier before you ever set foot there.
       : w.controlledBy ? `${LORE_FACTIONS[w.controlledBy]?.name || archetypeFor(w.id).name} space`
       : archetypeFor(w.id).name;
+    // The alert badge drives the sub-label: 'fallen' replaces it outright — it already says
+    // everything that matters, and the underlying status text (almost always "contested"; a razed
+    // outpost on an otherwise-pacified world is the one rare exception) would only repeat the same
+    // news in other words. 'attack' instead PREFIXES the base line: the colony/income text
+    // underneath is still useful context for deciding whether it's worth reinforcing, not just
+    // that it's on fire.
+    const sub = badge === "fallen" ? "☠ fallen — click to retake"
+      : badge === "attack" ? `⚔ under attack · ${baseSub}`
+      : baseSub;
     // The world's faction emblem: the DYNAMIC controlling faction (checkExpansion spread) when one has
     // claimed it, else its native faction (data.js LORE_FACTIONS) — so the map's emblems shift as factions
     // colonise across it, a world reading by whoever holds it at a glance.
@@ -87,10 +141,21 @@ export function renderStarmap() {
       mk("sm-stats", `⚙ ${w.industry} · 🔬 ${w.tech}`),
       mk("sm-deps", dossier),
     );
+    // Garrison line: your standing defence on a world you actually hold RIGHT NOW — the active
+    // seat, or a background colony with a building still standing (galaxyStatus's own "colony"
+    // test). Not shown for a contested/pacified/unexplored node, where "how many CCs" wouldn't
+    // mean "yours" anyway.
+    if (w.status === "seat" || w.status === "colony") {
+      const { cc, supply } = garrisonOf(g.planets.get(w.id));
+      node.append(mk("sm-garrison", `🛡 ${cc} CC · ${supply} supply`));
+    }
     node.addEventListener("click", () => onWorldClick(w));
     field.appendChild(node);
   });
   starmapEl.appendChild(field);
+
+  renderColonyOrders(status);   // per-colony standing-orders quick toggle (engine/colonyPolicy.js)
+  renderLaneOverlay(g);         // Freight Lanes summary (engine/galaxy.js runLanes)
 
   const foot = document.createElement("p");
   foot.className = "starmap-foot";
@@ -109,6 +174,90 @@ export function renderStarmap() {
     surrenderOdyssey();
   });
   starmapEl.appendChild(surrender);
+}
+
+// Per-colony standing orders (engine/colonyPolicy.js): a quick toggle row for every world you
+// currently hold a colony on, mirroring the fuller panel on that world's own Command Center
+// (hudSelection.js renderColonyPolicy) — editable from the starmap so a policy for a world you've
+// LEFT doesn't require jumping back just to change it.
+function renderColonyOrders(status) {
+  const g = game.galaxy;
+  const colonies = status.worlds.filter(w => w.status === "colony");
+  if (!colonies.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "starmap-side";
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = "Colony standing orders";
+  wrap.appendChild(head);
+
+  for (const w of colonies) {
+    const policy = getColonyPolicy(g, w.id);
+    const row = document.createElement("div");
+    row.className = "market-row";
+
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = worldName(w.id);
+    row.appendChild(label);
+
+    const asBtn = document.createElement("button");
+    asBtn.className = "market-btn";
+    asBtn.textContent = policy.autoSell.enabled ? "Auto-sell: ON" : "Auto-sell: OFF";
+    asBtn.title = "Sell stock above its floors into this colony's own market while you're away (set floors from its Command Center panel).";
+    asBtn.addEventListener("click", () => { setColonyPolicy(g, w.id, { autoSell: { enabled: !policy.autoSell.enabled } }); renderStarmap(); });
+    row.appendChild(asBtn);
+
+    const wtLabel = document.createElement("span");
+    wtLabel.className = "market-trend";
+    wtLabel.textContent = `workers ${policy.workerTarget > 0 ? policy.workerTarget : "off"}`;
+    row.appendChild(wtLabel);
+    const dec = document.createElement("button");
+    dec.className = "market-btn";
+    dec.textContent = "−";
+    dec.addEventListener("click", () => { setColonyPolicy(g, w.id, { workerTarget: Math.max(0, policy.workerTarget - 1) }); renderStarmap(); });
+    row.appendChild(dec);
+    const inc = document.createElement("button");
+    inc.className = "market-btn";
+    inc.textContent = "+";
+    inc.addEventListener("click", () => { setColonyPolicy(g, w.id, { workerTarget: policy.workerTarget + 1 }); renderStarmap(); });
+    row.appendChild(inc);
+
+    wrap.appendChild(row);
+  }
+  starmapEl.appendChild(wrap);
+}
+
+// Freight Lanes overlay (engine/galaxy.js runLanes): one line per standing route, galaxy-wide —
+// set up and edited at the source world's Spaceport panel (hudSelection.js renderLanes); this is
+// a read-only summary so a route between two worlds you're not currently standing on is still
+// visible at a glance.
+function renderLaneOverlay(g) {
+  const lanes = g.lanes || [];
+  if (!lanes.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "starmap-side";
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = "Freight Lanes";
+  wrap.appendChild(head);
+
+  for (const lane of lanes) {
+    const row = document.createElement("div");
+    row.className = "market-row";
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = `${worldName(lane.from)} ▸ ${worldName(lane.to)}`;
+    row.appendChild(label);
+    const info = document.createElement("span");
+    info.className = "market-trend";
+    info.textContent = `${lane.shipIds.length} ship${lane.shipIds.length === 1 ? "" : "s"}`;
+    row.appendChild(info);
+    wrap.appendChild(row);
+  }
+  starmapEl.appendChild(wrap);
 }
 
 function onWorldClick(w) {
