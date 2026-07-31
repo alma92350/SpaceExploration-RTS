@@ -61,10 +61,89 @@ const ENDGAME_WINDOW = 300;
 // boot.js clears BOTH via resetPanelSignature() when a new game boots so the first
 // frame rebuilds fresh.
 let lastTopbarSignature = null;
+
+// Commodity flow ledger (docs/improvement-proposals.md lines 795-803, "Commodity flow ledger: net
+// rates, not just stock levels"): the topbar above shows only absolute stocks, so a player can't
+// tell a commodity has gone net-negative until whatever depends on it actually goes dark (a
+// combustor/Reactor's fuel larder runs dry, the Gate stalls). A small ring buffer samples
+// player.resources on a state.time cadence — NEVER a wall clock (no Date.now/performance.now
+// here, matching the engine's one-clock rule even though this file sits entirely outside
+// engine/), so it's pause-safe (boot.js gates the SIM, not the render loop — a paused game keeps
+// calling renderHUD every animation frame with a frozen state.time, and sampleFlowLedger below
+// then simply never advances) and a same-seed replay would compute an identical history. Kept
+// deliberately BESIDE lastTopbarSignature above rather than folded into it: taking a new sample
+// must never itself force the topbar's innerHTML rebuild (see sampleFlowLedger's own comment), so
+// `sig` below never reads any of this. Reset together in resetPanelSignature — a new game/world
+// starts its own clean history, never compared against a previous world's timeline.
+const FLOW_SAMPLE_INTERVAL = 2;      // seconds of state.time between ring-buffer samples
+const FLOW_HISTORY_LEN = 30;         // samples retained -> up to ~60s of oldest-vs-newest smoothing once full
+let flowHistory = [];                // [{ time, resources: {com: qty, ...} }, ...] oldest first
+let lastFlowSampleTime = null;       // state.time of the last sample taken; null = none yet (or just reset)
+
 export function resetPanelSignature() {
   lastTopbarSignature = null;
   game.lastGateCharge = null;   // don't compare a new world's Gate against the previous one's charge history
+  flowHistory = [];
+  lastFlowSampleTime = null;
   resetSelectionSignature();
+}
+
+// Push a new flow-ledger sample once at least FLOW_SAMPLE_INTERVAL seconds of STATE time (never
+// wall-clock) have passed since the last one. Called unconditionally every renderHUD tick, ahead
+// of (and independent from) the topbar signature check below — so a paused game (state.time
+// frozen) never accumulates phantom samples no matter how many animation frames re-render it, and
+// a sample that IS taken never perturbs `sig`, so it can never itself trigger the guarded rebuild.
+function sampleFlowLedger(state) {
+  if (lastFlowSampleTime !== null && state.time - lastFlowSampleTime < FLOW_SAMPLE_INTERVAL) return;
+  lastFlowSampleTime = state.time;
+  flowHistory.push({ time: state.time, resources: { ...state.players.player.resources } });
+  if (flowHistory.length > FLOW_HISTORY_LEN) flowHistory.shift();
+}
+
+// Net units/min for one commodity, from the ring buffer's oldest-vs-newest sample. Fewer than two
+// samples yet (a fresh game, or right after resetPanelSignature) — or a non-positive elapsed span
+// — reads as flat: there's nothing to compare against yet, so a fresh stockpile never shows a
+// phantom rate. A commodity missing from an older sample (didn't exist in player.resources yet)
+// defaults to 0, the same `|| 0` idiom the topbar itself uses below.
+function flowRate(com) {
+  if (flowHistory.length < 2) return 0;
+  const oldest = flowHistory[0], newest = flowHistory[flowHistory.length - 1];
+  const dt = newest.time - oldest.time;
+  if (dt <= 0) return 0;
+  return ((newest.resources[com] || 0) - (oldest.resources[com] || 0)) / dt * 60;
+}
+
+// "+N/min" / "-N/min" for an already-ROUNDED rate — callers round once and reuse that same
+// integer for both the label and the red-highlight test below, so the two can never disagree (a
+// trickle that rounds to 0 always reads "+0/min", never a red "-0/min").
+function formatFlowRate(rounded) {
+  return `${rounded < 0 ? "-" : "+"}${Math.abs(rounded)}/min`;
+}
+
+// Which commodities currently have something LIVE standing on them: a built (not constructing)
+// fuel-burning station's fuels, a Plasma Rig's nuclear burn (always radioactives — engine/rig.js
+// updatePlasmaRig), or the Antimatter Gate's feed goods while it's actually charging. Gates the
+// red highlight below so it only fires for a shortage that's about to bite something real, not a
+// stockpile nobody has ever spent from (docs/improvement-proposals.md: "rather than coloring
+// every net-negative commodity red regardless of whether it matters yet"). Player-owned only —
+// the topbar is the player's own economy. A charge of exactly 0 does NOT count as "charging",
+// mirroring this file's own gateStalled reasoning below (a freshly-completed Gate hasn't drawn a
+// drop of its feed goods yet, so flagging them red would be a lie before the first tick actually
+// spends any) — nor does a charge of 1 (fully charged, no longer drawing). Pure scan of
+// state.buildings + BUILDINGS defs; writes nothing, reads only.
+function liveConsumers(state) {
+  const coms = new Set();
+  for (const b of state.buildings.values()) {
+    if (b.owner !== "player" || b.constructing) continue;
+    const def = BUILDINGS[b.type];
+    if (!def) continue;
+    if (def.combust) for (const com of def.combust.fuels) coms.add(com);
+    if (def.rig) coms.add("radioactives");
+    if (def.wonder && b.charge > 0 && b.charge < 1) {
+      for (const com in def.feed || {}) coms.add(com);
+    }
+  }
+  return coms;
 }
 
 export function renderHUD() {
@@ -87,6 +166,11 @@ export function renderHUD() {
     clockEl.textContent = "";
   } else {
     const res = state.players.player.resources;
+
+    // Sample the flow ledger every tick — see sampleFlowLedger's own comment for why this sits
+    // here, unconditionally, ahead of the signature guard below rather than inside it.
+    sampleFlowLedger(state);
+
     const used = supplyUsed(state, "player"), cap = supplyCap(state, "player");
     const blocked = performance.now() < game.supplyBlockedUntil;
     const pCap = game.galaxy ? powerCap(state, "player") : 0, pDraw = game.galaxy ? powerDraw(state, "player") : 0;
@@ -129,6 +213,7 @@ export function renderHUD() {
     if (sig !== lastTopbarSignature) {
       lastTopbarSignature = sig;
       resourcesEl.innerHTML = "";
+      const liveCons = liveConsumers(state);
       Object.entries(res).forEach(([com, qty]) => {
         const n = Math.floor(qty);
         // Suppress empty stockpiles (a fresh Odyssey shows "ai: 0", "antimatter: 0",
@@ -139,7 +224,14 @@ export function renderHUD() {
         const meta = COM[com];
         const span = document.createElement("span");
         span.textContent = meta?.ico ? `${meta.ico} ${n}` : `${com}: ${n}`;
-        span.title = meta?.name || com;
+        span.dataset.com = com;
+        // Flow-ledger tooltip: the net rate from the ring buffer's oldest-vs-newest sample (reads
+        // 0 with fewer than two samples yet — see flowRate). Red only when BOTH net-negative and
+        // something live currently depends on this commodity (liveConsumers) — a stockpile
+        // nobody has ever spent from stays the ordinary color even while it drains.
+        const rate = Math.round(flowRate(com));
+        span.title = `${meta?.name || com} · ${formatFlowRate(rate)}`;
+        if (rate < 0 && liveCons.has(com)) span.classList.add("deficit");
         resourcesEl.appendChild(span);
       });
 

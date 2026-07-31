@@ -10,7 +10,7 @@
 
 "use strict";
 
-import { UNITS } from "./engine/entities.js";
+import { UNITS, rankMults } from "./engine/entities.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { DETAIL, facing, updateFacing, lerpXY, inView, drawHealthBar,
          shade, polygonPoints, pathPoints, toWorld, pathOriented } from "./renderShared.js";
@@ -80,7 +80,31 @@ export function drawUnits(ctx, state, view, alpha = 1, selSet) {
     // A small downward pip marks hostile units — a SHAPE cue, so telling friend from foe in a
     // melee doesn't rely on the cyan-vs-red colour alone. Friendlies carry no marker.
     if (u.owner !== "player") drawEnemyPip(ctx, d.x, d.y + def.radius + 6);
+    // Veterancy chevrons (docs/improvement-proposals.md "Veterancy ranks"): drawn for EITHER
+    // side (an enemy veteran's chevrons are exactly the intel a scout brings back, same as the
+    // enemy pip above), and independent of drawHealthBar's own "hide at full hp" rule — a rank
+    // is a permanent trait, not a damage state, so it stays visible on a topped-off veteran too.
+    const rank = rankMults(u).rank;
+    if (rank > 0) drawVeterancyChevrons(ctx, d.x, d.y - def.radius - 13, rank);
     drawHealthBar(ctx, d.x, d.y - def.radius - 9, 16, u.hp, u.maxHp, selSet.has(u.id));
+  }
+}
+
+// A small stack of upward chevrons, one per veterancy rank, just above the health bar — a
+// veteran line reads at a glance without opening its stat panel. Own color (distinct from every
+// hull detail/cargo-dot/enemy-pip hue already in play here) so it never blends into whichever
+// unit it's stamped over.
+const CHEVRON_COLOR = "#a5f3fc";
+function drawVeterancyChevrons(ctx, cx, y, rank) {
+  ctx.strokeStyle = CHEVRON_COLOR;
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < rank; i++) {
+    const cy = y - i * 4;
+    ctx.beginPath();
+    ctx.moveTo(cx - 4, cy + 2);
+    ctx.lineTo(cx, cy - 2);
+    ctx.lineTo(cx + 4, cy + 2);
+    ctx.stroke();
   }
 }
 

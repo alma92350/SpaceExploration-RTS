@@ -178,7 +178,14 @@ function drawFireworks(ctx, vw, vh) {
 // existed on the main map. Unexplored cells now draw nothing (bare backdrop reads as
 // "unknown"); currently-visible cells draw nothing (the world underneath is at full
 // brightness); only explored-not-visible cells get the wash.
-function drawFogBase(ctx, state, view) {
+//
+// This layer is genuinely dynamic — fog.visible flips every tick as units move — so unlike
+// the terrain cache below it can't be pre-rendered once. It IS spatially coherent though
+// (docs/improvement-proposals.md "Stop per-cell fog/terrain fills": most rows are long
+// contiguous runs of the same qualify/don't-qualify state), so instead of one fillRect per
+// cell this walks each row and merges a run of qualifying cells into a single fillRect —
+// same cells painted, same colour, far fewer draw calls on a big map's mostly-uniform fog.
+export function drawFogBase(ctx, state, view) {
   const fog = state.fog;
   if (!fog) return;
   // Only the cells overlapping the viewport — clamped to the grid — instead of
@@ -189,10 +196,20 @@ function drawFogBase(ctx, state, view) {
   const gy1 = view ? Math.min(fog.rows - 1, Math.floor(view.maxY / FOG_CELL_SIZE)) : fog.rows - 1;
   ctx.fillStyle = "rgba(79, 209, 255, 0.05)";   // charted-but-not-live wash (matches the minimap)
   for (let gy = gy0; gy <= gy1; gy++) {
+    const row = gy * fog.cols;
+    let runStart = -1;   // gx a qualifying run began at, or -1 while no run is open
     for (let gx = gx0; gx <= gx1; gx++) {
-      const idx = gy * fog.cols + gx;
-      if (fog.visible[idx] || !fog.explored[idx]) continue;   // live cells and never-seen cells draw nothing
-      ctx.fillRect(gx * FOG_CELL_SIZE, gy * FOG_CELL_SIZE, FOG_CELL_SIZE, FOG_CELL_SIZE);
+      const idx = row + gx;
+      const qualifies = !fog.visible[idx] && fog.explored[idx];   // live cells and never-seen cells draw nothing
+      if (qualifies) {
+        if (runStart === -1) runStart = gx;
+      } else if (runStart !== -1) {
+        ctx.fillRect(runStart * FOG_CELL_SIZE, gy * FOG_CELL_SIZE, (gx - runStart) * FOG_CELL_SIZE, FOG_CELL_SIZE);
+        runStart = -1;
+      }
+    }
+    if (runStart !== -1) {   // a run that reached the last in-view column — flush it after the loop
+      ctx.fillRect(runStart * FOG_CELL_SIZE, gy * FOG_CELL_SIZE, (gx1 + 1 - runStart) * FOG_CELL_SIZE, FOG_CELL_SIZE);
     }
   }
 }
@@ -200,22 +217,48 @@ function drawFogBase(ctx, state, view) {
 // Terrain washes, drawn as charted geography beneath everything else. Rough
 // ground reads as a cool slate haze, high ground as a warm gold glow — subtle,
 // so it shapes the field without fighting the units for attention. OPEN cells
-// (the majority) draw nothing; viewport-culled like the fog base, so on a big
-// map the cost tracks the feature cells actually on screen.
+// (the majority) draw nothing.
 const TERRAIN_FILL = { 1: "rgba(120, 140, 180, 0.16)", 2: "rgba(255, 209, 102, 0.13)" };
-function drawTerrain(ctx, state, view) {
+
+// Terrain is immutable for the whole match (engine/map.js's own header comment), unlike the
+// fog wash above — so instead of re-walking every on-screen cell every frame, pre-render the
+// WHOLE grid ONCE into an offscreen canvas at cell resolution (one canvas pixel per terrain
+// cell — cols x rows, tiny even on a Gigantic map) and blit only the visible sub-rect with a
+// single drawImage per frame. Same underlayMap cache idiom minimap.js already uses for its own
+// static layers (see its header comment for the identical "16k+ fillRects" pathology) — keyed
+// on state.map identity so a fresh map (a new object from generateMap) invalidates the cache,
+// but the same map reuses the cached canvas for the rest of the match.
+let terrainCache = null, terrainCacheMap = null;
+
+function ensureTerrainCache(map, t) {
+  if (terrainCacheMap === map) return terrainCache;
+  const canvas = document.createElement("canvas");
+  canvas.width = t.cols; canvas.height = t.rows;
+  const c = canvas.getContext("2d");
+  for (let gy = 0; gy < t.rows; gy++) {
+    const row = gy * t.cols;
+    for (let gx = 0; gx < t.cols; gx++) {
+      const code = t.type[row + gx];
+      if (!code) continue;          // OPEN stays transparent, same as the old per-cell "continue"
+      c.fillStyle = TERRAIN_FILL[code];
+      c.fillRect(gx, gy, 1, 1);     // one canvas pixel per cell — exact 1:1, no seam-hiding +1 needed
+    }
+  }
+  terrainCache = canvas;
+  terrainCacheMap = map;
+  return terrainCache;
+}
+
+export function drawTerrain(ctx, state, view) {
   const t = state.map.terrain;
   if (!t) return;
+  const canvas = ensureTerrainCache(state.map, t);
   const gx0 = view ? Math.max(0, Math.floor(view.minX / t.cell)) : 0;
   const gx1 = view ? Math.min(t.cols - 1, Math.floor(view.maxX / t.cell)) : t.cols - 1;
   const gy0 = view ? Math.max(0, Math.floor(view.minY / t.cell)) : 0;
   const gy1 = view ? Math.min(t.rows - 1, Math.floor(view.maxY / t.cell)) : t.rows - 1;
-  for (let gy = gy0; gy <= gy1; gy++) {
-    for (let gx = gx0; gx <= gx1; gx++) {
-      const code = t.type[gy * t.cols + gx];
-      if (!code) continue;
-      ctx.fillStyle = TERRAIN_FILL[code];
-      ctx.fillRect(gx * t.cell, gy * t.cell, t.cell + 1, t.cell + 1);   // +1 hides cell seams
-    }
-  }
+  if (gx1 < gx0 || gy1 < gy0) return;   // camera panned fully off the grid — nothing to blit
+  const cw = gx1 - gx0 + 1, ch = gy1 - gy0 + 1;
+  ctx.imageSmoothingEnabled = false;    // nearest-neighbour scale-up — keeps the hard-edged per-cell look
+  ctx.drawImage(canvas, gx0, gy0, cw, ch, gx0 * t.cell, gy0 * t.cell, cw * t.cell, ch * t.cell);
 }

@@ -16,10 +16,11 @@
 "use strict";
 
 import { stepToward, keepEscortStation, keepFormationStation, keepFollowingLeader, orderedSpeed } from "./movement.js";
-import { UNITS, BUILDINGS, upgradeMult } from "./entities.js";
+import { UNITS, BUILDINGS, upgradeMult, rankMults } from "./entities.js";
 import { getEntity, removeEntity } from "./state.js";
 import { queryNeighbors } from "./grid.js";
-import { sampleTerrain, sideMod } from "./map.js";
+import { sampleTerrain, sideMod, TERRAIN } from "./map.js";
+import { UPHILL_FRAC } from "./fog.js";
 import { hashStr } from "./rng.js";
 import { detonateIfAttacked } from "./bomb.js";
 import { depositWreckage } from "./wreckage.js";
@@ -187,13 +188,21 @@ function performAttack(state, attacker, def, target) {
   // why this can never touch a building or the attacker's own side.
   if (def.splash) applySplash(state, attacker, target, dmg, def.splash);
   if (target.hp <= 0) {
+    // Veterancy (docs/improvement-proposals.md "Veterancy ranks"): a UNIT-kind attacker's
+    // confirmed kill counts toward its own rankMults (entities.js), applied in attackDamage
+    // above/below like any other multiplier. Buildings/turrets (kind "building") never accrue
+    // this — static defense holds ground by hp and ammo, not by leveling up.
+    if (attacker.kind === "unit") attacker.kills = (attacker.kills || 0) + 1;
     // Nothing is really destroyed: ~80% of whatever was spent building this thing
     // reappears as a minable wreck site a short delay later (engine/wreckage.js) —
     // replaces the old instant, combat-unit-only salvage refund, and now covers
     // workers and buildings too.
     depositWreckage(state, target);
     removeEntity(state, target.id);
-    state.events.push({ type: "entityKilled", x: target.x, y: target.y, owner: target.owner });
+    // unitType/kind (docs/improvement-proposals.md "Tiered destruction"): purely additive on top
+    // of the pre-existing x/y/owner — boot.js/effects.js/renderEffects.js/sound.js scale the
+    // death's visuals and audio by what actually died (a Worker pops, a Dreadnought booms).
+    state.events.push({ type: "entityKilled", x: target.x, y: target.y, owner: target.owner, unitType: target.type, kind: target.kind });
     return true;
   }
   return false;
@@ -234,7 +243,9 @@ function applySplash(state, attacker, target, dmg, splash) {
     if (e.hp > 0) continue;
     depositWreckage(state, e);
     removeEntity(state, e.id);
-    state.events.push({ type: "entityKilled", x: e.x, y: e.y, owner: e.owner });
+    // Same unitType/kind addition as performAttack's own entityKilled push above — a splash
+    // kill gets the same tiered destruction feedback as a direct one.
+    state.events.push({ type: "entityKilled", x: e.x, y: e.y, owner: e.owner, unitType: e.type, kind: e.kind });
   }
 }
 
@@ -286,6 +297,13 @@ function attackDamage(state, unit, def, target) {
   // instead of throwing on `.upgrades`, matching the defender-side guard below.
   dmg *= upgradeMult(state.players[unit.owner]?.upgrades, "damageDealtMult");
   dmg *= upgradeMult(state.players[target.owner]?.upgrades, "damageTakenMult");
+
+  // Veterancy (entities.js rankMults): the same shape as the two upgrade multipliers just
+  // above — the attacker's own kill tally raises damage dealt, the target's raises damage
+  // taken (i.e. reduces it, since takenMult < 1 per rank). 1/1 no-op for a fresh unit or any
+  // building/turret (kills never set on those), so this is purely additive to existing combat.
+  dmg *= rankMults(unit).dealtMult;
+  dmg *= rankMults(target).takenMult;
 
   // The attacker's faction (and any future world) damage edge, through the same
   // sideMod seam as every other side modifier. 1 for a neutral/economy/mobility
@@ -340,12 +358,27 @@ function stillEngageable(state, unit, def, id) {
   return Math.hypot(e.x - unit.x, e.y - unit.y) <= aggro;
 }
 
-function nearestEnemy(entities, unit, maxRange) {
+// Uphill concealment's acquisition half (mirrors fog.js's reveal(): same UPHILL_FRAC, same "the
+// SOURCE'S own tile decides, not the candidate's" rule): an acquirer whose own tile is NOT high
+// ground can only find (or hold) an enemy standing on high ground within UPHILL_FRAC of the
+// normal range — beyond that, the ridge is as blind to weapons as it is to fog. Computed once per
+// acquirer (via the `acquirerHigh` flag callers pass in — one sampleTerrain call, not one per
+// candidate) and applied only to a CANDIDATE that itself sits on high ground; open/rough ground
+// targets, and any target when the acquirer is itself on high ground, use the plain `range`.
+function highGroundCap(terrain, acquirerHigh, e, range) {
+  if (acquirerHigh || !terrain) return range;
+  return sampleTerrain(terrain, e.x, e.y) === TERRAIN[2] ? range * UPHILL_FRAC : range;
+}
+
+function nearestEnemy(state, entities, unit, maxRange) {
+  const terrain = state.map?.terrain;
+  const acquirerHigh = !!(terrain && sampleTerrain(terrain, unit.x, unit.y) === TERRAIN[2]);
   let best = null, bestD = Infinity;
   for (const e of entities) {
     if (e.owner === unit.owner || e.hp <= 0) continue;   // hp>0 also skips stale dead refs a grid bucket may still hold
     const d = Math.hypot(e.x - unit.x, e.y - unit.y);
-    if (d <= maxRange && d < bestD) { bestD = d; best = e; }
+    const cap = highGroundCap(terrain, acquirerHigh, e, maxRange);
+    if (d <= cap && d < bestD) { bestD = d; best = e; }
   }
   return best ? { id: best.id, d: bestD } : null;
 }
@@ -356,20 +389,22 @@ function nearestEnemy(entities, unit, maxRange) {
 // nearest while closing in (nothing in weapon range yet), so units approach
 // together and only spread once they can actually fire. Combined with the
 // target stickiness in updateCombat, each attacker commits to its own target.
-function spreadEnemy(entities, unit, def, aggro) {
+function spreadEnemy(state, entities, unit, def, aggro) {
   // The local engagement band — a bit past weapon range so it catches the front
   // line even in a tight melee, where almost no one has 2+ foes strictly within
   // their (often short) weapon range at once. Spreading across this band is what
   // actually reduces the dogpile.
   const band = def.range + 60;
+  const terrain = state.map?.terrain;
+  const acquirerHigh = !!(terrain && sampleTerrain(terrain, unit.x, unit.y) === TERRAIN[2]);
   let nearest = null, nearestD = Infinity;
   const local = [];
   for (const e of entities) {
     if (e.owner === unit.owner || e.hp <= 0) continue;
     const d = Math.hypot(e.x - unit.x, e.y - unit.y);
-    if (d > aggro) continue;
+    if (d > highGroundCap(terrain, acquirerHigh, e, aggro)) continue;
     if (d < nearestD) { nearestD = d; nearest = e; }
-    if (d <= band) local.push({ e, d });
+    if (d <= highGroundCap(terrain, acquirerHigh, e, band)) local.push({ e, d });
   }
   if (!nearest) return null;
   if (local.length <= 1) return { id: nearest.id, d: nearestD };   // approaching, or a lone foe — just take nearest
@@ -397,12 +432,15 @@ function acquireTarget(state, unit, def) {
   const aggro = def.aggroRange * sideMod(state, unit.owner, "sightMult") * terrainMult;
   // Units through the broad-phase grid (there can be hundreds); buildings stay a
   // straight scan since there are only ever a handful. Full-scan fallback when
-  // no grid is present (direct combat tests).
+  // no grid is present (direct combat tests). Both nearestEnemy/spreadEnemy apply
+  // uphill concealment's acquisition half internally (highGroundCap above) — the
+  // mesa's extra reach cuts both ways: it sees farther, but a lowland unit still
+  // can't shoot back at it past UPHILL_FRAC of that same reach.
   const unitCandidates = state.unitGrid
     ? queryNeighbors(state.unitGrid, unit.x, unit.y, aggro)
     : state.units.values();
-  const u = spreadEnemy(unitCandidates, unit, def, aggro);
-  const b = nearestEnemy(state.buildings.values(), unit, aggro);
+  const u = spreadEnemy(state, unitCandidates, unit, def, aggro);
+  const b = nearestEnemy(state, state.buildings.values(), unit, aggro);
   if (def.prefersBuildings && b) return b.id;
   if (!u) return b ? b.id : null;
   if (!b) return u.id;

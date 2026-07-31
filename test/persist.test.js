@@ -159,6 +159,37 @@ test("a tampered lastHitAt is dropped on load rather than propagated as NaN-pois
     "dropped, not left as a string that would NaN-poison state.time - lastHitAt in the Bulwark regen pass");
 });
 
+// Veterancy ranks (docs/improvement-proposals.md): unit.kills (engine/combat.js performAttack)
+// is an additive numeric field — same CONTRIBUTING.md "no SAVE_VERSION bump needed" rule as
+// lastHitAt above, verified empirically rather than assumed, plus the same corruption-hardening
+// treatment (a tampered save clamped to a sane non-negative integer, not propagated as garbage
+// into rankMults' kills comparisons).
+test("a unit's kills round-trips through save/load exactly", () => {
+  const state = createGameState({ planetId: "ferros", seed: 73, rng: mulberry32(73) });
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  skiff.kills = 5;
+  state.units.set(skiff.id, skiff);
+
+  const loaded = deserializeGame(JSON.parse(JSON.stringify(serializeGame(state))));
+  const reloaded = loaded.units.get(skiff.id);
+
+  assert.ok(reloaded, "the unit itself survived the round-trip");
+  assert.equal(reloaded.kills, 5, "kills survives exactly — an additive field, no SAVE_VERSION bump needed");
+});
+
+test("a tampered kills value is clamped to a sane non-negative integer on load, not propagated as garbage", () => {
+  const state = createGameState({ planetId: "ferros", seed: 74, rng: mulberry32(74) });
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  state.units.set(skiff.id, skiff);
+
+  const save = serializeGame(state);
+  const savedSkiff = save.units.find(u => u.id === skiff.id);
+  savedSkiff.kills = -7.4;   // a hand-edited save smuggling in garbage
+
+  const loaded = deserializeGame(save);
+  assert.equal(loaded.units.get(skiff.id).kills, 0, "clamped to a sane floor, not left negative/fractional");
+});
+
 test("a patrol order's flag round-trips through save/load with no dedicated persist.js code", () => {
   const state = createGameState({ planetId: "ferros", seed: 99, rng: mulberry32(99) });
   const skiff = makeUnit("skiff", "player", 700, 500);

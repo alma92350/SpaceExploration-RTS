@@ -257,6 +257,36 @@ different angles; integration caught and fixed one real interaction between it a
 new pacification floor (an ascended-then-conquered world could get stuck fighting itself between
 the two effects forever) before either shipped.
 
+### Added
+
+- **High ground now grants real concealment, not just a sight bonus.** A unit standing in the
+  lowland used to reveal a mesa top exactly as easily as open plain and could shoot at anything
+  it could see up there; now a source that isn't itself on high ground reveals — and can acquire
+  targets on — high ground only within a fraction of its normal range. Climb the ridge, take the
+  vantage yourself, or push in blind. Applies identically to the AI's own fog, so a held ridge is
+  a real objective for both sides.
+- **Veteran units are stronger, and you can see it.** Every kill now counts: survive enough
+  fights and a unit gains small chevrons over its health bar along with a permanent damage-dealt
+  bonus and damage-taken reduction. Pulling a bloodied army back to repair and re-field it is now
+  strictly better than re-buying it from scratch — for both sides equally.
+- **Deaths finally carry weight.** A Worker popping, a Dreadnought going down, and a Command
+  Center cracking now look and sound like three different kinds of loss instead of the identical
+  280ms ring and tone every death used to get — bigger hulls get bigger death flashes, debris,
+  and a deeper, longer boom; buildings collapse in a slower double ring.
+- **A commodity flow ledger on the topbar** shows net rates, not just stock — hover any resource
+  to see whether it's climbing or draining and how fast, and a commodity flashes red when it's
+  both net-negative and something currently live (a fuel-burning station, a charging Gate)
+  actually depends on it running dry.
+- **The main view no longer redraws fog and terrain one cell at a time.** On a fully-zoomed-out
+  Gigantic map this was up to 16,000 individual fills every frame; terrain is now a cached
+  offscreen image blitted once per frame, and the fog wash merges each row into a handful of
+  spans instead of thousands of individual cells — same look, a fraction of the cost.
+
+Five proposals from `docs/improvement-proposals.md`'s Cross-tier section shipped in this batch
+(per `docs/improvement-roadmap.md`'s Phase 8) — **the final phase of the improvement roadmap**.
+The fog-render performance work was sequenced to land only after the LOS pass, since it depends
+on exactly the fog-cell contract that change produced.
+
 - **How long a neighbour holds a grudge is now part of its personality.** Souring was already
   flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but
   *cooling off* was identical everywhere, and once you had drawn blood a neighbour stayed

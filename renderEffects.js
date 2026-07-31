@@ -15,7 +15,7 @@ import { isNodeDiscovered } from "./engine/fog.js";
 import { powerEfficiency } from "./engine/industry.js";
 import { rigSurvey, SURVEY_RADIUS } from "./engine/rig.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
-import { activeEffects } from "./effects.js";
+import { activeEffects, DEATH_BASE_RADIUS } from "./effects.js";
 import { hexA, lerpXY, shade, pathPoints, polygonPoints } from "./renderShared.js";
 import { POWER_TIER_COLOR, drawReactorBands } from "./renderBuildings.js";
 
@@ -250,6 +250,12 @@ function lerpColor(a, b, t) {
   return `rgb(${r}, ${g}, ${b2})`;
 }
 
+// Tiered destruction: a hull at or above this radius flings debris shards on death (Breacher 10,
+// Dreadnought/Aegis/Colossus 11-12, Leviathan 14, and up — every Skiff/Lancer/worker-scale unit
+// stays a plain ring).
+const DEBRIS_MIN_RADIUS = 10;
+const DEBRIS_SHARD_COUNT = 5;
+
 // Attack tracers, death flashes, and under-attack pings: all purely
 // cosmetic and short-lived (see effects.js), so this is the only place
 // in render.js that reads wall-clock-timed state instead of the sim's
@@ -259,14 +265,45 @@ export function drawEffects(ctx) {
 
   for (const t of tracers) drawTracer(ctx, t);
 
+  // Tiered destruction (docs/improvement-proposals.md): the ring's size/lifetime already scale
+  // with the killed entity's own radius (effects.js addDeathFlash/deathLifeMs, DEATH_BASE_RADIUS
+  // the baseline both files share) — this just draws the SHAPE differently by tier: a plain
+  // single ring for most deaths, a few outward debris shards bolted on for a big hull
+  // (radius >= DEBRIS_MIN_RADIUS), and a building gets a slower TWO-ring collapse (an outer ring
+  // plus a lagging inner one) instead of one, reading as a structure caving in rather than a unit
+  // popping.
   for (const d of deaths) {
-    const r = 6 + d.age * 16;
+    const scale = d.radius / DEATH_BASE_RADIUS;
+    const rMax = 16 * scale;
+    const r = 6 * scale + d.age * rMax;
     ctx.globalAlpha = Math.max(0, 1 - d.age);
     ctx.strokeStyle = "#ffab5e";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = Math.max(1.5, Math.min(3.2, 2 * scale));
     ctx.beginPath();
     ctx.arc(d.x, d.y, r, 0, Math.PI * 2);
     ctx.stroke();
+
+    if (d.kind === "building") {
+      // A second, inner ring trailing the outer one by a quarter of the effect's life — the core
+      // caves in a beat behind the shockwave, instead of the whole structure vanishing on one ring.
+      const innerAge = Math.max(0, d.age - 0.25);
+      const innerR = 4 * scale + innerAge * rMax * 0.7;
+      ctx.globalAlpha = Math.max(0, (1 - d.age) * 0.8);
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, innerR, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (d.radius >= DEBRIS_MIN_RADIUS) {
+      // A handful of shards flung outward for a heavy hull — angle hashed off position so it's
+      // stable across the effect's own lifetime rather than reshuffling every frame.
+      ctx.fillStyle = "#ffab5e";
+      for (let i = 0; i < DEBRIS_SHARD_COUNT; i++) {
+        const a = (i / DEBRIS_SHARD_COUNT) * Math.PI * 2 + (d.x + d.y) * 0.01;
+        const dist = d.age * rMax * 1.4;
+        ctx.beginPath();
+        ctx.arc(d.x + Math.cos(a) * dist, d.y + Math.sin(a) * dist, Math.max(0.5, 2 * (1 - d.age)), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
   const reduced = prefersReducedMotion();

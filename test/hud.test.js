@@ -78,7 +78,7 @@ sound.setMuted(true);   // renderSelectionPanel's icon buttons can synthesize a 
 
 const { game } = await import("../session.js");
 const { renderHUD, resetPanelSignature } = await import("../hud.js");
-const { clockEl, scoreBarEl, idleProductionEl, gateChipEl, canvas } = await import("../dom.js");
+const { resourcesEl, clockEl, scoreBarEl, idleProductionEl, gateChipEl, canvas } = await import("../dom.js");
 
 function setup(seed, opts = {}) {
   resetPanelSignature();
@@ -414,4 +414,220 @@ test("clicking the gate chip never throws with no active game", () => {
   game.galaxy = null;
 
   assert.doesNotThrow(() => gateChipEl.click());
+});
+
+/* ============================================================
+   Commodity flow ledger (docs/improvement-proposals.md lines 795-803, "Commodity flow ledger:
+   net rates, not just stock levels"): the topbar above shows only absolute stocks, so a player
+   can't tell a commodity has gone net-negative until whatever depends on it goes dark (a
+   combustor/Reactor runs out of fuel, the Gate stalls). renderHUD now keeps a small ring buffer
+   sampling state.players.player.resources on a state.time cadence (~2s, pause-safe — keyed to
+   state.time so a paused game, which keeps calling renderHUD every animation frame per boot.js
+   while the sim itself is gated off, never advances it), and shows each topbar resource span's
+   net rate as a "+X/min" / "-X/min" hover tooltip computed from the buffer's oldest-vs-newest
+   sample. A commodity is colored red (the "deficit" class) only when it's BOTH net-negative AND
+   something live currently depends on it — a standing (built, non-constructing) fuel-burning
+   station, a Plasma Rig's nuclear burn, or the Gate while it's actually charging — never merely
+   for being net-negative on its own.
+
+   Zero engine/ involvement: every fixture below drives renderHUD/state.time directly, exactly
+   like the endgame-clock and Gate-chip tests above.
+   ============================================================ */
+
+test("renderHUD: the flow ledger samples the ring buffer on a ~2s state.time cadence and is pause-safe — resource churn or repeated renders at a frozen state.time never sample; only state.time itself crossing the cadence does", () => {
+  const state = setup(501);
+  state.time = 0;
+  renderHUD();   // the very first sample ever taken: ore=300 @ t=0
+
+  // A paused game keeps calling renderHUD on every animation frame while state.time sits frozen
+  // (boot.js: "paused: skip the sim; render still draws the frozen frame"). Hammer that: churn
+  // the stock (forcing an ordinary topbar rebuild each time, via the existing stock-floor
+  // signature) and re-render repeatedly without ever moving state.time.
+  for (let i = 0; i < 10; i++) {
+    state.players.player.resources.ore = 290 - i;
+    renderHUD();
+  }
+  let oreSpan = resourcesEl.children.find(el => el.dataset.com === "ore");
+  assert.match(oreSpan.title, /\+0\/min/,
+    "state.time never moved, so the ledger still holds only its first-ever sample — nothing to compare against yet, no matter how many times renderHUD ran or the stock changed");
+
+  // Short of the ~2s cadence: still no second sample.
+  state.time = 1.9;
+  state.players.player.resources.ore = 150;
+  renderHUD();
+  oreSpan = resourcesEl.children.find(el => el.dataset.com === "ore");
+  assert.match(oreSpan.title, /\+0\/min/, "1.9s of state.time is short of the ~2s sampling cadence");
+
+  // Crossing the cadence takes the second sample, using the CURRENT stock at that instant.
+  state.time = 2;
+  state.players.player.resources.ore = 100;
+  renderHUD();
+  oreSpan = resourcesEl.children.find(el => el.dataset.com === "ore");
+  assert.match(oreSpan.title, /-6000\/min/,
+    "(100 - 300) ore over 2s of state.time, extrapolated to a per-minute rate");
+});
+
+test("renderHUD: the resource tooltip shows the correct net rate, computed from the ring buffer's oldest-vs-newest sample", () => {
+  const state = setup(502);
+  state.time = 0;
+  state.players.player.resources.crystals = 40;   // crystals starts at 0 — give it a real stock to track
+  renderHUD();   // sample #1: crystals=40 @ t=0
+
+  state.time = 10;
+  state.players.player.resources.crystals = 90;   // +50 crystals over 10s of state.time
+  renderHUD();   // sample #2
+
+  const crystalSpan = resourcesEl.children.find(el => el.dataset.com === "crystals");
+  assert.equal(crystalSpan.title, "Crystals · +300/min", "(90 - 40) crystals over 10s of state.time = +300/min");
+});
+
+test("renderHUD: a net-negative resource is colored only when something live currently depends on it, not every net-negative commodity", () => {
+  const state = setup(510);
+  state.time = 0;
+  state.players.player.resources.radioactives = 100;
+  state.players.player.resources.crystals = 100;   // also net-negative below, but nothing ever depends on crystals
+  renderHUD();
+
+  state.time = 2;
+  state.players.player.resources.radioactives = 80;
+  state.players.player.resources.crystals = 80;
+  renderHUD();
+
+  let radSpan = resourcesEl.children.find(el => el.dataset.com === "radioactives");
+  let crystalSpan = resourcesEl.children.find(el => el.dataset.com === "crystals");
+  assert.match(radSpan.title, /-600\/min/);
+  assert.equal(radSpan.classList.contains("deficit"), false, "net-negative, but no live consumer standing yet");
+  assert.equal(crystalSpan.classList.contains("deficit"), false, "net-negative, and crystals is never a combust/rig/wonder input");
+
+  // Stand up a live consumer of radioactives — a completed, non-constructing Reactor burns it
+  // (engine/entities.js BUILDINGS.reactor.combust).
+  const reactor = makeBuilding("reactor", "player", 500, 500);
+  state.buildings.set(reactor.id, reactor);
+
+  state.time = 4;
+  state.players.player.resources.radioactives = 60;
+  state.players.player.resources.crystals = 60;
+  renderHUD();
+
+  radSpan = resourcesEl.children.find(el => el.dataset.com === "radioactives");
+  crystalSpan = resourcesEl.children.find(el => el.dataset.com === "crystals");
+  assert.equal(radSpan.classList.contains("deficit"), true, "still net-negative, and now a standing Reactor depends on it");
+  assert.equal(crystalSpan.classList.contains("deficit"), false, "still no live consumer for crystals");
+});
+
+test("renderHUD: a fuel-burning station still under construction is not a live consumer yet", () => {
+  const state = setup(511);
+  state.time = 0;
+  state.players.player.resources.radioactives = 100;
+  renderHUD();
+
+  const reactor = makeBuilding("reactor", "player", 500, 500, { constructing: true });
+  state.buildings.set(reactor.id, reactor);
+
+  state.time = 2;
+  state.players.player.resources.radioactives = 80;
+  renderHUD();
+
+  const radSpan = resourcesEl.children.find(el => el.dataset.com === "radioactives");
+  assert.match(radSpan.title, /-600\/min/);
+  assert.equal(radSpan.classList.contains("deficit"), false, "a building site isn't burning fuel yet");
+});
+
+test("renderHUD: a Plasma Rig's nuclear burn makes radioactives count as live-consumed too", () => {
+  const state = setup(512);
+  state.time = 0;
+  state.players.player.resources.radioactives = 100;
+  renderHUD();
+
+  const rig = makeBuilding("plasmarig", "player", 500, 500);
+  state.buildings.set(rig.id, rig);
+
+  state.time = 2;
+  state.players.player.resources.radioactives = 80;
+  renderHUD();
+
+  const radSpan = resourcesEl.children.find(el => el.dataset.com === "radioactives");
+  assert.equal(radSpan.classList.contains("deficit"), true, "a standing Rig's nuclear-to-exploit cost also depends on radioactives");
+});
+
+test('renderHUD: the Gate only counts as a live consumer of its feed goods once it is actually charging, not the instant it completes at 0% — mirrors this file\'s own gateStalled "0% is not yet charging" rule', () => {
+  const state = setup(513);
+  state.time = 0;
+  state.players.player.resources.antimatter = 100;
+  renderHUD();
+
+  const gate = makeBuilding("antimatter_gate", "player", 500, 500);   // charge left unset -> 0%, freshly completed
+  state.buildings.set(gate.id, gate);
+
+  state.time = 2;
+  state.players.player.resources.antimatter = 80;
+  renderHUD();
+
+  let anteSpan = resourcesEl.children.find(el => el.dataset.com === "antimatter");
+  assert.equal(anteSpan.classList.contains("deficit"), false, "a Gate sitting at exactly 0% hasn't drawn a drop of antimatter yet");
+
+  gate.charge = 0.3;   // now genuinely mid-charge
+  state.time = 4;
+  state.players.player.resources.antimatter = 60;
+  renderHUD();
+
+  anteSpan = resourcesEl.children.find(el => el.dataset.com === "antimatter");
+  assert.equal(anteSpan.classList.contains("deficit"), true, "the Gate is genuinely charging now, drawing down its feed goods");
+});
+
+test("renderHUD: a net-POSITIVE resource is never colored red, even with a live consumer standing", () => {
+  const state = setup(514);
+  state.time = 0;
+  state.players.player.resources.radioactives = 20;
+  renderHUD();
+
+  const reactor = makeBuilding("reactor", "player", 500, 500);
+  state.buildings.set(reactor.id, reactor);
+
+  state.time = 2;
+  state.players.player.resources.radioactives = 40;   // climbing, not draining
+  renderHUD();
+
+  const radSpan = resourcesEl.children.find(el => el.dataset.com === "radioactives");
+  assert.match(radSpan.title, /\+600\/min/);
+  assert.equal(radSpan.classList.contains("deficit"), false, "gaining stock is never a shortage warning, regardless of who depends on it");
+});
+
+test("renderHUD: the topbar signature guard still skips the resource row when nothing tracked changed — taking a new flow-ledger sample does not itself force a rebuild", () => {
+  const state = setup(520);
+  state.time = 0;
+  renderHUD();   // priming sample
+  renderHUD();   // "before" snapshot -- already stable, nothing changed since the priming tick
+
+  const oreSpan = resourcesEl.children.find(el => el.dataset.com === "ore");
+  assert.ok(oreSpan);
+  oreSpan.textContent = "SENTINEL";   // stomp -- a real rebuild would overwrite this
+
+  // Cross a whole ~2s flow-ledger sampling cadence with every displayed value held exactly
+  // constant. If sampling were folded into the topbar's signature, this alone would force a
+  // rebuild and wipe the sentinel.
+  state.time = 5;
+  renderHUD();
+
+  assert.equal(oreSpan.textContent, "SENTINEL",
+    "nothing the topbar signature tracks changed — taking a new ring-buffer sample must not perturb it");
+});
+
+test("renderHUD: the topbar signature guard still rebuilds the resource row once a tracked stock actually changes, with the ledger folded in", () => {
+  const state = setup(521);
+  state.time = 0;
+  renderHUD();
+  renderHUD();
+
+  // Unlike gateChipEl (a single persistent node patched in place), the resource row is torn down
+  // and rebuilt wholesale (resourcesEl.innerHTML = "" + fresh createElement) on a real rebuild —
+  // so the proof is a FRESH node replacing the stomped one, not the same node mutating in place.
+  const before = resourcesEl.children.find(el => el.dataset.com === "ore");
+  before.textContent = "SENTINEL";
+  state.players.player.resources.ore = 301;   // a real, tracked change (the stock's floor moves)
+  renderHUD();
+
+  const after = resourcesEl.children.find(el => el.dataset.com === "ore");
+  assert.notEqual(after, before, "a real stock change must rebuild the resource row with fresh nodes");
+  assert.notEqual(after.textContent, "SENTINEL");
 });

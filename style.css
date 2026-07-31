@@ -107,6 +107,11 @@ html, body {
 .resources .relation.friendly { color: var(--good, #4ade80); }
 .resources .relation.neutral  { color: var(--warn); }
 .resources .relation.hostile  { color: var(--bad); }
+/* Commodity flow ledger (docs/improvement-proposals.md "Commodity flow ledger"): a resource span
+   reads red only once it's BOTH net-negative and something live actually depends on it (hud.js
+   liveConsumers) — a stockpile drifting down with nothing standing on it yet stays the ordinary
+   color. Hover any resource for the +X/min · -X/min tooltip that drives this. */
+.resources span.deficit { color: var(--bad); }
 
 /* Galaxy toasts — brief top-center alerts about worlds you're not on. #galaxyToast is a
    STACK (flex column) holding up to 3 toasts, so a routine "Researched…" no longer evicts a

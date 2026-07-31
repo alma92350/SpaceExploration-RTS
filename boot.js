@@ -21,7 +21,8 @@ import { drawFrame, resetFacing, snapshotPositions } from "./render.js";
 import { drawMinimap } from "./minimap.js";
 import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
-import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, addFuseWarning, activePings, resetEffects } from "./effects.js";
+import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, addFuseWarning, activePings, resetEffects, DEATH_BASE_RADIUS } from "./effects.js";
+import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
@@ -488,10 +489,18 @@ function processFrameEvents() {
         addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType, ev.bonus, ev.splashRadius);
         if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
-      case "entityKilled":
-        sound.playEntityKilled(pan);
-        addDeathFlash(ev.x, ev.y);
+      // Tiered destruction (docs/improvement-proposals.md): the event's unitType/kind (engine/
+      // combat.js/engine/bomb.js) let the death ring/sound scale by what actually died, instead
+      // of every kill playing the identical 280ms ring + tone. Falls back to the def-less
+      // baseline for an event somehow missing them (shouldn't happen post-this-change, but keeps
+      // this handler from ever crashing on a stray/older-shaped event).
+      case "entityKilled": {
+        const def = ev.kind === "building" ? BUILDINGS[ev.unitType] : UNITS[ev.unitType];
+        const radius = def?.radius || DEATH_BASE_RADIUS;
+        sound.playEntityKilled(pan, radius / DEATH_BASE_RADIUS);
+        addDeathFlash(ev.x, ev.y, radius, ev.kind || "unit");
         break;
+      }
       // A Helium Bomb's fuse just lit (engine/bomb.js) — proximity or the player's own
       // "Detonate Now" command. The real blast (bombDetonated below) doesn't land for
       // another ev.delay sim-seconds; this is the warning that it's now inevitable.

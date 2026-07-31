@@ -1,10 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createFog, updateFog, isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint, FOG_CELL_SIZE } from "../engine/fog.js";
+import { createFog, updateFog, isVisibleAt, isExploredAt, isNodeDiscovered, nearestUnexploredPoint, FOG_CELL_SIZE, UPHILL_FRAC } from "../engine/fog.js";
 import { makeUnit, makeBuilding } from "../engine/state.js";
+import { TERRAIN_CELL_SIZE } from "../engine/map.js";
 
 function mapStub(width = 800, height = 600) {
   return { width, height };
+}
+
+// A hand-built terrain grid (same idiom as engine/map.js's own generateTerrain), letting a test
+// pin exactly which cells are high ground (code 2) instead of reasoning through generateMap's
+// fractional feature specs. FOG_CELL_SIZE === TERRAIN_CELL_SIZE (both 40), so a fog cell's own
+// (gx, gy) indexes this terrain grid 1:1 — the documented hook (engine/map.js's
+// TERRAIN_CELL_SIZE comment).
+function terrainStub(width, height, highCells) {
+  const cols = Math.ceil(width / TERRAIN_CELL_SIZE);
+  const rows = Math.ceil(height / TERRAIN_CELL_SIZE);
+  const type = new Uint8Array(cols * rows);
+  for (const [gx, gy] of highCells) type[gy * cols + gx] = 2;
+  return { cols, rows, cell: TERRAIN_CELL_SIZE, type };
 }
 
 test("a freshly created fog grid is entirely unexplored and not visible", () => {
@@ -137,4 +151,78 @@ test("nearestUnexploredPoint is deterministic — same fog and origin give the s
   const a = nearestUnexploredPoint(fog, 400, 300);
   const b = nearestUnexploredPoint(fog, 400, 300);
   assert.deepEqual(a, b);
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Uphill concealment (docs/improvement-proposals.md "A real LOS pass: low ground can't see onto
+   high ground"): a source whose own tile is NOT high ground only reveals a high-ground CELL
+   (terrain type 2) within UPHILL_FRAC of its normal sight radius — a mesa top is a stat pad AND
+   an intelligence blind spot for anyone standing below it. A source standing ON high ground
+   itself is exempt (it already has the vantage), so the cap only ever narrows what a LOWLAND
+   source can see of the high ground, never the reverse.
+
+   The worker's sight (110) is used throughout so the numbers are concrete: UPHILL_FRAC * 110 =
+   60.5. A cell 80 world-units out sits strictly beyond that cap but strictly inside the plain
+   110 radius, isolating the effect from ordinary "out of sight entirely" cases.
+   --------------------------------------------------------------------------------------------- */
+
+test("UPHILL_FRAC is a sane fraction strictly between 0 and 1", () => {
+  assert.ok(UPHILL_FRAC > 0 && UPHILL_FRAC < 1);
+});
+
+test("a lowland source can't reveal a high-ground cell as far out as it reveals open ground at the identical distance", () => {
+  const worker = makeUnit("worker", "player", 20, 20);   // sits in fog cell (0,0), on open ground in both grids below
+  const state = { units: new Map([[worker.id, worker]]), buildings: new Map() };
+
+  // Target cell (2,0)'s center is (100, 20) — exactly 80 world-units from the source, which is
+  // beyond UPHILL_FRAC*110=60.5 but inside the plain 110 sight radius.
+  const openMap = { width: 800, height: 600, terrain: terrainStub(800, 600, []) };
+  const openFog = createFog(openMap);
+  updateFog({ ...state, map: openMap }, openFog, "player");
+  assert.equal(isVisibleAt(openFog, 100, 20), true, "fixture sanity: open ground at distance 80 is well within plain sight");
+
+  const highMap = { width: 800, height: 600, terrain: terrainStub(800, 600, [[2, 0]]) };
+  const highFog = createFog(highMap);
+  updateFog({ ...state, map: highMap }, highFog, "player");
+  assert.equal(isVisibleAt(highFog, 100, 20), false,
+    "the SAME distance onto a high-ground cell is now capped at UPHILL_FRAC of sight and stays dark");
+});
+
+test("well within UPHILL_FRAC of its sight, a lowland source still reveals a high-ground cell", () => {
+  const worker = makeUnit("worker", "player", 20, 20);
+  // Target cell (1,0)'s center is (60, 20) — 40 world-units out, inside UPHILL_FRAC*110=60.5.
+  const map = { width: 800, height: 600, terrain: terrainStub(800, 600, [[1, 0]]) };
+  const fog = createFog(map);
+  updateFog({ map, units: new Map([[worker.id, worker]]), buildings: new Map() }, fog, "player");
+
+  assert.equal(isVisibleAt(fog, 60, 20), true, "close high ground is still revealed — only the FAR edge of high ground is concealed");
+});
+
+test("a source standing on high ground itself is exempt from the uphill cap", () => {
+  const worker = makeUnit("worker", "player", 20, 20);
+  // Both the source's own cell (0,0) AND the distant target cell (2,0) (80 units out, beyond
+  // the 60.5 uphill cap) are marked high ground.
+  const map = { width: 800, height: 600, terrain: terrainStub(800, 600, [[0, 0], [2, 0]]) };
+  const fog = createFog(map);
+  updateFog({ map, units: new Map([[worker.id, worker]]), buildings: new Map() }, fog, "player");
+
+  assert.equal(isVisibleAt(fog, 100, 20), true,
+    "the source is itself on high ground, so the distant high-ground cell reveals at full (indeed terrain-extended) radius, not the uphill-capped one");
+});
+
+test("uphill concealment applies identically to the AI's own fog grid, not just the player's — updateFog takes `owner` generically", () => {
+  const enemy = makeUnit("worker", "ai", 20, 20);
+  const map = { width: 800, height: 600, terrain: terrainStub(800, 600, [[2, 0]]) };
+  const fog = createFog(map);
+  updateFog({ map, units: new Map([[enemy.id, enemy]]), buildings: new Map() }, fog, "ai");
+
+  assert.equal(isVisibleAt(fog, 100, 20), false, "the AI's own fog is capped the same way — no owner-specific branch exists to skip it");
+});
+
+test("uphill concealment degrades to plain reveal for a map-less state (no terrain grid at all)", () => {
+  const worker = makeUnit("worker", "player", 400, 300);
+  const fog = createFog(mapStub());
+  updateFog({ units: new Map([[worker.id, worker]]), buildings: new Map() }, fog, "player");   // no `map` key at all
+
+  assert.equal(isVisibleAt(fog, 400 + 100, 300), true, "no terrain to cap against — behaves exactly like before this feature");
 });
