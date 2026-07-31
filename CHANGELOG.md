@@ -80,6 +80,79 @@ teams sharing one working tree. One of those changes (timed doctrine research) m
 an already-documented, deliberately-unfixed AI weakness — `docs/odyssey-ai-review.md` §2.9 has the
 details and the repro.
 
+### Added
+
+- **Formations now rank by weapon range.** A wedge or line used to interleave whatever you selected
+  in whatever order you clicked it; short-ranged units (Bastion, Skiff) now screen the front of a
+  shaped formation while long-ranged ones (Lancer, Breacher, Colossus) trail behind, and an unarmed
+  support unit (the Mender) sinks to the rearmost slot of all instead of leading the charge. The
+  legacy grid-shape spread and the AI's own formation calls are untouched.
+- **Per-building logistics priority.** A high/normal/low cycle on any factory or power station's
+  panel now weights the auto-haulage scans toward (or away from) that building — high halves its
+  effective distance and lifts its hauler/server cap by one; low quadruples its effective distance
+  — instead of the previous flat nearest-first-with-a-hard-cap assignment being the only lever.
+- **Bulk trading.** The Market panel gained Sell ×4 and Sell All buttons (quoting the real marginal
+  proceeds before you click) alongside the original single-lot button, plus a trend glyph per row
+  that tells a briefly-depressed price apart from a deep, slow-draining glut.
+- **Grid Substation** — a cheap Odyssey-only relay that extends power-grid reach one hop from an
+  active source, so an expansion's factories no longer have to sit inside one dense power blob or
+  buy a whole second fuel-burning station just to stop paying the distance tax.
+- **Gifts and favor requests give diplomacy an actual road to Allied.** Tribute still only buys a
+  truce; you can now hand a neighbour commodities to build lasting goodwill (with diminishing
+  returns, so one dump can't buy friendship outright) and fulfill occasional favor requests for
+  credits and stance — and an Allied world's market spread tightens, so alliance finally pays for
+  itself instead of being a HUD word nothing reads.
+- **Bigger maps grow a contested middle, not just distance.** Large and Gigantic worlds now seed a
+  mirrored frontier belt of full-size deposit clusters in the map's contested band, one extra belt
+  per size step, instead of the same near-base economy stretched over a larger empty map.
+- **High ground now extends weapon range, not just sight.** A unit or turret holding a mesa or ridge
+  could already see farther than the README promised — it can finally shoot that far too.
+- **Attack pings on the minimap**, plus a Backspace hotkey that jumps the camera to the most recent
+  one — a raid on a far flank used to be findable only within the under-attack banner's few-second
+  window.
+- **Space now cycles through every base** on repeated presses instead of always landing on the
+  first Command Center, and a new topbar chip surfaces idle production buildings the same way the
+  idle-worker chip already does.
+- **Alt+click / Alt+drag subtracts from the current selection**, and Ctrl+double-click extends
+  select-all-of-type to the whole map instead of just the visible viewport.
+- **A Tech & Industry Chart overlay (hotkey T)** finally makes the unlock ladder visible in-game —
+  every building, unit gate, and tech node as tier columns, colored by whether it's built,
+  affordable now, or locked (with its full prerequisite chain spelled out), with a link to the full
+  field manual that was previously linked from nowhere in the app.
+- The landing picker now charts the destination's rough and high terrain from orbit instead of
+  showing nothing but fog — you still can't see deposits, units, or the fog state, only the ground.
+- **Research can be canceled for a full refund**, at the Datacenter or the Refinery, instead of a
+  mis-click stranding the cost until completion.
+- Reactor, Combustion Generator, and Biomass Reactor get bespoke hull art instead of sharing one
+  generic hexagon, and a running factory now shows a subtle work pulse — previously a humming base
+  and a dead one looked identical.
+- **Autosaves now keep two generations.** A corrupted or interrupted write used to mean losing an
+  entire Odyssey campaign; loading now falls back to the previous generation automatically, and
+  three consecutive save failures surface a one-time warning instead of failing silently forever.
+
+### Changed
+
+- Heavy Alloys now only boosts the Smelter and Assembly Plant it advertises, instead of silently
+  boosting every recipe building in the game including the Antimatter Forge and AI Foundry.
+- **A standing Foundry and Arsenal now speed up military production** (~8% each) instead of going
+  inert the moment their gate is unlocked, so they're worth defending and raiding past that point.
+  This applies through the same shared production code both sides use, so it retunes Tier-2 tempo
+  symmetrically for the player and the AI alike — worth knowing if a build or matchup suddenly
+  feels faster-paced than before.
+
+### Fixed
+
+- A shaped formation's range-ranking fallback for a unit with no declared weapon range sorted it to
+  the *front* of the formation instead of the rear — harmless for most of the roster, but it put
+  the unarmed Mender in the most exposed slot of all, backwards from the point of a healer.
+
+Seventeen more proposals from Tier 2 of `docs/improvement-proposals.md` shipped in this batch (per
+`docs/improvement-roadmap.md`'s Phase 3), again built by parallel TDD teams sharing one working
+tree. Every team that hit an unexpected test failure this round verified it against a clean
+baseline instead of assuming it was unrelated — one real, fully-anticipated interaction (the
+Foundry/Arsenal tempo change above, applied to a fixed-seed AI bench test) surfaced this way and
+was fixed at the test, not the feature.
+
 
 - **How long a neighbour holds a grudge is now part of its personality.** Souring was already
   flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but
