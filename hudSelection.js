@@ -35,8 +35,10 @@ import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine, c
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, spaceportTier, upgradeSpaceport,
          SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, FUEL_DISCOUNT_BY_TIER, cargoManifest, freightCapacity,
-         loadFreighter, unloadFreighter, freightUsed, freightRoom,
+         loadFreighter, unloadFreighter, freightUsed, freightRoom, JUMP_LOAD_RADIUS, CARGO_GOODS,
+         createLane, deleteLane, assignShipToLane, unassignShipFromLane,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
+import { setColonyPolicy, getColonyPolicy } from "./engine/colonyPolicy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip, packCommandCenter, PACK_COST } from "./engine/colony.js";
 import { sell, buy, unitPrice, tradeables, TRADE_LOT, quoteSell } from "./engine/market.js";
@@ -988,6 +990,178 @@ function renderGiftPicker(state) {
   }
 }
 
+// Freight Lanes (Odyssey): standing shipping between held worlds, set up here at a Spaceport.
+// A ship assigned to a lane stops being a jump rider (galaxy.js stagedRiders/jumpManifestAll
+// exclude it) — it's a fixed route now, delivering cargo every LANE_PERIOD (engine/galaxy.js
+// runLanes) straight from this world's treasury to the destination's, no jump or player
+// attention required.
+function renderLanes(state, spaceport) {
+  const g = game.galaxy;
+  const fromId = g.activeId;
+  const lanes = (g.lanes || []).filter(l => l.from === fromId);
+
+  if (!sectionToggle("spaceport:lanes", "Freight Lanes", lanes.length)) return;
+
+  for (const lane of lanes) {
+    const capacity = lane.shipIds.reduce((sum, id) => {
+      const u = state.units.get(id);
+      return sum + (u ? (UNITS[u.type]?.cargoHold || 0) : 0);
+    }, 0);
+    const head = document.createElement("div");
+    head.className = "market-head";
+    head.textContent = `🚀 Lane ▸ ${planetName(lane.to)} — ${lane.shipIds.length} ship${lane.shipIds.length === 1 ? "" : "s"} · ${capacity} cap/cycle`;
+    panelEl.appendChild(head);
+
+    // Commodity filter: a chip per CARGO_GOODS entry, toggled directly on the lane (a plain array
+    // on galaxy state — the same "flip a field, re-render" idiom the Electrify toggle above uses).
+    // At least one commodity always stays included, so the filter can never silently go empty.
+    const filterRow = document.createElement("div");
+    filterRow.className = "market-row";
+    for (const com of CARGO_GOODS) {
+      const included = lane.commodities.includes(com);
+      const chip = document.createElement("button");
+      chip.className = "market-btn";
+      chip.textContent = `${included ? "✓" : "—"} ${COM[com]?.name || com}`;
+      chip.title = included ? "Shipped by this lane — click to exclude" : "Excluded — click to ship it too";
+      chip.addEventListener("click", () => {
+        if (included) { if (lane.commodities.length > 1) lane.commodities = lane.commodities.filter(c => c !== com); }
+        else lane.commodities.push(com);
+        renderHUD();
+      });
+      filterRow.appendChild(chip);
+    }
+    panelEl.appendChild(filterRow);
+
+    for (const id of lane.shipIds) {
+      const u = state.units.get(id);
+      const row = document.createElement("div");
+      row.className = "market-row";
+      const label = document.createElement("span");
+      label.className = "market-com";
+      label.textContent = u ? `${UNITS[u.type].name} (${UNITS[u.type].cargoHold} cap)` : "(lost)";
+      row.appendChild(label);
+      const releaseBtn = document.createElement("button");
+      releaseBtn.className = "market-btn";
+      releaseBtn.textContent = "Release";
+      releaseBtn.title = "Free this ship from the lane — it can jump or take orders normally again";
+      releaseBtn.addEventListener("click", () => { unassignShipFromLane(g, lane.id, id); renderHUD(); });
+      row.appendChild(releaseBtn);
+      panelEl.appendChild(row);
+    }
+
+    // Every player freighter parked at THIS pad and not already committed to some lane.
+    const available = [...state.units.values()].filter(u =>
+      u.owner === "player" && UNITS[u.type]?.cargoHold && !u.laneId
+      && Math.hypot(u.x - spaceport.x, u.y - spaceport.y) <= JUMP_LOAD_RADIUS);
+    for (const u of available) {
+      panelEl.appendChild(makeButton(`Assign ${UNITS[u.type].name} (${UNITS[u.type].cargoHold} cap)`,
+        () => { assignShipToLane(g, lane.id, u.id); renderHUD(); },
+        { tip: "Park it here for good — it stops riding jumps and starts shipping this lane's cargo automatically, every few seconds of galaxy time." }));
+    }
+
+    panelEl.appendChild(makeButton("✕ Disband Lane", () => { deleteLane(g, lane.id); renderHUD(); },
+      { tip: "Free every assigned ship and remove this route." }));
+  }
+
+  // New lane: any OTHER world you actually hold a colony on (a real destination treasury) —
+  // shipping cargo to a world you don't hold has nowhere useful to land.
+  const targets = g.worlds.filter(w => w !== fromId).filter(w => {
+    const s = g.planets.get(w);
+    return s && [...s.buildings.values()].some(b => b.owner === "player");
+  });
+  for (const w of targets) {
+    panelEl.appendChild(makeButton(`+ New Lane ▸ ${planetName(w)}`,
+      () => { createLane(g, fromId, w, [...CARGO_GOODS]); renderHUD(); },
+      { tip: "Open a standing route (every commodity, by default): assign freighters below to ship this world's surplus there automatically." }));
+  }
+  if (!targets.length) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "No other colony to route to yet — settle a second world to open a lane.";
+    panelEl.appendChild(hint);
+  }
+}
+
+// Colony standing orders (Odyssey), set on a Command Center: what a background colony does
+// with itself once you leave it. Both policies are opt-in (off by default — a fresh colony is
+// inert, exactly like today) and take effect only while this world is a BACKGROUND colony
+// (engine/colonyPolicy.js runColonyPolicies) — the active seat is your own hands-on orders.
+// Editable here or from the starmap's per-colony row (starmap.js).
+function renderColonyPolicy(state, cc) {
+  const g = game.galaxy;
+  const planetId = state.planetId;
+  const policy = getColonyPolicy(g, planetId);
+
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = "📜 Standing Orders — takes effect once this becomes a background colony";
+  panelEl.appendChild(head);
+
+  // Sustain workers: re-queue at THIS CC (from the colony's own stockpile) when under target,
+  // and re-task any idle worker on the world to gather. One target for the whole world.
+  const wtRow = document.createElement("div");
+  wtRow.className = "market-row";
+  const wtLabel = document.createElement("span");
+  wtLabel.className = "market-com";
+  wtLabel.textContent = `Sustain workers: ${policy.workerTarget > 0 ? policy.workerTarget : "off"}`;
+  wtRow.appendChild(wtLabel);
+  const dec = document.createElement("button");
+  dec.className = "market-btn";
+  dec.textContent = "−";
+  dec.title = "Lower the sustained worker headcount";
+  dec.addEventListener("click", () => { setColonyPolicy(g, planetId, { workerTarget: Math.max(0, policy.workerTarget - 1) }); renderHUD(); });
+  wtRow.appendChild(dec);
+  const inc = document.createElement("button");
+  inc.className = "market-btn";
+  inc.textContent = "+";
+  inc.title = "Raise the sustained worker headcount";
+  inc.addEventListener("click", () => { setColonyPolicy(g, planetId, { workerTarget: policy.workerTarget + 1 }); renderHUD(); });
+  wtRow.appendChild(inc);
+  panelEl.appendChild(wtRow);
+
+  // Auto-sell surplus: sell stock above a per-commodity floor into THIS world's own market
+  // (the real sell() path — real slippage, real glut). Additive on top of the existing flat
+  // per-building passive income, not a replacement for it.
+  const asRow = document.createElement("div");
+  asRow.className = "market-row";
+  const asBtn = document.createElement("button");
+  asBtn.className = "market-btn";
+  asBtn.textContent = policy.autoSell.enabled ? "Auto-sell surplus: ON" : "Auto-sell surplus: OFF";
+  asBtn.title = "Sell stock above each commodity's floor into this world's own market while it's a background colony — on top of the flat per-building income, not instead of it.";
+  asBtn.addEventListener("click", () => { setColonyPolicy(g, planetId, { autoSell: { enabled: !policy.autoSell.enabled } }); renderHUD(); });
+  asRow.appendChild(asBtn);
+  panelEl.appendChild(asRow);
+
+  if (policy.autoSell.enabled) {
+    const coms = tradeables(state);
+    if (sectionToggle("cc:autosell", "Auto-sell floors", coms.length)) {
+      for (const com of coms) {
+        const meta = COM[com];
+        const floor = policy.autoSell.floors[com] || 0;
+        const row = document.createElement("div");
+        row.className = "market-row";
+        const label = document.createElement("span");
+        label.className = "market-com";
+        label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} · keep ${floor}`;
+        row.appendChild(label);
+        const lower = document.createElement("button");
+        lower.className = "market-btn";
+        lower.textContent = `−${TRADE_LOT}`;
+        lower.title = "Lower the floor — more of this commodity sells";
+        lower.addEventListener("click", () => { setColonyPolicy(g, planetId, { autoSell: { floors: { [com]: Math.max(0, floor - TRADE_LOT) } } }); renderHUD(); });
+        row.appendChild(lower);
+        const raise = document.createElement("button");
+        raise.className = "market-btn";
+        raise.textContent = `+${TRADE_LOT}`;
+        raise.title = "Raise the floor — less of this commodity sells (more stays banked)";
+        raise.addEventListener("click", () => { setColonyPolicy(g, planetId, { autoSell: { floors: { [com]: floor + TRADE_LOT } } }); renderHUD(); });
+        row.appendChild(raise);
+        panelEl.appendChild(row);
+      }
+    }
+  }
+}
+
 // The Odyssey Capital control on a Command Center: this CC is already the anchored
 // Capital (a note, and nothing else — it's permanent), or it's still a plain CC that can
 // EITHER fortify into the Capital (if the player doesn't have one yet elsewhere) OR pack
@@ -1193,6 +1367,7 @@ function rebuildSelectionPanel(sel) {
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
+    if (game.galaxy) renderColonyPolicy(state, cc);          // Odyssey: standing orders for once you leave this world
     // Odyssey diplomacy: tribute (appease), gifts, and favor requests — the panel itself always
     // shows once there's a neighbour to have one with; renderDiplomacy gates its OWN tribute
     // button to Neutral-or-worse, but gifts/favors matter across the whole stance range (they're
@@ -1611,6 +1786,8 @@ function rebuildSelectionPanel(sel) {
             lockTip: `Need ◈${cost} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
       }
     }
+
+    renderLanes(state, spaceport);
   }
 
   // Colony ship (Odyssey): settle in place into a Command Center. Locked (with the

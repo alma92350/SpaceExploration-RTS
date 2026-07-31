@@ -190,6 +190,11 @@ html, body {
 /* Conquered — its neighbour's capital is razed (Domination win progress). */
 .starmap-world.pacified { border-color: var(--gold, #fbbf24); }
 .starmap-world.pacified .sm-sub { color: var(--gold, #fbbf24); }
+/* Colony standing orders + Freight Lanes summary (starmap.js renderColonyOrders/
+   renderLaneOverlay) — reuse the market-head/market-row/market-btn idiom from the selection
+   panel (hudSelection.js) so a starmap-side list needs no styling of its own beyond width/spacing. */
+.starmap-side { width: min(760px, 92%); align-self: center; margin: 4px 0; }
+.starmap-side .market-head { margin: 10px 0 4px; }
 .starmap-foot { color: var(--muted); font-size: 0.8rem; margin-bottom: 18px; }
 /* Surrender — the only way out of the play-forever Odyssey. Muted by default (it's a rare,
    deliberate act), turning red once armed for the confirm click. */

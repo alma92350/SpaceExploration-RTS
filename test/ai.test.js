@@ -6,7 +6,7 @@ import { tick } from "../engine/sim.js";
 import { UNITS, UPGRADES } from "../engine/entities.js";
 import { updateResearch, researchTimeScale } from "../engine/techtree.js";
 import { isNodeDiscovered, isExploredAt, isVisibleAt, updateFog } from "../engine/fog.js";
-import { aiDoctrine, effectiveMix } from "../engine/aiWorkers.js";
+import { aiDoctrine, effectiveMix, assignIdlePlayerGather } from "../engine/aiWorkers.js";
 import { pickBuilder, accrueActionBudget } from "../engine/aiCommon.js";
 import { pickNextUnitType } from "../engine/aiMilitary.js";
 
@@ -1209,4 +1209,35 @@ test("Easy never counter-picks — its army stays its learnable, exploitable arc
     assert.equal(pickNextUnitType(state, state.ai.archetype), mix[built % mix.length],
       `built=${built}: Easy follows the plain cycle even with a massed Bastion army in plain sight (would be a Lancer counter-pick on Medium/Hard)`);
   }
+});
+
+// ---- P6 colony-economy rework: an owner-generic idle-gather assignment for the PLAYER side
+// (engine/colonyPolicy.js's worker-sustain policy re-tasks a background colony's idle workers to
+// gather, reusing this instead of duplicating assignIdleWorkers' node-picking logic) ----
+test("assignIdlePlayerGather sends an idle PLAYER worker to the nearest live node, reading the PLAYER's own fog (not the AI's)", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const base = state.map.bases.player;
+  const node = { id: "test-player-ore", com: "ore", amount: 500, max: 500, x: base.x + 80, y: base.y };
+  state.map.nodes.push(node);
+  state.map.nodesById.set(node.id, node);
+  const w = makeUnit("worker", "player", base.x, base.y);
+  state.units.set(w.id, w);
+
+  assignIdlePlayerGather(state, [w]);
+  assert.equal(w.order?.type, "gather", "the idle player worker is assigned a gather order");
+  assert.equal(w.order.nodeId, node.id, "…on the node it can actually reach");
+});
+
+test("assignIdlePlayerGather never touches a worker that already has an order", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const base = state.map.bases.player;
+  const node = { id: "test-player-ore-2", com: "ore", amount: 500, max: 500, x: base.x + 80, y: base.y };
+  state.map.nodes.push(node);
+  state.map.nodesById.set(node.id, node);
+  const w = makeUnit("worker", "player", base.x, base.y);
+  w.order = { type: "move", x: base.x + 500, y: base.y };
+  state.units.set(w.id, w);
+
+  assignIdlePlayerGather(state, [w]);
+  assert.equal(w.order.type, "move", "a busy worker keeps its existing order");
 });

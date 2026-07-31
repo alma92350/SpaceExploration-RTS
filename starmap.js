@@ -21,6 +21,7 @@ import { planetName as worldName, LORE_FACTIONS, PLANETS, COM } from "./data.js"
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { stanceLabel } from "./engine/diplomacy.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
+import { getColonyPolicy, setColonyPolicy } from "./engine/colonyPolicy.js";
 
 export function renderStarmap() {
   const g = game.galaxy;
@@ -100,6 +101,9 @@ export function renderStarmap() {
   });
   starmapEl.appendChild(field);
 
+  renderColonyOrders(status);   // per-colony standing-orders quick toggle (engine/colonyPolicy.js)
+  renderLaneOverlay(g);         // Freight Lanes summary (engine/galaxy.js runLanes)
+
   const foot = document.createElement("p");
   foot.className = "starmap-foot";
   foot.textContent = "M or Esc to close · the Odyssey never ends unless you surrender";
@@ -117,6 +121,90 @@ export function renderStarmap() {
     surrenderOdyssey();
   });
   starmapEl.appendChild(surrender);
+}
+
+// Per-colony standing orders (engine/colonyPolicy.js): a quick toggle row for every world you
+// currently hold a colony on, mirroring the fuller panel on that world's own Command Center
+// (hudSelection.js renderColonyPolicy) — editable from the starmap so a policy for a world you've
+// LEFT doesn't require jumping back just to change it.
+function renderColonyOrders(status) {
+  const g = game.galaxy;
+  const colonies = status.worlds.filter(w => w.status === "colony");
+  if (!colonies.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "starmap-side";
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = "Colony standing orders";
+  wrap.appendChild(head);
+
+  for (const w of colonies) {
+    const policy = getColonyPolicy(g, w.id);
+    const row = document.createElement("div");
+    row.className = "market-row";
+
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = worldName(w.id);
+    row.appendChild(label);
+
+    const asBtn = document.createElement("button");
+    asBtn.className = "market-btn";
+    asBtn.textContent = policy.autoSell.enabled ? "Auto-sell: ON" : "Auto-sell: OFF";
+    asBtn.title = "Sell stock above its floors into this colony's own market while you're away (set floors from its Command Center panel).";
+    asBtn.addEventListener("click", () => { setColonyPolicy(g, w.id, { autoSell: { enabled: !policy.autoSell.enabled } }); renderStarmap(); });
+    row.appendChild(asBtn);
+
+    const wtLabel = document.createElement("span");
+    wtLabel.className = "market-trend";
+    wtLabel.textContent = `workers ${policy.workerTarget > 0 ? policy.workerTarget : "off"}`;
+    row.appendChild(wtLabel);
+    const dec = document.createElement("button");
+    dec.className = "market-btn";
+    dec.textContent = "−";
+    dec.addEventListener("click", () => { setColonyPolicy(g, w.id, { workerTarget: Math.max(0, policy.workerTarget - 1) }); renderStarmap(); });
+    row.appendChild(dec);
+    const inc = document.createElement("button");
+    inc.className = "market-btn";
+    inc.textContent = "+";
+    inc.addEventListener("click", () => { setColonyPolicy(g, w.id, { workerTarget: policy.workerTarget + 1 }); renderStarmap(); });
+    row.appendChild(inc);
+
+    wrap.appendChild(row);
+  }
+  starmapEl.appendChild(wrap);
+}
+
+// Freight Lanes overlay (engine/galaxy.js runLanes): one line per standing route, galaxy-wide —
+// set up and edited at the source world's Spaceport panel (hudSelection.js renderLanes); this is
+// a read-only summary so a route between two worlds you're not currently standing on is still
+// visible at a glance.
+function renderLaneOverlay(g) {
+  const lanes = g.lanes || [];
+  if (!lanes.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "starmap-side";
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = "Freight Lanes";
+  wrap.appendChild(head);
+
+  for (const lane of lanes) {
+    const row = document.createElement("div");
+    row.className = "market-row";
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = `${worldName(lane.from)} ▸ ${worldName(lane.to)}`;
+    row.appendChild(label);
+    const info = document.createElement("span");
+    info.className = "market-trend";
+    info.textContent = `${lane.shipIds.length} ship${lane.shipIds.length === 1 ? "" : "s"}`;
+    row.appendChild(info);
+    wrap.appendChild(row);
+  }
+  starmapEl.appendChild(wrap);
 }
 
 function onWorldClick(w) {

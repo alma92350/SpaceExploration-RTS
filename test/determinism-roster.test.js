@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { createGalaxy, addPlanet, stepGalaxy, ODYSSEY_WORLDS } from "../engine/galaxy.js";
+import { createGalaxy, addPlanet, stepGalaxy, ODYSSEY_WORLDS, createLane, assignShipToLane, LANE_PERIOD } from "../engine/galaxy.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
+import { makeBuilding, makeUnit } from "../engine/state.js";
+import { setColonyPolicy } from "../engine/colonyPolicy.js";
 import { mulberry32, entitySnapshot, galaxySnapshot } from "./_helpers.js";
 
 // The headline determinism test (determinism.test.js) proves same-seed replays match on ONE
@@ -46,4 +48,47 @@ test("a reloaded galaxy continues identically at full precision (not just rounde
   const g2 = deserializeGalaxy(saved);                // restore (also restores the shared id counter)
   for (let i = 0; i < 40; i++) stepGalaxy(g2, 0.1);   // same steps from the same point
   assert.equal(galaxySnapshot(g2), originalContinued);
+});
+
+// P6 colony-economy rework: Freight Lanes (runLanes) and colony standing orders
+// (colonyPolicy.js's runColonyPolicies) both run out of stepGalaxy's own scheduling —
+// exactly the kind of background machinery a determinism bug (wall-clock, unseeded order,
+// Map-iteration dependence) most easily hides in. Build two byte-identical galaxies from the
+// same seed, wire up an active lane AND an active colony policy on each the SAME way, run them
+// forward, and require the full-precision fingerprints to match exactly.
+test("two galaxies from the same seed, with an active Freight Lane and colony standing orders, replay byte-identical", () => {
+  const build = seed => {
+    const g = createGalaxy({ seed });
+    const from = g.planets.get(g.activeId);
+    const sp = makeBuilding("spaceport", "player", from.map.bases.player.x + 40, from.map.bases.player.y);
+    from.buildings.set(sp.id, sp);
+    const hauler = makeUnit("hauler", "player", sp.x + 10, sp.y);
+    from.units.set(hauler.id, hauler);
+    from.players.player.resources.metals = 400;
+
+    const destId = g.worlds.find(w => w !== g.activeId);
+    const to = addPlanet(g, destId, { unsettled: true });
+    to.background = true;
+    const cc = makeBuilding("command", "player", to.map.bases.player.x, to.map.bases.player.y);
+    to.buildings.set(cc.id, cc);
+    to.players.player.resources.ore = 1000;
+    to.players.player.resources.alloys = 300;
+    g.discovered.add(destId);
+
+    const lane = createLane(g, g.activeId, destId, ["metals"]);
+    assignShipToLane(g, lane.id, hauler.id);
+    setColonyPolicy(g, destId, { autoSell: { enabled: true, floors: { alloys: 50 } }, workerTarget: 2 });
+
+    for (let i = 0; i < LANE_PERIOD * 2 + 25; i++) stepGalaxy(g, 0.05);   // several lane cycles + several policy scans
+    return g;
+  };
+
+  const a = build(271828), b = build(271828);
+  // Sanity FIRST: both mechanisms actually did something, so the equality below is a real
+  // replay comparison, not two untouched galaxies trivially matching.
+  const fromA = a.planets.get(a.activeId), destA = a.planets.get(a.worlds.find(w => w !== a.activeId));
+  assert.ok(fromA.players.player.resources.metals < 400, "the lane actually shipped metals out");
+  assert.ok(destA.players.player.resources.ore > 700, "worker-sustain actually spent ore at the CC");
+
+  assert.equal(galaxySnapshot(a), galaxySnapshot(b), "same seed + same setup ⇒ byte-identical galaxies, lanes/policies included");
 });

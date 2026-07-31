@@ -67,12 +67,20 @@ export function galaxySnapshot(galaxy) {
       s.ai.nextWaveAt == null ? "-" : s.ai.nextWaveAt,
       Number(s.ai.waveCount) || 0,
     ].join("::"));
+  // Freight Lanes + colony standing orders (P6 colony-economy rework): sorted by lane/planet id so
+  // Map/array insertion order can't leak a false mismatch, only genuine value differences.
+  const lanes = [...(galaxy.lanes || [])]
+    .slice().sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map(l => [l.id, l.from, l.to, l.commodities.join(","), l.shipIds.join(",")].join("::"));
+  const colonyPolicies = [...(galaxy.colonyPolicies || [])]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([id, p]) => [id, JSON.stringify(p)].join("::"));
   return JSON.stringify({
     seed: galaxy.seed, credits: galaxy.credits, activeId: galaxy.activeId,
     tick: galaxy.tick, time: galaxy.time, entitySeq: galaxy.entitySeq,
     pacified: [...(galaxy.pacified || [])].sort(),
     reached: [...(galaxy.reached || [])].sort(),
-    planets,
+    planets, lanes, colonyPolicies,
   });
 }
 

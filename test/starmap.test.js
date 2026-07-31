@@ -89,11 +89,13 @@ await import("../boot.js");
 globalThis.window = { addEventListener() {}, removeEventListener() {} };
 
 const { game } = await import("../session.js");
-const { createGalaxy, galaxyStatus } = await import("../engine/galaxy.js");
+const { createGalaxy, galaxyStatus, addPlanet, createLane } = await import("../engine/galaxy.js");
 const { PLANETS, COM } = await import("../data.js");
 const { PLANET_MODIFIERS } = await import("../engine/map.js");
 const { renderStarmap } = await import("../starmap.js");
 const { starmapEl } = await import("../dom.js");
+const { makeBuilding } = await import("../engine/state.js");
+const { getColonyPolicy } = await import("../engine/colonyPolicy.js");
 
 // The world-node button for `id`, in the exact order renderStarmap built the field (mirrors
 // galaxyStatus's own world order, so this never depends on matching by rendered text).
@@ -164,4 +166,62 @@ test("the dossier line shows even for a still-unexplored world — charted geogr
 test("renderStarmap is a no-op with no galaxy — never throws", () => {
   game.galaxy = null;
   assert.doesNotThrow(() => renderStarmap());
+});
+
+// A `.starmap-side` section, found by its market-head text (the section's first child) — the
+// same reusable idiom renderColonyOrders/renderLaneOverlay both use.
+function sideSection(label) {
+  return starmapEl.children.find(c => c._classes?.has("starmap-side") && c.children[0]?.textContent === label);
+}
+
+test("a held colony gets a standing-orders row on the starmap, toggleable without jumping back", () => {
+  const g = createGalaxy({ seed: 7 });
+  const destId = g.worlds.find(w => w !== g.activeId);
+  const colony = addPlanet(g, destId, { unsettled: true });
+  colony.background = true;
+  const cc = makeBuilding("command", "player", colony.map.bases.player.x, colony.map.bases.player.y);
+  colony.buildings.set(cc.id, cc);
+  g.discovered.add(destId);
+  game.galaxy = g;
+
+  renderStarmap();
+
+  const section = sideSection("Colony standing orders");
+  assert.ok(section, "a standing-orders section is rendered for the held colony");
+  const row = section.children.find(c => c._classes?.has("market-row"));
+  assert.ok(row, "one row for the colony");
+  const toggle = row.children.find(c => c.tagName === "button" && c.textContent.startsWith("Auto-sell"));
+  assert.ok(toggle, "an auto-sell toggle is present");
+  assert.equal(toggle.textContent, "Auto-sell: OFF", "off by default");
+
+  toggle.click();
+  assert.equal(getColonyPolicy(g, destId).autoSell.enabled, true, "clicking the starmap toggle actually flips the policy");
+
+  game.galaxy = null;
+});
+
+test("an active Freight Lane gets a summary line on the starmap", () => {
+  const g = createGalaxy({ seed: 8 });
+  const destId = g.worlds.find(w => w !== g.activeId);
+  addPlanet(g, destId, { unsettled: true });
+  createLane(g, g.activeId, destId, ["metals"]);
+  game.galaxy = g;
+
+  renderStarmap();
+
+  const section = sideSection("Freight Lanes");
+  assert.ok(section, "a Freight Lanes section is rendered");
+  const row = section.children.find(c => c._classes?.has("market-row"));
+  assert.ok(row, "one row for the lane");
+  assert.ok(row.children[0].textContent.includes("▸"), "shows the source ▸ destination route");
+
+  game.galaxy = null;
+});
+
+test("no colonies and no lanes ⇒ neither starmap-side section renders", () => {
+  const g = createGalaxy({ seed: 9 });
+  game.galaxy = g;
+  renderStarmap();
+  assert.equal(starmapEl.children.filter(c => c._classes?.has("starmap-side")).length, 0);
+  game.galaxy = null;
 });
