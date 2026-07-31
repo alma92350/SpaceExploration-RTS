@@ -550,32 +550,58 @@ export function freightRoom(unit) {
   return Math.max(0, cap - freightUsed(unit));
 }
 
-// Player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE doctrines of
-// two tiers each. You commit to Assault (offense) OR Bulwark (defense) —
-// researching any upgrade of one doctrine locks the other — and can then deepen
-// your chosen path with its Tier-2 upgrade (which requires the Tier-1, via the
-// same prereqsMet machinery the tech tree uses). So "which upgrade" is a real
-// strategic fork with an opportunity cost, not a buy-both no-brainer. Like the
-// Odyssey tech tree's TECHS (engine/techtree.js), each entry is PAID ON ENQUEUE
-// and DEVELOPED OVER TIME — `time` is seconds to develop at a tech-5 world,
-// scaled by researchTimeScale — queued at a Refinery via production.js's
-// researchUpgrade and ticked by the SAME updateResearch loop the Datacenter
-// uses (it resolves TECHS or UPGRADES by building.type). Effects apply live,
-// army-wide (and base-wide — see reinforcedPlating/reinforcedBulwark below), the
-// instant a queued upgrade completes; multipliers stack multiplicatively in
-// combat.js. Assault costs radioactives, Bulwark crystals — so a world's deposit
-// specialty tilts which doctrine comes easier.
+// Player-wide Refinery upgrades, arranged as three MUTUALLY EXCLUSIVE doctrines, each three tiers
+// deep (docs/improvement-proposals.md's doctrine-depth redesign brought Assault and Bulwark up to
+// the depth Logistics already had). You commit to Assault (offense), Bulwark (defense), or
+// Logistics (economy/tempo) — researching any upgrade of one doctrine locks the others — and can
+// then deepen your chosen path tier by tier (each requiring the tier right below it, via the same
+// prereqsMet machinery the tech tree uses). So "which upgrade" is a real strategic fork with an
+// opportunity cost, not a buy-both no-brainer. Like the Odyssey tech tree's TECHS
+// (engine/techtree.js), each entry is PAID ON ENQUEUE and DEVELOPED OVER TIME — `time` is seconds
+// to develop at a tech-5 world, scaled by researchTimeScale — queued at a Refinery via
+// production.js's researchUpgrade and ticked by the SAME updateResearch loop the Datacenter uses
+// (it resolves TECHS or UPGRADES by building.type). Effects apply live, army-wide (and base-wide
+// — see reinforcedPlating/reinforcedBulwark below), the instant a queued upgrade completes;
+// multipliers stack multiplicatively in combat.js. Assault costs radioactives, Bulwark crystals —
+// so a world's deposit specialty tilts which combat doctrine comes easier.
+// Each doctrine's Tier-3 is a CAPSTONE, additionally gated on a completed Arsenal (not just its
+// own Tier-2) — Logistics' is a capability flag (recycling); Assault's and Bulwark's each change
+// TEXTURE, not just magnitude, so the deepening tier adds a genuine tactical verb rather than a
+// third copy of the same multiplier (see overdriveActuators/selfSealingPlating below).
 // `ico` is the doctrine's emblem (assault ⚔️, bulwark 🛡️, logistics 📦), reused on the Refinery
-// research buttons so the doctrine reads at a glance — same iconography as the rest of the HUD.
+// research buttons so the doctrine reads at a glance — same iconography as the rest of the HUD;
+// a Tier-3 capstone breaks from its own doctrine's emblem for a more specific one instead
+// (recycling ♻️, overdriveActuators ⚡, selfSealingPlating 🩹), the same way recycling already did.
 export const UPGRADES = {
   overchargedWeapons: {
     id: "overchargedWeapons", name: "Overcharged Weapons", doctrine: "assault", tier: 1, ico: "⚔️",
     cost: { radioactives: 150 }, time: 25, desc: "+15% damage dealt by all combat units", damageDealtMult: 1.15,
   },
+  // Doctrine depth (docs/improvement-proposals.md "Give the doctrine Tier-2s a verb"): a flat
+  // damage stack alone changes no decision a player makes IN a fight, so Tier-2 also grants a
+  // tactical verb on top of it — chaseSpeedMult moves an Assault army ~10% faster specifically
+  // while it's chasing an already-acquired target (the out-of-weapon-range chase branch in
+  // engine/combat.js updateCombat), never on a plain move order. Read by upgradeMult exactly like
+  // damageDealtMult — it's a genuine multiplier, just consumed at a different call site.
   overchargedCore: {
     id: "overchargedCore", name: "Overcharged Core", doctrine: "assault", tier: 2, ico: "⚔️",
     cost: { radioactives: 200, ore: 120 }, time: 32, requires: ["overchargedWeapons"],
-    desc: "+15% more damage dealt (stacks with Overcharged Weapons)", damageDealtMult: 1.15,
+    desc: "+15% more damage dealt (stacks with Overcharged Weapons); +10% move speed while chasing an acquired target",
+    damageDealtMult: 1.15, chaseSpeedMult: 1.1,
+  },
+  // The Arsenal-gated capstone (docs/improvement-proposals.md "Tier-3 doctrine capstones"):
+  // texture, not just magnitude. Tier-2's chaseSpeedMult is about CLOSING a fight; this is about
+  // WINNING it once joined — a genuinely different tactical identity (tempo), so it needs no
+  // reconciliation with Tier-2 the way Bulwark's regen does below. Applied at every "reset the
+  // cooldown after a landed shot" site in engine/combat.js — the main unit attack path and
+  // updateWorkerCombat — but deliberately NOT updateBuildingCombat: this is the ARMY's tempo
+  // upgrade (mobile units only), not a base-defense buff. Bulwark, not Assault, is the doctrine
+  // that already reaches structures too (see reinforcedPlating's own comment below). Mixed
+  // building+upgrade requires — prereqsMet already resolves both token kinds.
+  overdriveActuators: {
+    id: "overdriveActuators", name: "Overdrive Actuators", doctrine: "assault", tier: 3, ico: "⚡",
+    cost: { radioactives: 220, ore: 140 }, time: 38, requires: ["overchargedCore", "arsenal"],
+    desc: "-10% attack cooldown — the army shoots faster once it's engaged", attackCooldownMult: 0.9,
   },
   // "all units and structures", not just combat units: attackDamage (engine/combat.js) applies
   // damageTakenMult to EVERY target it computes damage for — units AND buildings alike, with no
@@ -585,10 +611,43 @@ export const UPGRADES = {
     id: "reinforcedPlating", name: "Reinforced Plating", doctrine: "bulwark", tier: 1, ico: "🛡️",
     cost: { crystals: 150 }, time: 25, desc: "-12% damage taken by all units and structures", damageTakenMult: 0.88,
   },
+  // Doctrine depth, the Bulwark half (docs/improvement-proposals.md "Give the doctrine Tier-2s a
+  // verb" AND "Tier-3 doctrine capstones" — RECONCILED into one mechanic here; see
+  // selfSealingPlating below for why there's only one regen system, not two independently-tracked
+  // ones). This is the verb itself: role:"combat" army units passively heal `regenRate` hp/s once
+  // `regenDelay` seconds have passed since they last took a hit (engine/repair.js
+  // updateBulwarkRegen reads these two fields directly, like recycling's capability flag below —
+  // NOT through the generic upgradeMult product, since a rate and a delay aren't multipliers to
+  // stack, they're the two knobs of one mechanic). "Win attrition wars by cycling out of fights" —
+  // strictly out-of-combat: a unit under continuous fire keeps restamping unit.lastHitAt
+  // (engine/combat.js) every hit, so it never crosses even this delay — see
+  // test/balance.test.js's auto-battle duels, untouched by design.
   reinforcedBulwark: {
     id: "reinforcedBulwark", name: "Reinforced Bulwark", doctrine: "bulwark", tier: 2, ico: "🛡️",
     cost: { crystals: 200, ore: 120 }, time: 32, requires: ["reinforcedPlating"],
-    desc: "-12% more damage taken by all units and structures (stacks with Reinforced Plating)", damageTakenMult: 0.88,
+    desc: "-12% more damage taken (stacks with Reinforced Plating); army units regenerate hp once out of combat",
+    damageTakenMult: 0.88, regenRate: 0.5, regenDelay: 8,
+  },
+  // The Bulwark capstone (docs/improvement-proposals.md "Tier-3 doctrine capstones") — and the
+  // RECONCILIATION point with "Give the doctrine Tier-2s a verb" above, which independently
+  // proposed the exact same "out-of-combat hp regen" identity for reinforcedBulwark. Rather than
+  // ship two separately-tracked regen fields (a silent double-heal for a player who owns both, or
+  // a Tier-3 pick that just restates what Tier-2 already grants), this is ONE mechanic:
+  // engine/repair.js's updateBulwarkRegen reads regenRate/regenDelay off whichever of these two
+  // upgrades the player holds, this capstone's numbers winning whenever both are present — so a
+  // save can never double-apply both tiers at once. And this entry genuinely DEEPENS Tier-2's
+  // grant rather than repeating it: 3x the heal rate, well under half the unhit delay. A
+  // Tier-2-only army must fully disengage for 8s before it heals at all; a Tier-2+3 army peels a
+  // wounded unit out for a much shorter breather AND patches it up faster once it does — "armies
+  // that hold ground recover" (the proposal's own framing), a sustain identity that complements
+  // the Mender rather than replacing it. Still strictly out-of-combat at every tier: the
+  // shortened delay is still a real delay, so a continuously-hit unit (lastHitAt restamped every
+  // hit) never benefits at ANY tier — see test/repair.test.js's reconciliation-proving cases.
+  selfSealingPlating: {
+    id: "selfSealingPlating", name: "Self-Sealing Plating", doctrine: "bulwark", tier: 3, ico: "🩹",
+    cost: { crystals: 220, ore: 140 }, time: 38, requires: ["reinforcedBulwark", "arsenal"],
+    desc: "out-of-combat hp regen kicks in sooner and heals faster than Reinforced Bulwark alone",
+    regenRate: 1.5, regenDelay: 3,
   },
   // A third doctrine that isn't about the fight at all: Logistics trades combat
   // upgrades for economy and tempo. Committing to it locks Assault AND Bulwark

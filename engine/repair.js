@@ -17,7 +17,7 @@
 
 "use strict";
 
-import { UNITS } from "./entities.js";
+import { UNITS, UPGRADES } from "./entities.js";
 import { queryNeighbors } from "./grid.js";
 import { onPowerGrid } from "./industry.js";
 import { stepToward } from "./movement.js";
@@ -174,5 +174,72 @@ export function updateRepair(state, dt) {
       if (Math.hypot(b.x - mender.x, b.y - mender.y) > range) continue;
       b.hp = Math.min(b.maxHp, b.hp + heal);
     }
+  }
+}
+
+/* ============================================================
+   Bulwark doctrine regen (engine/entities.js UPGRADES.reinforcedBulwark / selfSealingPlating) —
+   a SEPARATE pass from the Mender's updateRepair above: doctrine-gated (not every player has it),
+   army-only (role:"combat" units, not buildings — this is the army's own attrition tool, not a
+   base-repair one), and reads unit.lastHitAt (engine/combat.js performAttack/applySplash) rather
+   than proximity to a healer.
+
+   THE RECONCILIATION: docs/improvement-proposals.md's "Give the doctrine Tier-2s a verb" and
+   "Tier-3 doctrine capstones" proposals were written independently and BOTH landed on "out-of-
+   combat hp regen" as Bulwark's identity — one for reinforcedBulwark (Tier 2), one for a Tier-3
+   capstone. Rather than ship two separately-tracked regen fields (a silent double-heal for a
+   player who owns both, or a Tier-3 pick that just restates what Tier 2 already grants), this is
+   ONE mechanic with two knobs, and selfSealingPlating (the capstone) is a genuine DEEPENING of
+   it, not a repeat:
+     - reinforcedBulwark (Tier 2) grants the verb itself: `regenRate` hp/s of passive hull regen,
+       for role:"combat" units only, once `regenDelay` seconds have passed since the unit's last
+       hit — "win attrition wars by cycling out of fights" (the proposal's own framing).
+     - selfSealingPlating (Tier 3, requires reinforcedBulwark + arsenal) does not add a second
+       regen source on top of the first — it replaces Tier 2's numbers with strictly better ones
+       (3x the rate, well under half the delay — see entities.js), so a fully-committed Bulwark
+       army both starts healing sooner after disengaging AND heals faster once it does. A
+       Tier-2-only army must fully sit out a fight for 8s before it heals at all; a Tier-2+3 army
+       peels a wounded unit out for a much shorter breather and patches it up quicker too — a
+       measurable, tested difference (test/repair.test.js), not just a relabeled Tier-2.
+   Both tiers read `regenRate`/`regenDelay` straight off whichever UPGRADES entry applies — not
+   through the generic upgradeMult() product (entities.js): a rate and a delay aren't multipliers
+   to stack, they're the two knobs of one mechanic, the same "read directly" idiom recycling's own
+   capability flag already uses. bulwarkRegen() below picks the capstone's numbers over Tier-2's
+   whenever both are present, so a save can never double-apply both tiers at once.
+
+   Both tiers share the exact same gate — state.time - (unit.lastHitAt||0) > delay — so a unit
+   under CONTINUOUS fire never crosses even the shortened Tier-3 delay: regen stays strictly
+   out-of-combat at every tier, which is what keeps test/balance.test.js's auto-battle duels
+   (continuous fire, no gaps) unaffected. See test/repair.test.js for the tier-vs-tier proof.
+   ============================================================ */
+
+// The regen grant in effect for `upgrades` — the capstone's numbers when researched, else
+// Tier-2's, else null (no Bulwark regen at all). Never both: this is what stops a Tier-2+3 player
+// from double-healing.
+function bulwarkRegen(upgrades) {
+  if (!upgrades) return null;
+  if (upgrades.selfSealingPlating) return UPGRADES.selfSealingPlating;
+  if (upgrades.reinforcedBulwark) return UPGRADES.reinforcedBulwark;
+  return null;
+}
+
+/**
+ * Passive Bulwark hull regen for role:"combat" units whose owner has researched reinforcedBulwark
+ * or selfSealingPlating. Called once per tick from sim.js, right after updateRepair — same "after
+ * this tick's combat has resolved" timing that pass already documents, so a unit hit THIS tick
+ * (lastHitAt just stamped to the still-current state.time) never regens on that same tick.
+ * A no-op entirely for a player without either upgrade, so games without this doctrine tier are
+ * byte-identical to before it existed.
+ * @param {State} state @param {number} dt
+ */
+export function updateBulwarkRegen(state, dt) {
+  for (const unit of state.units.values()) {
+    if (unit.hp <= 0 || unit.hp >= unit.maxHp) continue;
+    const def = UNITS[unit.type];
+    if (!def || def.role !== "combat") continue;   // the army verb — workers/support/freighters sit this out
+    const grant = bulwarkRegen(state.players[unit.owner]?.upgrades);
+    if (!grant) continue;
+    if (state.time - (unit.lastHitAt || 0) <= grant.regenDelay) continue;   // still in (or too recently out of) a fight
+    unit.hp = Math.min(unit.maxHp, unit.hp + grant.regenRate * dt);
   }
 }
