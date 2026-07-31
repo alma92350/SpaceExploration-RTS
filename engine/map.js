@@ -224,6 +224,29 @@ export function generateMap(planetId = "ferros", rng = Math.random, opts = {}) {
     }
   });
 
+  // Frontier belt: on bigger maps (sizeMult >= 2), a mirrored belt of full-size
+  // VISIBLE deposit clusters seeded in the contested middle (x ~0.35-0.45),
+  // one additional mirrored set per size step above 1, cycling the world's own
+  // deposit commodities. sizeMult used to only grow the hidden caches
+  // (0.6x singletons below) — a Gigantic map was the same economy stretched
+  // over 16x area with nothing contestable in the middle. Now each size tier
+  // adds a real fight over new ground, not just a longer walk. Gated strictly
+  // on sizeMult >= 2 and placed after every earlier rng-consuming block, so a
+  // sizeMult=1 game's rng draw sequence — and thus its node layout — stays
+  // byte-identical (test/map.test.js's byte-for-byte pin). `frontier` marks
+  // these out from the deposit-table nodes, same idiom as `home`/`hidden`.
+  if (sizeMult >= 2) {
+    const beltComs = Object.keys(planet.deposits);
+    const beltSteps = sizeMult - 1;
+    for (let i = 0; i < beltSteps; i++) {
+      const com = beltComs[i % beltComs.length];
+      const y = height * 0.5 + (i - (beltSteps - 1) / 2) * height * 0.12;
+      const amount = amountOf(600 * (planet.deposits[com] || 1));
+      nodes.push({ id: `n${nid++}`, com, amount, max: amount, x: width * 0.35 + rng() * width * 0.10, y, frontier: true });
+      nodes.push({ id: `n${nid++}`, com, amount, max: amount, x: width * 0.65 - rng() * width * 0.10, y, frontier: true });
+    }
+  }
+
   // Hidden resource caches: extra deposits the survey missed, out in the
   // contested middle and along the vertical extremes, invisible until a unit
   // scouts their cell (fog.js's isNodeDiscovered). Fixed, mirrored fractional
