@@ -88,6 +88,7 @@ function setup() {
   // "test" planetId. Fresh empty state, every time.
   game.groups[state.planetId] = {};
   game.hotkeyActions = null;
+  game.lastAttackAt = null;   // Backspace jump-to-last-alert reads this live off the shared session
   let calls = 0;
   const controller = attachInput(canvas, state, () => { calls++; });
   return { canvas, window: globalThis.window, state, controller, calls: () => calls };
@@ -116,6 +117,16 @@ function rightClick(canvas, window, clientX, clientY, ctrlKey = false) {
 function leftClick(canvas, window, clientX, clientY, ctrlKey = false) {
   canvas.dispatchEvent(ev("mousedown", { button: 0, clientX, clientY }));
   window.dispatchEvent(ev("mouseup", { button: 0, clientX, clientY, ctrlKey }));
+}
+
+// A real left-DRAG (box-select): mousedown at the start, then a mousemove to the end point —
+// dragBox.x2/y2 only ever advances on mousemove (see input.js), never on mouseup itself — and
+// finally mouseup at the end point, which is what actually resolves the box via
+// applyBoxSelection. `extra` carries mouseup's own modifier flags (ctrlKey/altKey).
+function leftDrag(canvas, window, start, end, extra = {}) {
+  canvas.dispatchEvent(ev("mousedown", { button: 0, clientX: start.clientX, clientY: start.clientY }));
+  canvas.dispatchEvent(ev("mousemove", { clientX: end.clientX, clientY: end.clientY }));
+  window.dispatchEvent(ev("mouseup", { button: 0, clientX: end.clientX, clientY: end.clientY, ...extra }));
 }
 
 // ============================================================================
@@ -610,4 +621,271 @@ test("two taps far apart on screen are NOT a double-tap — the second lands as 
   assert.deepEqual(state.selection, [a.id], "the far tap did not extend the selection to every skiff on screen");
   assert.deepEqual(a.order, { type: "move", x: 2200, y: 2000 },
     "instead it was read as an ordinary command for the standing selection — the same plain-move fallback commandAt uses elsewhere");
+});
+
+// ============================================================================
+// Backspace: jump-to-last-alert (docs/improvement-proposals.md "Attack pings on the minimap plus
+// a jump-to-last-alert key") — centers the camera on game.lastAttackAt (session.js), written by
+// boot.js's frame-event pump next to supplyBlockedUntil, the same established cross-module
+// pattern. A no-op before the game's first alert (game.lastAttackAt still null).
+// ============================================================================
+
+test("Backspace centers the camera on the most recent under-attack alert (game.lastAttackAt)", () => {
+  const { window, controller } = setup();
+  game.lastAttackAt = { x: 2800, y: 1400 };
+
+  window.dispatchEvent(ev("keydown", { key: "Backspace", code: "Backspace" }));
+
+  assert.equal(controller.getCamera().x, 2800);
+  assert.equal(controller.getCamera().y, 1400);
+});
+
+test("Backspace before any alert has ever fired (game.lastAttackAt is null) is a harmless no-op", () => {
+  const { window, controller, calls } = setup();
+  const before = { x: controller.getCamera().x, y: controller.getCamera().y };
+
+  assert.doesNotThrow(() => window.dispatchEvent(ev("keydown", { key: "Backspace", code: "Backspace" })));
+
+  assert.equal(controller.getCamera().x, before.x, "nothing to jump to, so the camera must not move");
+  assert.equal(controller.getCamera().y, before.y);
+  assert.equal(calls(), 0, "nothing changed, so onChange should not fire either");
+});
+
+// ============================================================================
+// Space cycles bases (docs/improvement-proposals.md "Space cycles bases and an idle-production
+// topbar chip"): centerOnBase() used to always land on the FIRST completed Command Center a
+// .find() happened to hit; repeated presses within DOUBLE_GROUP_MS now cycle through every one
+// in turn (sorted by id), the same double-press timing recallGroup already uses for its own
+// jump-to-centroid gesture. A single, isolated press always lands on the first (sorted) CC —
+// unchanged single-base behavior.
+// ============================================================================
+
+test("Space centers on the (single) completed Command Center — unchanged single-base behavior", () => {
+  const { state, window, controller } = setup();
+  const cc = makeBuilding("command", "player", 2500, 2600);
+  state.buildings.set(cc.id, cc);
+
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));
+
+  assert.equal(controller.getCamera().x, 2500);
+  assert.equal(controller.getCamera().y, 2600);
+});
+
+test("Space falls back to the landing zone when no completed Command Center exists yet", () => {
+  const { state, window, controller } = setup();
+  state.map.bases.player = { x: 1500, y: 1600 };
+  const constructingCC = makeBuilding("command", "player", 1000, 1000, { constructing: true });
+  state.buildings.set(constructingCC.id, constructingCC);   // still under construction -- must not count
+
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));
+
+  assert.equal(controller.getCamera().x, 1500);
+  assert.equal(controller.getCamera().y, 1600);
+});
+
+test("repeated Space presses within the double-press window cycle through every completed CC in turn, sorted by id", () => {
+  const { state, window, controller } = setup();
+  const a = makeBuilding("command", "player", 1000, 1200);
+  const b = makeBuilding("command", "player", 3000, 3200);
+  state.buildings.set(a.id, a);
+  state.buildings.set(b.id, b);
+  const [first, second] = [a, b].sort((x, y) => (x.id < y.id ? -1 : 1));
+
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));
+  assert.deepEqual([controller.getCamera().x, controller.getCamera().y], [first.x, first.y],
+    "the first press lands on the first CC (sorted by id)");
+
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));   // second press, right away -- within the window
+  assert.deepEqual([controller.getCamera().x, controller.getCamera().y], [second.x, second.y],
+    "a quick second press cycles to the next CC");
+
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));   // third press, still quick -- wraps back around
+  assert.deepEqual([controller.getCamera().x, controller.getCamera().y], [first.x, first.y],
+    "a third quick press wraps back to the first CC");
+});
+
+test("a Space press after the double-press window has elapsed restarts the cycle at the first CC", async () => {
+  const { state, window, controller } = setup();
+  const a = makeBuilding("command", "player", 1000, 1200);
+  const b = makeBuilding("command", "player", 3000, 3200);
+  state.buildings.set(a.id, a);
+  state.buildings.set(b.id, b);
+  const [first, second] = [a, b].sort((x, y) => (x.id < y.id ? -1 : 1));
+
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));   // -> first
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));   // quick second -> second
+  assert.deepEqual([controller.getCamera().x, controller.getCamera().y], [second.x, second.y]);
+
+  await new Promise(r => setTimeout(r, 450));   // let the double-press window (400ms) lapse
+
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));   // a slow next press -- restarts at the first CC
+  assert.deepEqual([controller.getCamera().x, controller.getCamera().y], [first.x, first.y]);
+});
+
+// ============================================================================
+// focusIdleProducer (docs/improvement-proposals.md "Space cycles bases and an idle-production
+// topbar chip"): the building-scale sibling of focusIdleWorker — cycles to and selects the next
+// completed player production building (BUILDINGS[type].produces) whose queue is empty.
+// ============================================================================
+
+test("focusIdleProducer selects and centers on the next idle production building, cycling like focusIdleWorker", () => {
+  const { state, controller } = setup();
+  const barracksA = makeBuilding("barracks", "player", 500, 600);
+  const barracksB = makeBuilding("barracks", "player", 900, 1000);
+  state.buildings.set(barracksA.id, barracksA);
+  state.buildings.set(barracksB.id, barracksB);
+
+  controller.focusIdleProducer();
+  assert.deepEqual(state.selection, [barracksA.id]);
+  assert.equal(controller.getCamera().x, 500);
+  assert.equal(controller.getCamera().y, 600);
+
+  controller.focusIdleProducer();
+  assert.deepEqual(state.selection, [barracksB.id], "a second call cycles to the other idle producer");
+
+  controller.focusIdleProducer();
+  assert.deepEqual(state.selection, [barracksA.id], "a third call wraps back around");
+});
+
+test("focusIdleProducer skips a constructing building, one with a non-empty queue, and one with no `produces` at all", () => {
+  const { state, controller } = setup();
+  const constructing = makeBuilding("barracks", "player", 100, 100, { constructing: true });
+  const busy = makeBuilding("barracks", "player", 200, 200);
+  busy.queue.push({ unitType: "skiff", progress: 0 });
+  const nonProducer = makeBuilding("refinery", "player", 300, 300);   // no `produces` — the Refinery researches upgrades instead
+  const idle = makeBuilding("barracks", "player", 400, 400);
+  [constructing, busy, nonProducer, idle].forEach(b => state.buildings.set(b.id, b));
+
+  controller.focusIdleProducer();
+
+  assert.deepEqual(state.selection, [idle.id], "only the truly idle producer is ever reachable");
+});
+
+test("focusIdleProducer is a harmless no-op when nothing is idle", () => {
+  const { state, controller, calls } = setup();
+  const busy = makeBuilding("barracks", "player", 200, 200);
+  busy.queue.push({ unitType: "skiff", progress: 0 });
+  state.buildings.set(busy.id, busy);
+  state.selection = [];
+
+  assert.doesNotThrow(() => controller.focusIdleProducer());
+  assert.deepEqual(state.selection, [], "nothing idle -> nothing selected");
+  assert.equal(calls(), 0, "nothing changed, so onChange should not fire");
+});
+
+// ============================================================================
+// Selection subtraction (docs/improvement-proposals.md "Selection subtraction and map-wide
+// select-all-of-type"): Alt+click / Alt+drag is a third applyBoxSelection mode that filters
+// state.selection down (subtracting the picked units), preserving the order of whatever
+// survives — so the formation leader (selection[0]) stays leader unless it's one of the units
+// actually removed. Ctrl+click's own leader-promotion gesture (tested above) is untouched.
+// ============================================================================
+
+test("Alt+click removes an already-selected unit, preserving the order of the rest (the leader survives)", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  const c = makeUnit("skiff", "player", 900, 500);
+  [a, b, c].forEach(u => state.units.set(u.id, u));
+  state.selection = [a.id, b.id, c.id];
+
+  const { clientX, clientY } = clientFor(controller, b.x, b.y);
+  canvas.dispatchEvent(ev("mousedown", { button: 0, clientX, clientY }));
+  window.dispatchEvent(ev("mouseup", { button: 0, clientX, clientY, altKey: true }));
+
+  assert.deepEqual(state.selection, [a.id, c.id], "b is subtracted; a stays the leader, c keeps its relative order");
+});
+
+test("Alt+click on a unit that ISN'T currently selected is a harmless no-op (nothing to subtract)", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  state.units.set(a.id, a); state.units.set(b.id, b);
+  state.selection = [a.id];
+
+  const { clientX, clientY } = clientFor(controller, b.x, b.y);
+  canvas.dispatchEvent(ev("mousedown", { button: 0, clientX, clientY }));
+  window.dispatchEvent(ev("mouseup", { button: 0, clientX, clientY, altKey: true }));
+
+  assert.deepEqual(state.selection, [a.id], "b was never selected, so alt-clicking it changes nothing");
+});
+
+test("Alt+drag subtracts every unit the box catches from the current selection", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  const c = makeUnit("skiff", "player", 2000, 2000);   // well outside the drag box below
+  [a, b, c].forEach(u => state.units.set(u.id, u));
+  state.selection = [a.id, b.id, c.id];
+
+  const start = clientFor(controller, 400, 400);
+  const end = clientFor(controller, 800, 600);   // a box that catches a and b, not c
+  leftDrag(canvas, window, start, end, { altKey: true });
+
+  assert.deepEqual(state.selection, [c.id], "a and b (caught by the box) are subtracted; c (outside it) survives");
+});
+
+test("Alt-drag over a mix of army + workers only subtracts the army — a worker alongside a fighter is excluded from the box's own picks, same as replace/additive mode", () => {
+  const { state, canvas, controller } = setup();
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  const worker = makeUnit("worker", "player", 520, 500);
+  [skiff, worker].forEach(u => state.units.set(u.id, u));
+  state.selection = [skiff.id, worker.id];
+
+  const start = clientFor(controller, 400, 400);
+  const end = clientFor(controller, 700, 600);   // catches both skiff and worker
+  leftDrag(canvas, window, start, end, { altKey: true });
+
+  assert.deepEqual(state.selection, [worker.id],
+    "the box's own army-priority filter drops the worker from its picks whenever a fighter is present, so only the skiff is actually subtracted");
+});
+
+test("a plain (non-alt) drag over the same units still replaces the selection as before — alt-drag is additive-mode-only otherwise unchanged", () => {
+  const { state, canvas, controller } = setup();
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 700, 500);
+  [a, b].forEach(u => state.units.set(u.id, u));
+  state.selection = [a.id];
+
+  const start = clientFor(controller, 400, 400);
+  const end = clientFor(controller, 800, 600);
+  leftDrag(canvas, window, start, end);   // no altKey
+
+  assert.deepEqual([...state.selection].sort(), [a.id, b.id].sort(), "a plain drag replaces the selection with the box's catch, as before");
+});
+
+// ============================================================================
+// Map-wide select-all-of-type (docs/improvement-proposals.md "Selection subtraction and map-wide
+// select-all-of-type"): Ctrl+double-click extends selectSameTypeAt to the whole map instead of
+// just the current viewport, matching the map-wide semantics Q and the panel's type rows use. A
+// plain double-click (no Ctrl) stays viewport-limited, as before.
+// ============================================================================
+
+test("Ctrl+double-click selects every unit of that type across the WHOLE map, not just the current viewport", () => {
+  const { state, canvas, controller } = setup();
+  const onscreen = makeUnit("skiff", "player", 2000, 2000);
+  const offscreen = makeUnit("skiff", "player", 3900, 3900);   // well outside the default viewport
+  state.units.set(onscreen.id, onscreen);
+  state.units.set(offscreen.id, offscreen);
+  state.selection = [];
+
+  const { clientX, clientY } = clientFor(controller, onscreen.x, onscreen.y);
+  canvas.dispatchEvent(ev("dblclick", { clientX, clientY, ctrlKey: true }));
+
+  assert.deepEqual([...state.selection].sort(), [onscreen.id, offscreen.id].sort(),
+    "Ctrl+double-click reaches every same-type unit anywhere on the map, matching Q's map-wide semantics");
+});
+
+test("a plain double-click (no Ctrl) stays viewport-limited, as before", () => {
+  const { state, canvas, controller } = setup();
+  const onscreen = makeUnit("skiff", "player", 2000, 2000);
+  const offscreen = makeUnit("skiff", "player", 3900, 3900);
+  state.units.set(onscreen.id, onscreen);
+  state.units.set(offscreen.id, offscreen);
+  state.selection = [];
+
+  const { clientX, clientY } = clientFor(controller, onscreen.x, onscreen.y);
+  canvas.dispatchEvent(ev("dblclick", { clientX, clientY }));   // no ctrlKey
+
+  assert.deepEqual(state.selection, [onscreen.id], "the off-screen unit of the same type is not swept in without Ctrl");
 });

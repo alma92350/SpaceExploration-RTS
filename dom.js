@@ -33,6 +33,7 @@ export const seedChipEl = byId("seedChip");
 export const factionChipEl = byId("factionChip");
 export const sheetToggleEl = byId("sheetToggle");
 export const idleWorkersEl = byId("idleWorkers");
+export const idleProductionEl = byId("idleProduction");
 export const objectivesEl = byId("objectives");
 export const helpOverlayEl = byId("helpOverlay");
 export const helpBtn = byId("helpBtn");

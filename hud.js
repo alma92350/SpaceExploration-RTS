@@ -10,12 +10,12 @@
 
 import { game } from "./session.js";
 import {
-  resourcesEl, clockEl, scoreBarEl, idleWorkersEl,
+  resourcesEl, clockEl, scoreBarEl, idleWorkersEl, idleProductionEl,
   scenarioBarEl, scenarioBannerEl, scenarioStatusEl, repairBtn, departBtn,
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
-import { UNITS } from "./engine/entities.js";
+import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { powerCap, powerDraw } from "./engine/industry.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
@@ -63,6 +63,7 @@ export function renderHUD() {
     // so blank the skirmish readouts and drive the bar instead.
     resourcesEl.innerHTML = "";
     idleWorkersEl.classList.add("hidden");
+    idleProductionEl.classList.add("hidden");
     clockEl.textContent = "";
   } else {
     const res = state.players.player.resources;
@@ -170,6 +171,17 @@ export function renderHUD() {
     }
     idleWorkersEl.textContent = `⚒ ${idle} idle`;
     idleWorkersEl.classList.toggle("hidden", idle === 0);
+
+    // Idle-production indicator: the building-scale sibling above — multiple Barracks are normal
+    // mid-game (the AI explicitly runs several, per README), and an empty Produce queue on one
+    // you aren't looking at is otherwise invisible. Click (input.focusIdleProducer, wired in
+    // main.js) cycles to and selects the next one.
+    let idleProduction = 0;
+    for (const b of state.buildings.values()) {
+      if (b.owner === "player" && !b.constructing && BUILDINGS[b.type]?.produces && b.queue.length === 0) idleProduction++;
+    }
+    idleProductionEl.textContent = `🏭 ${idleProduction} idle`;
+    idleProductionEl.classList.toggle("hidden", idleProduction === 0);
   }
 
   renderScenarioBar(state);

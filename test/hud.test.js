@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as sound from "../sound.js";
-import { createGameState } from "../engine/state.js";
+import { createGameState, makeBuilding } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { DEFAULT_MATCH_TIME_LIMIT } from "../engine/victory.js";
 
@@ -78,14 +78,14 @@ sound.setMuted(true);   // renderSelectionPanel's icon buttons can synthesize a 
 
 const { game } = await import("../session.js");
 const { renderHUD, resetPanelSignature } = await import("../hud.js");
-const { clockEl, scoreBarEl } = await import("../dom.js");
+const { clockEl, scoreBarEl, idleProductionEl } = await import("../dom.js");
 
 function setup(seed, opts = {}) {
   resetPanelSignature();
   const state = createGameState({ planetId: "ferros", seed, rng: mulberry32(seed), ...opts });
   game.state = state;
   game.galaxy = null;
-  game.input = { building: null, attackArmed: false, focusIdleWorker() {}, selectAllArmy() {}, groupCounts: () => [] };
+  game.input = { building: null, attackArmed: false, focusIdleWorker() {}, focusIdleProducer() {}, selectAllArmy() {}, groupCounts: () => [] };
   game.supplyBlockedUntil = 0;
   state.selection = [];
   return state;
@@ -145,4 +145,48 @@ test("renderHUD: Odyssey (a galaxy in play) never shows the countdown/score bar,
 
   assert.equal(scoreBarEl.classList.contains("hidden"), true, "the open-world sandbox has no timeout-score tiebreak to warn about");
   assert.doesNotMatch(clockEl.textContent, /^-/, "never a countdown for a mode with no clock at all");
+});
+
+/* ============================================================
+   Idle-production topbar chip (docs/improvement-proposals.md "Space cycles bases and an
+   idle-production topbar chip"): counts completed player production buildings
+   (BUILDINGS[type].produces, !constructing, queue.length === 0) next to the idle-worker loop —
+   multiple Barracks are normal mid-game, and an empty queue on one you aren't looking at is
+   otherwise invisible.
+   ============================================================ */
+
+test("renderHUD: the idle-production chip already reads '1 idle' at kickoff — the seeded, empty-queue Command Center counts", () => {
+  const state = setup(410);
+
+  renderHUD();
+
+  assert.equal(idleProductionEl.textContent, "🏭 1 idle");
+  assert.equal(idleProductionEl.classList.contains("hidden"), false);
+
+  // Queue something on it — the only producer in a fresh skirmish — and the chip hides at zero.
+  const cc = [...state.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  cc.queue.push({ unitType: "worker", progress: 0 });
+  renderHUD();
+
+  assert.equal(idleProductionEl.classList.contains("hidden"), true, "a non-empty queue takes the only producer out of the idle count");
+});
+
+test("renderHUD: the idle-production count only includes finished buildings that actually produce something", () => {
+  const state = setup(411);
+  const cc = [...state.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  cc.queue.push({ unitType: "worker", progress: 0 });   // no longer idle — isolate the count to what's added below
+
+  const idleBarracks = makeBuilding("barracks", "player", 200, 200);
+  state.buildings.set(idleBarracks.id, idleBarracks);   // produces, completed, empty queue -> counts
+
+  const constructingBarracks = makeBuilding("barracks", "player", 260, 200, { constructing: true });
+  state.buildings.set(constructingBarracks.id, constructingBarracks);   // still constructing -> must not count
+
+  const refinery = makeBuilding("refinery", "player", 320, 200);
+  state.buildings.set(refinery.id, refinery);   // no `produces` (it researches upgrades) -> must not count
+
+  renderHUD();
+
+  assert.equal(idleProductionEl.textContent, "🏭 1 idle", "only the finished, empty-queue Barracks counts");
+  assert.equal(idleProductionEl.classList.contains("hidden"), false);
 });

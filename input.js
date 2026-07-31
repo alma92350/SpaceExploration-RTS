@@ -17,7 +17,9 @@ import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, dragCamera
 import * as sound from "./sound.js";
 
 const CLICK_THRESHOLD = 4;
-const DOUBLE_GROUP_MS = 400;   // a second press of the same control-group digit within this window recenters
+// A second press within this window recenters/cycles instead of repeating — shared by control
+// groups (recallGroup, below) and by Space's base-cycling (centerOnBase, below).
+const DOUBLE_GROUP_MS = 400;
 const UNIT_PICK_RADIUS = 10;
 const NODE_PICK_RADIUS = 14;
 const ZOOM_STEP = 1.12;
@@ -48,6 +50,8 @@ export function attachInput(canvas, state, onChange) {
   const groups = () => (game.groups[state.planetId] ||= {});
   let lastGroupDigit = null, lastGroupAt = -Infinity;   // a second press of the same digit re-centers
   let idleCycle = 0;                 // round-robins through idle workers on repeated presses
+  let idleProducerCycle = 0;         // round-robins through idle production buildings on repeated presses
+  let baseCycle = 0, lastBaseAt = -Infinity;   // round-robins through completed CCs on repeated Space presses
   let edgePan = [0, 0];              // camera nudge from the cursor sitting at a screen edge
 
   // ---- touch state ----
@@ -160,7 +164,14 @@ export function attachInput(canvas, state, onChange) {
   // front instead of no-op'ing there — i.e. makes it the formation leader (engine/formation.js
   // pickLeader is always selection[0]) without having to clear the selection and rebuild it
   // around that unit from scratch. Ctrl+clicking any one squadmate is enough to hand it the lead.
-  function applyBoxSelection(box, additive) {
+  //
+  // `subtractive` (Alt+click / Alt+drag) is a third mode, independent of `additive`: it REMOVES
+  // whatever the box/click picked from the current selection instead of replacing or adding to
+  // it, filtering state.selection down rather than rebuilding it — Array#filter preserves the
+  // order of whatever survives, so the formation leader (selection[0]) stays leader unless it's
+  // one of the units actually subtracted. Takes precedence over `additive` if somehow both are
+  // set (not a real gesture — Ctrl+click's own leader-promotion behavior is otherwise untouched).
+  function applyBoxSelection(box, additive, subtractive = false) {
     const dx = Math.abs(box.x2 - box.x1), dy = Math.abs(box.y2 - box.y1);
     let picks;
     if (dx < CLICK_THRESHOLD && dy < CLICK_THRESHOLD) {
@@ -178,7 +189,12 @@ export function attachInput(canvas, state, onChange) {
         inBox = inBox.filter(u => UNITS[u.type].role !== "worker");
       picks = inBox.map(u => u.id);
     }
-    if (additive) {
+    if (subtractive) {
+      if (picks.length) {
+        const drop = new Set(picks);
+        state.selection = state.selection.filter(id => !drop.has(id));
+      }
+    } else if (additive) {
       if (picks.length === 1 && state.selection.includes(picks[0])) {
         const [id] = picks;
         state.selection = [id, ...state.selection.filter(sid => sid !== id)];
@@ -193,17 +209,22 @@ export function attachInput(canvas, state, onChange) {
     return picks;
   }
 
-  // Grab every same-type unit of yours currently on screen (the double-click /
-  // double-tap gesture). Returns true if it hit one of your units.
-  function selectSameTypeAt(p) {
+  // Grab every same-type unit of yours currently on screen (the double-click / double-tap
+  // gesture) — or, with `mapWide` (Ctrl+double-click), everywhere on the whole map, matching the
+  // map-wide semantics Q and the panel's type rows already use. Returns true if it hit one of
+  // your units.
+  function selectSameTypeAt(p, mapWide = false) {
     const hit = entityAt(p.x, p.y);
     if (!hit || hit.owner !== "player" || hit.kind !== "unit") return false;
-    const { vw, vh } = viewport();
-    const tl = screenToWorld(camera, vw, vh, 0, 0);
-    const br = screenToWorld(camera, vw, vh, vw, vh);
+    // bounds stays null for the map-wide path, skipping the tl/br screen clamp below entirely.
+    let bounds = null;
+    if (!mapWide) {
+      const { vw, vh } = viewport();
+      bounds = { tl: screenToWorld(camera, vw, vh, 0, 0), br: screenToWorld(camera, vw, vh, vw, vh) };
+    }
     state.selection = [...state.units.values()]
       .filter(u => u.owner === "player" && u.type === hit.type
-        && u.x >= tl.x && u.x <= br.x && u.y >= tl.y && u.y <= br.y)
+        && (!bounds || (u.x >= bounds.tl.x && u.x <= bounds.br.x && u.y >= bounds.tl.y && u.y <= bounds.br.y)))
       .map(u => u.id);
     onChange();
     return true;
@@ -364,21 +385,22 @@ export function attachInput(canvas, state, onChange) {
     if (e.button !== 0 || !dragBox) return;
     const box = dragBox;
     dragBox = null;
-    // Ctrl (the game's modifier — see the waypoint note below) adds to the
-    // current selection instead of replacing it, so you can pull several groups
-    // together. An empty additive click leaves the selection untouched.
-    applyBoxSelection(box, e.ctrlKey);
+    // Ctrl (the game's modifier — see the waypoint note below) adds to the current selection
+    // instead of replacing it, so you can pull several groups together; Alt instead SUBTRACTS
+    // the box's catch from the current selection (pulling specific units back out of a big
+    // blob). An empty additive/subtractive click leaves the selection untouched.
+    applyBoxSelection(box, e.ctrlKey, e.altKey);
   }, { signal });
 
-  // Double-click a unit to grab every same-type unit of yours currently on
-  // screen — the standard "select all of this type" gesture.
+  // Double-click a unit to grab every same-type unit of yours currently on screen — the standard
+  // "select all of this type" gesture. Ctrl+double-click extends that to the whole map.
   canvas.addEventListener("dblclick", e => {
     // Mid-build-placement or with attack-move armed, each of the two clicks that make up this
     // dblclick already went through mousedown's own buildMode/attackMoveArmed handling (placed
     // the building / committed the attack-move); the reselect-fleet-of-this-type gesture below
     // doesn't apply on top of that, same as every other handler that checks these flags first.
     if (buildMode || attackMoveArmed) return;
-    selectSameTypeAt(toWorld(e.clientX, e.clientY));
+    selectSameTypeAt(toWorld(e.clientX, e.clientY), e.ctrlKey);
   }, { signal });
 
   // The actual right-click handling (build/attack-move cancel, or commandAt with whatever
@@ -591,12 +613,53 @@ export function attachInput(canvas, state, onChange) {
     centerCamera(w.x, w.y);
     onChange();
   }
-  // Snap the camera to your primary base — a completed Command Center, else the landing zone.
-  // The macro "get me home" key (Space), so a raid on your economy is one press away.
+  // The building-scale sibling of focusIdleWorker above: cycle to the next completed player
+  // production building (BUILDINGS[type].produces) sitting idle — an empty queue, not
+  // constructing — selecting it and centering the camera on it. Multiple Barracks are normal
+  // mid-game, and an empty queue on one you're not currently looking at is otherwise invisible.
+  // Wired to the topbar's "N idle" production chip (main.js) the same way focusIdleWorker is
+  // wired to the idle-workers chip.
+  function focusIdleProducer() {
+    const idle = [...state.buildings.values()].filter(b =>
+      b.owner === "player" && !b.constructing && BUILDINGS[b.type]?.produces && b.queue.length === 0);
+    if (!idle.length) return;
+    const b = idle[idleProducerCycle % idle.length];
+    idleProducerCycle++;
+    state.selection = [b.id];
+    centerCamera(b.x, b.y);
+    onChange();
+  }
+  // Snap the camera to a base — a completed Command Center, else the landing zone. The macro
+  // "get me home" key (Space), so a raid on your economy is one press away. A .find() used to
+  // always land on the SAME (first-found) Command Center once an expansion existed; repeated
+  // presses within DOUBLE_GROUP_MS (the same double-press timing recallGroup already uses for
+  // its own centroid re-center) now cycle through every completed CC in turn, sorted by id for a
+  // stable order — matching engine/galaxy.js's own id-sorted playerSpaceports precedent.
   function centerOnBase() {
-    const cc = [...state.buildings.values()].find(b => b.owner === "player" && b.type === "command" && !b.constructing);
-    const at = cc || (state.map.bases && state.map.bases.player);
-    if (at) { centerCamera(at.x, at.y); onChange(); }
+    const ccs = [...state.buildings.values()]
+      .filter(b => b.owner === "player" && b.type === "command" && !b.constructing)
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    const now = performance.now();
+    const cycling = ccs.length > 0 && now - lastBaseAt < DOUBLE_GROUP_MS;
+    lastBaseAt = now;
+    if (!ccs.length) {
+      baseCycle = 0;
+      const at = state.map.bases && state.map.bases.player;
+      if (at) { centerCamera(at.x, at.y); onChange(); }
+      return;
+    }
+    baseCycle = cycling ? (baseCycle + 1) % ccs.length : 0;
+    const at = ccs[baseCycle];
+    centerCamera(at.x, at.y);
+    onChange();
+  }
+  // Backspace: the standard RTS "jump to last alert" — recenter on wherever the most recent
+  // under-attack ping fired (game.lastAttackAt, session.js — written by boot.js's frame-event
+  // pump next to supplyBlockedUntil). A no-op before the game's first alert.
+  function jumpToLastAttack() {
+    if (!game.lastAttackAt) return;
+    centerCamera(game.lastAttackAt.x, game.lastAttackAt.y);
+    onChange();
   }
 
   window.addEventListener("keydown", e => {
@@ -631,7 +694,8 @@ export function attachInput(canvas, state, onChange) {
     if (k === "f") { formSelected(); onChange(); return; }   // form up in place and hold the shape
     if (k === "escape") { setArmed(false); buildMode = null; onChange(); return; }   // bail out of a pending action
     if (k === "`") { focusIdleWorker(); return; }   // it calls onChange itself
-    if (k === " ") { e.preventDefault(); centerOnBase(); return; }   // Space — jump the camera to your base
+    if (k === " ") { e.preventDefault(); centerOnBase(); return; }   // Space — jump the camera to your base (repeat: cycle bases)
+    if (k === "backspace") { e.preventDefault(); jumpToLastAttack(); return; }   // Backspace — jump to the last under-attack alert
     // Positional production/build hotkeys (Z/C/V/B/N): fire the Nth produce/build button the
     // HUD is currently showing (game.hotkeyActions, set by hud.js). click() replays the real
     // button handler, so orders flow through the same queueProduction/startBuild path — the
@@ -668,6 +732,9 @@ export function attachInput(canvas, state, onChange) {
     getBuildGhost() { return buildMode ? { buildingType: buildMode.buildingType, x: lastWorldPos.x, y: lastWorldPos.y } : null; },
     getCamera: () => camera,
     focusIdleWorker,
+    // The topbar's "N idle" production chip (main.js) clicks this, mirroring idleWorkersEl's own
+    // wiring to focusIdleWorker above.
+    focusIdleProducer,
     selectAllArmy: () => { selectAllArmy(); onChange(); },
     // Narrow the current selection to one unit type — the HUD's aggregated type rows
     // are clickable (hud.js), so clicking "12× Skiff" keeps only the Skiffs.

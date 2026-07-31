@@ -21,7 +21,7 @@ import { drawFrame, resetFacing, snapshotPositions } from "./render.js";
 import { drawMinimap } from "./minimap.js";
 import { clampCamera } from "./camera.js";
 import { attachInput } from "./input.js";
-import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, addFuseWarning, resetEffects } from "./effects.js";
+import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, addFuseWarning, activePings, resetEffects } from "./effects.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
@@ -62,14 +62,14 @@ let loop, announced, lastHud, lastUnderAttackAt, underAttackTimer;
 // Highest Antimatter Gate charge milestone (25/50/75/100%) already announced, so the
 // wonderCharging event (which fires every tick) toasts once per threshold, not per frame.
 let gateMilestone = 0;
-// Where the last under-attack alert fired — clicking the banner jumps there, so a
-// raid on the far side of a big map is one click away instead of a frantic scroll.
-let lastAttackAt = null;
+// Where the last under-attack alert fired lives on game.lastAttackAt (session.js, next to
+// supplyBlockedUntil) rather than a module-local var — input.js's Backspace "jump to last
+// alert" key reads it too, not just the banner click below.
 underAttackEl.addEventListener("click", () => {
-  if (!lastAttackAt || !game.input || !game.state) return;
+  if (!game.lastAttackAt || !game.input || !game.state) return;
   const cam = game.input.getCamera();
-  cam.x = lastAttackAt.x;
-  cam.y = lastAttackAt.y;
+  cam.x = game.lastAttackAt.x;
+  cam.y = game.lastAttackAt.y;
   clampCamera(cam, game.state.map, canvas.clientWidth, canvas.clientHeight);
 });
 
@@ -229,7 +229,7 @@ export function surrenderOdyssey() {
 // under-attack click panned to stale coordinates on the wrong map.
 function resetWorldUiBookkeeping() {
   gateMilestone = 0;
-  lastAttackAt = null;
+  game.lastAttackAt = null;
   lastUnderAttackAt = -Infinity;
   game.supplyBlockedUntil = 0;
   underAttackEl.classList.add("hidden");
@@ -362,7 +362,7 @@ export function bootState(newState, { intro }) {
       // pin alpha to 1 (settled/live positions) so paused units sit still instead of jittering.
       const a = pauseReasons.size ? 1 : alpha;
       drawFrame(ctx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, game.input.getDragBox(), game.input.getBuildGhost(), a);
-      drawMinimap(minimapCtx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, MINIMAP_W, MINIMAP_H);
+      drawMinimap(minimapCtx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, MINIMAP_W, MINIMAP_H, activePings());
       processFrameEvents();
       if (now - lastHud > 150) { lastHud = now; renderHUD(); }
       if (game.state.over && !announced) {
@@ -539,7 +539,7 @@ function processFrameEvents() {
 // stay in lockstep with each other during a sustained siege instead of
 // re-flashing on every single hit.
 function triggerUnderAttack(x, y) {
-  lastAttackAt = { x, y };   // remembered even while throttled, so a click always jumps to the freshest hit
+  game.lastAttackAt = { x, y };   // remembered even while throttled, so a click/Backspace always jumps to the freshest hit
   const now = performance.now();
   if (now - lastUnderAttackAt < UNDER_ATTACK_THROTTLE_MS) return;
   lastUnderAttackAt = now;

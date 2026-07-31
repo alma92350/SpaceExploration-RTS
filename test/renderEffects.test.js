@@ -4,7 +4,7 @@ import { createGameState } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { drawBuildGhost, drawEffects, TRACER_STYLE } from "../renderEffects.js";
-import { addTracer, resetEffects } from "../effects.js";
+import { addTracer, addUnderAttackPing, activePings, resetEffects } from "../effects.js";
 
 // A stub 2D context that no-ops any method the drawing code happens to call, instead of
 // hand-enumerating the canvas API — keeps this test robust to unrelated rendering changes.
@@ -191,4 +191,46 @@ test("drawEffects does not throw once a tracer has aged past its muzzle-flash wi
     await new Promise(r => setTimeout(r, 45));   // > 0.3 * TRACER_LIFETIME_MS (120ms) — flash is long gone, tracer still fading
     assert.doesNotThrow(() => drawEffects(fakeCtx()), `drawEffects threw for an aged ${type} tracer`);
   }
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Attack pings on the minimap (docs/improvement-proposals.md "Attack pings on the minimap plus a
+   jump-to-last-alert key"): activePings() is the minimap's own read of the same pings
+   addUnderAttackPing already feeds the world-space ping above (drawEffects' `pings` handling),
+   but kept alive far longer (MINIMAP_PING_LIFETIME_MS, not the short PING_LIFETIME_MS the
+   world-space ping fades on) so a raid on a distant flank is still findable on the minimap long
+   after the on-screen banner + world-space ping have both faded.
+   --------------------------------------------------------------------------------------------- */
+
+test("activePings returns every live under-attack ping, each with a fresh (near-zero) age", () => {
+  resetEffects();
+  addUnderAttackPing(400, 900);
+  addUnderAttackPing(1200, 300);
+
+  const pings = activePings();
+
+  assert.equal(pings.length, 2);
+  assert.deepEqual(pings.map(p => ({ x: p.x, y: p.y })), [{ x: 400, y: 900 }, { x: 1200, y: 300 }],
+    "positions are carried through unchanged, in the order they were pinged");
+  for (const p of pings) assert.ok(p.age >= 0 && p.age < 0.01, `a freshly-added ping's age should read ~0, got ${p.age}`);
+});
+
+test("activePings is empty with nothing pinged, and resetEffects clears an earlier ping from it", () => {
+  resetEffects();
+  assert.deepEqual(activePings(), []);
+
+  addUnderAttackPing(0, 0);
+  assert.equal(activePings().length, 1);
+
+  resetEffects();
+  assert.deepEqual(activePings(), [], "resetEffects must clear pings the minimap would otherwise keep showing");
+});
+
+test("activePings still reports a ping as alive well past the world-space ping's own (much shorter) PING_LIFETIME_MS", async () => {
+  resetEffects();
+  addUnderAttackPing(50, 60);
+  await new Promise(r => setTimeout(r, 60));   // real ms elapsed — tiny next to either lifetime, but enough to prove it isn't pruned early
+  const pings = activePings();
+  assert.equal(pings.length, 1, "a ping barely 60ms old must still be alive for the minimap, same as for the world-space ping");
+  assert.ok(pings[0].age > 0, "age should have advanced off exactly zero");
 });
