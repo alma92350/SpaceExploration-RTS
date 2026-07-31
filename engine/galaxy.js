@@ -25,7 +25,7 @@ import { mulberry32 } from "./rng.js";
 import { updateFog } from "./fog.js";
 import { tick } from "./sim.js";
 import { createMarket } from "./market.js";
-import { createDiplomacy, aiDevelopment } from "./diplomacy.js";
+import { createDiplomacy, aiDevelopment, PEACE_THRESHOLD } from "./diplomacy.js";
 import { UNITS, BUILDINGS, freightUsed, freightRoom } from "./entities.js";
 import { hasColonyShip } from "./colony.js";
 import { PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE, archetypeFor } from "./aiArchetypes.js";
@@ -306,6 +306,7 @@ export function stepGalaxy(galaxy, dt) {
     checkDomination(galaxy);      // conquest progress: pacified worlds (per-world toast) + a milestone at the target
     checkExpansion(galaxy);       // faction spread: developed AI worlds claim + colonise across the starmap
     checkGalaxyProgress(galaxy);  // milestones: colonies founded, the Antimatter Gate coming online — fireworks, not wins
+    checkRivalGate(galaxy);       // the rival Gate: track the galaxy's own charging threat, ascend it on completion
     checkGalaxyRescue(galaxy);    // NEVER auto-defeat: a total wipeout sends a relief colony ship so life goes on
     runColonyPolicies(galaxy);    // colony standing orders (engine/colonyPolicy.js): auto-sell + sustain workers, background worlds only
   }
@@ -478,6 +479,145 @@ export function checkExpansion(galaxy) {
   notes.push({ type: "expand", from: exp, planetId: best, faction });
 }
 
+/* ---------- THE RIVAL GATE (docs/improvement-proposals.md "the galaxy's strongest faction races
+   its own wonder" + "a fully-teched neighbour races its own Antimatter Gate", merged per the
+   Phase 7 plan — two independently-written proposals describing the same feature, reconciled
+   into one mechanism here).
+
+   The TRIGGER (whether a world raises and charges its own Gate at all) lives entirely in
+   engine/aiIndustry.js's rivalGateEligible/RIVAL_GATE_BUFFER — every qualifying world builds its
+   own Gate independently, self-contained, on its own think cycle, exactly like every other
+   aiIndustry.js building decision. This module's job is narrower: pick which ONE currently-
+   charging world is surfaced to the player as THE Rival Gate (checkExpansion's own most-
+   developed, tie-by-id idiom, just above — deterministic, no clock/RNG), track its live charge
+   for the starmap, and apply the 'ascension' consequence to EVERY world whose Gate completes —
+   not only the tracked one, so two simultaneously-eligible worlds (a rare but real possibility on
+   a Hard-heavy galaxy) can't let a second Gate complete unnoticed just because this scan happened
+   to be watching a different one.
+
+   THE ASCENSION CONSEQUENCE deliberately COMBINES both twins' proposals rather than picking one:
+   the claimed-neighbours burst (Defense twin) AND the hardEdge upgrade + a permanent stance
+   ceiling (AI twin) are not mutually exclusive, and the trigger is already double-gated (the
+   Strategic tier banked AND Hard/wantsDeepIndustry) — a genuinely rare, hard-earned event, so
+   escalating hard on it reads as "the galaxy changed under you" (the Defense twin's own framing)
+   rather than as pile-on. Never a defeat: state.over is never touched by any of this. */
+
+// The AI twin's proposal literally says "a permanent stance floor" for the ascension; taken
+// literally that would HELP the player (the same shape as diplomacy.js's own APPEASE_FLOOR truce
+// line), which contradicts its own framing as a "penalty toward the player" — so this reads it as
+// a permanent CEILING instead: the ascended world's stance can never rise back past Wary, no
+// matter how the scarcity/development pull on it evolves. Reapplied every scan (below), not a
+// one-time snap — updateDiplomacy's own drift would otherwise claw it back up, and the AI twin's
+// own "Where" note explicitly keeps this out of engine/diplomacy.js ("needs no change").
+const RIVAL_ASCENSION_STANCE_CEILING = PEACE_THRESHOLD;
+
+// The currently-charging AI-owned wonder building on `state`, or null — the same predicate
+// aiIndustry.js's own `hasGate` check uses, just read from the outside.
+function aiWonderOn(state) {
+  for (const b of state.buildings.values())
+    if (b.owner === "ai" && BUILDINGS[b.type]?.wonder) return b;
+  return null;
+}
+
+// Apply the ascension consequence to `worldId` exactly once. Combines both twins' proposals (see
+// the header comment above): hardEdge + a permanent stance ceiling, AND an all-at-once claims
+// burst — every still-unclaimed world the player hasn't founded/settled on and isn't currently
+// standing on (the exact same safety exclusion checkExpansion's own EXPAND step already applies,
+// for the exact same reason: flipping a world's faction out from under live combat/economy
+// multipliers). Deliberately ALL AT ONCE rather than checkExpansion's own one-per-scan trickle —
+// an ascension is a single dramatic event, not a gradual spread.
+function applyRivalAscension(galaxy, worldId, state) {
+  if (state.players.ai) state.players.ai.upgrades.hardEdge = true;
+  (galaxy.rivalAscended || (galaxy.rivalAscended = new Set())).add(worldId);
+  if (state.diplomacy) state.diplomacy.stance = Math.min(state.diplomacy.stance, RIVAL_ASCENSION_STANCE_CEILING);
+
+  const claims = galaxy.claims || (galaxy.claims = new Map());
+  const notes = galaxy.expansionNotes || (galaxy.expansionNotes = []);
+  const faction = state.players.ai ? state.players.ai.faction : "neutral";
+  claims.set(worldId, faction);
+  for (const other of galaxy.worlds) {
+    if (other === worldId || claims.has(other)) continue;
+    if (other === galaxy.activeId || playerFoothold(galaxy.planets.get(other))) continue;
+    claims.set(other, faction);
+    const os = galaxy.planets.get(other);
+    if (os && os.players.ai) os.players.ai.faction = faction;
+    notes.push({ type: "expand", from: worldId, planetId: other, faction });
+  }
+}
+
+// The rival-gate scan, run at PROGRESS_CHECK_EVERY cadence from stepGalaxy — the same throttled
+// schedule checkDomination/checkExpansion/checkGalaxyProgress already share. Three jobs, in order:
+//  1. Ascension sweep — any AI-owned wonder anywhere at full charge ascends exactly once
+//     (galaxy.rivalAscended is the idempotency latch), regardless of whether it was the tracked
+//     world. Fires the singular "rival-gate" milestone the first time this happens anywhere.
+//  2. Reapply the stance ceiling for every already-ascended world — "permanent" in the same sense
+//     DOMINATION_TARGET's pacify flag is permanent: reasserted every scan, not a single mutation.
+//  3. Selection — if nothing is currently tracked, pick the single most-developed world with a
+//     live (charging, not yet ascended) Gate to surface as THE Rival Gate (galaxyStatus below).
+// Iterates `galaxy.worlds` (the fixed roster order), never the Map, so neither insertion order nor
+// Map iteration can affect the outcome — only aiDevelopment values and the id tie-break can.
+export function checkRivalGate(galaxy) {
+  const ascended = galaxy.rivalAscended || (galaxy.rivalAscended = new Set());
+  const notes = galaxy.rivalGateNotes || (galaxy.rivalGateNotes = []);
+
+  // 1) ASCENSION SWEEP.
+  for (const worldId of galaxy.worlds) {
+    if (ascended.has(worldId)) continue;
+    const state = galaxy.planets.get(worldId);
+    if (!state) continue;
+    const b = aiWonderOn(state);
+    if (!b || (b.charge || 0) < 1) continue;
+    applyRivalAscension(galaxy, worldId, state);
+    notes.push({ type: "ascended", planetId: worldId });
+    reachMilestone(galaxy, "rival-gate");
+    if (galaxy.rivalGate && galaxy.rivalGate.worldId === worldId) galaxy.rivalGate = null;
+  }
+
+  // 2) REAPPLY the permanent stance ceiling on every ascended world — see the header comment on
+  // why this lives here rather than in engine/diplomacy.js's own drift.
+  for (const worldId of ascended) {
+    const state = galaxy.planets.get(worldId);
+    if (state && state.diplomacy) state.diplomacy.stance = Math.min(state.diplomacy.stance, RIVAL_ASCENSION_STANCE_CEILING);
+  }
+
+  // 3) SELECTION — only when nothing is currently tracked. Clear a stale tracked reference first
+  // (its building razed out from under it without ascending).
+  if (galaxy.rivalGate) {
+    const state = galaxy.planets.get(galaxy.rivalGate.worldId);
+    const b = state && state.buildings.get(galaxy.rivalGate.buildingId);
+    if (!b || b.owner !== "ai" || !BUILDINGS[b.type]?.wonder || (b.charge || 0) >= 1) {
+      galaxy.rivalGate = null;
+    }
+  }
+  if (!galaxy.rivalGate) {
+    let best = null, bestDev = -Infinity, bestBuilding = null;
+    for (const worldId of galaxy.worlds) {
+      if (ascended.has(worldId)) continue;
+      const state = galaxy.planets.get(worldId);
+      if (!state) continue;
+      const b = aiWonderOn(state);
+      if (!b || (b.charge || 0) >= 1) continue;
+      const dev = aiDevelopment(state);
+      if (dev > bestDev || (dev === bestDev && best !== null && worldId < best)) { bestDev = dev; best = worldId; bestBuilding = b; }
+    }
+    if (best !== null) {
+      galaxy.rivalGate = { worldId: best, buildingId: bestBuilding.id };
+      notes.push({ type: "spotted", planetId: best });
+    }
+  }
+}
+
+// The tracked Rival Gate's live status for the starmap — { worldId, charge } or null. Reads the
+// CURRENT charge straight off the building (not a stale snapshot), so a caller polling this every
+// frame always sees the live number.
+function rivalGateStatus(galaxy) {
+  if (!galaxy.rivalGate) return null;
+  const state = galaxy.planets.get(galaxy.rivalGate.worldId);
+  const b = state && state.buildings.get(galaxy.rivalGate.buildingId);
+  if (!b) return null;
+  return { worldId: galaxy.rivalGate.worldId, charge: b.charge || 0 };
+}
+
 // A pure snapshot of the galaxy for the starmap: per-world status (your active
 // seat / a colony you hold / unexplored) and, for worlds you've been to, the
 // neighbour's stance. Plus the visited count and credits.
@@ -494,6 +634,7 @@ export function galaxyStatus(galaxy) {
     total: galaxy.worlds.length,
     pacified: galaxy.pacified ? galaxy.pacified.size : 0,   // Domination progress: worlds conquered
     dominationTarget: DOMINATION_TARGET,
+    rivalGate: rivalGateStatus(galaxy),   // the tracked Rival Gate's { worldId, charge }, or null — starmap alert
     worlds: galaxy.worlds.map(id => {
       const seen = discovered.has(id);
       const s = seen ? galaxy.planets.get(id) : null;

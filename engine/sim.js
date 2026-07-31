@@ -94,7 +94,13 @@ export function tick(state, dt) {
   // (endless) only ends on losing the player's Command Center; a normal match
   // uses the CC/score victory check.
   if (state.scenario) { /* updateScenario already set state.over if finished */ }
-  else if (state.endless) { if (!state.background) { checkEndlessWin(state); checkEndlessLoss(state); } }   // win first (a Gate completing the same tick your CC falls still counts); a colony (background) is never "over"
+  // checkEndlessWin runs on EVERY endless world, background included — a rival Gate (Phase 7)
+  // usually completes on a colony the player has left, not the active seat, and its AI-owned
+  // branch only ever pushes a galaxy event (never finish()), so running it in the background is
+  // harmless there. checkEndlessLoss stays active-world-only as before: it already no-ops for
+  // every galaxy world via state.inGalaxy, so this scoping only ever matters to a standalone
+  // endless test fixture, and a colony (background) is never "over" regardless.
+  else if (state.endless) { checkEndlessWin(state); if (!state.background) checkEndlessLoss(state); }
   else checkWinCondition(state);
 
   if (state.market) updateMarket(state, dt);       // Odyssey: relax trade pressure back toward equilibrium

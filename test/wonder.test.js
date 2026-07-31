@@ -5,7 +5,7 @@ import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy, jumpCapital } from "../engine/galaxy.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
-import { updateWonder } from "../engine/wonder.js";
+import { updateWonder, chargingWonderOf, chargingPlayerWonder } from "../engine/wonder.js";
 import { checkEndlessWin } from "../engine/victory.js";
 import { BUILDINGS } from "../engine/entities.js";
 
@@ -104,6 +104,38 @@ test("a Gate completing on a background colony fires the 'gate' milestone (no wi
   assert.ok(!activeState(g).over, "…but the sandbox does NOT end — the Gate is a triumph, not a victory");
   const rg = [...home.buildings.values()].find(b => b.type === "antimatter_gate");
   assert.ok((rg.charge || 0) >= 1, "the colony Gate reached full charge");
+});
+
+/* ---------- chargingWonderOf: the owner-generic detector (Phase 7 rival Gate) ---------- */
+
+test("chargingWonderOf(state, owner) finds only THAT owner's partly-charged wonder", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const playerGate = makeBuilding("antimatter_gate", "player", 600, 500);
+  const aiGate = makeBuilding("antimatter_gate", "ai", 700, 500);
+  state.buildings.set(playerGate.id, playerGate);
+  state.buildings.set(aiGate.id, aiGate);
+  assert.equal(chargingWonderOf(state, "player"), null, "neither has started charging yet");
+  assert.equal(chargingWonderOf(state, "ai"), null);
+
+  playerGate.charge = 0.4;
+  assert.equal(chargingWonderOf(state, "player")?.id, playerGate.id, "finds the player's own charging wonder");
+  assert.equal(chargingWonderOf(state, "ai"), null, "…and never the other owner's, even though one exists");
+
+  aiGate.charge = 0.6;
+  assert.equal(chargingWonderOf(state, "ai")?.id, aiGate.id, "now finds the AI's own charging wonder");
+  assert.equal(chargingWonderOf(state, "player")?.id, playerGate.id, "…without disturbing the player's own result");
+
+  aiGate.charge = 1;
+  assert.equal(chargingWonderOf(state, "ai"), null, "full charge → done, not 'charging', for the AI exactly like the player");
+});
+
+test("chargingPlayerWonder delegates to chargingWonderOf(state, \"player\") — existing callers (diplomacy.js/aiMilitary.js) unaffected", () => {
+  const state = createGameState({ planetId: "ferros", endless: true });
+  const gate = makeBuilding("antimatter_gate", "player", 600, 500);
+  gate.charge = 0.3;
+  state.buildings.set(gate.id, gate);
+  assert.equal(chargingPlayerWonder(state)?.id, chargingWonderOf(state, "player")?.id);
+  assert.equal(chargingPlayerWonder(state).id, gate.id);
 });
 
 test("a mid-charge Gate survives a save/load", () => {

@@ -52,23 +52,31 @@ export function updateWonder(state, building, dt) {
   state.events.push({ type: "wonderCharging", charge: building.charge, x: building.x, y: building.y, owner: building.owner });
 }
 
-// The player's charging wonder on this world, or null — a completed wonder-flagged
-// building partway to full charge. The Tier-4 finale hooks read ONE definition of it:
-// the AI's siege-target bias (engine/ai.js) and the diplomacy war-push (engine/
-// diplomacy.js). Odyssey-only by construction — the Gate is `odysseyOnly` and a
-// skirmish player can never build one, so this returns null in every skirmish and
-// both callers collapse to their prior behaviour. Pure scan of state.buildings,
-// id-tiebroken (there is only ever one). NOT fog-gated: a charging antimatter Gate
-// is a galaxy-wide event the neighbour can sense, so it provokes war regardless of
-// line-of-sight; the AI applies its OWN fog check at the targeting seam (it still
-// has to see the Gate to march its army onto it).
-export function chargingPlayerWonder(state) {
+// `owner`'s charging wonder on this world, or null — a completed wonder-flagged building
+// partway to full charge. Generalized (Phase 7 "the rival Gate") from what used to be a
+// player-only scan, since updateWonder above was ALREADY owner-generic (it reads
+// building.owner's own resources) — only the detector was hardcoded to "player". Odyssey-only
+// by construction — the Gate is `odysseyOnly` and a skirmish never builds one, so this returns
+// null in every skirmish regardless of owner. Pure scan of state.buildings, id-tiebroken (there
+// is only ever one wonder per owner, in practice). NOT fog-gated: a charging antimatter Gate is
+// a galaxy-wide event, sensed regardless of line-of-sight; a caller that needs visibility (the
+// AI targeting the player's Gate, the player targeting a rival's) applies its OWN fog check at
+// the seam that actually acts on it.
+export function chargingWonderOf(state, owner) {
   let best = null;
   for (const b of state.buildings.values()) {
-    if (b.owner !== "player" || b.constructing) continue;
+    if (b.owner !== owner || b.constructing) continue;
     if (!BUILDINGS[b.type]?.wonder) continue;
     const c = b.charge || 0;
     if (c > 0 && c < 1 && (!best || b.id < best.id)) best = b;
   }
   return best;
+}
+
+// The player's charging wonder — the Tier-4 finale hooks' one shared definition (the AI's
+// siege-target bias in engine/ai.js, and the diplomacy war-push in engine/diplomacy.js).
+// Byte-identical to the pre-generalization function: a thin delegate, so neither caller
+// changes at all.
+export function chargingPlayerWonder(state) {
+  return chargingWonderOf(state, "player");
 }
