@@ -7,7 +7,10 @@
        backup/transfer you keep on disk (download a .json, or pick one to import).
      • AutoSave keeps the CURRENT game in browser localStorage on a timer (and on
        tab-hide / unload), so the map-select "Continue" buttons (setup.js) can
-       resume exactly where you left off without any manual save.
+       resume exactly where you left off without any manual save. Two GENERATIONS
+       are kept per mode (KEY + the rotated-out KEY+'.prev'), not one overwritten
+       slot: loadGame/loadOdyssey fall back to '.prev' if the primary fails to
+       deserialize, so a single corrupt/interrupted write can't lose the campaign.
 
    Both channels branch on the mode: a skirmish is a single state (SAVE_KEY /
    serializeGame); an Odyssey is the whole galaxy (ODYSSEY_KEY / serializeGalaxy).
@@ -21,24 +24,39 @@ import { saveBtn, loadBtn, homeBtn } from "./dom.js";
 import { serializeGame, serializeGameString, deserializeGame, serializeGalaxy, serializeGalaxyString, deserializeGalaxy } from "./engine/persist.js";
 import { bootState, bootGalaxy, restartToMapSelect, pauseLoop, resumeLoop } from "./boot.js";
 import { isGalaxySave, resumableMode } from "./saveShape.js";
+import { showGalaxyToast } from "./overlays.js";
 import * as sound from "./sound.js";
 
 const SAVE_KEY = "stellarfrontier.save.v1";
 const ODYSSEY_KEY = "stellarfrontier.odyssey.v1";
+// The previous-generation localStorage slot for either key: KEY + PREV_SUFFIX. autoSave rotates
+// the current primary into this slot before writing a fresh one (writeGeneration below), so one
+// corrupt/quota-failed write — or a save that lands at a genuinely bad moment — still leaves last
+// cycle's good save one fallback away (loadGame/loadOdyssey below) instead of losing the whole
+// campaign, as used to happen when a single slot was overwritten every 12 seconds.
+const PREV_SUFFIX = ".prev";
 const AUTOSAVE_INTERVAL_MS = 12000;   // how often the current game is checkpointed to localStorage
 const MAX_SAVE_BYTES = 8 * 1024 * 1024;   // reject an implausibly large import before parsing it (a real save is ≪ this)
 
 const read = key => { try { return localStorage.getItem(key); } catch (e) { return null; } };
 
-export function hasSave() { return !!read(SAVE_KEY); }
-export function hasOdysseySave() { return !!read(ODYSSEY_KEY); }
+// True the instant EITHER generation exists — a `.prev`-only save (the primary write failed most
+// recently, but last cycle's landed fine) should still offer "Continue": loadGame/loadOdyssey below
+// try both generations too, so this stays consistent with what they can actually resume.
+export function hasSave() { return !!read(SAVE_KEY) || !!read(SAVE_KEY + PREV_SUFFIX); }
+export function hasOdysseySave() { return !!read(ODYSSEY_KEY) || !!read(ODYSSEY_KEY + PREV_SUFFIX); }
 
 // The save-format version of each stored save (null when absent/unparseable) — used by the
 // update check (version.js saveImpact) to tell the player whether a new release keeps their data.
+// Prefers the primary generation; falls back to `.prev`'s version when the primary is missing or
+// unparseable, so this reports exactly what loadGame/loadOdyssey would actually resume.
 export function storedSaveVersions() {
   const ver = raw => { try { const o = JSON.parse(raw); return typeof o?.v === "number" ? o.v : null; } catch (e) { return null; } };
-  const s = read(SAVE_KEY), o = read(ODYSSEY_KEY);
-  return { skirmish: s ? ver(s) : null, odyssey: o ? ver(o) : null };
+  const versionOf = key => {
+    const v = ver(read(key));
+    return v != null ? v : ver(read(key + PREV_SUFFIX));
+  };
+  return { skirmish: versionOf(SAVE_KEY), odyssey: versionOf(ODYSSEY_KEY) };
 }
 
 /* ---------- localStorage: the automatic checkpoint (resume) ---------- */
@@ -56,38 +74,73 @@ function snapshot() {
     : { key: SAVE_KEY, str: serializeGameString(game.state) };
 }
 
+// Write a fresh generation to `key`, rotating whatever's currently there into `key + PREV_SUFFIX`
+// FIRST — so loadGame/loadOdyssey below always have last cycle's good save to fall back to if
+// this write lands badly (corrupt, or interrupted) or the next one does. A setItem quota throw —
+// from either the rotation write or the fresh one — is met with exactly ONE retry: drop the
+// `.prev` backup (freeing its space) and write the primary alone, so a nearly-full quota can never
+// let the backup starve the primary out of ever being written at all.
+function writeGeneration(key, str) {
+  const prevKey = key + PREV_SUFFIX;
+  try {
+    const current = localStorage.getItem(key);
+    if (current != null) localStorage.setItem(prevKey, current);
+    localStorage.setItem(key, str);
+    return true;
+  } catch (e) {
+    try {
+      localStorage.removeItem(prevKey);
+      localStorage.setItem(key, str);
+      return true;
+    } catch (e2) { return false; }
+  }
+}
+
 // Checkpoint the current game to localStorage. Cheap and safe to call often. Returns
 // true on a successful write, false when there's nothing to save OR the write throws
 // (quota exceeded, or Safari/Firefox private mode where setItem always throws). The
-// periodic/hidden/unload callers ignore the result — the next tick is their fallback —
-// but "Save & Exit" checks it, because silently swallowing a failure there would tell
-// the player their game was checkpointed and then strand them with nothing to Continue.
+// periodic caller counts consecutive failures (recordAutoSaveOutcome below) toward a
+// one-time warning; "Save & Exit" checks the return value directly, because silently
+// swallowing a failure there would tell the player their game was checkpointed and then
+// strand them with nothing to Continue.
 export function autoSave() {
   const snap = snapshot();
   if (!snap) return false;
-  try { localStorage.setItem(snap.key, snap.str); return true; }   // already a JSON string — one stringify pass
-  catch (e) { return false; }
+  return writeGeneration(snap.key, snap.str);
 }
 
-// Resume the autosaved Odyssey galaxy from localStorage (topbar-less; used by the
-// setup "Continue Odyssey" button).
+// Parse + deserialize a raw localStorage string with `deserialize`, returning the live object or
+// null if either step throws — corrupt JSON, an unsupported save version, or anything
+// sanitizeSave/cleanEntity rejects (engine/persist.js). The shared "try it, or don't" shape
+// loadGame/loadOdyssey below use for both the primary generation and its `.prev` fallback.
+function tryDeserialize(raw, deserialize) {
+  if (!raw) return null;
+  try { return deserialize(JSON.parse(raw)); }
+  catch (e) { return null; }
+}
+
+// Resume the autosaved Odyssey galaxy from localStorage (topbar-less; used by the setup "Continue
+// Odyssey" button). Tries the primary generation first, then falls back to `.prev` (written by
+// writeGeneration above) if the primary is missing, corrupt, or fails to deserialize — so one bad
+// write doesn't strand the whole campaign the way a single overwritten slot used to.
 export function loadOdyssey() {
-  const raw = read(ODYSSEY_KEY);
-  if (!raw) { flashButton(loadBtn, "No save"); return; }
-  try {
-    sound.unlockAudio();
-    bootGalaxy(deserializeGalaxy(JSON.parse(raw)), { intro: false });
-  } catch (e) { flashButton(loadBtn, "Load failed"); }
+  const primaryRaw = read(ODYSSEY_KEY), prevRaw = read(ODYSSEY_KEY + PREV_SUFFIX);
+  if (!primaryRaw && !prevRaw) { flashButton(loadBtn, "No save"); return; }
+  const galaxy = tryDeserialize(primaryRaw, deserializeGalaxy) || tryDeserialize(prevRaw, deserializeGalaxy);
+  if (!galaxy) { flashButton(loadBtn, "Load failed"); return; }
+  sound.unlockAudio();
+  bootGalaxy(galaxy, { intro: false });
 }
 
-// Resume the autosaved skirmish from localStorage (setup "Continue" button).
+// Resume the autosaved skirmish from localStorage (setup "Continue" button). Same primary-then-
+// `.prev` fallback as loadOdyssey above.
 export function loadGame() {
-  const raw = read(SAVE_KEY);
-  if (!raw) { flashButton(loadBtn, "No save"); return; }
-  try {
-    sound.unlockAudio();
-    bootState(deserializeGame(JSON.parse(raw)), { intro: false });
-  } catch (e) { flashButton(loadBtn, "Load failed"); }
+  const primaryRaw = read(SAVE_KEY), prevRaw = read(SAVE_KEY + PREV_SUFFIX);
+  if (!primaryRaw && !prevRaw) { flashButton(loadBtn, "No save"); return; }
+  const state = tryDeserialize(primaryRaw, deserializeGame) || tryDeserialize(prevRaw, deserializeGame);
+  if (!state) { flashButton(loadBtn, "Load failed"); return; }
+  sound.unlockAudio();
+  bootState(state, { intro: false });
 }
 
 /* ---------- file: the explicit backup/transfer (Save / Load buttons) ---------- */
@@ -223,13 +276,45 @@ if (saveBtn) saveBtn.addEventListener("click", saveToFile);
 if (loadBtn) loadBtn.addEventListener("click", loadFromFile);
 if (homeBtn) homeBtn.addEventListener("click", goHome);
 
+// Consecutive autoSave() failures the PERIODIC timer has observed — NOT the visibilitychange/
+// beforeunload calls below, which each fire once at a moment the player is already leaving (a
+// toast then would go unseen, and a tab-hide/close is exactly the moment a save is most likely to
+// race something else anyway). After AUTOSAVE_FAIL_TOAST consecutive failures, surface it exactly
+// ONCE per session: silent, repeated failure otherwise means a corrupt/full-quota/private-mode
+// browser quietly strands the player with nothing to Continue, discovered only when they come back
+// and "Continue" has nothing (see this file's own header). A later success resets the STREAK (a
+// fresh run of failures needs AUTOSAVE_FAIL_TOAST in a row again to re-warrant concern) but never
+// re-arms the one-time flag — this is a "your autosave is unreliable" notice, not a per-incident
+// alert that would nag on every transient blip.
+const AUTOSAVE_FAIL_TOAST = 3;
+let autoSaveFailStreak = 0;
+let autoSaveFailToastShown = false;
+
+// Record one autoSave() outcome from the periodic timer; returns true exactly once — the instant
+// the streak first reaches AUTOSAVE_FAIL_TOAST consecutive failures — so the caller knows to show
+// the toast right then. Pure bookkeeping, no DOM: exported so the threshold/one-time behavior is
+// directly testable without a real localStorage or toast-stack element.
+export function recordAutoSaveOutcome(ok) {
+  if (ok) { autoSaveFailStreak = 0; return false; }
+  autoSaveFailStreak++;
+  if (autoSaveFailStreak === AUTOSAVE_FAIL_TOAST && !autoSaveFailToastShown) {
+    autoSaveFailToastShown = true;
+    return true;
+  }
+  return false;
+}
+
 // Keep the current game checkpointed without any manual step: on a timer, whenever the
 // tab is hidden (task-switch / phone lock), and on unload (tab close / refresh). These
 // are the writes the setup "Continue" buttons read back. Guarded so importing this module
 // under Node (to unit-test its pure logic) doesn't start a real autosave timer or touch a
 // non-existent `window` — the whole block is browser-only wiring.
 if (typeof window !== "undefined") {
-  setInterval(autoSave, AUTOSAVE_INTERVAL_MS);
+  setInterval(() => {
+    if (recordAutoSaveOutcome(autoSave())) {
+      showGalaxyToast("Autosave is failing — use Save to export a file.", "bad");
+    }
+  }, AUTOSAVE_INTERVAL_MS);
   window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") autoSave(); });
   window.addEventListener("beforeunload", autoSave);
 }
