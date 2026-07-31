@@ -29,6 +29,18 @@ export const game = {
   // handler. Kept here, next to supplyBlockedUntil above, for the same reason: it crosses that
   // same module boundary.
   lastAttackAt: null,
+  // Live per-world alert badges for the Odyssey starmap (P6 "Starmap live colony ledger"):
+  // planetId -> {type, at}, written by boot.js's notifyColony for every attack/hostile/lost
+  // notification a background colony raises (engine/galaxy.js sweepColonies) — the SAME trigger
+  // that already fires the transient toast, just remembered here too so starmap.js's
+  // renderStarmap can badge a world at a glance instead of relying on whichever toast the player
+  // happened to catch. `at` is a performance.now() timestamp; starmap.js treats an attack/hostile
+  // entry as "live" only within its own ~30s window, while a "lost" entry persists as a badge
+  // until boot.js's focusActivePlanet clears that ONE planet's entry — i.e. until the player
+  // actually jumps back and looks. Reset to {} on every fresh boot (bootState), like `groups`
+  // below; never part of the deterministic sim or the persisted save (same reasoning as
+  // lastAttackAt above — this crosses the boot.js/starmap.js module boundary, nothing more).
+  colonyAlerts: {},
   // Control groups, keyed per planet id → { digit: [unitIds] }. Lives on the session (not
   // in the per-game input controller) so a group survives an Odyssey jump — which tears down
   // and rebuilds attachInput — and can be shown in the HUD and persisted UI-side. Never part

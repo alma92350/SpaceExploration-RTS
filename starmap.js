@@ -22,6 +22,41 @@ import { archetypeFor } from "./engine/aiArchetypes.js";
 import { stanceLabel } from "./engine/diplomacy.js";
 import { PLANET_MODIFIERS } from "./engine/map.js";
 import { getColonyPolicy, setColonyPolicy } from "./engine/colonyPolicy.js";
+import { UNITS } from "./engine/entities.js";
+
+// Live colony alert badges (P6 "Starmap live colony ledger and alert badges"): boot.js's
+// notifyColony stamps game.colonyAlerts[planetId] = {type, at} for every attack/hostile/lost
+// notification a background colony raises (engine/galaxy.js sweepColonies) — the same trigger
+// that already fires the transient toast, just remembered here too so a world reads its own
+// trouble at a glance. A "lost" alert badges the world until the player actually revisits (boot.js
+// focusActivePlanet clears that one planet's entry on arrival); an attack/hostile alert only reads
+// as live for ATTACK_ALERT_WINDOW_MS after it fired, so a raid from ten minutes ago doesn't still
+// flag the world red forever.
+const ATTACK_ALERT_WINDOW_MS = 30000;
+function alertBadge(planetId) {
+  const alert = game.colonyAlerts[planetId];
+  if (!alert) return null;
+  if (alert.type === "lost") return "fallen";
+  return performance.now() - alert.at <= ATTACK_ALERT_WINDOW_MS ? "attack" : null;
+}
+
+// This held world's own defence at a glance: your Command Center count (a razed CC drops this to
+// zero even while other buildings still stand) and the supply committed to COMBAT units here —
+// workers/freighters/colony ships don't count, since the question is "how much of a fight can
+// this world put up", not its whole population (that's the topbar's job, engine/supply.js
+// supplyUsed). Reads `state.buildings`/`state.units` directly off g.planets.get(id) (the State
+// shape, engine/types.js) rather than any cached snapshot — cheap enough to run only when the
+// starmap actually (re)renders: it opens paused (openStarmap calls pauseLoop('starmap')) and this
+// is never on a per-frame path (confirmed by reading every renderStarmap call site: the topbar
+// button/M-key open and this file's own standing-order/lane-toggle re-renders, nothing periodic).
+function garrisonOf(state) {
+  let cc = 0, supply = 0;
+  for (const b of state.buildings.values())
+    if (b.owner === "player" && b.type === "command" && !b.constructing) cc++;
+  for (const u of state.units.values())
+    if (u.owner === "player" && UNITS[u.type]?.role === "combat") supply += UNITS[u.type].supplyCost || 0;
+  return { cc, supply };
+}
 
 export function renderStarmap() {
   const g = game.galaxy;
@@ -58,10 +93,11 @@ export function renderStarmap() {
   status.worlds.forEach((w, i) => {
     const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
     const node = document.createElement("button");
-    node.className = "starmap-world " + w.status;
+    const badge = alertBadge(w.id);   // 'attack' | 'fallen' | null — this world's live alert state
+    node.className = "starmap-world " + w.status + (badge ? ` alert-${badge}` : "");
     node.style.left = `${50 + Math.cos(ang) * 38}%`;
     node.style.top = `${50 + Math.sin(ang) * 40}%`;
-    const sub = w.status === "seat" ? (w.pacified ? "◉ you are here · pacified" : "◉ you are here")
+    const baseSub = w.status === "seat" ? (w.pacified ? "◉ you are here · pacified" : "◉ you are here")
       : w.status === "pacified" ? "⚔ conquered"
       : w.status === "colony" ? `your colony · +${w.income} ◈/min`
       : w.status === "contested" ? `contested · ${stanceLabel(w.stance)}`
@@ -69,6 +105,15 @@ export function renderStarmap() {
       // sphere — so you watch factions spread across the frontier before you ever set foot there.
       : w.controlledBy ? `${LORE_FACTIONS[w.controlledBy]?.name || archetypeFor(w.id).name} space`
       : archetypeFor(w.id).name;
+    // The alert badge drives the sub-label: 'fallen' replaces it outright — it already says
+    // everything that matters, and the underlying status text (almost always "contested"; a razed
+    // outpost on an otherwise-pacified world is the one rare exception) would only repeat the same
+    // news in other words. 'attack' instead PREFIXES the base line: the colony/income text
+    // underneath is still useful context for deciding whether it's worth reinforcing, not just
+    // that it's on fire.
+    const sub = badge === "fallen" ? "☠ fallen — click to retake"
+      : badge === "attack" ? `⚔ under attack · ${baseSub}`
+      : baseSub;
     // The world's faction emblem: the DYNAMIC controlling faction (checkExpansion spread) when one has
     // claimed it, else its native faction (data.js LORE_FACTIONS) — so the map's emblems shift as factions
     // colonise across it, a world reading by whoever holds it at a glance.
@@ -96,6 +141,14 @@ export function renderStarmap() {
       mk("sm-stats", `⚙ ${w.industry} · 🔬 ${w.tech}`),
       mk("sm-deps", dossier),
     );
+    // Garrison line: your standing defence on a world you actually hold RIGHT NOW — the active
+    // seat, or a background colony with a building still standing (galaxyStatus's own "colony"
+    // test). Not shown for a contested/pacified/unexplored node, where "how many CCs" wouldn't
+    // mean "yours" anyway.
+    if (w.status === "seat" || w.status === "colony") {
+      const { cc, supply } = garrisonOf(g.planets.get(w.id));
+      node.append(mk("sm-garrison", `🛡 ${cc} CC · ${supply} supply`));
+    }
     node.addEventListener("click", () => onWorldClick(w));
     field.appendChild(node);
   });
