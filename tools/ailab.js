@@ -28,8 +28,11 @@
 
    Opponents (--opponent) decide what the AI is measured AGAINST, and the answer differs
    completely between them: none (no player at all) · passive (seats a base, never acts — the
-   only bot that never draws blood) · turtle (economy behind turrets) · skirmisher (a turtle that
-   also attacks, so it is the one that provokes).
+   only bot that never draws blood) · turtle (economy behind turrets, never attacks) · skirmisher
+   (a turtle that also attacks with whatever it has mustered) · tech (a turtle that ALSO climbs
+   Foundry -> Arsenal and attacks with a Lancer/Breacher/Dreadnought guard instead of a Skiff blob
+   — the counter-pick/composition yardstick: does the AI react to and survive an actual army, not
+   just a blob). skirmisher and tech are the two that provoke.
 
    Common flags
      --overrides f.json   inject rows into the AI tables before running, e.g.
@@ -37,6 +40,10 @@
                             "archetypes": { "rusher": { "odyssey": { "workerTarget": 9 } } },
                             "difficulties": { "hard": { "workerTargetMult": 1.4 } } }
      --seed N             base seed (default 1) — every run is reproducible from it
+     --apm real|none      default 'real': the AI runs at its OWN difficulty row's aiApm cap
+                          (engine/aiDifficulty.js) — the single biggest difficulty dial, and until
+                          now exercised by zero bench measurements. 'none' keeps a run unthrottled,
+                          for comparison against the bench's pre-APM measurement history.
 
    Deterministic by construction: every world seeds from mulberry32, every sparring
    opponent is scripted off the sim clock, and no wall-clock or Math.random is read. Two
@@ -78,12 +85,16 @@ const THINK = 1.5;               // sparring-bot decision cadence, matching the 
 // One Odyssey world, built exactly the way engine/galaxy.js addPlanet builds a neighbour:
 // endless, with its own market and diplomacy, the archetype's faction, and the AI dials under
 // test. The `opponent` decides what the player side is, which is what the AI is actually being
-// measured against — see the sparring bots below.
-function labWorld({ world, strategy, difficulty, opponent, seed }) {
+// measured against — see the sparring bots below. `apm` === "real" runs the AI at its OWN
+// difficulty row's aiApm (the CLI's own default, via baseConfig below); anything else — including
+// simply omitting it — keeps a direct labWorld/run() call unthrottled exactly like before, so
+// every existing programmatic caller (this file's own test suite included) is untouched.
+function labWorld({ world, strategy, difficulty, opponent, seed, apm }) {
+  const diffOpt = DIFFICULTY_OPTIONS.find(o => o.mult === difficulty);
   const s = createGameState({
     planetId: world, seed, rng: mulberry32(seed), endless: true,
     aiStrategy: strategy, difficulty,
-    aiApm: null, aiMicro: !!DIFFICULTY_OPTIONS.find(o => o.mult === difficulty)?.aiMicro,
+    aiApm: apm === "real" ? (diffOpt?.aiApm ?? null) : null, aiMicro: !!diffOpt?.aiMicro,
     aiFaction: archetypeFor(world).faction,
   });
   s.diplomacy = createDiplomacy();
@@ -148,6 +159,49 @@ function botBuild(s, type, dx, dy) {
   return !!spot && issueBuild(s, worker.id, type, spot.x, spot.y);
 }
 
+// Shared by every bot with a real economy (today: `turtle` and `tech`): grow the workforce to a
+// target, keep supply ahead of the cap, and — once there's a Barracks — hold a wall of turrets.
+// Returns false when the tick's one action already went to an economy/defence step (or there's no
+// Command Center yet, so nothing else can happen), true once the caller is free to decide what its
+// Barracks builds — the same one-action-per-think discipline every bot here already follows.
+function botEconomy(s) {
+  botGather(s);
+  const cc = playerBuildingsOf(s, "command").find(b => !b.constructing);
+  if (!cc) return false;
+  const res = s.players.player.resources;
+  const workers = playerUnitsOf(s, "worker").length;
+  if (workers < 12 && cc.queue.length === 0) { queueProduction(s, cc.id, "worker"); return false; }
+  if (supplyUsed(s, "player") >= supplyCap(s, "player") - 4
+      && !playerBuildingsOf(s, "habitat").some(b => b.constructing)) { botBuild(s, "habitat", 0, 90); return false; }
+  if (!playerBuildingsOf(s, "barracks").length) { botBuild(s, "barracks", 90, -90); return false; }
+  if (playerBuildingsOf(s, "turret").length < 4 && canAfford(res, BUILDINGS.turret.cost)) {
+    const i = playerBuildingsOf(s, "turret").length;
+    if (botBuild(s, "turret", 120 - 60 * (i % 2), 120 * (i < 2 ? 1 : -1))) return false;
+  }
+  return true;
+}
+
+// tech's composition guard: Tier-2 (Foundry) then Tier-3 (Arsenal), never a Skiff — the whole
+// point of this bot is a mixed army the counter-pick/turret-wall-reading changes actually have
+// something to answer, not another single-unit blob (engine/entities.js `requires`: Lancer and
+// Breacher need a completed Foundry, Dreadnought a completed Arsenal). Listed cost-ascending so
+// trying it in order doubles as "cheapest-affordable-first": queueProduction already rejects a
+// locked or unaffordable entry on its own, so this never wedges waiting on a Dreadnought it can't
+// yet pay for while it's sitting on Lancer money.
+const TECH_COMP = ["lancer", "breacher", "dreadnought"];
+
+// turtle's economy, plus the tech ladder past the Barracks. Foundry first (Lancer/Breacher's
+// prereq), then Arsenal (Dreadnought's) once the Foundry is actually done — not just laid down —
+// and only then does an idle Barracks start cycling TECH_COMP.
+function techBuild(s) {
+  if (!botEconomy(s)) return;
+  if (!playerBuildingsOf(s, "foundry").length) { botBuild(s, "foundry", -90, -90); return; }
+  const foundryDone = playerBuildingsOf(s, "foundry").some(b => !b.constructing);
+  if (foundryDone && !playerBuildingsOf(s, "arsenal").length) { botBuild(s, "arsenal", -90, 90); return; }
+  const idle = playerBuildingsOf(s, "barracks").filter(b => !b.constructing).find(b => b.queue.length === 0);
+  if (idle) for (const t of TECH_COMP) if (queueProduction(s, idle.id, t)) break;
+}
+
 const OPPONENTS = {
   // A living-galaxy BACKGROUND world: no player at all. This is what 10 of the 11 worlds
   // actually are for most of an Odyssey, so it's the honest setting for measuring the
@@ -180,37 +234,41 @@ const OPPONENTS = {
     desc: "economy + static defence, never attacks (the base-cracking yardstick)",
     setup: seatBase,
     think(s) {
-      botGather(s);
-      const cc = playerBuildingsOf(s, "command").find(b => !b.constructing);
-      if (!cc) return;
-      const res = s.players.player.resources;
-      const workers = playerUnitsOf(s, "worker").length;
-      if (workers < 12 && cc.queue.length === 0) { queueProduction(s, cc.id, "worker"); return; }
-      if (supplyUsed(s, "player") >= supplyCap(s, "player") - 4
-          && !playerBuildingsOf(s, "habitat").some(b => b.constructing)) { botBuild(s, "habitat", 0, 90); return; }
-      const rax = playerBuildingsOf(s, "barracks").filter(b => !b.constructing);
-      if (!playerBuildingsOf(s, "barracks").length) { botBuild(s, "barracks", 90, -90); return; }
-      if (playerBuildingsOf(s, "turret").length < 4 && canAfford(res, BUILDINGS.turret.cost)) {
-        const i = playerBuildingsOf(s, "turret").length;
-        if (botBuild(s, "turret", 120 - 60 * (i % 2), 120 * (i < 2 ? 1 : -1))) return;
-      }
+      if (!botEconomy(s)) return;
       // A standing guard, cheapest-first so the bot's composition never depends on tech it
       // hasn't built. Units hold at the rally point; the bot never issues an attack order.
-      const idle = rax.find(b => b.queue.length === 0);
+      const res = s.players.player.resources;
+      const idle = playerBuildingsOf(s, "barracks").filter(b => !b.constructing).find(b => b.queue.length === 0);
       if (idle && canAfford(res, UNITS.skiff.cost)) queueProduction(s, idle.id, "skiff");
     },
   },
 
-  // The only bot that PROVOKES. A `neverInitiates` neighbour is entitled to answer a player who
-  // has drawn blood (engine/diplomacy.js provoked()), so measuring whether Economic / Force Parity
-  // ever push back needs an opponent that actually fights — the other three never do, and against
-  // them those strategies are SUPPOSED to stay quiet. Deterministic: it commits whenever six idle
-  // combat units have accumulated, off the sim clock, with no randomness.
+  // PROVOKES: commits its army once it's mustered one. A `neverInitiates` neighbour is entitled to
+  // answer a player who has drawn blood (engine/diplomacy.js provoked()), so measuring whether
+  // Economic / Force Parity ever push back needs an opponent that actually fights — `none`/
+  // `passive` never do, and against them those strategies are SUPPOSED to stay quiet (`turtle` can
+  // still incidentally provoke — its turrets kill the AI's scouts — but never deliberately
+  // attacks). Deterministic: it commits whenever six idle combat units have accumulated, off the
+  // sim clock, with no randomness. `tech` below is the other bot that provokes, same trigger.
   skirmisher: {
-    desc: "turtle economy that throws its army at the AI whenever it musters one (the only bot that provokes)",
+    desc: "turtle economy that throws a Skiff blob at the AI whenever it musters one",
     setup: seatBase,
     think(s) {
       OPPONENTS.turtle.think(s);
+      const idle = [...s.units.values()].filter(u =>
+        u.owner === "player" && UNITS[u.type].role === "combat" && (!u.order || u.order.type === "move"));
+      if (idle.length >= 6) issueAttackMove(idle, s.map.bases.ai.x, s.map.bases.ai.y);
+    },
+  },
+
+  // The composition yardstick: everything skirmisher is, plus it actually teches — so it answers
+  // "does the AI react to and survive a composition, not a blob" instead of re-asking "does the AI
+  // beat a Skiff blob". Same six-idle wave-commit trigger as skirmisher, so it provokes too.
+  tech: {
+    desc: "turtle economy that also teches Foundry/Arsenal and throws a Lancer/Breacher/Dreadnought guard at the AI",
+    setup: seatBase,
+    think(s) {
+      techBuild(s);
       const idle = [...s.units.values()].filter(u =>
         u.owner === "player" && UNITS[u.type].role === "combat" && (!u.order || u.order.type === "move"));
       if (idle.length >= 6) issueAttackMove(idle, s.map.bases.ai.x, s.map.bases.ai.y);
@@ -471,6 +529,10 @@ function baseConfig(args) {
     sample: num(args.sample, 5),
     opponent: args.opponent || "passive",
     seedBase: num(args.seed, 1),
+    // 'real' (the default) is the whole point of this flag: exercise the AI's own difficulty-row
+    // aiApm cap, the one dial every CLI run used to skip entirely. 'none' opts back into the old
+    // always-unthrottled runs, for a baseline comparison against the bench's pre-APM history.
+    apm: args.apm === "none" ? "none" : "real",
   };
 }
 
@@ -656,7 +718,9 @@ Common flags
                        { "strategies":   { "swarm":  { "armyAttackSizeMult": 0.5 } },
                          "archetypes":   { "rusher": { "odyssey": { "workerTarget": 9 } } },
                          "difficulties": { "hard":   { "workerTargetMult": 1.4 } } }
-  --seed N             base seed (default 1) — every row is reproducible from it`;
+  --seed N             base seed (default 1) — every row is reproducible from it
+  --apm real|none      default 'real': the AI runs at its own difficulty row's aiApm cap;
+                       'none' runs unthrottled (the old default), for baseline comparability`;
 
 function main(argv) {
   const args = parseArgs(argv);

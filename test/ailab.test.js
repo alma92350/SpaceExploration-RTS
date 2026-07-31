@@ -20,8 +20,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { run, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS } from "../tools/ailab.js";
+import { run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS } from "../tools/ailab.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
+import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
+import { tick } from "../engine/sim.js";
 
 const short = extra => ({ world: "ferros", strategy: "default", difficulty: "medium",
                           opponent: "passive", minutes: 4, sample: 2, seed: 7, ...extra });
@@ -35,9 +37,40 @@ test("a lab run is deterministic — same configuration, byte-identical metrics"
     "two identical lab runs diverged: something in the harness reads a clock or an unseeded pick");
 });
 
+test("the tech opponent is deterministic too — same configuration, byte-identical metrics", () => {
+  const cfg = short({ opponent: "tech", minutes: 10 });
+  assert.equal(fingerprint(run(cfg)), fingerprint(run(cfg)),
+    "two identical tech-opponent runs diverged: the new bot must be exactly as clock-free as the others");
+});
+
 test("the seed genuinely varies the run (the lab isn't pinned to one world roll)", () => {
   const a = run(short({ seed: 7 })), b = run(short({ seed: 99 }));
   assert.notEqual(fingerprint(a), fingerprint(b), "two different seeds produced identical metrics");
+});
+
+test("labWorld's apm flag resolves to the difficulty row's own aiApm ('real'), or stays unthrottled otherwise", () => {
+  const hard = DIFFICULTY_OPTIONS.find(o => o.mult === "hard");
+  const cfg = { world: "ferros", strategy: "default", difficulty: "hard", opponent: "passive", seed: 1 };
+  const real = labWorld({ ...cfg, apm: "real" });
+  assert.equal(real.state.ai.apm, hard.aiApm, "apm:'real' should set state.ai.apm to Hard's own aiApm dial");
+  const none = labWorld({ ...cfg, apm: "none" });
+  assert.equal(none.state.ai.apm, null, "apm:'none' must preserve today's unthrottled runs");
+  const unset = labWorld(cfg);
+  assert.equal(unset.state.ai.apm, null, "omitting apm must keep the unthrottled default direct callers (incl. this suite) rely on");
+});
+
+test("the apm override seam reaches the sim: 'real' Easy builds measurably less than 'real' Hard over the same window", () => {
+  // Mirrors test/sim.test.js's own "AI speed scales with its APM setting" contrast, but through
+  // the ailab.js CLI seam specifically — proving --apm doesn't just set a field nobody reads. Easy
+  // (20) vs unthrottled converges too fast to tell apart (the opening is resource-limited, not
+  // action-limited, well before 20 APM), so this compares the two ends of the real dial instead —
+  // exactly what a player choosing a difficulty actually gets.
+  const base = { opponent: "passive", minutes: 10, sample: 1, apm: "real" };
+  const output = r => r.workersFinal + r.buildingsFinal;
+  const easy = output(run(short({ ...base, difficulty: "easy" })));
+  const hard = output(run(short({ ...base, difficulty: "hard" })));
+  assert.ok(easy < hard * 0.85,
+    `Easy's 20-apm run (${easy}) should build noticeably less than Hard's 140-apm run (${hard}) in the same 10 minutes`);
 });
 
 test("each sparring opponent sets up the player side it advertises", () => {
@@ -48,6 +81,7 @@ test("each sparring opponent sets up the player side it advertises", () => {
   assert.equal(presence("none"), 0, "the background-world opponent leaves no player presence at all");
   assert.ok(presence("passive") >= 1, "the passive opponent seats a Command Center");
   assert.ok(presence("turtle") >= 1, "the turtle opponent seats a Command Center");
+  assert.ok(presence("tech") >= 1, "the tech opponent seats a Command Center");
   for (const [id, bot] of Object.entries(OPPONENTS))
     assert.equal(typeof bot.desc, "string", `opponent ${id} needs a one-line description for the scoreboard`);
 });
@@ -56,6 +90,25 @@ test("the turtle bot actually builds an economy — it's a yardstick, not a stat
   const r = run(short({ opponent: "turtle", minutes: 8, world: "ferros" }));
   const last = r.curve[r.curve.length - 1];
   assert.ok(last.playerBuildings > 1, `the turtle should raise more than its Command Center (got ${last.playerBuildings})`);
+});
+
+test("the tech bot climbs past the Barracks and fields more than Skiffs — the composition yardstick", () => {
+  const { state, bot } = labWorld({ world: "ferros", strategy: "default", difficulty: "medium",
+                                     opponent: "tech", seed: 7 });
+  const dt = 0.1;   // mirrors ailab.js's own fixed sim step (DT)
+  let sinceThink = 0;
+  for (let i = 0; i < Math.round(20 * 60 / dt); i++) {
+    tick(state, dt);
+    sinceThink += dt;
+    if (sinceThink >= 1.5) { sinceThink = 0; bot.think(state); }   // mirrors ailab.js's own THINK cadence
+  }
+  const done = [...state.buildings.values()].filter(b => b.owner === "player" && !b.constructing);
+  assert.ok(done.some(b => b.type === "foundry"), "the tech bot should raise a Foundry within 20 minutes");
+  const guardTypes = new Set([...state.units.values()]
+    .filter(u => u.owner === "player" && u.type !== "worker")
+    .map(u => u.type));
+  assert.ok([...guardTypes].some(t => t !== "skiff"),
+    `the tech bot's guard should include Tier-2/3 units, not just Skiffs (got: ${[...guardTypes].join(", ") || "none"})`);
 });
 
 test("an overrides row reaches the sim — a strategy that never initiates commits no waves", () => {
