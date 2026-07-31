@@ -30,8 +30,12 @@ let fireworks = [];
 let explosions = [];
 let fuseWarnings = [];
 
-export function addTracer(fromX, fromY, toX, toY, unitType) {
-  tracers.push({ fromX, fromY, toX, toY, unitType, born: performance.now() });
+// `bonus` (engine/combat.js's attackHit event field) marks a counter-triangle hit — a Skiff
+// catching a Lancer, etc. — so renderEffects.js can telegraph it hotter and thicker instead of
+// drawing it identically to a futile plink. Defaults falsy, so every pre-existing call keeps its
+// plain look.
+export function addTracer(fromX, fromY, toX, toY, unitType, bonus = false) {
+  tracers.push({ fromX, fromY, toX, toY, unitType, bonus, born: performance.now() });
 }
 
 export function addDeathFlash(x, y) {

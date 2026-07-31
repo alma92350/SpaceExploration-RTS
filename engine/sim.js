@@ -141,6 +141,14 @@ function updateUnit(state, unit, dt) {
   // falls back to auto-acquiring once its whole chain is exhausted.
   if (!unit.order && unit.orderQueue && unit.orderQueue.length) {
     unit.order = unit.orderQueue.shift();
+    // A patrol leg (engine/commands.js issuePatrol) loops forever: the instant it's pulled off
+    // the queue and made active, requeue it at the tail too, so once THIS leg completes and the
+    // next one is pulled, this one is already waiting to come back around. The very FIRST leg of
+    // a fresh patrol never passes through here at all (issuePatrol places it directly into
+    // `order`, same as any other plain command) — issuePatrol gives it the equivalent trailing
+    // copy by hand for exactly that reason, so every leg ends up with one "next occurrence"
+    // queued behind it and the whole chain cycles instead of draining to idle.
+    if (unit.order.patrol) unit.orderQueue.push(unit.order);
   }
 
   const def = UNITS[unit.type];
@@ -228,7 +236,13 @@ function updateUnit(state, unit, dt) {
   }
 
   switch (unit.order.type) {
-    case "move": {
+    case "move":
+    // A non-combat/non-support role (today: only "scout", the Ranger) reaches an "attack-move"
+    // order here rather than through combat.js's updateCombat (role "combat" only) — the patrol
+    // order (engine/commands.js issuePatrol) is gated to combat/scout roles alike, and a scout
+    // never auto-acquires regardless of order type (that's entirely role-gated, in updateCombat),
+    // so for it "attack-move" just means "get there", identically to a plain move.
+    case "attack-move": {
       const arrived = stepToward(state, unit, unit.order.x, unit.order.y, orderedSpeed(def.speed, unit.order), dt);
       if (arrived) unit.order = null;
       break;
@@ -279,9 +293,9 @@ function updateUnit(state, unit, dt) {
       else if (!b.constructing) unit.order = null;
       break;
     }
-    // Any order type this non-combat/non-support unit can't act on (e.g. an
-    // "attack-move" that reached a freighter) is dropped rather than left to stick
-    // forever and wedge the unit's whole order queue. No valid caller hits this today.
+    // Any order type this non-combat/non-support unit can't act on (e.g. a "gather"
+    // order that reached a freighter) is dropped rather than left to stick forever
+    // and wedge the unit's whole order queue. No valid caller hits this today.
     default:
       unit.order = null;
   }

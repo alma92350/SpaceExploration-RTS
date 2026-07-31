@@ -85,7 +85,7 @@ globalThis.document = {
   removeEventListener() {},
 };
 
-const { pauseLoop, resumeLoop, togglePause, startGame, initiateJump } = await import("../boot.js");
+const { pauseLoop, resumeLoop, togglePause, startGame, startOdyssey, initiateJump } = await import("../boot.js");
 // dom.js is already loaded (boot.js imports it statically) — re-importing it here just returns
 // the SAME cached module, i.e. the SAME `pauseBtn` object boot.js's syncPause() mutates. A
 // second, independent observable of the same `manual` boolean: the topbar button's label.
@@ -246,13 +246,20 @@ globalThis.cancelAnimationFrame = () => {};
 // start* functions), and the identical hideObjectives the comment above relies on.
 const { setup, DIFFICULTY_OPTIONS } = await import("../setup.js");
 const { hideObjectives } = await import("../overlays.js");
+const { sideMod, PLANET_MODIFIERS } = await import("../engine/map.js");
 
-// Whatever difficulty/seed the setup screen actually started at — captured once, so every test
-// below restores the EXACT starting values rather than a hardcoded guess. setup is a live
-// cross-test singleton exactly like game (see the game.state resets throughout this file); no
-// other test in this file touches it, but nothing resets it between files either.
+// Whatever difficulty/seed/startWorld/swapAsym the setup screen actually started at — captured
+// once, so every test below restores the EXACT starting values rather than a hardcoded guess.
+// setup is a live cross-test singleton exactly like game (see the game.state resets throughout
+// this file); no other test in this file touches it, but nothing resets it between files either.
 const ORIGINAL_DIFFICULTY = setup.difficulty, ORIGINAL_SEED = setup.seed;
-function resetSetup() { setup.difficulty = ORIGINAL_DIFFICULTY; setup.seed = ORIGINAL_SEED; }
+const ORIGINAL_START_WORLD = setup.startWorld, ORIGINAL_SWAP_ASYM = setup.swapAsym;
+const ORIGINAL_MATCH_TIME_LIMIT = setup.matchTimeLimit;
+function resetSetup() {
+  setup.difficulty = ORIGINAL_DIFFICULTY; setup.seed = ORIGINAL_SEED;
+  setup.startWorld = ORIGINAL_START_WORLD; setup.swapAsym = ORIGINAL_SWAP_ASYM;
+  setup.matchTimeLimit = ORIGINAL_MATCH_TIME_LIMIT;
+}
 
 test("difficultyDials(): a recognized difficulty key drives the created state's AI with that exact difficulty's aiApm/aiMicro", () => {
   resetSetup();
@@ -317,6 +324,79 @@ test("resolveSeed(): a null setup.seed draws a fresh, valid unsigned-32-bit seed
   // Not an exact-value assertion (it's genuinely random) — proving it's really drawing a fresh
   // value each time, not some frozen/cached one, is instead that two independent draws disagree.
   assert.notEqual(seed1, seed2, "back-to-back calls with no explicit seed must not repeat the same random seed");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
+// setup.js's Match length row (docs/improvement-proposals.md "Make the clock endgame visible,
+// honest, and configurable") — a skirmish-only pick (Quick 20 / Standard 40 / Marathon 60) plumbed
+// straight through startGame -> createGameState onto state.matchTimeLimit.
+test("setup.matchTimeLimit is plumbed through startGame onto the created state, overriding the 40-minute default", () => {
+  resetSetup();
+  setup.matchTimeLimit = 1200;   // "Quick 20"
+
+  startGame("ferros");
+
+  assert.equal(game.state.matchTimeLimit, 1200, "the picked Match length must land on state.matchTimeLimit unchanged");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
+// Odyssey Setup workstream: the player picks (or rerolls) their starting world instead of one
+// forced random draw (docs/improvement-proposals.md). setup.startWorld is a plain pass-through
+// into createGalaxy's opts.startId (engine/galaxy.js already covers validation/fallback/
+// determinism in test/odyssey.test.js) — this is the boot.js WIRING itself: driving the real
+// startOdyssey() and reading the result off game.galaxy, the same pattern difficultyDials/
+// resolveSeed above use for startGame.
+test("startOdyssey(): an explicit setup.startWorld lands the galaxy's active seat on that exact world", () => {
+  resetSetup();
+  setup.startWorld = "helix";
+
+  startOdyssey();
+
+  assert.equal(game.galaxy.activeId, "helix", "the chosen start world becomes the galaxy's active seat");
+
+  hideObjectives();
+  game.state = null;
+  game.galaxy = null;
+  resetSetup();
+});
+
+test("startOdyssey(): a null setup.startWorld (Random) draws the galaxy's own seed-derived world, same as before this feature", () => {
+  resetSetup();
+  setup.seed = 999;
+  setup.startWorld = null;
+
+  startOdyssey();
+  const withNoPick = game.galaxy.activeId;
+  game.galaxy = null;
+
+  startOdyssey();   // same seed, still no pick -> must draw the identical world again
+  assert.equal(game.galaxy.activeId, withNoPick, "Random reproduces the seed's own draw, not a fresh roll");
+
+  hideObjectives();
+  game.state = null;
+  game.galaxy = null;
+  resetSetup();
+});
+
+// Pick your side of the Oort/Nimbus asymmetric matchups: setup.swapAsym threads through
+// createGameState into generateMap's opts.swapAsym (engine/map.js's own tests cover the swap
+// logic itself) — this proves boot.js's startGame actually wires the setup flag through end to
+// end, onto the real created state's map.
+test("startGame(): setup.swapAsym threads through to the created state's swapped map modifiers", () => {
+  resetSetup();
+  setup.swapAsym = true;
+
+  startGame("oort");
+
+  assert.equal(game.state.swapAsym, true, "the swap flag lands on state.swapAsym");
+  assert.equal(sideMod(game.state, "player", "buildTimeMult"), PLANET_MODIFIERS.oort.asym.ai.buildTimeMult,
+    "the player now reads oort's AI-side modifier — the swap actually took effect on the created map");
 
   hideObjectives();
   game.state = null;

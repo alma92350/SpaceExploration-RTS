@@ -83,6 +83,19 @@ function countByType(units) {
   return counts;
 }
 
+// "12× Skiff — 84% hp · ▼ falls to Bastion" — shared by rebuildSelectionPanel's per-type rows
+// and renderSelectionPanel's live hp-only patch (both walk the same countByType map) so the two
+// can never drift, same rule recycleRowText/researchRowText below already follow. Only the "falls
+// to" half is shown (not "strong vs") — the point is flagging THIS army's own soft spot at a
+// glance, not repeating unitTip's full breakdown inline; counterInfo (above) already returns ""
+// when nothing counters the type, so the suffix just doesn't appear then.
+function summaryRowLabel(type, entry) {
+  const def = UNITS[type];
+  const pct = Math.round((entry.hp / entry.maxHp) * 100);
+  const { weak } = counterInfo(def);
+  return `${entry.count}× ${def.name} — ${pct}% hp${weak ? " · " + weak : ""}`;
+}
+
 // Only the queue's *composition* (what's queued, in what order) needs a
 // full rebuild -- a job's progress fraction changes every tick and is
 // instead patched in place below, same reasoning as the hp-only patch
@@ -91,8 +104,9 @@ function queueSignature(sel) {
   const b = sel.length === 1 && sel[0].kind === "building" ? sel[0] : null;
   if (!b) return "";
   const prod = b.queue ? b.queue.map(j => j.unitType).join(",") : "";
-  // The Datacenter's tech research is its own queue — include it so queuing/finishing a
-  // research rebuilds the panel (the progress % itself is then live-patched each tick).
+  // The Datacenter's tech research OR the Refinery's doctrine research is its own queue — include
+  // it so queuing/finishing a research rebuilds the panel (the progress % itself is then
+  // live-patched each tick, same as the production queue's job labels above).
   const research = b.researchQueue ? b.researchQueue.map(j => j.techId).join(",") : "";
   return prod + "#" + research;
 }
@@ -115,6 +129,33 @@ const ALL_COSTS = [
   ...Object.values(BUILDINGS).map(b => b.cost),
   ...RESEARCHABLE_UPGRADES.map(u => u.cost),
 ];
+
+// Reverse of bonusVs (engine/entities.js): which unit types deal bonus damage AGAINST a given
+// type — e.g. COUNTERED_BY.skiff === ["bastion"], because Bastion's bonusVs.skiff is set. Hoisted
+// once at module load, same idiom as ALL_COSTS above (UNITS is a static definition that never
+// changes at runtime), mirroring the COUNTER_OF reduce shape engine/aiMilitary.js already builds
+// off these exact same bonusVs tables for the AI's own counter-picking.
+const COUNTERED_BY = Object.values(UNITS).reduce((map, def) => {
+  if (def.bonusVs) for (const targetType of Object.keys(def.bonusVs)) (map[targetType] ||= []).push(def.id);
+  return map;
+}, {});
+
+// The counter-triangle, surfaced from data instead of memorized from the README: what `def` is
+// strong against (its own bonusVs keys, plus "structures" for a class-wide siege bonus like the
+// Breacher's bonusVsBuildings) and what it falls to (COUNTERED_BY, above). Returns "" for either
+// side that doesn't apply — a building def, or a unit deliberately built outside the triangle
+// (the Dreadnought, the Leviathan) — so every caller can blindly test-and-append.
+function counterInfo(def) {
+  const strongVs = [
+    ...Object.keys(def.bonusVs || {}).map(t => UNITS[t]?.name || t),
+    ...(def.bonusVsBuildings ? ["structures"] : []),
+  ];
+  const weakVs = (COUNTERED_BY[def.id] || []).map(t => UNITS[t]?.name || t);
+  return {
+    strong: strongVs.length ? `▲ strong vs ${strongVs.join(", ")}` : "",
+    weak: weakVs.length ? `▼ falls to ${weakVs.join(", ")}` : "",
+  };
+}
 
 // Fingerprint of what the player can currently afford and which completed
 // buildings they hold — the two inputs to every button's greyed/locked state.
@@ -186,6 +227,15 @@ export function renderSelectionPanel() {
     // starved ↔ stalled), so its "why it's not producing" line stays live without
     // a full rebuild every HUD tick.
     + "|" + factorySignature(sel)
+    // Rebuild any selected gathering worker's live "Miners X/cap" note as other workers join or
+    // leave its assigned node (node.miners is retallied every tick by sim.js countMiners) —
+    // without this the count would freeze at whatever it read on the panel's last rebuild, same
+    // reasoning as factorySignature just above.
+    + "|" + sel.filter(e => e.kind === "unit" && e.order && e.order.type === "gather")
+        .map(e => {
+          const node = state.map.nodesById ? state.map.nodesById.get(e.order.nodeId) : state.map.nodes.find(n => n.id === e.order.nodeId);
+          return node ? node.miners || 0 : "";
+        }).join(",")
     // Rebuild when the Odyssey diplomacy panel would appear/disappear (stance crossing
     // the 0.25 band) or its tribute button's cost/affordability would flip — so the
     // appease lever surfaces the moment the neighbour cools, without a per-tick rebuild.
@@ -294,9 +344,7 @@ export function renderSelectionPanel() {
     // patch can only ever land on the per-entity summary rows it means to update.
     const rows = panelEl.querySelectorAll(".sel-row-summary");
     [...countByType(sel).entries()].forEach(([type, entry], i) => {
-      const def = UNITS[type];
-      const pct = Math.round((entry.hp / entry.maxHp) * 100);
-      if (rows[i]) rows[i].textContent = `${entry.count}× ${def.name} — ${pct}% hp`;
+      if (rows[i]) rows[i].textContent = summaryRowLabel(type, entry);
     });
   } else {
     const rows = panelEl.querySelectorAll(".sel-row-summary");
@@ -319,11 +367,13 @@ export function renderSelectionPanel() {
     });
   }
 
-  // Same live patch for the Datacenter's tech research (its own researchQueue) — otherwise the
-  // "Researching … — N%" row would sit frozen at whatever % it had on the last rebuild.
+  // Same live patch for a Refinery's doctrine research OR a Datacenter's tech research (each
+  // building's own researchQueue, resolved against the right node table by building.type — same
+  // split engine/techtree.js's updateResearch itself makes) — otherwise the "Researching … — N%"
+  // row would sit frozen at whatever % it had on the last rebuild.
   if (building && building.researchQueue && building.researchQueue.length) {
     const row = panelEl.querySelector(".research-progress");
-    if (row) row.textContent = researchRowText(building.researchQueue);
+    if (row) row.textContent = researchRowText(building.researchQueue, building.type === "refinery" ? UPGRADES : TECHS);
   }
 
   // Same live patch for an in-progress Recycle — one row per currently-recycling selected
@@ -346,10 +396,13 @@ function recycleRowText(entity) {
   return `♻ Recycling ${def.name} — ${Math.round(entity.recycling.progress * 100)}%`;
 }
 
-// The Datacenter research header text — shared by the rebuild and the live patch so the two
-// never drift.
-function researchRowText(queue) {
-  const head = TECHS[queue[0].techId];
+// The research-queue header text ("🖥️ Researching Metallurgy — 40% (+1 queued)") — shared by the
+// Datacenter's and the Refinery's rebuild AND live-patch call sites so none of the four can drift
+// apart. `table` is whichever node table backs this building — TECHS for a Datacenter, UPGRADES
+// for a Refinery — the same split engine/techtree.js's updateResearch itself resolves by
+// building.type.
+function researchRowText(queue, table) {
+  const head = table[queue[0].techId];
   return `${head.ico ? head.ico + " " : ""}Researching ${head.name} — ${Math.round(queue[0].progress * 100)}%`
     + (queue.length > 1 ? ` (+${queue.length - 1} queued)` : "");
 }
@@ -784,8 +837,7 @@ function rebuildSelectionPanel(sel) {
     const multiType = counts.size > 1;   // only worth sub-selecting when the mix has 2+ types
     for (const [type, entry] of counts) {
       const def = UNITS[type];
-      const pct = Math.round((entry.hp / entry.maxHp) * 100);
-      const label = `${entry.count}× ${def.name} — ${pct}% hp`;
+      const label = summaryRowLabel(type, entry);
       // With several types selected, each row is a button that narrows the selection
       // to just that type (input.selectType) — click "3× Bastion" to keep only them.
       if (multiType) {
@@ -839,6 +891,26 @@ function rebuildSelectionPanel(sel) {
         note.textContent = home ? "🏠 Home base assigned — jobs stay loyal to it first" : "🏠 Home base assigned (that Command Center is gone — using nearest-distance for now)";
         panelEl.appendChild(note);
         if (home) panelEl.appendChild(makeButton("Clear home base", () => { e.homeCC = null; }, { tip: "Go back to picking jobs by plain nearest-distance" }));
+      }
+      // A gathering worker's node saturation (engine/gather.js miningEfficiency / sim.js
+      // countMiners): node.miners is retallied every tick but nothing used to show it, so a
+      // deposit six workers deep just read as ordinary slow income with no visible cause. Resolve
+      // the order's node the same way updateGather does (nodesById when the map built one) and
+      // report the live headcount against the worker's own soft cap, flagging the
+      // diminishing-returns band (miningEfficiency's own cutoff) once it's crossed.
+      if (e.kind === "unit" && e.order && e.order.type === "gather") {
+        const node = state.map.nodesById
+          ? state.map.nodesById.get(e.order.nodeId)
+          : state.map.nodes.find(n => n.id === e.order.nodeId);
+        const cap = UNITS[e.type].minerSoftCap;
+        if (node && Number.isFinite(cap)) {
+          const miners = node.miners || 0;
+          const over = miners > cap;
+          const note = document.createElement("div");
+          note.className = "sel-note " + (over ? "warn" : "");
+          note.textContent = `Miners ${miners}/${cap}` + (over ? " — diminishing returns" : "");
+          panelEl.appendChild(note);
+        }
       }
     });
   }
@@ -916,13 +988,27 @@ function rebuildSelectionPanel(sel) {
     if (barracks.queue.length) renderQueueRows(barracks);
   }
 
+  // Refinery: the doctrine upgrades. Same queued/timed idiom as the Datacenter's tech tree below
+  // (production.js researchUpgrade pays up front and queues; engine/techtree.js updateResearch
+  // develops it) — a live progress row for whatever's currently developing, and the plain
+  // button-per-upgrade list below it drops anything already queued (the progress row already
+  // says it's underway), same split the Datacenter panel makes.
   const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);
   if (refinery) {
     const upgrades = state.players.player.upgrades;
-    const chosen = committedDoctrine(state, "player");   // null until the first research commits a doctrine
+    const chosen = committedDoctrine(state, "player");   // null until the first research commits (or queues) a doctrine
     const label = { assault: "Assault", bulwark: "Bulwark", logistics: "Logistics" };
-    if (sectionToggle("refinery:research", "Research", RESEARCHABLE_UPGRADES.length)) {
-      RESEARCHABLE_UPGRADES.forEach(u => {
+    const queue = refinery.researchQueue || [];
+    const queued = new Set(queue.map(j => j.techId));
+    if (queue.length) {
+      const row = document.createElement("div");
+      row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
+      row.textContent = researchRowText(queue, UPGRADES);
+      panelEl.appendChild(row);
+    }
+    const visibleUpgrades = RESEARCHABLE_UPGRADES.filter(u => !queued.has(u.id));
+    if (sectionToggle("refinery:research", "Research", visibleUpgrades.length)) {
+      visibleUpgrades.forEach(u => {
         if (upgrades[u.id]) {
           const row = document.createElement("div");
           row.className = "sel-row";
@@ -953,7 +1039,7 @@ function rebuildSelectionPanel(sel) {
     if (queue.length) {
       const row = document.createElement("div");
       row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
-      row.textContent = researchRowText(queue);
+      row.textContent = researchRowText(queue, TECHS);
       panelEl.appendChild(row);
     }
     // Already-queued nodes are dropped here (reflected in the progress row's "+N queued" above,
@@ -1647,7 +1733,9 @@ function lockTipFor(def) {
   return `Requires ${(def.requires || []).map(r => BUILDINGS[r]?.name || UPGRADES[r]?.name || TECHS[r]?.name || r).join(", ")}`;
 }
 
-// A compact stat line for a unit/building button tooltip.
+// A compact stat line for a unit/building button tooltip, plus the counter-triangle "strong
+// vs / falls to" lines (counterInfo, above) each on their own line — a building def (or a unit
+// deliberately outside the triangle) contributes neither, so this is a no-op append for those.
 function unitTip(def) {
   const bits = [`${def.hp} hp`];
   if (def.attack) bits.push(`${def.attack} dmg`, `rng ${def.range}`);
@@ -1657,5 +1745,9 @@ function unitTip(def) {
   if (def.supplyCost) bits.push(`${def.supplyCost} supply`);
   if (def.supplyGrants) bits.push(`+${def.supplyGrants} supply`);
   if (def.dropOff || def.isCommandCenter) bits.push("resource drop-off");
-  return bits.join(" · ");
+  let tip = bits.join(" · ");
+  const { strong, weak } = counterInfo(def);
+  if (strong) tip += `\n${strong}`;
+  if (weak) tip += `\n${weak}`;
+  return tip;
 }

@@ -378,6 +378,33 @@ export function issueHold(units) {
   });
 }
 
+// Patrol: a looping attack-move waypoint chain. Each point becomes an ordinary {type:
+// 'attack-move', x, y} leg — engine/combat.js needs nothing extra, a patrol leg auto-engages
+// anything encountered exactly like any other attack-move — except every leg also carries
+// `patrol: true`, which engine/sim.js's pull-next-queued-order step reads to requeue a leg right
+// back onto the tail the moment it's pulled off the front, so the chain cycles forever instead of
+// draining to idle once the last point is reached.
+// Built with the same per-unit `dispatch` plumbing every other order goes through (queue=false
+// for the first point replaces whatever the unit was doing, same as a plain command; queue=true
+// for the rest appends them behind it) so a fresh patrol command cleanly cancels an old one.
+// Gated to combat/scout roles, the same UNITS[type].role check issueHold uses just above — a
+// worker or freighter caught in the selection is silently skipped, like every other role-gated
+// order in this file.
+export function issuePatrol(units, points) {
+  if (!points.length) return;
+  units.forEach(u => {
+    if (!UNITS[u.type] || (UNITS[u.type].role !== "combat" && UNITS[u.type].role !== "scout")) return;
+    points.forEach((p, i) => dispatch(u, { type: "attack-move", x: p.x, y: p.y, patrol: true }, i > 0));
+    // The first point lands directly in `order` (dispatch's queue=false branch above, for i===0)
+    // rather than being pulled off orderQueue — the ONE place (engine/sim.js) that re-enqueues a
+    // patrol leg once it's activated. Give it that same "there's another copy of me waiting"
+    // treatment by hand here, or the loop would quietly drop the very first waypoint after one
+    // lap (leg two -> leg three -> leg two -> ... forever, leg one never revisited) instead of
+    // genuinely cycling through every point that was given.
+    u.orderQueue.push(u.order);
+  });
+}
+
 // Put a Ranger into autonomous scout mode (order type "scout"): it ranges the
 // map on its own toward the nearest unexplored ground until re-ordered (see
 // scout.js). Only scout-role units accept it, so issuing it to a mixed selection

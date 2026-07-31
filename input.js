@@ -9,7 +9,7 @@
 "use strict";
 
 import { game } from "./session.js";
-import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueRepair, issueSetHomeBase, issueHoldFormation } from "./engine/commands.js";
+import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueScout, issueHold, issueEscort, issueServiceBuilding, issueFerryFreighter, issueRepair, issueSetHomeBase, issueHoldFormation, issuePatrol } from "./engine/commands.js";
 import { UNITS, BUILDINGS, storeCapOf, canGatherType, canLogisticsType, canBuildCategory } from "./engine/entities.js";
 import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
@@ -549,6 +549,24 @@ export function attachInput(canvas, state, onChange) {
   function holdSelected() {
     issueHold(selectedUnits());
   }
+  // R: convert the selection's EXISTING move/attack-move waypoint chain into a looping patrol
+  // (engine/commands.js issuePatrol) — the same points already laid down by right-click /
+  // Ctrl+right-click keep going instead of running out at the last stop. Reads each unit's own
+  // order + orderQueue independently (a mixed selection can be at a different point in its own
+  // chain), so this is a conversion of what's already there, not a fresh command with its own
+  // destination. Only move/attack-move legs carry a map point to patrol between — anything else
+  // queued (an attack on a specific target, a gather, …) isn't a waypoint and is skipped, so a
+  // unit with none of those queued just keeps doing whatever it's doing: nothing to loop.
+  // issuePatrol itself re-applies the combat/scout role gate, so a worker caught in the
+  // selection is silently skipped here too.
+  function patrolSelected() {
+    for (const u of selectedUnits()) {
+      const points = [u.order, ...(u.orderQueue || [])]
+        .filter(o => o && (o.type === "move" || o.type === "attack-move"))
+        .map(o => ({ x: o.x, y: o.y }));
+      if (points.length) issuePatrol([u], points);
+    }
+  }
   // Form up right where the selection stands, in the player's chosen shape, and hold there —
   // the "protect a formation" stance (engine/commands.js issueHoldFormation), the group-scale
   // sibling of Escort (which protects one external ship instead).
@@ -609,6 +627,7 @@ export function attachInput(canvas, state, onChange) {
     if (k === "e") { scoutSelected(); onChange(); return; }   // send selected Rangers to auto-scout
     if (k === "a") { setArmed(true); return; }        // arm attack-move; next left-click commits it
     if (k === "h") { holdSelected(); onChange(); return; }   // hold position
+    if (k === "r") { patrolSelected(); onChange(); return; }   // convert the current waypoint chain into a looping patrol
     if (k === "f") { formSelected(); onChange(); return; }   // form up in place and hold the shape
     if (k === "escape") { setArmed(false); buildMode = null; onChange(); return; }   // bail out of a pending action
     if (k === "`") { focusIdleWorker(); return; }   // it calls onChange itself
@@ -660,6 +679,7 @@ export function attachInput(canvas, state, onChange) {
     stopSelected: () => { stopSelected(); onChange(); },
     scoutSelected: () => { scoutSelected(); onChange(); },
     holdSelected: () => { holdSelected(); onChange(); },
+    patrolSelected: () => { patrolSelected(); onChange(); },
     formSelected: () => { formSelected(); onChange(); },
     // Recall a group from the HUD chip (touch has no number row); same double-press-recenter
     // as the keyboard path.

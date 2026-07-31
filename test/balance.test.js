@@ -153,3 +153,42 @@ test("the Breacher is the turtle-breaker: it cracks a turret line that stops the
   assert.ok(!cracksBase("bastion", 4), "a same-cost Bastion army is stopped cold by the 4-turret line");
   assert.ok(!cracksBase("lancer", 4), "as is a Lancer army — siege is the Breacher's job");
 });
+
+// ---- Out-of-triangle counteredBy certification (engine/entities.js, folded into
+// engine/aiMilitary.js's COUNTER_OF for the AI's counter-pick). Each of these units
+// declares an optional `counteredBy` field; every one of those declared values must
+// actually win its own duel here, so the field stays self-verifying — a future stat
+// tweak that quietly breaks the mapping fails loudly instead of silently feeding the
+// AI's counter-pick a stale answer. Tier-3 capital-supply units (Colossus, Aegis:
+// supplyCost 4, like the Dreadnought above) are judged at supply parity — their value
+// is per-supply in a supply-capped late game, not per-cost, same as supplyDuel's own
+// doc comment; the Tier-2/3, supply-2 Breacher and Wraith are judged at ordinary cost
+// parity, like the triangle itself.
+
+test("the Breacher's declared counteredBy (Skiff) actually wins the duel", () => {
+  assert.ok(beats("skiff", "breacher"), "a cost-parity Skiff swarm beats a Breacher army — \"folds to massed Skiffs\" per README");
+});
+
+test("the Wraith's declared counteredBy (Skiff) actually wins the duel", () => {
+  assert.ok(beats("skiff", "wraith"), "the glass-cannon Wraith melts to focused Skiff fire, per its own doc comment");
+});
+
+test("the Colossus's declared counteredBy (Skiff) actually wins at supply parity", () => {
+  const r = supplyDuel("skiff", "colossus");
+  assert.ok(r.a > r.b, "mass Skiff overwhelms the fragile, slow-firing artillery piece at equal supply");
+});
+
+test("the Aegis's declared counteredBy (Lancer) actually wins at supply parity", () => {
+  // Cost parity actually favours the Aegis — its huge hp pool buys more survivability
+  // per ore than the Lancer's — but armies are supply-capped, not cost-capped, in the
+  // late game, the same distinction the Dreadnought test above draws. At equal SUPPLY,
+  // the Lancer's armor-piercing damage out-DPS's the Aegis's near-token gun before its
+  // tankiness matters, so the same-supply comparison is the honest one.
+  const r = supplyDuel("lancer", "aegis");
+  assert.ok(r.a > r.b, "Lancer out-shoots the aura tank's token gun at equal supply");
+});
+
+test("the Leviathan's curated soft answer (Skiff) also wins at supply parity, though it carries no counteredBy of its own yet", () => {
+  const r = supplyDuel("skiff", "leviathan");
+  assert.ok(r.a > r.b, "a swarm of cheap Skiffs still trades into the capital ship at equal supply, per its own doc comment");
+});

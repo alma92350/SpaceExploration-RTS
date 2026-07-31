@@ -52,3 +52,18 @@ test("a bare (skirmish) state with no aiArchetype overlay drifts on the stock di
   s.time = 500;
   assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) updateDiplomacy(s, 0.5); });
 });
+
+// ---- The Technologist (Kybernet, aiArchetypes.js): "patient grace and high forgiveness" ----
+
+test("the Technologist (Kybernet) recovers from a soured stance faster than the Economist — high forgiveness actually drives the recovery drift", () => {
+  const tech = odysseyWorld("kybernet");   // ODYSSEY_EXTRA_ARCHETYPE.kybernet -> technologist
+  const econ = odysseyWorld("ferros");     // PLANET_ARCHETYPE ferros -> economist
+  assert.equal(archetypeFor("kybernet").name, "Technologist");
+  for (const s of [tech, econ]) {
+    s.time = 300;                // both still well inside their own opening grace, fresh (unmined) map -> identical ~0.6 target
+    s.diplomacy.stance = -0.5;   // both start equally soured, well below that target -> recovery direction, not souring
+  }
+  for (let i = 0; i < 200; i++) { updateDiplomacy(tech, 0.5); updateDiplomacy(econ, 0.5); }
+  assert.ok(tech.diplomacy.stance > econ.diplomacy.stance,
+    `Kybernet's higher forgiveness recovers stance faster from the same soured start (tech ${tech.diplomacy.stance.toFixed(3)} vs econ ${econ.diplomacy.stance.toFixed(3)})`);
+});

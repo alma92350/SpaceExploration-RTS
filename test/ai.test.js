@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
-import { UNITS } from "../engine/entities.js";
-import { isNodeDiscovered, isExploredAt, updateFog } from "../engine/fog.js";
-import { aiDoctrine } from "../engine/aiWorkers.js";
+import { UNITS, UPGRADES } from "../engine/entities.js";
+import { updateResearch, researchTimeScale } from "../engine/techtree.js";
+import { isNodeDiscovered, isExploredAt, isVisibleAt, updateFog } from "../engine/fog.js";
+import { aiDoctrine, effectiveMix } from "../engine/aiWorkers.js";
 import { pickBuilder, accrueActionBudget } from "../engine/aiCommon.js";
+import { pickNextUnitType } from "../engine/aiMilitary.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -697,8 +699,10 @@ test("aiDoctrine overrides the archetype's stated preference when the world's ec
 test("a macro AI whose archetype prefers Assault researches Bulwark instead, once the world's economy overrides it", () => {
   // Same cross-over as above, but proven end-to-end through the real AI: force a genuine
   // disagreement (an Assault-preferring archetype on a crystal-rich, radioactive-starved world)
-  // and confirm aiResearch actually banks the WORLD-favored doctrine's upgrade, not the
-  // archetype's own stated one.
+  // and confirm aiResearch actually queues, then (once it develops) banks, the WORLD-favored
+  // doctrine's upgrade, not the archetype's own stated one. Doctrine research now develops over
+  // time (engine/techtree.js updateResearch) instead of landing instantly the moment aiResearch
+  // enqueues it.
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   state.ai.archetype = { ...state.ai.archetype, doctrine: "assault" };   // stated preference: Assault
   for (const n of state.map.nodes) if (n.com === "crystals" || n.com === "radioactives") { n.max = 0; n.amount = 0; }
@@ -711,8 +715,21 @@ test("a macro AI whose archetype prefers Assault researches Bulwark instead, onc
 
   for (let i = 0; i < 5; i++) runAI(state, THINK_INTERVAL);
 
+  assert.equal(refinery.researchQueue?.[0]?.techId, "reinforcedPlating",
+    "the AI queued Bulwark's Tier-1 upgrade — the world-favored doctrine, not the archetype's own stated Assault preference");
+  assert.ok(!state.players.ai.upgrades.reinforcedPlating, "…not researched yet — it still has to develop");
+
+  // Further think cycles while it's still developing must not re-queue a duplicate or waver
+  // between doctrines (engine/aiEconomy.js aiResearch's re-entry guard) — still exactly one job.
+  for (let i = 0; i < 20; i++) runAI(state, THINK_INTERVAL);
+  assert.equal(refinery.researchQueue.length, 1, "still just the one queued job — no duplicate re-enqueue while it's already in flight");
+
+  // Let it actually finish developing (the same tick-driven loop engine/sim.js runs for real).
+  const need = UPGRADES.reinforcedPlating.time * researchTimeScale(state);
+  for (let t = 0; t < need + 1; t += 0.5) updateResearch(state, refinery, 0.5);
+
   assert.equal(state.players.ai.upgrades.reinforcedPlating, true,
-    "the AI researched Bulwark's Tier-1 upgrade — the world-favored doctrine");
+    "the AI researched Bulwark's Tier-1 upgrade once it finished developing — the world-favored doctrine");
   assert.ok(!state.players.ai.upgrades.overchargedWeapons,
     "…not Assault's, despite that being the archetype's own stated preference");
 });
@@ -1034,4 +1051,131 @@ test("Standard (non-Tactical) AI never builds a Mender, even with a Foundry", ()
     || [...state.units.values()].some(u => u.owner === "ai" && u.type === "mender");
   assert.equal(anyMender, false, "a Standard AI builds no Mender");
   assert.ok(barracks.queue.length > 0, "...it's still producing combat units from the mix");
+});
+
+// ---- P2 counter-intelligence: engine/aiMilitary.js's counterToPlayerArmy /
+// pickNextUnitType — out-of-triangle counters (COUNTER_OF's counteredBy fold),
+// the soft-answer fallback (SOFT_ANSWER), reading a turret wall, and the
+// difficulty-shaped counter-pick cadence (engine/aiDifficulty.js counterEvery).
+// Each declared counteredBy value's OWN duel-proof lives in test/balance.test.js
+// beside the Dreadnought's; these tests instead pin that the AI actually reaches
+// for the right answer once it can see the threat.
+
+// Places `n` player-owned `type` units close enough to the AI's own base to be
+// swept into its starting Command Center's sight, then makes them actually
+// visible (creation-time fog is a one-off snapshot — new units after that need
+// a fresh updateFog, same idiom as the rest of this file's fog-gated tests).
+function revealPlayerArmy(state, type, n) {
+  const aiBase = state.map.bases.ai;
+  for (let i = 0; i < n; i++) {
+    const u = makeUnit(type, "player", aiBase.x + 40 + i * 14, aiBase.y);
+    state.units.set(u.id, u);
+  }
+  updateFog(state, state.fogAI, "ai");
+}
+
+test("a visible massed Dreadnought, Breacher, Wraith, Colossus, or Leviathan army yields a Skiff counter-pick", () => {
+  for (const type of ["dreadnought", "breacher", "wraith", "colossus", "leviathan"]) {
+    const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+    revealPlayerArmy(state, type, 5);
+    // built=9 (not the more obvious 3): with no Foundry up, this world's plain
+    // 5-entry cycle ["skiff","skiff","bastion","skiff","bastion"] would ALSO land
+    // on built=3/6's "skiff" on its own — a vacuous pass that wouldn't tell the
+    // counter-pick apart from a coincidence. built=9 (still a Medium-cadence
+    // trigger, 9 % 3 === 0) lands the plain cycle on "bastion" instead, so a
+    // "skiff" result here only happens if the counter-pick actually fired.
+    state.ai.unitsBuilt = 9;
+    assert.equal(pickNextUnitType(state, state.ai.archetype), "skiff", `a massed ${type} army should draw a Skiff counter-pick`);
+  }
+});
+
+test("a visible massed Aegis army yields a Lancer counter-pick", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  stockedFoundry(state);   // unlocks the Lancer so the counter-pick has somewhere to land
+  revealPlayerArmy(state, "aegis", 5);
+  state.ai.unitsBuilt = 3;
+  assert.equal(pickNextUnitType(state, state.ai.archetype), "lancer");
+});
+
+test("a visible turret wall (fog-revealed) triggers a Breacher counter-pick", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  stockedFoundry(state);   // unlocks the Breacher so the counter-pick has somewhere to land
+  const aiBase = state.map.bases.ai;
+  for (let i = 0; i < 4; i++) {
+    const t = makeBuilding("turret", "player", aiBase.x + 40 + i * 30, aiBase.y);
+    state.buildings.set(t.id, t);
+  }
+  updateFog(state, state.fogAI, "ai");
+  state.ai.unitsBuilt = 3;
+  assert.equal(pickNextUnitType(state, state.ai.archetype), "breacher", "a 4-turret wall in plain sight draws the siege answer");
+});
+
+test("an unseen turret wall triggers nothing — the AI can't counter what it hasn't scouted", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  stockedFoundry(state);
+  const playerBase = state.map.bases.player;   // far from the AI's own vision, and never revealed to it
+  assert.equal(isVisibleAt(state.fogAI, playerBase.x, playerBase.y), false, "fixture: the player's base starts unseen by the AI's fog");
+  for (let i = 0; i < 4; i++) {
+    const t = makeBuilding("turret", "player", playerBase.x + 40 + i * 30, playerBase.y);
+    state.buildings.set(t.id, t);
+  }
+  const mix = effectiveMix(state, state.ai.archetype);
+  state.ai.unitsBuilt = 3;
+  assert.equal(pickNextUnitType(state, state.ai.archetype), mix[3 % mix.length],
+    "no vision of the wall -> the plain mix cycle, not Breacher");
+});
+
+test("a turret wall is suppressed when the Breacher isn't in the archetype's affordable mix", () => {
+  const state = createGameState({ planetId: "korrath", rng: () => 0.5 });   // Rusher: unitMix never includes Breacher
+  const aiBase = state.map.bases.ai;
+  for (let i = 0; i < 4; i++) {
+    const t = makeBuilding("turret", "player", aiBase.x + 40 + i * 30, aiBase.y);
+    state.buildings.set(t.id, t);
+  }
+  updateFog(state, state.fogAI, "ai");
+  const mix = effectiveMix(state, state.ai.archetype);
+  assert.ok(!mix.includes("breacher"), "fixture sanity: the Rusher's mix never includes the Breacher");
+  state.ai.unitsBuilt = 3;
+  assert.equal(pickNextUnitType(state, state.ai.archetype), mix[3 % mix.length],
+    "the wall is seen, but Breacher isn't reachable, so the counter-pick guard drops it and the plain cycle continues");
+});
+
+test("Medium's counter-pick cadence is unchanged at every 3rd unit, exactly as before the difficulty dial existed", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });   // difficulty defaults to "medium"
+  stockedFoundry(state);
+  revealPlayerArmy(state, "bastion", 5);
+  const mix = effectiveMix(state, state.ai.archetype);
+  state.ai.unitsBuilt = 2;
+  assert.equal(pickNextUnitType(state, state.ai.archetype), mix[2], "built=2: not yet the 3rd unit — the plain cycle");
+  state.ai.unitsBuilt = 3;
+  assert.equal(pickNextUnitType(state, state.ai.archetype), "lancer", "built=3: the 3rd unit counter-picks the massed Bastion's hard counter");
+});
+
+test("Hard's counter-pick cadence is 2 — it reacts to a massed threat a full cadence ahead of Medium", () => {
+  const mk = difficulty => {
+    const state = createGameState({ planetId: "ferros", rng: () => 0.5, difficulty });
+    stockedFoundry(state);
+    revealPlayerArmy(state, "bastion", 5);
+    return state;
+  };
+  const hard = mk("hard"), medium = mk("medium");
+  const mix = effectiveMix(hard, hard.ai.archetype);   // archetype/world-derived, identical regardless of difficulty
+  hard.ai.unitsBuilt = 2;
+  medium.ai.unitsBuilt = 2;
+  assert.equal(pickNextUnitType(hard, hard.ai.archetype), "lancer",
+    "Hard's every-2 cadence counter-picks the massed Bastion's hard counter at built=2");
+  assert.equal(pickNextUnitType(medium, medium.ai.archetype), mix[2],
+    "Medium's every-3 cadence hasn't hit yet at built=2 — still the plain cycle entry");
+});
+
+test("Easy never counter-picks — its army stays its learnable, exploitable archetype mix", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5, difficulty: "easy" });
+  stockedFoundry(state);
+  revealPlayerArmy(state, "bastion", 5);
+  const mix = effectiveMix(state, state.ai.archetype);
+  for (let built = 0; built < mix.length * 2; built++) {
+    state.ai.unitsBuilt = built;
+    assert.equal(pickNextUnitType(state, state.ai.archetype), mix[built % mix.length],
+      `built=${built}: Easy follows the plain cycle even with a massed Bastion army in plain sight (would be a Lancer counter-pick on Medium/Hard)`);
+  }
 });

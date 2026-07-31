@@ -122,6 +122,40 @@ test("asymmetric worlds apply per-side modifiers; symmetric worlds tilt both sid
   assert.equal(sideMod(ferros, "player", "speedMult"), 1, "ferros has no modifier -> default");
 });
 
+test("opts.swapAsym exchanges the player/ai halves of an asymmetric world's matchup", () => {
+  const swapped = { map: generateMap("oort", () => 0.5, { swapAsym: true }) };
+  assert.equal(sideMod(swapped, "player", "buildTimeMult"), 0.82, "the player now gets the faster factory");
+  assert.equal(sideMod(swapped, "ai", "gatherMult"), 1.2, "the AI now gets the richer claim");
+  assert.equal(sideMod(swapped, "ai", "buildTimeMult", 1), 1, "the enemy loses the build-speed edge once swapped");
+  assert.equal(sideMod(swapped, "player", "gatherMult", 1), 1, "the player loses the gather edge it had unswapped");
+
+  const swappedNimbus = { map: generateMap("nimbus", () => 0.5, { swapAsym: true }) };
+  assert.equal(sideMod(swappedNimbus, "player", "speedMult", 1), 1.12, "the player now strikes faster out of the storm");
+  assert.equal(sideMod(swappedNimbus, "ai", "sightMult"), 0.95, "the enemy now sees through the thinning storm");
+});
+
+test("opts.swapAsym never mutates the shared PLANET_MODIFIERS table", () => {
+  generateMap("oort", () => 0.5, { swapAsym: true });
+  assert.equal(PLANET_MODIFIERS.oort.asym.player.gatherMult, 1.2, "the shared table's player half is unchanged");
+  assert.equal(PLANET_MODIFIERS.oort.asym.ai.buildTimeMult, 0.82, "the shared table's ai half is unchanged");
+  // An UNSWAPPED game generated after a swapped one must still read the normal assignment —
+  // proof the swap attached a copy, not a mutation of the object every game shares by reference.
+  const again = { map: generateMap("oort", () => 0.5) };
+  assert.equal(sideMod(again, "player", "gatherMult"), 1.2, "an unswapped game after a swapped one reads the normal assignment");
+  assert.equal(sideMod(again, "ai", "buildTimeMult"), 0.82, "…on both halves of the matchup");
+});
+
+test("opts.swapAsym is a no-op on a world with no asym block, and doesn't perturb node generation", () => {
+  const normal = generateMap("ferros", () => 0.5);
+  const swapped = generateMap("ferros", () => 0.5, { swapAsym: true });
+  assert.deepEqual(swapped.modifiers, normal.modifiers, "no asym block to swap -> modifiers are unaffected");
+  assert.deepEqual(swapped.nodes, normal.nodes, "swapping consumes no rng draw -> the map layout is untouched");
+
+  const oortNormal = generateMap("oort", () => 0.5);
+  const oortSwapped = generateMap("oort", () => 0.5, { swapAsym: true });
+  assert.deepEqual(oortSwapped.nodes, oortNormal.nodes, "swapping which side gets which bonus doesn't touch the map layout");
+});
+
 test("generateMap attaches the planet's modifiers (empty for the unmodified worlds)", () => {
   assert.deepEqual(generateMap("ferros", () => 0.5).modifiers, {}, "ferros carries no modifiers");
   assert.equal(generateMap("glacius", () => 0.5).modifiers.speedMult, 0.9, "glacius slows every unit");

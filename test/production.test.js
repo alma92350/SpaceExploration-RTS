@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { queueProduction, cancelProduction, updateProductionQueue, updateBuildingConstruction, researchUpgrade } from "../engine/production.js";
-import { UNITS, UPGRADES } from "../engine/entities.js";
+import { UNITS, UPGRADES, upgradeMult } from "../engine/entities.js";
+import { updateResearch, researchTimeScale } from "../engine/techtree.js";
 import { tick } from "../engine/sim.js";
 
 function commandCenterOf(state, owner) {
@@ -409,7 +410,7 @@ test("a planet build-time modifier speeds construction and production alike", ()
   assert.ok(spawned, "the queued worker spawns in half its normal build time");
 });
 
-test("researchUpgrade pays the cost and flags it researched", () => {
+test("researchUpgrade pays the cost up front and queues the research, instead of landing it instantly", () => {
   const state = createGameState({ planetId: "ferros" });
   const refinery = makeBuilding("refinery", "player", 500, 500);
   state.buildings.set(refinery.id, refinery);
@@ -418,8 +419,27 @@ test("researchUpgrade pays the cost and flags it researched", () => {
   const ok = researchUpgrade(state, refinery.id, "reinforcedPlating");
 
   assert.equal(ok, true);
-  assert.equal(state.players.player.resources.crystals, 200 - UPGRADES.reinforcedPlating.cost.crystals);
-  assert.equal(state.players.player.upgrades.reinforcedPlating, true);
+  assert.equal(state.players.player.resources.crystals, 200 - UPGRADES.reinforcedPlating.cost.crystals, "paid on enqueue, not on completion");
+  assert.equal(refinery.researchQueue[0].techId, "reinforcedPlating", "the upgrade heads the Refinery's own research queue");
+  assert.equal(refinery.researchQueue[0].progress, 0, "freshly queued, nothing developed yet");
+  assert.equal(state.players.player.upgrades.reinforcedPlating, undefined, "not researched yet — it still has to develop, like a Datacenter tech node");
+});
+
+test("a queued doctrine upgrade has no effect until it actually finishes developing, then applies live army-wide", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const refinery = makeBuilding("refinery", "player", 500, 500);
+  state.buildings.set(refinery.id, refinery);
+  state.players.player.resources.radioactives = 1000;
+
+  researchUpgrade(state, refinery.id, "overchargedWeapons");
+  assert.equal(upgradeMult(state.players.player.upgrades, "damageDealtMult"), 1, "queued but still developing — no bonus yet");
+
+  const need = UPGRADES.overchargedWeapons.time * researchTimeScale(state);
+  for (let t = 0; t < need + 1; t += 0.5) updateResearch(state, refinery, 0.5);
+
+  assert.equal(state.players.player.upgrades.overchargedWeapons, true, "sanity: it actually completed");
+  assert.equal(upgradeMult(state.players.player.upgrades, "damageDealtMult"), UPGRADES.overchargedWeapons.damageDealtMult,
+    "…but the instant it completes, the bonus applies live (combat.js reads player.upgrades directly, army-wide)");
 });
 
 test("researchUpgrade refuses a second purchase of the same upgrade", () => {
@@ -454,27 +474,42 @@ test("researchUpgrade refuses when the player can't afford it", () => {
   assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), false);
 });
 
-test("upgrade doctrines are mutually exclusive: committing to one locks the other", () => {
+// Develops a Refinery's head-of-queue job all the way to completion — the "let time pass"
+// equivalent of the old instant researchUpgrade, shared by the doctrine-lock tests below (which
+// now need a Tier-1 to actually FINISH, not merely be queued, before its Tier-2 unlocks).
+function finishHeadOfQueue(state, refinery) {
+  const job = refinery.researchQueue[0];
+  const need = UPGRADES[job.techId].time * researchTimeScale(state);
+  for (let t = 0; t < need + 1; t += 0.5) updateResearch(state, refinery, 0.5);
+}
+
+test("upgrade doctrines are mutually exclusive: committing to one locks the other, even while it's still developing", () => {
   const state = createGameState({ planetId: "ferros" });
   const refinery = makeBuilding("refinery", "player", 500, 500);
   state.buildings.set(refinery.id, refinery);
   Object.assign(state.players.player.resources, { ore: 2000, crystals: 2000, radioactives: 2000 });
 
   assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), true, "commit to Assault");
-  assert.equal(researchUpgrade(state, refinery.id, "reinforcedPlating"), false, "the Bulwark path is now locked out");
+  assert.equal(researchUpgrade(state, refinery.id, "reinforcedPlating"), false, "the Bulwark path is now locked out — the resources are already committed, before the timer even finishes");
   assert.equal(state.players.player.upgrades.reinforcedPlating, undefined, "and nothing of the other doctrine is set/charged");
-  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), true, "but deepening the chosen doctrine is fine");
+
+  finishHeadOfQueue(state, refinery);   // let Overcharged Weapons actually finish developing
+  assert.equal(state.players.player.upgrades.overchargedWeapons, true, "sanity: Tier-1 completed");
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), true, "deepening the chosen doctrine is fine once Tier-1 is actually researched");
 });
 
-test("a Tier-2 upgrade needs its Tier-1 first", () => {
+test("a Tier-2 upgrade needs its Tier-1 actually researched, not just queued", () => {
   const state = createGameState({ planetId: "ferros" });
   const refinery = makeBuilding("refinery", "player", 500, 500);
   state.buildings.set(refinery.id, refinery);
   Object.assign(state.players.player.resources, { ore: 2000, radioactives: 2000 });
 
   assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), false, "Tier-2 locked without Tier-1");
-  assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), true, "research Tier-1...");
-  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), true, "...now Tier-2 unlocks");
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), true, "queue Tier-1...");
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), false, "...still locked while Tier-1 is only queued, not yet developed");
+
+  finishHeadOfQueue(state, refinery);   // let it actually finish
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedCore"), true, "...now Tier-2 unlocks, once Tier-1 is truly researched");
 });
 
 test("Logistics locks the combat doctrines: after Logistics Network, an Assault upgrade is refused", () => {
@@ -484,8 +519,10 @@ test("Logistics locks the combat doctrines: after Logistics Network, an Assault 
   state.players.player.resources = { ore: 1000, crystals: 1000, radioactives: 1000 };
 
   assert.equal(researchUpgrade(state, refinery.id, "logisticsNetwork"), true);
-  assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), false, "committed to Logistics -> Assault locked");
-  assert.equal(researchUpgrade(state, refinery.id, "rapidFabrication"), true, "but its own Tier-2 is allowed");
+  assert.equal(researchUpgrade(state, refinery.id, "overchargedWeapons"), false, "committed to Logistics -> Assault locked, even while Logistics Network is still developing");
+
+  finishHeadOfQueue(state, refinery);   // let Logistics Network actually finish
+  assert.equal(researchUpgrade(state, refinery.id, "rapidFabrication"), true, "but its own Tier-2 is allowed once Tier-1 is researched");
 });
 
 test("Rapid Fabrication (Logistics T2) cuts production time", () => {

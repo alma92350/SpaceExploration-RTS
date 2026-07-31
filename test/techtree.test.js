@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { TECHS, researchTech, updateResearch, researchTimeScale, techMult } from "../engine/techtree.js";
-import { BUILDINGS, prereqsMet } from "../engine/entities.js";
+import { BUILDINGS, UPGRADES, prereqsMet } from "../engine/entities.js";
 
 // A datacenter on an endless world, with commodities to burn — owned by the player by
 // default, but an AI-owned one (and any extra createGameState opts, e.g. difficulty) can be
@@ -145,6 +145,61 @@ test("passive nodes multiply industry through techMult; unlock nodes carry no pa
   assert.equal(techMult({ automation: true }, "rateMult"), 1.25, "Automation speeds factories");
   assert.equal(techMult({ heavyalloys: true }, "yieldMult"), 1.4, "Heavy Alloys lifts yield");
   assert.equal(techMult({ metallurgy: true }, "powerMult"), 1, "an unlock node has no passive field");
+});
+
+/* ---------- generalized to the Refinery's doctrine upgrades too (Tier 1: "Doctrine research
+   develops over time instead of landing instantly", docs/improvement-proposals.md) ----------
+   updateResearch now resolves ITS node table by building.type — datacenter -> TECHS (above),
+   refinery -> UPGRADES — instead of being hardcoded to the Datacenter alone. The Refinery's own
+   enqueue side (production.js researchUpgrade: doctrine lock, prereqsMet, queued-dupe guard,
+   pay-on-enqueue) is exercised in test/production.test.js; these pin the SHARED development loop
+   itself against the Refinery's table. */
+
+function withRefinery(planetId = "ferros", owner = "player", stateOpts = {}) {
+  const state = createGameState({ planetId, ...stateOpts });
+  const refinery = makeBuilding("refinery", owner, 600, 500);
+  state.buildings.set(refinery.id, refinery);
+  return { state, refinery };
+}
+
+test("updateResearch resolves a Refinery's queue against UPGRADES, not TECHS, and lands it in player.upgrades on completion", () => {
+  const { state, refinery } = withRefinery();
+  // Set directly (production.js's own enqueue/pay path is covered in production.test.js) — this
+  // test is only about the shared development loop resolving the right table.
+  refinery.researchQueue = [{ techId: "reinforcedPlating", progress: 0 }];
+  const need = UPGRADES.reinforcedPlating.time * researchTimeScale(state);
+  for (let t = 0; t < need + 1; t += 0.5) updateResearch(state, refinery, 0.5);
+  assert.equal(state.players.player.upgrades.reinforcedPlating, true, "a Refinery job develops against UPGRADES and lands in player.upgrades");
+  assert.equal(refinery.researchQueue.length, 0, "the job leaves the queue on completion, same as a Datacenter job");
+  assert.ok(state.events.some(e => e.type === "researchComplete" && e.techId === "reinforcedPlating"), "the same researchComplete event a TECHS job fires");
+});
+
+test("updateResearch is a no-op for a Refinery still under construction", () => {
+  const { state, refinery } = withRefinery();
+  refinery.constructing = true;
+  refinery.researchQueue = [{ techId: "reinforcedPlating", progress: 0 }];
+  updateResearch(state, refinery, 1000);
+  assert.ok(!state.players.player.upgrades.reinforcedPlating, "an unfinished Refinery never develops research");
+  assert.equal(refinery.researchQueue[0].progress, 0, "no progress accrues either");
+});
+
+test("updateResearch silently drops a queued Refinery job whose techId no longer resolves in UPGRADES", () => {
+  const { state, refinery } = withRefinery();
+  refinery.researchQueue = [{ techId: "not-a-real-upgrade", progress: 0 }];
+  assert.doesNotThrow(() => updateResearch(state, refinery, 1), "an unrecognized upgrade id must not throw");
+  assert.equal(refinery.researchQueue.length, 0, "the unresolvable job is dropped rather than stalling the queue forever");
+});
+
+test("difficulty's research-pace dial also reaches the AI's own Refinery doctrine research, mirroring the Datacenter dial", () => {
+  const progressAfterOneTick = difficulty => {
+    const { state, refinery } = withRefinery("ferros", "ai", { difficulty });
+    refinery.researchQueue = [{ techId: "reinforcedPlating", progress: 0 }];
+    updateResearch(state, refinery, 1);
+    return refinery.researchQueue[0].progress;
+  };
+  const easy = progressAfterOneTick("easy"), medium = progressAfterOneTick("medium"), hard = progressAfterOneTick("hard");
+  assert.ok(hard > medium, "Hard's AI develops a doctrine upgrade faster than Medium's");
+  assert.ok(medium > easy, "Medium's AI develops a doctrine upgrade faster than Easy's");
 });
 
 test("the research + deeper-industry buildings are Odyssey-only and tech-gated through prereqsMet", () => {

@@ -220,16 +220,20 @@ function cleanEntity(e, def, map) {
           ...(j.alt ? { alt: true } : {}),
         }))
       : [];
-    // A Datacenter's research queue is untrusted exactly like the production queue above: a non-array
-    // `researchQueue` (e.g. the number 5) throws .length/.shift and bricks the game on the first
-    // research tick (engine/techtree.js updateResearch), and a bogus techId derefs an undefined TECHS
-    // def. When the field is present, rebuild it from known-good jobs — real TECHS ids, progress
-    // clamped to [0,1] — or [] for a non-array. A building WITHOUT the field (every non-Datacenter,
-    // and a Datacenter that never queued research) is left untouched, so it's the identity for a valid
-    // save.
+    // A Datacenter's OR Refinery's research queue is untrusted exactly like the production queue
+    // above: a non-array `researchQueue` (e.g. the number 5) throws .length/.shift and bricks the
+    // game on the first research tick (engine/techtree.js updateResearch, which now resolves EITHER
+    // TECHS or UPGRADES by building.type — doctrine research develops over time too, not just the
+    // Datacenter's tech tree), and a bogus techId derefs an undefined def either way. When the field
+    // is present, rebuild it from known-good jobs — a real TECHS OR UPGRADES id (whichever table
+    // this building's own type actually resolves — the two id spaces only ever overlap on the
+    // deliberately-shared "recycling" id, entities.js, which is harmless here since updateResearch
+    // itself always resolves that id against the one table this building's type maps to), progress
+    // clamped to [0,1] — or [] for a non-array. A building WITHOUT the field (any building that
+    // never queued research) is left untouched, so it's the identity for a valid save.
     if (e.researchQueue !== undefined) {
       e.researchQueue = Array.isArray(e.researchQueue)
-        ? e.researchQueue.filter(j => j && TECHS[j.techId]).map(j => ({
+        ? e.researchQueue.filter(j => j && (TECHS[j.techId] || UPGRADES[j.techId])).map(j => ({
             techId: j.techId,
             progress: Math.max(0, Math.min(num(j.progress, 0), 1)),
           }))
@@ -340,8 +344,17 @@ function serPlayer(p) {
 function serPlanet(state) {
   return {
     seed: state.seed, planetId: state.planetId,
-    sizeMult: state.sizeMult, resourceMult: state.resourceMult, endless: !!state.endless,
+    sizeMult: state.sizeMult, resourceMult: state.resourceMult,
+    swapAsym: !!state.swapAsym,   // additive: which side plays which half of an asym world's matchup (engine/map.js) — default false, no version bump
+    // setup.js's Match length row override (engine/victory.js DEFAULT_MATCH_TIME_LIMIT) — additive,
+    // defaults null (no override, same as every pre-existing save) so no SAVE_VERSION bump per
+    // CONTRIBUTING's additive-field rule.
+    matchTimeLimit: state.matchTimeLimit ?? null,
+    endless: !!state.endless,
     time: state.time, tick: state.tick, over: state.over, winner: state.winner,
+    // additive: why the match ended (engine/victory.js finish) — default null, same as an
+    // in-progress or pre-this-feature save; no SAVE_VERSION bump per CONTRIBUTING.
+    winReason: state.winReason ?? null,
     // One entry per side, in state.owners order — for the player-vs-ai pair this
     // serialises as { player, ai }, byte-identical to the old literal. The save
     // shape stays two-keyed (fog/fogAI below likewise): a save FORMAT built for N
@@ -448,8 +461,19 @@ function rehydratePlanet(P) {
   // further down, so the map's real dimensions and the state's reported multiplier can never disagree.
   const sizeMult = Math.max(0.1, num(P.sizeMult, 1));
   const resourceMult = Math.max(0.1, num(P.resourceMult, 1));
+  // Additive, coerced to a real boolean like every other untrusted save flag: a save from before
+  // this field existed (or a tampered non-boolean) reads as unswapped, not throwing/undefined.
+  const swapAsym = !!P.swapAsym;
+  // setup.js's Match length override (engine/victory.js DEFAULT_MATCH_TIME_LIMIT): additive and
+  // untrusted like every other save field. `null`/missing means "no override" (the common case —
+  // must NOT sanitize through num()'s Number(null)===0 coercion, which would silently turn "no
+  // override" into "end the match at time 0"). A non-null value is only trusted if it coerces to a
+  // genuinely POSITIVE finite number; anything else (0, negative, NaN, a string) falls back to the
+  // same safe "no override" null rather than a broken instant/never timeout.
+  const matchTimeLimit = P.matchTimeLimit == null ? null
+    : (Number.isFinite(Number(P.matchTimeLimit)) && Number(P.matchTimeLimit) > 0 ? Number(P.matchTimeLimit) : null);
   const map = generateMap(P.planetId, mulberry32((P.seed ?? 0) >>> 0),
-    { sizeMult, resourceMult });
+    { sizeMult, resourceMult, swapAsym });
   const amounts = new Map(P.nodes.map(n => [n.id, n.amount]));
   for (const n of map.nodes) if (amounts.has(n.id)) n.amount = amounts.get(n.id);
   // A crater node (engine/bomb.js) never comes back from the seed regeneration above — it
@@ -545,7 +569,8 @@ function rehydratePlanet(P) {
 
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
-    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult,
+    winReason: P.winReason ?? null,   // additive — why the match ended (engine/victory.js finish); null before/absent
+    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult, swapAsym, matchTimeLimit,
     endless: !!P.endless,
     map,
     owners,

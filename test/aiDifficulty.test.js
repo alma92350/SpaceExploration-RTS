@@ -10,7 +10,9 @@
    in test/market.test.js alongside sell/buy, which it composes with. Tier 4
    (rusherGraduates) is table-shape-only here too — its actual behavior lives in
    test/aiIndustry.test.js, right alongside the "Rusher skips the deep chain" test
-   it carves an exception into.
+   it carves an exception into. Tier 5 (counterEvery) is the same split again: the
+   table-shape assertions are here, the cadence's actual behavior lives in
+   test/ai.test.js alongside the rest of the counter-pick coverage it composes with.
    ============================================================ */
 
 import { test } from "node:test";
@@ -56,6 +58,15 @@ test("rusherGraduates is Hard-only — the one identity-level dial, not just a n
   assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "easy").rusherGraduates, undefined);
   assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "medium").rusherGraduates, undefined);
   assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "hard").rusherGraduates, true);
+});
+
+/* ---------- Tier 5: counter-pick cadence (table-shape here; behavior in test/ai.test.js) ---------- */
+
+test("counterEvery is 0 on Easy (never counter-picks), 2 on Hard (reacts half again as fast); Medium carries none of it", () => {
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "easy").counterEvery, 0);
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "medium").counterEvery, undefined,
+    "unset -> engine/aiMilitary.js's `?? COUNTER_EVERY` fallback, byte-identical to before this dial existed");
+  assert.equal(DIFFICULTY_OPTIONS.find(o => o.mult === "hard").counterEvery, 2);
 });
 
 test("every difficulty option still names its two original dials (aiApm, aiMicro) and its key", () => {

@@ -1,26 +1,34 @@
 /* ============================================================
-   The Odyssey research tree (Phase 2). Nodes are researched at a Datacenter,
-   PAID IN GATHERED COMMODITIES (the game's law — the resources you gather are the
-   resources you spend, no separate research currency) and DEVELOPED OVER TIME,
-   scaled by the world's tech rating so a Syndicate hub out-researches a frontier
-   rock. A researched node is an id in player.upgrades — the SAME bag the combat
-   doctrines use — so it gates buildings/recipes through the existing prereqsMet
+   The queued, TIMED research loop — shared by the Odyssey tech tree (TECHS, below;
+   researched at a Datacenter) and the Refinery's doctrine upgrades (UPGRADES,
+   engine/entities.js; researched in every mode, skirmish included). updateResearch
+   resolves WHICH node table applies purely from building.type, so both run the
+   SAME dt-driven development loop instead of two near-duplicate ones — see
+   RESEARCH_TABLE_BY_BUILDING below. Either way, a node is PAID IN GATHERED
+   COMMODITIES (the game's law — the resources you gather are the resources you
+   spend, no separate research currency) and DEVELOPED OVER TIME, scaled by the
+   world's tech rating so a Syndicate hub out-researches a frontier rock — which,
+   for a doctrine upgrade, now makes a SKIRMISH world's own tech rating matter too.
+   A completed node lands as an id in player.upgrades — the SAME bag either table
+   reads back from — so it gates buildings/recipes through the existing prereqsMet
    primitive with zero new gating machinery. committedDoctrine/upgradeMult
-   (entities.js) both guard on UPGRADES membership, so a tech id parked in upgrades
-   is invisible to the doctrine system; the passive-effect nodes are read here via
-   techMult instead.
+   (entities.js) both guard on UPGRADES membership specifically, so a TECHS id
+   parked in upgrades is invisible to the doctrine system; the passive-effect TECHS
+   nodes are read here via techMult instead.
 
-   Odyssey-only and inert-by-construction: the Datacenter is `odysseyOnly`,
-   updateResearch is a no-op for any other building, and the skirmish AI never
-   builds one — so the skirmish sim/AI path is untouched and stays byte-identical
-   (a tech id is never in a skirmish player.upgrades). Deterministic and DOM-free:
-   accrual is dt-driven float math with no wall-clock and no unseeded randomness.
+   The TECHS half stays Odyssey-only and inert-by-construction: the Datacenter is
+   `odysseyOnly` and the skirmish AI never builds one, so the skirmish sim/AI path
+   is untouched there (a TECHS id is never in a skirmish player.upgrades). The
+   Refinery half is available — and now timed, where it used to be instant-on-
+   payment — in BOTH modes; see production.js's researchUpgrade for its enqueue
+   side. Deterministic and DOM-free either way: accrual is dt-driven float math
+   with no wall-clock and no unseeded randomness.
    ============================================================ */
 
 "use strict";
 
 import { PLANETS } from "../data.js";
-import { canAfford, payCost, prereqsMet } from "./entities.js";
+import { canAfford, payCost, prereqsMet, UPGRADES } from "./entities.js";
 import { difficultyFor } from "./aiDifficulty.js";
 
 // The tree. `cost` is gathered commodities (paid on start); `time` is seconds to
@@ -99,17 +107,27 @@ function aiResearchPaceMult(state, owner) {
   return owner === "ai" ? (difficultyFor(state).researchPaceMult || 1) : 1;
 }
 
-// Advance a Datacenter's research QUEUE by dt — a no-op for anything that isn't a
-// completed Datacenter with a queued job. Develops the head of the queue; on
-// completion the node lands in player.upgrades (where prereqsMet/techMult read it),
-// the job is dropped, and the next queued node begins. Same dt-driven float pattern
-// as buildProgress — deterministic, engine-pure.
+// Which building type researches from which node table — the one thing that
+// differs between the Datacenter's tech tree and the Refinery's doctrine
+// upgrades; everything else in updateResearch below is shared verbatim. Any
+// other building type (or one whose researchQueue was mis-set by a tampered
+// save) simply isn't a research building at all.
+const RESEARCH_TABLE_BY_BUILDING = { datacenter: TECHS, refinery: UPGRADES };
+
+// Advance a research building's QUEUE by dt — a no-op for anything that isn't a
+// completed Datacenter or Refinery with a queued job (RESEARCH_TABLE_BY_BUILDING
+// resolves which node table this building's ids belong to). Develops the head of
+// the queue; on completion the node lands in player.upgrades (where
+// prereqsMet/techMult/upgradeMult read it), the job is dropped, and the next
+// queued node begins. Same dt-driven float pattern as buildProgress —
+// deterministic, engine-pure.
 export function updateResearch(state, building, dt) {
-  if (building.constructing || building.type !== "datacenter") return;
+  const table = RESEARCH_TABLE_BY_BUILDING[building.type];
+  if (!table || building.constructing) return;
   const queue = building.researchQueue;
   if (!queue || queue.length === 0) return;
   const job = queue[0];
-  const def = TECHS[job.techId];
+  const def = table[job.techId];
   if (!def) { queue.shift(); return; }
   job.progress += dt / (def.time * researchTimeScale(state) * aiResearchPaceMult(state, building.owner));
   if (job.progress >= 1) {
@@ -123,8 +141,14 @@ export function updateResearch(state, building, dt) {
 // not already owned or queued, its prereqs met OR already queued AHEAD of it (so a
 // whole path can be lined up at once and stop being babysat one node at a time),
 // and affordability — then pay (gathered commodities, on enqueue like the
-// production queue) and append it. Mirrors production.js researchUpgrade, but timed
-// and queued rather than instant and single.
+// production queue) and append it. Mirrors production.js researchUpgrade — both are
+// timed and queued now — except a Datacenter's OWN queued-ahead node counts as a
+// met prereq here; a Refinery's Tier-2 doctrine upgrade deliberately does NOT get
+// that same relaxation (it needs its Tier-1 actually complete, not just queued —
+// see researchUpgrade), since a queued Tier-1 is also what commits the doctrine
+// lock (entities.js committedDoctrine), and letting an unfinished Tier-1 unlock its
+// own Tier-2 would let a player queue an entire doctrine's cost before the first
+// upgrade even proves out.
 export function researchTech(state, buildingId, techId) {
   const building = state.buildings.get(buildingId);
   if (!building || building.type !== "datacenter" || building.constructing) return false;

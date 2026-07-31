@@ -113,7 +113,7 @@ globalThis.document = fakeDocument();
 sound.setMuted(true);
 
 const { game } = await import("../session.js");
-const { createGameState, makeBuilding } = await import("../engine/state.js");
+const { createGameState, makeBuilding, makeUnit } = await import("../engine/state.js");
 const { mulberry32 } = await import("../engine/rng.js");
 const { panelEl } = await import("../dom.js");
 const { renderSelectionPanel, resetSelectionSignature } = await import("../hudSelection.js");
@@ -515,6 +515,29 @@ test("Refinery research: with the SAME doctrine committed, an unmet Tier-1 alone
 });
 
 /* ---------------------------------------------------------------------------------------------
+   Doctrine research develops over time (Tier 1 proposal): the Refinery now gets its own live
+   progress row, reusing the Datacenter research-row idiom — a queued-but-developing upgrade
+   drops out of the plain button list (same as a Datacenter node already does) in favour of the
+   progress row saying it's underway.
+   --------------------------------------------------------------------------------------------- */
+
+test("Refinery research: a queued upgrade shows a live progress row and drops out of the button list", () => {
+  const { state } = setup(214);
+  const refinery = selectRefinery(state);
+  Object.assign(state.players.player.resources, { crystals: 2000 });
+
+  assert.equal(researchUpgrade(state, refinery.id, "reinforcedPlating"), true, "sanity: queues Reinforced Plating");
+  renderSelectionPanel();
+
+  const row = panelEl.querySelector(".research-progress");
+  assert.ok(row, "expected a live progress row for the Refinery's own research queue, same idiom as the Datacenter");
+  assert.ok(row.textContent.includes("Reinforced Plating"), "names the upgrade actually developing");
+  assert.ok(row.textContent.includes("0%"), "starts at 0%, not landed instantly");
+  assert.ok(!findButton(upgradeButtonLabel(UPGRADES.reinforcedPlating)),
+    "the now-queued upgrade drops out of the plain button list — the progress row above already says it's underway");
+});
+
+/* ---------------------------------------------------------------------------------------------
    TARGET 5 — the reported bug: the Market panel's price/afford-state live patch
    (hudSelection.js's marketRowFields/refreshMarketRows). A Buy or Sell trade mutates
    engine/market.js's trade pressure, but touches nothing renderSelectionPanel's rebuild
@@ -611,4 +634,167 @@ test("the Market panel's live patch survives an UNRELATED renderSelectionPanel t
   assert.equal(marketRow("ore"), row, "an unrelated tick must not rebuild the row either");
   assert.equal(marketRow("ore").querySelector(".market-com").textContent, priceAfterSell,
     "the price must stay exactly what the trades set it to — not drift, not revert");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 6 — node saturation visible in the panel (docs/improvement-proposals.md): a selected
+   worker on a real gather order shows its assigned node's live "Miners X/cap" headcount
+   (node.miners, retallied every tick by sim.js's countMiners), flagging the diminishing-returns
+   band once it crosses UNITS.worker.minerSoftCap — the same number miningEfficiency
+   (engine/gather.js) already silently divides by, with nothing anywhere showing it until now.
+   --------------------------------------------------------------------------------------------- */
+
+function findMinersNote() {
+  return panelEl.children.find(c => c.tagName === "div" && (c.textContent || "").startsWith("Miners "));
+}
+
+// Selects the seeded starting Worker and puts it on a real gather order against `node`, with
+// `miners` standing in for the live per-tick tally sim.js's countMiners would otherwise freeze on
+// this node (these tests never call tick(), same shortcut the rest of this file takes).
+function selectGatheringWorker(state, node, miners) {
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+  node.miners = miners;
+  state.selection = [worker.id];
+  return worker;
+}
+
+test("a selected gathering worker shows its node's live miner count against the soft cap", () => {
+  const { state } = setup(401);
+  const node = state.map.nodes.find(n => n.com === "ore");
+  selectGatheringWorker(state, node, 2);   // under UNITS.worker.minerSoftCap (3)
+
+  renderSelectionPanel();
+  const note = findMinersNote();
+  assert.ok(note, "expected a 'Miners …' note for the selected gathering worker");
+  assert.equal(note.textContent, `Miners 2/${UNITS.worker.minerSoftCap}`);
+  assert.ok(!note.className.includes("warn"), "under the cap is not a warning");
+});
+
+test("a selected gathering worker flags diminishing returns once its node's miners exceed the soft cap", () => {
+  const { state } = setup(402);
+  const node = state.map.nodes.find(n => n.com === "ore");
+  const over = UNITS.worker.minerSoftCap + 2;
+  selectGatheringWorker(state, node, over);
+
+  renderSelectionPanel();
+  const note = findMinersNote();
+  assert.ok(note, "expected a 'Miners …' note for the selected gathering worker");
+  assert.equal(note.textContent, `Miners ${over}/${UNITS.worker.minerSoftCap} — diminishing returns`);
+  assert.ok(note.className.includes("warn"), "over the cap should read as a warning");
+});
+
+test("a selected worker with no gather order shows no miners note", () => {
+  const { state } = setup(403);
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  state.selection = [worker.id];   // idle — no order at all
+
+  renderSelectionPanel();
+  assert.equal(findMinersNote(), undefined, "an idle worker has no node to report saturation for");
+});
+
+test("the miners note stays live across an unrelated renderSelectionPanel tick as the node's headcount changes", () => {
+  const { state } = setup(404);
+  const node = state.map.nodes.find(n => n.com === "ore");
+  selectGatheringWorker(state, node, 1);
+
+  renderSelectionPanel();
+  assert.equal(findMinersNote().textContent, `Miners 1/${UNITS.worker.minerSoftCap}`);
+
+  node.miners = UNITS.worker.minerSoftCap + 4;   // another worker piles on, tallied on some later tick
+  renderSelectionPanel();   // an ordinary tick — nothing ELSE about the selection changed
+  assert.equal(findMinersNote().textContent, `Miners ${UNITS.worker.minerSoftCap + 4}/${UNITS.worker.minerSoftCap} — diminishing returns`,
+    "the live headcount must not freeze at whatever it read on the panel's last rebuild — same " +
+    "live-patch requirement TARGET 5's market rows pin above");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 7 — counter-triangle readability (docs/improvement-proposals.md "Counter-triangle
+   telegraphs" + "Surface the counter-triangle on unit buttons and selection rows", merged):
+   unitTip() appends "strong vs / falls to" lines derived from UNITS[].bonusVs (+
+   bonusVsBuildings -> "structures"), and the aggregated per-type selection rows (countByType,
+   both rebuildSelectionPanel's initial build and renderSelectionPanel's live hp-only patch) get
+   the same "falls to" suffix so a mixed-army scan shows its soft spots. Both are pure reads off
+   the static UNITS table — no engine change, no new DOM machinery beyond what's already here.
+   --------------------------------------------------------------------------------------------- */
+
+test("a produce button's tooltip carries the counter-triangle 'strong vs' / 'falls to' lines, derived from UNITS[].bonusVs", () => {
+  const { state } = setup(501);
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.selection = [barracks.id];
+
+  renderSelectionPanel();
+  const btn = findButton(`Produce Skiff (${costText(UNITS.skiff.cost)})`);
+  assert.ok(btn, "expected the produce-Skiff button in the rebuilt Barracks panel");
+  assert.ok(btn.title.includes("▲ strong vs Lancer"), `expected a 'strong vs Lancer' line in the tooltip, got: ${JSON.stringify(btn.title)}`);
+  assert.ok(btn.title.includes("▼ falls to Bastion"), `expected a 'falls to Bastion' line in the tooltip, got: ${JSON.stringify(btn.title)}`);
+});
+
+test("a unit deliberately outside the triangle (the Dreadnought) shows neither counter line", () => {
+  const { state } = setup(502);
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  state.selection = [barracks.id];
+
+  renderSelectionPanel();
+  const btn = findButton(`Produce Dreadnought (${costText(UNITS.dreadnought.cost)})`);
+  assert.ok(btn, "expected the produce-Dreadnought button");
+  assert.ok(!btn.title.includes("▲ strong vs"), `Dreadnought has no bonusVs — expected no 'strong vs' line, got: ${JSON.stringify(btn.title)}`);
+  assert.ok(!btn.title.includes("▼ falls to"), `nothing counters the Dreadnought — expected no 'falls to' line, got: ${JSON.stringify(btn.title)}`);
+});
+
+test("a siege unit's 'strong vs' line reads 'structures' for its class-wide bonusVsBuildings, not a specific unit type", () => {
+  const { state } = setup(503);
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  // The Breacher requires a completed Foundry (UNITS.breacher.requires) — build one so the button
+  // is actually unlocked and shows its real unitTip, not lockTipFor's "Requires Foundry" instead.
+  const foundry = makeBuilding("foundry", "player", 560, 500);
+  state.buildings.set(foundry.id, foundry);
+  state.selection = [barracks.id];
+
+  renderSelectionPanel();
+  const btn = findButton(`Produce Breacher (${costText(UNITS.breacher.cost)})`);
+  assert.ok(btn, "expected the produce-Breacher button");
+  assert.ok(btn.title.includes("▲ strong vs structures"), `expected 'strong vs structures' from bonusVsBuildings, got: ${JSON.stringify(btn.title)}`);
+});
+
+test("the aggregated multi-type selection row is suffixed with its 'falls to' counter, so a mixed army shows its soft spot", () => {
+  const { state } = setup(504);
+  const skiffA = makeUnit("skiff", "player", 500, 500);
+  const skiffB = makeUnit("skiff", "player", 520, 500);
+  const bastion = makeUnit("bastion", "player", 540, 500);
+  [skiffA, skiffB, bastion].forEach(u => state.units.set(u.id, u));
+  state.selection = [skiffA.id, skiffB.id, bastion.id];
+
+  renderSelectionPanel();
+  const rows = panelEl.querySelectorAll(".sel-row-summary");
+  const skiffRow = rows.find(r => r.textContent.startsWith("2× Skiff"));
+  const bastionRow = rows.find(r => r.textContent.startsWith("1× Bastion"));
+  assert.ok(skiffRow, "expected the aggregated Skiff row");
+  assert.ok(bastionRow, "expected the aggregated Bastion row");
+  assert.ok(skiffRow.textContent.includes("▼ falls to Bastion"),
+    `expected the Skiff row to flag its Bastion weakness, got: ${skiffRow.textContent}`);
+  assert.ok(bastionRow.textContent.includes("▼ falls to Lancer"),
+    `expected the Bastion row to flag its Lancer weakness (the real counter, not the Skiff it's grouped with), got: ${bastionRow.textContent}`);
+});
+
+test("the aggregated row's counter suffix survives the live hp-only patch too, not just the initial rebuild (same rule TARGET 5's market rows and TARGET 6's miners note already pin)", () => {
+  const { state } = setup(505);
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  const bastion = makeUnit("bastion", "player", 520, 500);
+  state.units.set(skiff.id, skiff);
+  state.units.set(bastion.id, bastion);
+  state.selection = [skiff.id, bastion.id];
+
+  renderSelectionPanel();   // initial rebuild
+  skiff.hp = Math.max(1, skiff.hp - 10);   // damage only — doesn't change the panel's rebuild signature
+  renderSelectionPanel();   // live hp-only patch path (TARGET 2)
+
+  const rows = panelEl.querySelectorAll(".sel-row-summary");
+  const skiffRow = rows.find(r => r.textContent.startsWith("1× Skiff"));
+  assert.ok(skiffRow, "expected the live-patched Skiff row");
+  assert.ok(skiffRow.textContent.includes("▼ falls to Bastion"),
+    `expected the live-patched row to still carry the counter suffix, got: ${skiffRow.textContent}`);
 });

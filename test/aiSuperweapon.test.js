@@ -11,6 +11,8 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 import { mulberry32 } from "../engine/rng.js";
+import { BOMB_CORE_RADIUS } from "../engine/bomb.js";
+import { BUILDINGS } from "../engine/entities.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -99,7 +101,37 @@ test("Aggressive strategy arms and triggers a Helium Bomb immediately once it's 
   assert.ok(bomb.fuseUntil != null, "…and lights the fuse immediately too — the same lightFuse() the player's own Detonate Now calls");
 });
 
-test("Aggressive strategy walks a Helium Bomb (unarmed) toward a distant target instead of arming on the spot", () => {
+test("the offensive bomb no longer arms at the old flat ARRIVE_RADIUS (70) — it waits for the target's own rim-based kill-band", () => {
+  const state = createGameState({ planetId: "ferros", endless: true, aiStrategy: "aggressive" });
+  const base = state.map.bases.ai;
+  const cc = makeBuilding("command", "ai", base.x, base.y); state.buildings.set(cc.id, cc);
+  const bomb = makeUnit("heliumbomb", "ai", base.x, base.y); state.units.set(bomb.id, bomb);
+  // The Antimatter Gate (radius 28): its real per-target threshold is radius + BOMB_CORE_RADIUS =
+  // 43 — well short of the old flat 70 this used to arm at, where bombDamageAt(70) is only
+  // ~138hp against a 1200hp Gate, nowhere near the documented one-shot (engine/bomb.js). Placed at
+  // the midpoint between the two thresholds: inside the old flat radius (would have armed under
+  // the bug) but outside the new, correct one.
+  const threshold = BUILDINGS.antimatter_gate.radius + BOMB_CORE_RADIUS;
+  assert.ok(threshold < 70, "sanity check: the new per-target threshold really is tighter than the old flat radius");
+  const dist = (threshold + 70) / 2;
+  const gate = makeBuilding("antimatter_gate", "player", base.x + dist, base.y); state.buildings.set(gate.id, gate);
+  // A committed wave (order.type 'attack-move'), so the walk itself isn't held home by the
+  // separate "travels with the wave" fix (engine/aiSuperweapon.js) — isolates this test to the
+  // arrival-threshold question alone.
+  const raider = makeUnit("skiff", "ai", base.x + 10, base.y);
+  raider.order = { type: "attack-move", x: gate.x, y: gate.y };
+  state.units.set(raider.id, raider);
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.ok(!bomb.armed, "inside the old flat ARRIVE_RADIUS but outside the Gate's real kill-band — must not arm here");
+  assert.equal(bomb.order?.type, "move", "still closing the last distance to the Gate's rim");
+});
+
+test("Aggressive strategy holds a Helium Bomb home when no attack wave is committed, even with a distant target chosen", () => {
+  // The bomb travels WITH the wave, not alone (engine/aiSuperweapon.js) — an unescorted solo walk
+  // is exactly what used to get it shot down long before arrival. With no AI army at all here,
+  // there's nothing on an attack-move order — no committed wave for it to travel inside of.
   const state = createGameState({ planetId: "ferros", endless: true, aiStrategy: "aggressive" });
   const base = state.map.bases.ai;
   const cc = makeBuilding("command", "ai", base.x, base.y); state.buildings.set(cc.id, cc);
@@ -109,6 +141,30 @@ test("Aggressive strategy walks a Helium Bomb (unarmed) toward a distant target 
 
   runAI(state, THINK_INTERVAL);
 
-  assert.ok(!bomb.armed, "still in transit — it only arms once it arrives");
-  assert.equal(bomb.order?.type, "move", "issued a plain move toward the target — free to travel at no risk while unarmed (engine/bomb.js)");
+  assert.ok(!bomb.armed, "nowhere near arriving");
+  assert.equal(bomb.order, null, "holds position — no committed wave to travel inside of, so it doesn't walk out alone");
+});
+
+test("the bomb holds position against a defended target until an attack wave actually commits, then advances with it", () => {
+  const state = createGameState({ planetId: "ferros", endless: true, aiStrategy: "aggressive" });
+  const base = state.map.bases.ai;
+  const cc = makeBuilding("command", "ai", base.x, base.y); state.buildings.set(cc.id, cc);
+  const bomb = makeUnit("heliumbomb", "ai", base.x, base.y); state.units.set(bomb.id, bomb);
+  // A defended enemy target, comfortably beyond the arrival threshold, so it's the walk (or the
+  // hold) under test here, not an immediate arm-on-the-spot.
+  const enemyCC = makeBuilding("command", "player", base.x + 150, base.y); state.buildings.set(enemyCC.id, enemyCC);
+  const enemyTurret = makeBuilding("turret", "player", base.x + 190, base.y); state.buildings.set(enemyTurret.id, enemyTurret);
+
+  runAI(state, THINK_INTERVAL);
+  assert.equal(bomb.order, null, "no committed attack-move wave yet — the bomb holds position instead of walking out alone");
+  assert.ok(!bomb.armed);
+
+  // Commit a wave: a real attack-move order, the same order.type aiMilitary's own strike force
+  // carries (engine/aiMilitary.js aiOffense).
+  const raider = makeUnit("skiff", "ai", base.x + 30, base.y);
+  raider.order = { type: "attack-move", x: enemyCC.x, y: enemyCC.y };
+  state.units.set(raider.id, raider);
+
+  runAI(state, THINK_INTERVAL);
+  assert.equal(bomb.order?.type, "move", "a wave is now committed — the bomb travels with it instead of holding home");
 });

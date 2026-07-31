@@ -6,7 +6,80 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Patrol orders.** Combat and scout units can now be sent on a looping attack-move circuit
+  instead of going idle at the end of a waypoint chain — select a unit with an existing move/
+  attack-move order queued and press R to convert it into a loop.
+- **The counter-triangle is finally visible where it matters.** Attacks that land a hard counter
+  (Skiff on Lancer, Bastion on Skiff, Lancer on Bastion, a Breacher on a building) now draw a
+  hotter, thicker tracer and impact flash, and unit tooltips and selection rows spell out what
+  a unit is strong or weak against — derived straight from the data, not hand-written. Every
+  weapon also got its own tracer shape and a muzzle flash, instead of one shared red line.
+- **Gatherers no longer idle when a node runs dry.** They now roll onto the nearest same-
+  commodity node you've discovered, the same self-healing the AI already had. Node saturation
+  (too many workers on one seam) is now visible too — a ring on the map and a line in the panel.
+- **Doctrine research now takes time to develop** instead of landing the instant it's paid for,
+  scaled by the world's tech rating — a Refinery mid-research is a raidable window, and Bulwark's
+  structure shielding (it already reduced damage to turrets and buildings, not just units) is now
+  documented and tested rather than an accident of how damage math was written.
+- **Odyssey: pick your starting world, or reroll it** — a card row like skirmish's, instead of
+  always landing on a random one. Asymmetric skirmish worlds (Oort, Nimbus) also get a side-swap
+  toggle so either half of the matchup is playable. Starmap nodes now show a world's deposits and
+  rule modifiers before you jump, not just after you land.
+- **A reactive opening checklist** replaces the old static 30-second objectives banner — it tracks
+  what you've actually done (workers trained, a Barracks up, a doctrine picked, a Habitat raised)
+  and checks items off live.
+- **The clock is an honest, configurable endgame now.** The final five minutes flip the elapsed-
+  time readout to a countdown with a live two-sided score bar, the post-game screen tells you the
+  *real* reason the match ended (elimination vs. the score tiebreak — it used to claim the enemy's
+  last Command Center fell even when a timeout decided it), and skirmish setup gets a Quick/
+  Standard/Marathon match-length option.
+- **The Leviathan has a real hull.** The endgame flagship used to fall through to the generic
+  fallback silhouette; it now has a bespoke twin-spine capital-ship render befitting the biggest
+  thing you'll ever build. A new full-roster render smoke test guards every unit and building type
+  against silently falling back to a generic shape again.
+- **A fourth AI archetype, the Technologist,** gives Kybernet — the Odyssey's research-capital
+  world — its own small, teched-up elite-army temperament instead of playing as a generic
+  Economist, and is the first archetype whose mix ever fields the Colossus.
+- `tools/ailab.js` (the AI bench) gained a `tech` sparring opponent that climbs the Foundry/
+  Arsenal gate and fields a real Tier-2/3 composition instead of Skiffs only, and a `--apm`
+  flag so a probe can exercise a difficulty row's real APM throttle instead of always running
+  unthrottled.
+
 ### Changed
+
+- **The AI's counter-pick logic is unified and sharper.** It used to go blind the moment your
+  army's dominant type fell outside the Skiff/Bastion/Lancer triangle (a massed Breacher,
+  Dreadnought, Wraith, Aegis, or Colossus army drew no reaction at all), and it never once
+  factored in static defense — the test suite already proved a turret wall was fully
+  uncounterable. It now falls back to each unit's documented cost-efficiency answer when it has
+  no hard counter, and reads a turret wall the same way it reads an army, answering with
+  Breachers once the wall is the bigger threat. Difficulty now shapes *how* it counter-picks, not
+  just how fast: Easy never counter-picks (a learnable, exploitable army), Hard reacts nearly
+  twice as often as Medium.
+- **A graduated Hard Rusher now actually re-arms for the tier it graduated into.** It could
+  already climb the tech ladder all the way to a Leviathan while its Barracks kept cycling
+  Tier-1 Skiffs and Bastions forever; its unit mix now extends alongside its industry.
+- The Helium Bomb's blast radius is now measured to a target's rim instead of its center, so the
+  header's claim that it can one-shot even the Antimatter Gate is finally true at point-blank
+  range instead of geometrically impossible; the AI also no longer detonates its own offensive
+  bomb short of the kill band. Its offensive delivery now travels inside an actual committed
+  attack wave instead of walking in alone to be shot down before it arrives.
+
+### Fixed
+
+- A worker whose gathering node hit exactly 0 mid-carry could strand its last partial load
+  forever (never banked); this is now rare in practice, since the same fix that stops gatherers
+  from idling at a dry node also gives it somewhere to carry the stranded load — the fully-idle
+  fallback path can still lose it.
+
+Twenty-one improvement proposals from `docs/improvement-proposals.md`'s Tier 1 and Tier 2 (per
+`docs/improvement-roadmap.md`'s phased sequencing) shipped in this batch, built by parallel TDD
+teams sharing one working tree. One of those changes (timed doctrine research) measurably deepens
+an already-documented, deliberately-unfixed AI weakness — `docs/odyssey-ai-review.md` §2.9 has the
+details and the repro.
+
 
 - **How long a neighbour holds a grudge is now part of its personality.** Souring was already
   flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but

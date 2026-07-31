@@ -27,11 +27,11 @@ export function checkWinCondition(state) {
   if (state.over) return;
   const standing = ownersOf(state).filter(o => hasCommandCenter(state, o));
 
-  if (standing.length === 0) { finish(state, scoreLeader(state)); return; }   // mutual wipe → score
-  if (standing.length === 1) { finish(state, standing[0]); return; }          // last side standing wins
+  if (standing.length === 0) { finish(state, scoreLeader(state), "mutual-wipe-score"); return; }   // mutual wipe → score
+  if (standing.length === 1) { finish(state, standing[0], "elimination"); return; }                // last side standing wins
 
   const limit = state.matchTimeLimit ?? DEFAULT_MATCH_TIME_LIMIT;
-  if (state.time >= limit) finish(state, scoreLeader(state));
+  if (state.time >= limit) finish(state, scoreLeader(state), "timeout-score");
 }
 
 // Odyssey (open-world) terminal check: there is no victory by conquest and no
@@ -61,9 +61,15 @@ export function checkEndlessWin(state) {
     if (b.owner === "player" && BUILDINGS[b.type]?.wonder && (b.charge || 0) >= 1) { finish(state, "player"); return; }
 }
 
-function finish(state, winner) {
+// `reason` is only ever supplied by checkWinCondition's three branches above — the skirmish clock
+// this feature makes honest (docs/improvement-proposals.md "Make the clock endgame visible,
+// honest, and configurable"). checkEndlessLoss/checkEndlessWin below call finish() with no reason
+// (winReason stays null): the Odyssey sandbox has no clock and no score tiebreak to explain, so
+// there's nothing for a HUD to disambiguate there the way showGameOver now must for a skirmish.
+function finish(state, winner, reason = null) {
   state.over = true;
   state.winner = winner;
+  state.winReason = reason;
 }
 
 function hasCommandCenter(state, owner) {
@@ -83,19 +89,34 @@ function hasCommandCenter(state, owner) {
 // defense. Still simple and symmetric. Exported so a HUD could show the score.
 const BANK_WEIGHT = 0.25;      // idle resources are worth far less than committed ones
 const COMBAT_BONUS = 1.35;     // an army in the field beats an equal-cost economy at the tiebreak
-export function playerScore(state, owner) {
-  let score = 0;
+
+// The three components playerScore sums, broken out instead of collapsed into one total — so a
+// HUD/game-over screen can show WHY the tiebreak came out the way it did (docs/improvement-
+// proposals.md "Make the clock endgame visible, honest, and configurable"). `structures` folds in
+// every NON-combat unit (workers, freighters, Menders, …) at raw cost alongside buildings — the
+// same "else" bucket playerScore's own loop already puts them in — so bank+army+structures always
+// equals playerScore's own total by construction (playerScore is defined in terms of this below,
+// not the other way around, so the two can never drift apart).
+export function scoreBreakdown(state, owner) {
+  let bank = 0, army = 0, structures = 0;
   const res = state.players[owner].resources;
-  for (const com of Object.keys(res)) score += (res[com] || 0) * BANK_WEIGHT;
+  for (const com of Object.keys(res)) bank += (res[com] || 0) * BANK_WEIGHT;
   for (const u of state.units.values()) {
     if (u.owner !== owner) continue;
     const def = UNITS[u.type];
-    score += costValue(def?.cost) * (def?.role === "combat" ? COMBAT_BONUS : 1);
+    const v = costValue(def?.cost);
+    if (def?.role === "combat") army += v * COMBAT_BONUS; else structures += v;
   }
   for (const b of state.buildings.values()) {
-    if (b.owner === owner) score += costValue(BUILDINGS[b.type]?.cost);
+    if (b.owner === owner) structures += costValue(BUILDINGS[b.type]?.cost);
   }
-  return score;
+  return { bank, army, structures, total: bank + army + structures };
+}
+
+// Exported so a HUD could show the score (and now does — hud.js's endgame score bar, and
+// showGameOver's breakdown). Thin wrapper over scoreBreakdown so the two can never disagree.
+export function playerScore(state, owner) {
+  return scoreBreakdown(state, owner).total;
 }
 
 function costValue(cost) {

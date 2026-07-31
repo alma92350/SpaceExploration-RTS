@@ -483,6 +483,54 @@ test("a positional production hotkey (Z) fires the HUD's bound action exactly on
 });
 
 // ============================================================================
+// R: patrol (docs/improvement-proposals.md "Patrol: looping attack-move waypoints") — converts
+// the selection's existing move/attack-move waypoint chain into a looping patrol
+// (engine/commands.js issuePatrol), the same points already laid down by right-click /
+// Ctrl+right-click. P was unavailable (overlays.js already binds it to pause), so R.
+// ============================================================================
+
+test("R converts the selection's move/attack-move waypoint chain into a looping patrol", () => {
+  const { state, window } = setup();
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  state.units.set(skiff.id, skiff);
+  state.selection = [skiff.id];
+  skiff.order = { type: "move", x: 600, y: 500 };
+  skiff.orderQueue = [{ type: "attack-move", x: 700, y: 500 }];
+
+  window.dispatchEvent(ev("keydown", { key: "r", code: "KeyR" }));
+
+  assert.deepEqual(skiff.order, { type: "attack-move", x: 600, y: 500, patrol: true },
+    "the active leg's point is kept, but it's now an attack-move flagged patrol:true");
+  assert.deepEqual(skiff.orderQueue, [
+    { type: "attack-move", x: 700, y: 500, patrol: true },
+    { type: "attack-move", x: 600, y: 500, patrol: true },
+  ], "the queued point survives too, plus the trailing copy of the active leg that makes it loop (engine/commands.js issuePatrol)");
+});
+
+test("R skips a non-combat/non-scout unit in the selection (e.g. a worker) — same gate issuePatrol applies", () => {
+  const { state, window } = setup();
+  const worker = makeUnit("worker", "player", 500, 500);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+  worker.order = { type: "move", x: 600, y: 500 };
+
+  window.dispatchEvent(ev("keydown", { key: "r", code: "KeyR" }));
+
+  assert.deepEqual(worker.order, { type: "move", x: 600, y: 500 }, "a worker's plain move order is left completely untouched — R never applies to it");
+});
+
+test("R on a unit with nothing move/attack-move queued (e.g. standing idle) is a harmless no-op", () => {
+  const { state, window } = setup();
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  state.units.set(skiff.id, skiff);
+  state.selection = [skiff.id];
+  skiff.order = null;
+
+  assert.doesNotThrow(() => window.dispatchEvent(ev("keydown", { key: "r", code: "KeyR" })));
+  assert.equal(skiff.order, null, "nothing to convert into a patrol, so nothing happens");
+});
+
+// ============================================================================
 // The focused-control guard: hotkeys must not fire while a real HUD control (a button, a text
 // input, the Home-confirm modal) has focus, or Space/letters would double as both a game
 // command AND whatever that control does with the same keystroke. dispatchEvent always sets

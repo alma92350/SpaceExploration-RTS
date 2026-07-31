@@ -16,7 +16,7 @@ import { powerEfficiency } from "./engine/industry.js";
 import { rigSurvey, SURVEY_RADIUS } from "./engine/rig.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects } from "./effects.js";
-import { hexA, lerpXY } from "./renderShared.js";
+import { hexA, lerpXY, shade, pathPoints, polygonPoints } from "./renderShared.js";
 import { POWER_TIER_COLOR, drawReactorBands } from "./renderBuildings.js";
 
 // Cached once: whether the viewer asked the OS to reduce motion. Used to swap
@@ -95,13 +95,126 @@ function drawBountyMarkers(ctx, sc) {
   ctx.restore();
 }
 
-// Tracer color hints at what fired: Bastion's short, heavy hit reads
-// warm/gold, Lancer's precision shot reads cool/blue, everything else
-// (Skiff, and any future default) reads hostile red.
-function tracerColor(unitType) {
-  if (unitType === "bastion") return "#ffd166";
-  if (unitType === "lancer") return "#4fd1ff";
-  return "#f87171";
+// Per-weapon fire signature: shape + base color keyed by the firing unit's type (attackHit's
+// unitType, engine/combat.js — a turret reads as its own "turret" type). Replaces the old
+// two-case tracerColor() special-case (only bastion/lancer were colored; every other type —
+// skiff, breacher, turret, dreadnought, wraith, colossus, including the player's OWN units —
+// fell to the same hostile-red default). `shape` picks which branch of drawTracer (below) draws
+// it; `color`/`width` are the base look BEFORE the counter-triangle bonus-hit brightening
+// (drawTracer again). Every type that can actually fire (UNITS[]/BUILDINGS[].attack truthy) gets
+// its own entry — see test/renderEffects.test.js's roster-completeness check. `default` is the
+// fallback for a hypothetical future type this table hasn't caught up with yet — kept a neutral
+// pale color rather than red, so a gap here reads as "unclassified", not "hostile".
+export const TRACER_STYLE = {
+  skiff:       { shape: "dart", color: "#8be9fd", width: 2 },
+  bastion:     { shape: "bolt", color: "#ffd166", width: 4 },
+  lancer:      { shape: "beam", color: "#4fd1ff", width: 1.5 },
+  breacher:    { shape: "arc",  color: "#ff8a3d", width: 3 },
+  dreadnought: { shape: "bolt", color: "#f87171", width: 4.5 },
+  wraith:      { shape: "dart", color: "#c084fc", width: 2 },
+  aegis:       { shape: "beam", color: "#7dd3fc", width: 1.5 },
+  colossus:    { shape: "arc",  color: "#fb7185", width: 4 },
+  leviathan:   { shape: "arc",  color: "#facc15", width: 5 },
+  turret:      { shape: "beam", color: "#a78bfa", width: 2 },   // static defense — its own hue, distinct from every mobile hull
+  worker:      { shape: "default", color: "#e2e8f0", width: 1.5 },
+  ranger:      { shape: "default", color: "#e2e8f0", width: 1.5 },
+  default:     { shape: "default", color: "#e2e8f0", width: 2 },
+};
+
+// The flash is fully gone well before the tracer itself finishes fading (TRACER_LIFETIME_MS,
+// effects.js), so it reads as a one-frame flicker at the gun, not a second glow racing the shot
+// down the line.
+const MUZZLE_FLASH_FRACTION = 0.3;
+
+// One tracer, in whatever shape its firing unit's TRACER_STYLE assigns, brightened and thickened
+// when it carries a counter-triangle bonus hit (engine/combat.js's `bonus` flag — a Skiff
+// catching a Lancer, etc.), plus a one-flicker muzzle flash at the firing end. Split out of
+// drawEffects so each weapon shape reads as its own small branch, not one long loop body.
+function drawTracer(ctx, t) {
+  const style = TRACER_STYLE[t.unitType] || TRACER_STYLE.default;
+  const color = t.bonus ? shade(style.color, 35) : style.color;
+  const width = style.width * (t.bonus ? 1.6 : 1);
+  const dx = t.toX - t.fromX, dy = t.toY - t.fromY;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;   // unit vector shooter -> target, for the shape branches below
+
+  ctx.globalAlpha = Math.max(0, 1 - t.age);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+
+  if (style.shape === "bolt") {
+    // Thick and stubby: only the last stretch of the line, near the target — a heavy close-range
+    // punch (Bastion/Dreadnought) rather than a full-length beam.
+    const cut = Math.max(0, len - Math.min(len, 30 + len * 0.35));
+    ctx.beginPath();
+    ctx.moveTo(t.fromX + ux * cut, t.fromY + uy * cut);
+    ctx.lineTo(t.toX, t.toY);
+    ctx.stroke();
+  } else if (style.shape === "beam") {
+    // A full-length thin beam with a hot, slightly thicker tip near the target.
+    ctx.beginPath();
+    ctx.moveTo(t.fromX, t.fromY);
+    ctx.lineTo(t.toX, t.toY);
+    ctx.stroke();
+    const tipStart = Math.max(0, len - Math.min(len, 22));
+    ctx.strokeStyle = t.bonus ? "#fff7cc" : shade(color, 30);
+    ctx.lineWidth = width + 1;
+    ctx.beginPath();
+    ctx.moveTo(t.fromX + ux * tipStart, t.fromY + uy * tipStart);
+    ctx.lineTo(t.toX, t.toY);
+    ctx.stroke();
+  } else if (style.shape === "dart") {
+    // A short bright segment that SLIDES from shooter to target as the tracer ages, over a faint
+    // full-length guide line — reads as a fast, light round rather than a static drawn line.
+    ctx.globalAlpha = Math.max(0, (1 - t.age) * 0.25);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(t.fromX, t.fromY);
+    ctx.lineTo(t.toX, t.toY);
+    ctx.stroke();
+    const cx = t.fromX + dx * t.age, cy = t.fromY + dy * t.age;
+    const half = Math.min(len / 2, 9);
+    ctx.globalAlpha = Math.max(0, 1 - t.age);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(cx - ux * half, cy - uy * half);
+    ctx.lineTo(cx + ux * half, cy + uy * half);
+    ctx.stroke();
+  } else if (style.shape === "arc") {
+    // A lobbed shell: a quadratic curve bulging away from the straight line — siege fire
+    // (Breacher/Colossus/Leviathan) reads as arcing in, not a flat direct shot.
+    const bulge = Math.min(40, len * 0.18);
+    const midX = (t.fromX + t.toX) / 2 - uy * bulge, midY = (t.fromY + t.toY) / 2 + ux * bulge;
+    ctx.beginPath();
+    ctx.moveTo(t.fromX, t.fromY);
+    ctx.quadraticCurveTo(midX, midY, t.toX, t.toY);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(t.fromX, t.fromY);
+    ctx.lineTo(t.toX, t.toY);
+    ctx.stroke();
+  }
+
+  // A one-flicker muzzle flash at the firing end — gone well before the tracer itself fades, so
+  // it reads as the gun flashing, not a second glow racing the shot down the line. A little spin
+  // (rotation keyed to age) sells the "flicker" rather than a static stamp.
+  if (t.age < MUZZLE_FLASH_FRACTION) {
+    ctx.globalAlpha = Math.max(0, 1 - t.age / MUZZLE_FLASH_FRACTION);
+    ctx.fillStyle = t.bonus ? "#fff7cc" : color;
+    pathPoints(ctx, polygonPoints(t.fromX, t.fromY, style.width + (t.bonus ? 2.5 : 1.5), 5, t.age * 3));
+    ctx.fill();
+  }
+
+  // The impact spark where the round lands — a quick bright flash that fades faster than the
+  // tracer, so a hit reads as connecting, not just a line drawn through the target. Bigger and
+  // hotter on a counter-triangle bonus hit, so the extra damage reads at the point of impact too.
+  ctx.globalAlpha = Math.max(0, 1 - t.age * 1.6);
+  ctx.fillStyle = t.bonus ? "#fff7cc" : "#ffe9c2";
+  ctx.beginPath();
+  ctx.arc(t.toX, t.toY, (t.bonus ? 4 : 2.5) + (1 - t.age) * (t.bonus ? 2.5 : 1.5), 0, Math.PI * 2);
+  ctx.fill();
 }
 
 // The Helium Bomb shockwave (see drawEffects below): the fireball collapses
@@ -128,24 +241,7 @@ function lerpColor(a, b, t) {
 export function drawEffects(ctx) {
   const { tracers, deaths, pings, explosions, fuseWarnings } = activeEffects();
 
-  for (const t of tracers) {
-    const color = tracerColor(t.unitType);
-    ctx.globalAlpha = Math.max(0, 1 - t.age);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(t.fromX, t.fromY);
-    ctx.lineTo(t.toX, t.toY);
-    ctx.stroke();
-    // A small impact spark where the round lands — a quick bright flash that
-    // fades faster than the tracer, so a hit reads as connecting, not just a
-    // line drawn through the target.
-    ctx.globalAlpha = Math.max(0, 1 - t.age * 1.6);
-    ctx.fillStyle = "#ffe9c2";
-    ctx.beginPath();
-    ctx.arc(t.toX, t.toY, 2.5 + (1 - t.age) * 1.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  for (const t of tracers) drawTracer(ctx, t);
 
   for (const d of deaths) {
     const r = 6 + d.age * 16;

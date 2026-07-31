@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation, issueServiceBuilding, issueRepair, issueSetHomeBase } from "../engine/commands.js";
+import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation, issueServiceBuilding, issueRepair, issueSetHomeBase, issuePatrol } from "../engine/commands.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 
@@ -377,4 +377,72 @@ test("issueSetHomeBase is passive — it never touches a unit's current order", 
   issueSetHomeBase([worker], "cc-2");
   assert.equal(worker.homeCC, "cc-2");
   assert.deepEqual(worker.order, { type: "gather", nodeId: "n1" }, "whatever it was doing keeps running");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Patrol: looping attack-move waypoints (docs/improvement-proposals.md). issuePatrol(units,
+   points) builds an ordinary attack-move waypoint chain — the first point becomes the active
+   order, the rest queue behind it — with every leg flagged patrol:true so engine/sim.js's
+   pull-next-queued-order step (test/sim.test.js) recycles each leg onto the tail the instant
+   it's pulled off the front, so the chain cycles instead of letting the unit go idle once it
+   runs out. The active leg is the one exception: it lands directly in `order` rather than being
+   pulled off the queue, so issuePatrol gives it its own trailing copy by hand — otherwise the
+   very first waypoint would silently drop out of the rotation after one lap (see sim.test.js's
+   "cycles forever" test for the end-to-end proof). Gated to combat/scout roles, the same
+   UNITS[type].role check issueHold already uses.
+   --------------------------------------------------------------------------------------------- */
+
+test("issuePatrol builds an attack-move waypoint chain with every leg flagged patrol:true", () => {
+  const [unit] = dummyUnits(1);   // skiff — combat role
+  issuePatrol([unit], [{ x: 500, y: 400 }, { x: 700, y: 600 }, { x: 300, y: 900 }]);
+
+  assert.deepEqual(unit.order, { type: "attack-move", x: 500, y: 400, patrol: true },
+    "the first point becomes the active leg");
+  assert.equal(unit.orderQueue.length, 3, "the other two points, PLUS a trailing copy of the active leg, wait behind it");
+  assert.deepEqual(unit.orderQueue[0], { type: "attack-move", x: 700, y: 600, patrol: true });
+  assert.deepEqual(unit.orderQueue[1], { type: "attack-move", x: 300, y: 900, patrol: true });
+  assert.deepEqual(unit.orderQueue[2], { type: "attack-move", x: 500, y: 400, patrol: true },
+    "the trailing copy of the first leg — without it, the rotation would lose this point after one lap");
+});
+
+test("issuePatrol only assigns combat/scout-role units, gated the same way issueHold is", () => {
+  const [worker] = capableDummyUnits(1);   // role "worker"
+  issuePatrol([worker], [{ x: 500, y: 400 }]);
+  assert.equal(worker.order, null, "a worker never gets a patrol order");
+  assert.equal(worker.orderQueue, undefined, "and its orderQueue is untouched — dispatch never ran for it");
+});
+
+test("issuePatrol accepts a scout-role unit (the Ranger), not just combat", () => {
+  const scout = { id: "u1", type: "ranger", order: null };
+  issuePatrol([scout], [{ x: 100, y: 100 }, { x: 200, y: 200 }]);
+  assert.deepEqual(scout.order, { type: "attack-move", x: 100, y: 100, patrol: true });
+  assert.equal(scout.orderQueue.length, 2, "the second point, plus the trailing copy of the active leg");
+});
+
+test("issuePatrol replaces whatever the unit was doing, same as any other plain (non-queued) order", () => {
+  const [unit] = dummyUnits(1);
+  issueMove([unit], 900, 900);
+  issueMove([unit], 950, 950, true);   // a queued waypoint behind it
+  assert.equal(unit.orderQueue.length, 1, "sanity: something was queued before the patrol command");
+
+  issuePatrol([unit], [{ x: 500, y: 400 }]);
+
+  assert.deepEqual(unit.order, { type: "attack-move", x: 500, y: 400, patrol: true }, "the old move order is gone");
+  assert.deepEqual(unit.orderQueue, [{ type: "attack-move", x: 500, y: 400, patrol: true }],
+    "the old queued waypoint is dropped — all that's left is the trailing copy of the (single) patrol leg");
+});
+
+// A degenerate but valid case: one point still loops (attack-move back to the same spot forever)
+// rather than behaving like a one-shot attack-move — the trailing copy is what makes that so.
+test("issuePatrol with a single point still loops (the trailing copy is what makes even one point cycle)", () => {
+  const [unit] = dummyUnits(1);
+  issuePatrol([unit], [{ x: 500, y: 400 }]);
+  assert.deepEqual(unit.order, { type: "attack-move", x: 500, y: 400, patrol: true });
+  assert.deepEqual(unit.orderQueue, [{ type: "attack-move", x: 500, y: 400, patrol: true }]);
+});
+
+test("issuePatrol with no points is a harmless no-op", () => {
+  const [unit] = dummyUnits(1);
+  issuePatrol([unit], []);
+  assert.equal(unit.order, null);
 });

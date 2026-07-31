@@ -53,10 +53,15 @@ test("mining respects the worker's cargo cap", () => {
   assert.ok(worker.cargo.qty <= 10, "cargo never exceeds the worker's cap");
 });
 
-test("a fully depleted node leaves the worker idle after its final deposit", () => {
+test("a fully depleted node leaves the worker idle when no other same-commodity node is within range", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
   const node = firstNode(state, "ore");
+  // Starve every OTHER ore node too — ferros seeds several within the retarget radius of any one
+  // home seam (see the "rolls onto a sibling seam" tests below), so leaving them untouched here
+  // would make the worker retarget instead of idling. Zeroing them isolates the true idle
+  // fallback: nextNodeAfterDepletion (engine/gather.js) genuinely has nowhere left to send it.
+  for (const n of state.map.nodes) if (n.com === "ore" && n !== node) n.amount = 0;
   node.amount = 4;   // less than one worker's cargo cap
   worker.x = node.x; worker.y = node.y;
   worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
@@ -65,6 +70,167 @@ test("a fully depleted node leaves the worker idle after its final deposit", () 
 
   assert.equal(worker.order, null);
   assert.ok(node.amount <= 0);
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Gatherers roll to the next seam when a node runs dry (docs/improvement-proposals.md): a player
+   worker used to idle the instant its node hit 0, same as the tests just above pin for the
+   genuinely-nowhere-to-go case. These cover the new nextNodeAfterDepletion retarget: nearest
+   same-commodity node the OWNER has discovered (fog-gated), within a ~600px radius, preferring one
+   under the miner soft cap, distance-then-id tiebreak, idle only when nothing qualifies.
+   --------------------------------------------------------------------------------------------- */
+
+test("on the real ferros map, depleting one home ore seam rolls the worker onto a sibling seam instead of idling", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  node.amount = 4;
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.ok(worker.order, "ferros seeds several ore seams around the home cluster, well within the retarget radius — the worker should never go idle here");
+  assert.notEqual(worker.order.nodeId, node.id, "it must have actually retargeted, not just still be pointed at the dry node");
+  assert.equal(worker.order.type, "gather");
+  assert.equal(state.map.nodesById.get(worker.order.nodeId).com, "ore", "the new target must be the same commodity");
+});
+
+test("retargeting picks the nearest same-commodity node the player has discovered, within the retarget radius", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  // Starve every OTHER real ore node so the one synthetic seam below is the only candidate —
+  // isolates the pick from ferros' own dense home-ore cluster (covered by the real-map test above).
+  for (const n of state.map.nodes) if (n.com === "ore" && n !== node) n.amount = 0;
+  const seam = { id: "test-seam", com: "ore", x: node.x + 200, y: node.y, amount: 300, max: 300 };
+  state.map.nodes.push(seam);
+  if (state.map.nodesById) state.map.nodesById.set(seam.id, seam);
+
+  node.amount = 4;   // less than one worker's cargo cap — depletes on the very next mining tick
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.equal(worker.order?.nodeId, seam.id, "must retarget to the discovered seam, not stay stuck on the dry node");
+  assert.equal(worker.order.phase, "toNode", "a fresh retarget starts the walk-to-node phase over");
+});
+
+test("retargeting only considers the same commodity as the depleted node", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  for (const n of state.map.nodes) if (n.com === "ore" && n !== node) n.amount = 0;
+  const wrongCom = { id: "wrong-commodity", com: "crystals", x: node.x + 30, y: node.y, amount: 300, max: 300 };
+  state.map.nodes.push(wrongCom);
+  if (state.map.nodesById) state.map.nodesById.set(wrongCom.id, wrongCom);
+
+  node.amount = 4;
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.equal(worker.order, null, "a nearby crystals node must never satisfy a depleted ore worker's retarget");
+});
+
+test("retargeting prefers a node under the miner soft cap over a nearer one that's already saturated", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  for (const n of state.map.nodes) if (n.com === "ore" && n !== node) n.amount = 0;
+  const cap = UNITS.worker.minerSoftCap;
+  const near = { id: "near-saturated", com: "ore", x: node.x + 50, y: node.y, amount: 300, max: 300, miners: cap + 1 };
+  const far = { id: "far-open", com: "ore", x: node.x + 400, y: node.y, amount: 300, max: 300, miners: 0 };
+  for (const n of [near, far]) { state.map.nodes.push(n); if (state.map.nodesById) state.map.nodesById.set(n.id, n); }
+
+  node.amount = 4;
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.equal(worker.order?.nodeId, far.id, "an under-cap node beats a nearer already-saturated one, even though it's farther away");
+});
+
+test("retargeting stays within the ~600px radius — a same-commodity node beyond it is not a candidate", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  for (const n of state.map.nodes) if (n.com === "ore" && n !== node) n.amount = 0;
+  const tooFar = { id: "too-far", com: "ore", x: node.x + 900, y: node.y, amount: 300, max: 300 };
+  state.map.nodes.push(tooFar);
+  if (state.map.nodesById) state.map.nodesById.set(tooFar.id, tooFar);
+
+  node.amount = 4;
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.equal(worker.order, null, "the only same-commodity node left is out of range — the worker idles rather than trekking cross-map");
+});
+
+test("retargeting never sends a worker into an undiscovered hidden cache", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  for (const n of state.map.nodes) if (n.com === "ore" && n !== node) n.amount = 0;
+  const cache = { id: "hidden-cache", com: "ore", x: node.x + 100, y: node.y, amount: 300, max: 300, hidden: true };
+  state.map.nodes.push(cache);
+  if (state.map.nodesById) state.map.nodesById.set(cache.id, cache);
+
+  node.amount = 4;
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.equal(worker.order, null, "an undiscovered hidden cache must not be a retarget candidate, fog or no fog");
+});
+
+test("retargeting breaks an exact distance tie by node id, deterministically", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  for (const n of state.map.nodes) if (n.com === "ore" && n !== node) n.amount = 0;
+  // Two candidates at the exact same distance from the depleted node (mirrored east/west) — only
+  // their ids differ, so the tiebreak alone decides the outcome.
+  const east = { id: "zz-later", com: "ore", x: node.x + 150, y: node.y, amount: 300, max: 300 };
+  const west = { id: "aa-earlier", com: "ore", x: node.x - 150, y: node.y, amount: 300, max: 300 };
+  for (const n of [east, west]) { state.map.nodes.push(n); if (state.map.nodesById) state.map.nodesById.set(n.id, n); }
+
+  node.amount = 4;
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.equal(worker.order?.nodeId, "aa-earlier", "an exact distance tie must resolve to the lower id, not insertion/iteration order");
+});
+
+test("an AI-owned gatherer also rolls onto the next seam, gated by the AI's own fog", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "ai" && u.type === "worker");
+  assert.ok(worker, "sanity: the AI starts with a worker too");
+  const oreNodes = state.map.nodes.filter(n => n.com === "ore");
+  // The ore node nearest the AI's own starting worker — its home seam, sitting inside the AI's own
+  // explored fog (state.fogAI), unlike the player's home cluster on the far side of the map.
+  const node = oreNodes.reduce((best, n) =>
+    Math.hypot(n.x - worker.x, n.y - worker.y) < Math.hypot(best.x - worker.x, best.y - worker.y) ? n : best);
+  for (const n of oreNodes) if (n !== node) n.amount = 0;
+  const seam = { id: "ai-test-seam", com: "ore", x: node.x + 200, y: node.y, amount: 300, max: 300 };
+  state.map.nodes.push(seam);
+  if (state.map.nodesById) state.map.nodesById.set(seam.id, seam);
+
+  node.amount = 4;
+  worker.x = node.x; worker.y = node.y;
+  worker.order = { type: "gather", nodeId: node.id, phase: "mining" };
+
+  for (let i = 0; i < 50 && worker.order && worker.order.nodeId === node.id; i++) updateGather(state, worker, 0.05);
+
+  assert.equal(worker.order?.nodeId, seam.id, "the AI's own worker retargets too, gated by state.fogAI rather than the player's state.fog");
 });
 
 test("mining saturates: workers past the soft cap pull a diminishing share, never zero", () => {

@@ -32,14 +32,18 @@
    DAMAGE FALLOFF: the blast isn't a flat "erase everything inside the
    radius" cutoff — HP loss decays with the square of distance from ground
    zero (bombDamageAt below), same shape as a real blast's inverse-square
-   falloff. The curve is referenced against BOMB_CORE_RADIUS (1.5x the bomb's
-   own footprint) rather than the true center, since 1/d^2 diverges as d->0;
-   inside that "unitary distance" everything takes the same peak hit
-   (BOMB_MAX_DAMAGE, enough to one-shot even the toughest building in the
-   game), and it tapers off from there out to zero at BOMB_BLAST_RADIUS. So
-   ground zero is still an indiscriminate kill, but a lightly-built unit
-   caught out near the edge may only take a scratch instead of vanishing
-   outright.
+   falloff. Distance is measured to each caught entity's RIM, not its center
+   (rimDistance below) — so a big building's own footprint doesn't stand
+   between it and the peak band: at physical contact, a Gate or Command
+   Center's hull IS inside BOMB_CORE_RADIUS, not 36-38 units short of it the
+   way raw center-to-center distance would read it. The curve itself is still
+   referenced against BOMB_CORE_RADIUS (1.5x the bomb's own footprint) rather
+   than the true center, since 1/d^2 diverges as d->0; inside that "unitary
+   distance" everything takes the same peak hit (BOMB_MAX_DAMAGE, enough to
+   one-shot even the toughest building in the game), and it tapers off from
+   there out to zero at BOMB_BLAST_RADIUS. So ground zero is still an
+   indiscriminate kill, but a lightly-built unit caught out near the edge may
+   only take a scratch instead of vanishing outright.
 
    TERRAFORMING: a detonation doesn't just erase — it also schedules a crater
    (state.craters) at the blast center. Once CRATER_SPAWN_DELAY of sim time
@@ -130,14 +134,32 @@ function isBomb(e) {
   return !!e && e.kind === "unit" && UNITS[e.type]?.role === "bomb";
 }
 
+// `e`'s own radius — a building carries it directly on the instance (state.js's makeBuilding
+// copies it off BUILDINGS at creation); a unit doesn't (makeUnit never does), so it's looked up
+// off its UNITS definition instead. Local to this module, same as movement.js/formation.js's own
+// (independently duplicated) radiusOf — not worth a shared export for a one-line lookup two other
+// files already have their own copy of.
+function radiusOf(e) {
+  return e.kind === "unit" ? (UNITS[e.type]?.radius || 0) : (e.radius || 0);
+}
+
+// Distance from the bomb's center to `e`'s RIM, not its center — max(0, ...) so an entity whose
+// footprint already overlaps the bomb (or contains it) reads as point-blank, never negative. This
+// is the fix behind the header's one-shot claim: raw center-to-center distance used to count a big
+// building's own radius AGAINST it, putting even physical wall contact outside BOMB_CORE_RADIUS.
+function rimDistance(e, bomb) {
+  return Math.max(0, Math.hypot(e.x - bomb.x, e.y - bomb.y) - radiusOf(e));
+}
+
 // Detonate `bomb` right now, unconditionally — the ONE place the blast itself
 // happens, so every trigger produces the exact same result. Every unit and
-// building within BOMB_BLAST_RADIUS, ANY owner included (the bomb's own
-// side's units and buildings, and the bomb itself, are not exempt), takes
-// bombDamageAt(dist) HP loss and dies (outright removed, and — same as an
-// ordinary combat kill — deposits its own wreckage, engine/wreckage.js) if
-// that drops it to 0 or below; anything too far out to be reduced to 0 just
-// survives, scarred. Snapshots
+// building within BOMB_BLAST_RADIUS of the bomb's center (measured to each
+// one's own RIM, not its center — rimDistance above), ANY owner included (the
+// bomb's own side's units and buildings, and the bomb itself, are not
+// exempt), takes bombDamageAt(dist) HP loss and dies (outright removed, and —
+// same as an ordinary combat kill — deposits its own wreckage,
+// engine/wreckage.js) if that drops it to 0 or below; anything too far out to
+// be reduced to 0 just survives, scarred. Snapshots
 // the caught set with its distances before removing anything, so the sweep
 // can't be thrown off by entities disappearing mid-scan. One bombDetonated
 // event drives the explosion VFX + sound (boot.js/effects.js/sound.js); each
@@ -148,11 +170,11 @@ export function detonateBomb(state, bomb) {
 
   const caught = [];
   for (const u of state.units.values()) {
-    const dist = Math.hypot(u.x - bomb.x, u.y - bomb.y);
+    const dist = rimDistance(u, bomb);
     if (dist <= BOMB_BLAST_RADIUS) caught.push({ e: u, dist });
   }
   for (const b of state.buildings.values()) {
-    const dist = Math.hypot(b.x - bomb.x, b.y - bomb.y);
+    const dist = rimDistance(b, bomb);
     if (dist <= BOMB_BLAST_RADIUS) caught.push({ e: b, dist });
   }
 
@@ -234,18 +256,21 @@ export function lightFuse(state, bomb) {
 }
 
 // Per-tick check for an ARMED bomb: is any live enemy unit or building within
-// BOMB_DETECT_RANGE? Lights the fuse (see lightFuse) rather than detonating
-// outright. Called from updateBombFuse below; also safe to call standalone
-// (e.g. tests) since lightFuse is idempotent either way.
+// BOMB_DETECT_RANGE of its RIM, not its center (rimDistance above — the same
+// measure detonateBomb uses, so "close enough to trip the fuse" and "close
+// enough to take full damage" never disagree on a big hull)? Lights the fuse
+// (see lightFuse) rather than detonating outright. Called from updateBombFuse
+// below; also safe to call standalone (e.g. tests) since lightFuse is
+// idempotent either way.
 export function checkBombProximity(state, bomb) {
   if (!bomb.armed || bomb.fuseUntil != null) return false;
   for (const u of state.units.values()) {
     if (u.owner === bomb.owner || u.hp <= 0) continue;
-    if (Math.hypot(u.x - bomb.x, u.y - bomb.y) <= BOMB_DETECT_RANGE) { lightFuse(state, bomb); return true; }
+    if (rimDistance(u, bomb) <= BOMB_DETECT_RANGE) { lightFuse(state, bomb); return true; }
   }
   for (const b of state.buildings.values()) {
     if (b.owner === bomb.owner || b.constructing) continue;
-    if (Math.hypot(b.x - bomb.x, b.y - bomb.y) <= BOMB_DETECT_RANGE) { lightFuse(state, bomb); return true; }
+    if (rimDistance(b, bomb) <= BOMB_DETECT_RANGE) { lightFuse(state, bomb); return true; }
   }
   return false;
 }

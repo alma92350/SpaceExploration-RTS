@@ -109,7 +109,8 @@ export function startGame(planetId) {
   const aiFaction = archetypeFor(planetId).faction || "neutral";
   const fresh = createGameState({ planetId, seed, rng: mulberry32(seed),
     aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy: setup.aiStrategy, difficulty: setup.difficulty,
-    sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
+    sizeMult: setup.sizeMult, resourceMult: setup.resourceMult, swapAsym: setup.swapAsym,
+    matchTimeLimit: setup.matchTimeLimit,
     playerFaction: setup.faction, aiFaction });
   bootState(fresh, { intro: true });
 }
@@ -148,6 +149,7 @@ export function startOdyssey() {
   bootGalaxy(createGalaxy({
     seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
     playerFaction: setup.faction, aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy: setup.aiStrategy,
+    startId: setup.startWorld,
   }), { intro: true });
 }
 
@@ -368,7 +370,10 @@ export function bootState(newState, { intro }) {
         loop.stop();
         if (game.state.scenario) showScenarioEnd(game.state, restartToMapSelect);
         else showGameOver(game.state.winner, game.state.seed, restartToMapSelect,
-          { odyssey: !!game.galaxy, wonBy: game.galaxy?.wonBy, surrendered: !!game.galaxy?.surrendered });
+          { odyssey: !!game.galaxy, wonBy: game.galaxy?.wonBy, surrendered: !!game.galaxy?.surrendered,
+            // winReason (engine/victory.js finish) + the state itself, so showGameOver can branch
+            // its copy honestly and, for a score decision, show the bank/army/structures breakdown.
+            winReason: game.state.winReason, state: game.state });
       }
     },
   });
@@ -451,7 +456,7 @@ function processFrameEvents() {
         break;
       case "attackHit":
         (ev.heavy ? sound.playHeavyHit : sound.playAttackHit)(pan);
-        addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType);
+        addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType, ev.bonus);
         if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
       case "entityKilled":

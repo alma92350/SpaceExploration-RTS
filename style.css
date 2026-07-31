@@ -178,6 +178,9 @@ html, body {
 .starmap-world .sm-sub { font-size: 0.72rem; color: var(--muted); }
 /* Industry/Tech badge — the world's economic character at a glance. */
 .starmap-world .sm-stats { font-size: 0.68rem; color: var(--muted); opacity: 0.85; font-variant-numeric: tabular-nums; margin-top: 1px; }
+/* Deposit icons + yield, plus the world's rule-modifier label when it has one — the same
+   geography read the skirmish select cards already give freely (setup.js's mod-note). */
+.starmap-world .sm-deps { font-size: 0.66rem; color: var(--muted); opacity: 0.8; margin-top: 2px; max-width: 190px; text-align: center; }
 .starmap-world.seat   { border-color: var(--accent); box-shadow: 0 0 14px rgba(79,209,255,0.5); }
 .starmap-world.seat .sm-sub   { color: var(--accent); }
 .starmap-world.colony { border-color: var(--good, #4ade80); }
@@ -215,6 +218,22 @@ html, body {
   font-variant-numeric: tabular-nums;
   color: var(--gold);
 }
+/* The final-5-minutes countdown (hud.js renderHUD) — warn-colored so the clock itself signals
+   "the score tiebreak is close" before a player even reads the score bar beside it. */
+.clock.endgame { color: var(--warn); font-weight: 700; }
+
+/* The compact two-sided score readout (playerScore(state,"player"/"ai")) that appears alongside
+   the countdown — otherwise the score driving the tiebreak is completely invisible in-game. */
+.score-bar {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.score-bar.hidden { display: none; }
 
 .mute-btn {
   background: none;
@@ -552,6 +571,19 @@ body.paused::after {
    line warns amber like every other "this changes the rules" cue. */
 .map-card .ai-note { display: block; margin-top: 8px; font-size: 0.78rem; color: var(--accent-2); }
 .map-card .mod-note { display: block; margin-top: 4px; font-size: 0.78rem; color: var(--warn); }
+/* Odyssey's start-world picker: the same card, just narrower — 11 worlds + Random need to fit
+   without the long desc paragraph (setup.js's renderMapSelect Odyssey branch omits it). */
+.map-card.map-card-compact { width: 168px; padding: 12px 14px; }
+.map-card.map-card-compact .sm-stats { display: block; margin-top: 6px; font-size: 0.72rem; color: var(--muted); }
+/* Pick your side of an asymmetric matchup (Oort, Nimbus): a small pill INSIDE the card, not a
+   nested button (invalid — a button can't contain another interactive control) — see setup.js. */
+.map-card-swap {
+  display: block; margin-top: 10px; padding: 5px 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  font-size: 0.74rem; text-align: center; cursor: pointer;
+}
+.map-card-swap:hover { border-color: var(--accent-2); color: var(--text); }
+.map-card-swap.active { border-color: var(--accent); color: var(--accent); background: var(--panel-2); }
 
 /* ---- splash-screen game setup (AI speed / map size / resources) ---- */
 .map-select h3.cards-heading {
@@ -698,8 +730,17 @@ body.paused::after {
 }
 .objectives.hidden { display: none; }
 .obj-goal { display: block; font-weight: 700; color: var(--text); font-size: 0.86rem; }
-.obj-tip { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 4px; line-height: 1.4; }
-.obj-tip b { color: var(--accent); }
+/* The reactive opening checklist (overlays.js renderObjectives/updateObjectives): one row per
+   predicate, checking off — with a brief flash — as the match state satisfies it. */
+.obj-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.obj-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.78rem; color: var(--muted); line-height: 1.4; border-radius: 4px; }
+.obj-check { flex: 0 0 14px; color: var(--good, #4ade80); font-weight: 700; }
+.obj-row.done { color: var(--text); text-decoration: line-through; text-decoration-color: var(--border); }
+.obj-row.flash { animation: obj-flash 900ms ease-out; }
+@keyframes obj-flash {
+  0% { background: rgba(74, 222, 128, 0.35); }
+  100% { background: transparent; }
+}
 .obj-close {
   position: absolute; top: 6px; right: 10px;
   background: transparent; border: none;

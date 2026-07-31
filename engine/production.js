@@ -168,10 +168,12 @@ function negate(cost) {
   return Object.fromEntries(Object.entries(cost).map(([com, qty]) => [com, -qty]));
 }
 
-// A Refinery's one-time, player-wide purchase — see UPGRADES in
-// entities.js for what each one does. Not a queue: it applies the
-// instant it's paid for (combat.js reads state.players[owner].upgrades
-// live), so there's nothing further to tick down.
+// A Refinery's player-wide doctrine research — see UPGRADES in entities.js for
+// what each one does. Queued and TIMED, exactly like the Datacenter's tech tree:
+// pays up front on enqueue, then develops over ~25-40s (engine/techtree.js
+// updateResearch, which resolves UPGRADES for a Refinery the same way it resolves
+// TECHS for a Datacenter) before it lands in player.upgrades and takes effect live,
+// army- (and base-) wide.
 export function researchUpgrade(state, buildingId, upgradeId) {
   const building = state.buildings.get(buildingId);
   if (!building || building.type !== "refinery" || building.constructing) return false;
@@ -179,14 +181,20 @@ export function researchUpgrade(state, buildingId, upgradeId) {
   if (player.upgrades[upgradeId]) return false;
   const def = UPGRADES[upgradeId];
   if (!def) return false;
-  // Doctrine lock: once committed to one doctrine, the other is off-limits.
+  // Doctrine lock: once committed to one doctrine — researched OR still developing,
+  // see entities.js committedDoctrine — the other is off-limits.
   const chosen = committedDoctrine(state, building.owner);
   if (chosen && def.doctrine && chosen !== def.doctrine) return false;
-  // Tier gate: a Tier-2 upgrade needs its Tier-1 already researched (prereqsMet
-  // reads the requires upgrade token, same as the tech tree).
+  // Tier gate: a Tier-2 upgrade needs its Tier-1 already RESEARCHED, not merely
+  // queued (prereqsMet reads player.upgrades via the requires token, same as the
+  // tech tree) — unlike researchTech's Datacenter queue, a Refinery job queued
+  // ahead does NOT count as meeting its own successor's prereq (see the comment on
+  // researchTech in techtree.js for why).
   if (!prereqsMet(state, building.owner, def)) return false;
+  const queue = building.researchQueue || (building.researchQueue = []);
+  if (queue.some(j => j.techId === upgradeId)) return false;   // already queued — no dupes
   if (!canAfford(player.resources, def.cost)) return false;
   payCost(player.resources, def.cost);
-  player.upgrades[upgradeId] = true;
+  queue.push({ techId: upgradeId, progress: 0 });
   return true;
 }

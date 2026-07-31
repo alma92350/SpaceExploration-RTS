@@ -48,6 +48,45 @@ test("createGalaxy lands the player on one world with a colony ship (no CC yet)"
   assert.ok(commandCenters(s, "ai").length >= 1, "a neighbour is present to coexist / clash with");
 });
 
+/* ---------- choosing (or rerolling) the starting world ---------- */
+
+test("createGalaxy honors an explicit opts.startId, and records the choice in galaxy.settings", () => {
+  const g = createGalaxy({ seed: 7, startId: "helix" });
+  assert.equal(g.activeId, "helix", "the explicit start world is the active seat");
+  assert.ok(g.discovered.has("helix"), "the chosen world is the one REACHED at creation");
+  assert.equal(g.settings.startId, "helix", "the choice is recorded on galaxy.settings");
+});
+
+test("an unrecognised startId is ignored and falls back to the same random draw as omitting it", () => {
+  const base = createGalaxy({ seed: 7 });
+  const bogus = createGalaxy({ seed: 7, startId: "not-a-real-world" });
+  assert.equal(bogus.activeId, base.activeId, "a bogus startId behaves exactly like no startId at all");
+});
+
+test("choosing a start world still consumes the seed's random draw, so every OTHER world's own generation is unaffected", () => {
+  const seed = 7;
+  const g1 = createGalaxy({ seed });                              // the natural, random draw
+  const chosen = ODYSSEY_WORLDS.find(w => w !== g1.activeId);     // deliberately a DIFFERENT world
+  const g2 = createGalaxy({ seed, startId: chosen });
+  assert.equal(g2.activeId, chosen, "the explicit choice wins over the draw");
+
+  // planetSeed(seed, planetId) — every world's own per-planet seed — is a pure function of the
+  // galaxy seed and that world's id, independent of which world became the start seat. So a
+  // world that's a BACKGROUND world in both galaxies must generate byte-identically either way:
+  // proof that resolving an explicit startId doesn't perturb any other world's RNG stream.
+  const common = ODYSSEY_WORLDS.find(w => w !== g1.activeId && w !== g2.activeId);
+  assert.deepEqual(g2.planets.get(common).map.nodes, g1.planets.get(common).map.nodes,
+    "a world untouched by the start-world choice generates identically either way");
+});
+
+test("an explicit startId that matches the natural draw reproduces the same galaxy", () => {
+  const seed = 21;
+  const base = createGalaxy({ seed });
+  const explicit = createGalaxy({ seed, startId: base.activeId });
+  assert.equal(explicit.activeId, base.activeId);
+  assert.deepEqual([...explicit.planets.keys()].sort(), [...base.planets.keys()].sort());
+});
+
 test("endless mode never ends by conquest — razing the enemy CC does not win", () => {
   const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
   for (const b of commandCenters(s, "ai")) s.buildings.delete(b.id);   // wipe the neighbour's CC

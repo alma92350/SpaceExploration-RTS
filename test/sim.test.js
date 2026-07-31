@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
-import { issueMove, issueEscort } from "../engine/commands.js";
+import { issueMove, issueEscort, issuePatrol } from "../engine/commands.js";
 import { isNodeDiscovered } from "../engine/fog.js";
 import { PLANET_ARCHETYPE } from "../engine/aiArchetypes.js";
 import { UNITS } from "../engine/entities.js";
@@ -64,6 +64,56 @@ test("a unit walks through its queued waypoints in order, then goes idle", () =>
   assert.deepEqual(visited, path, "it reaches each waypoint in the order they were queued");
   assert.equal(w.order, null, "with the chain finished it holds no order");
   assert.equal(w.orderQueue.length, 0, "and the queue is drained");
+});
+
+// Patrol (docs/improvement-proposals.md "Patrol: looping attack-move waypoints"): unlike the
+// plain waypoint chain above, a patrol-flagged chain must NEVER drain to idle — sim.js's
+// pull-next-queued-order step recycles each patrol leg back onto the tail of the queue the
+// moment it's pulled off, so the same chain cycles forever until the unit is re-ordered.
+// Path kept close to the player's own base corner (map.bases.player, not the contested middle
+// the waypoint test above uses) so a skiff — which, unlike a worker, DOES auto-acquire — has
+// nothing enemy-owned nearby to detour onto during the run.
+test("a patrol order cycles its waypoints forever instead of draining to idle once the chain runs out", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const skiff = makeUnit("skiff", "player", 400, 500);
+  state.units.clear();
+  state.units.set(skiff.id, skiff);
+
+  const path = [[300, 500], [300, 300], [200, 300]];
+  issuePatrol([skiff], path.map(([x, y]) => ({ x, y })));
+
+  const visited = [];
+  for (let i = 0; i < 900 && visited.length < path.length + 1; i++) {   // up to 45s
+    tick(state, 0.05);
+    const next = path[visited.length % path.length];
+    if (Math.hypot(skiff.x - next[0], skiff.y - next[1]) < 1.5
+        && (!visited.length || visited[visited.length - 1] !== next)) visited.push(next);
+  }
+
+  assert.ok(visited.length >= path.length + 1,
+    `expected a full lap plus proof the chain restarted (${path.length + 1}+ arrivals) within the time budget, got ${visited.length}`);
+  assert.deepEqual(visited.slice(0, path.length), path, "the first lap visits the waypoints in the order they were given");
+  assert.deepEqual(visited[path.length], path[0], "the chain looped back to the FIRST waypoint instead of stopping — a genuine cycle, not a one-shot chain");
+  assert.ok(skiff.order !== null, "a patrolling unit is never left with no order at all — the next leg is always ready");
+});
+
+// Patrol is gated to combat/scout roles (engine/commands.js issuePatrol), and "attack-move" was,
+// before this feature, only ever actually acted on by a combat-role unit (routed through
+// engine/combat.js's updateCombat) — sim.js's own generic order switch had no "attack-move" case
+// at all, so a scout given one would have hit the `default: unit.order = null` branch and never
+// moved a single pixel. This proves the Ranger (role "scout") really travels its patrol leg
+// through the real tick() dispatch, not just that issuePatrol accepted it (test/commands.test.js).
+test("a scout's (Ranger's) patrol leg actually moves it, through the real tick dispatch", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const ranger = makeUnit("ranger", "player", 300, 500);
+  state.units.set(ranger.id, ranger);
+  issuePatrol([ranger], [{ x: 300, y: 300 }, { x: 200, y: 300 }]);
+  const x0 = ranger.x, y0 = ranger.y;
+
+  for (let i = 0; i < 40; i++) tick(state, 0.1);
+
+  assert.ok(Math.hypot(ranger.x - x0, ranger.y - y0) > 1,
+    "the Ranger travelled toward its first patrol point instead of sitting frozen with its order silently dropped");
 });
 
 test("an idle worker never auto-acquires a neighbouring enemy — it stays on the economy", () => {

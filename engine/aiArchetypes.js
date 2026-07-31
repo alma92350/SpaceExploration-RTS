@@ -76,6 +76,39 @@ export const ARCHETYPES = {
     wantsRefinery: true,   // builds a Refinery and researches its doctrine once teched.
     faction: "frontier",   // mobility & vision for even, map-controlling play (factions.js)
   },
+  // A FOURTH archetype (docs/improvement-proposals.md "A fourth archetype: the Technologist on
+  // Kybernet"): eleven Odyssey worlds shared only rusher/economist/balanced, so a full session met
+  // the same three temperaments over and over, and Kybernet — tech 10 (fastest research,
+  // engine/techtree.js researchTimeScale) and industry 8 (fastest factories) — played as a generic
+  // Economist despite being the roster's one dedicated tech-race world. No archetype ever fielded
+  // the Colossus either, leaving one of the four Arsenal specialists dead content on the AI side.
+  technologist: {
+    name: "Technologist",
+    workerTarget: 7,
+    armyAttackSize: 7,
+    attackTimeout: 220,
+    // A SMALL, elite roster that skips straight up the tech ladder rather than the wide Tier-1
+    // spam of a Rusher or the big even mix of an Economist/Balanced: one Tier-1 opener (Skiff),
+    // then everything past it is Foundry- or Arsenal-gated. The Colossus is the point of the whole
+    // archetype — no other mix in the game fields it, so the ancient relic-fuelled siege engine
+    // finally sees play on a world with relics; the Wraith rounds out its other Arsenal option on a
+    // gas world. effectiveMix's own surface-affordability filter drops whichever of the two a given
+    // world can't pay for, exactly like it already does for Balanced's Wraith/Aegis pair — no extra
+    // gating needed here.
+    unitMix: ["skiff", "lancer", "lancer", "dreadnought", "colossus", "wraith"],
+    turretCount: 2,
+    maxBarracks: 2,
+    expandWhenNodesBelow: 0.3,   // teches deep and needs the ore to fund it, but a small army needs less territory than an Economist's
+    garrison: 2,            // a modest home guard — not all-in like a Rusher, not a big turtle like an Economist.
+    doctrine: "assault",    // its elite units (Lancer/Dreadnought/Colossus) hit hard; leans offensive once teched.
+    wantsRefinery: true,    // the deep-industry signal — Kybernet's whole identity is fastest research + fastest factories.
+    faction: "syndicate",   // elite firepower on a lean economy — a small, teched-up roster over a wide one.
+    // ODYSSEY overlay: a research capital wants STABILITY to protect its tech lead, not a prolonged
+    // war — a longer opening peace than the stock 7 minutes (graceMult > 1, patient), and it lets go
+    // of a grudge fast (forgiveness higher than even the already-fast-forgiving Economist's 1.5), so
+    // a skirmish with it never calcifies into the permanent hostility a Rusher nurses.
+    odyssey: { graceMult: 1.3, forgiveness: 1.75 },
+  },
 };
 
 // Which temperament each playable world hands the AI. Key order drives the
@@ -109,8 +142,8 @@ export const PLANET_ARCHETYPE = {
 // where finished goods sell dear (engine/market.js). Temperament only sets the
 // neighbour's combat style, exactly as for the skirmish nine.
 export const ODYSSEY_EXTRA_ARCHETYPE = {
-  kybernet: "economist",   // a patient tech-race rival on the research capital
-  verdani: "balanced",     // a calm, map-controlling neighbour on the farm world
+  kybernet: "technologist",   // the research capital fields its own small-elite, teched-up rival
+  verdani: "balanced",        // a calm, map-controlling neighbour on the farm world
 };
 
 const ALL_ARCHETYPE = { ...PLANET_ARCHETYPE, ...ODYSSEY_EXTRA_ARCHETYPE };
