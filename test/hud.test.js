@@ -78,7 +78,7 @@ sound.setMuted(true);   // renderSelectionPanel's icon buttons can synthesize a 
 
 const { game } = await import("../session.js");
 const { renderHUD, resetPanelSignature } = await import("../hud.js");
-const { clockEl, scoreBarEl, idleProductionEl } = await import("../dom.js");
+const { clockEl, scoreBarEl, idleProductionEl, gateChipEl, canvas } = await import("../dom.js");
 
 function setup(seed, opts = {}) {
   resetPanelSignature();
@@ -189,4 +189,229 @@ test("renderHUD: the idle-production count only includes finished buildings that
 
   assert.equal(idleProductionEl.textContent, "🏭 1 idle", "only the finished, empty-queue Barracks counts");
   assert.equal(idleProductionEl.classList.contains("hidden"), false);
+});
+
+/* ============================================================
+   Persistent Antimatter Gate charge strip (docs/improvement-proposals.md lines 745-753): today
+   the Gate's charge is visible only in boot.js's 25%-milestone toasts or by keeping the Gate
+   itself selected in hudSelection.js's own wonder panel — invisible while the player is off
+   defending the waves a charging Gate provokes (per CHANGELOG), and a stall (starved feed goods
+   or throttled Power) is completely silent. renderHUD now finds the player's wonder-flagged
+   building — gated on game.galaxy only, the same Odyssey idiom the power readout above already
+   uses — and renders a slim persistent chip: percentage + color tier warming with progress,
+   flipping to a "stalled" state when charge hasn't advanced since the last tick observed it.
+   Clicking it centers the camera on the Gate, mirroring boot.js's underAttackEl click handler.
+   ============================================================ */
+
+// A player (or rival) wonder-flagged building, at a chosen charge. `charge` left undefined
+// leaves `building.charge` completely unset — exactly what engine/wonder.js's updateWonder
+// itself leaves a just-completed Gate with, before anything has fed it a first tick of progress.
+function addGate(state, owner, charge, opts = {}) {
+  const gate = makeBuilding("antimatter_gate", owner, opts.x ?? 400, opts.y ?? 300, opts);
+  if (charge !== undefined) gate.charge = charge;
+  state.buildings.set(gate.id, gate);
+  return gate;
+}
+
+test("renderHUD: no gate chip in a skirmish — gated on game.galaxy only, even with a wonder-flagged building present", () => {
+  const state = setup(420);   // setup()'s own default leaves game.galaxy null
+  addGate(state, "player", 0.5);
+
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("hidden"), true);
+});
+
+test("renderHUD: no gate chip in an Odyssey with no player-owned wonder", () => {
+  setup(421);
+  game.galaxy = {};
+
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("hidden"), true);
+});
+
+test("renderHUD: no gate chip for an AI-owned Gate — the strip watches the player's own clock, not a rival's", () => {
+  const state = setup(422);
+  game.galaxy = {};
+  addGate(state, "ai", 0.5);
+
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("hidden"), true);
+});
+
+test("renderHUD: no gate chip while the Gate is still under construction", () => {
+  const state = setup(423);
+  game.galaxy = {};
+  addGate(state, "player", undefined, { constructing: true });
+
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("hidden"), true);
+});
+
+test("renderHUD: shows the gate chip with the rounded charge once game.galaxy exists and a player wonder is present", () => {
+  const state = setup(424);
+  game.galaxy = {};
+  addGate(state, "player", 0.417);
+
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("hidden"), false);
+  assert.equal(gateChipEl.textContent, "🌀 Gate 42% · provoking neighbours");
+});
+
+test('renderHUD: a freshly-completed Gate at exactly 0% charge reads as stalled, not "provoking neighbours"', () => {
+  const state = setup(425);
+  game.galaxy = {};
+  addGate(state, "player", undefined);   // a just-finished Gate: nothing fed into it yet
+
+  renderHUD();
+
+  assert.equal(gateChipEl.textContent, "🌀 Gate 0% · stalled");
+  assert.equal(gateChipEl.classList.contains("stalled"), true);
+});
+
+test("renderHUD: the gate chip's color tier warms as charge climbs, and drops warm/hot as appropriate", () => {
+  const state = setup(426);
+  game.galaxy = {};
+  const gate = addGate(state, "player", 0.3);
+
+  renderHUD();
+  assert.equal(gateChipEl.classList.contains("warm"), false);
+  assert.equal(gateChipEl.classList.contains("hot"), false);
+
+  gate.charge = 0.6;
+  renderHUD();
+  assert.equal(gateChipEl.classList.contains("warm"), true);
+  assert.equal(gateChipEl.classList.contains("hot"), false);
+
+  gate.charge = 0.9;
+  renderHUD();
+  assert.equal(gateChipEl.classList.contains("hot"), true);
+  assert.equal(gateChipEl.classList.contains("warm"), false);
+});
+
+test("renderHUD: the gate chip is not stalled on the very first sighting of a charging wonder", () => {
+  const state = setup(427);
+  game.galaxy = {};
+  addGate(state, "player", 0.3);
+
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("stalled"), false,
+    "no prior tick to compare against yet, so this must not read as a stall");
+});
+
+test("renderHUD: the gate chip flips to a stalled state when charge hasn't advanced since the last tick", () => {
+  const state = setup(428);
+  game.galaxy = {};
+  addGate(state, "player", 0.3);
+
+  renderHUD();   // establishes the baseline tick
+  renderHUD();   // charge unchanged since that baseline
+
+  assert.equal(gateChipEl.classList.contains("stalled"), true);
+  assert.match(gateChipEl.textContent, /stalled/);
+});
+
+test("renderHUD: the gate chip stays out of the stalled state while charge keeps climbing tick over tick", () => {
+  const state = setup(429);
+  game.galaxy = {};
+  const gate = addGate(state, "player", 0.3);
+
+  renderHUD();
+  gate.charge = 0.35;   // real progress since the last tick
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("stalled"), false);
+  assert.match(gateChipEl.textContent, /provoking neighbours/);
+});
+
+test("renderHUD: a Gate razed and rebuilt starts its own clean stalled comparison instead of reading the dead Gate's last charge", () => {
+  const state = setup(430);
+  game.galaxy = {};
+  const gate = addGate(state, "player", 0.6);
+  renderHUD();
+  renderHUD();   // the old Gate reads stalled at 60% (two ticks, no change)
+  assert.equal(gateChipEl.classList.contains("stalled"), true, "sanity: the old Gate really is showing stalled");
+
+  state.buildings.delete(gate.id);   // razed mid-charge
+  addGate(state, "player", 0.02, { x: 500, y: 500 });   // freshly rebuilt, low charge, genuinely advancing
+  renderHUD();
+
+  assert.equal(gateChipEl.classList.contains("stalled"), false,
+    "a brand-new wonder id must not be judged against the destroyed Gate's final charge");
+});
+
+test("renderHUD: the topbar signature guard skips the gate chip too — an unrelated HUD change doesn't force a spurious re-render", () => {
+  const state = setup(431);
+  game.galaxy = {};
+  addGate(state, "player", 0.5);
+
+  renderHUD();   // priming tick: establishes game.lastGateCharge
+  renderHUD();   // "before" snapshot -- charge unchanged since the priming tick, so this is already stable
+  const before = gateChipEl.textContent;
+  assert.ok(before.length > 0);
+
+  gateChipEl.textContent = "SENTINEL";   // stomp — a real rebuild would overwrite this
+  state.time += 5;   // an unrelated HUD change (the clock), not part of the topbar signature
+  renderHUD();
+
+  assert.equal(gateChipEl.textContent, "SENTINEL",
+    "nothing the topbar signature tracks changed, so the chip's DOM must not be touched");
+});
+
+test("renderHUD: the topbar signature guard still rebuilds the chip once the tracked charge actually changes", () => {
+  const state = setup(432);
+  game.galaxy = {};
+  const gate = addGate(state, "player", 0.5);
+
+  renderHUD();
+  renderHUD();
+  gateChipEl.textContent = "SENTINEL";
+  gate.charge = 0.7;   // a real, tracked change
+  renderHUD();
+
+  assert.notEqual(gateChipEl.textContent, "SENTINEL");
+  assert.match(gateChipEl.textContent, /70%/);
+});
+
+test("clicking the gate chip centers the camera on the Gate, mirroring boot.js's underAttackEl click handler", () => {
+  const state = setup(433);
+  game.galaxy = {};
+  canvas.clientWidth = 800;
+  canvas.clientHeight = 600;
+  const cx = state.map.width / 2, cy = state.map.height / 2;
+  addGate(state, "player", 0.5, { x: cx, y: cy });
+  const camera = { x: 0, y: 0, zoom: 1 };
+  game.input.getCamera = () => camera;
+
+  renderHUD();
+  gateChipEl.click();
+
+  assert.equal(camera.x, cx);
+  assert.equal(camera.y, cy);
+});
+
+test("clicking the gate chip when there is no player wonder is a no-op", () => {
+  setup(434);
+  game.galaxy = {};
+  const camera = { x: 111, y: 222, zoom: 1 };
+  game.input.getCamera = () => camera;
+
+  renderHUD();   // no wonder -- chip stays hidden
+  gateChipEl.click();
+
+  assert.equal(camera.x, 111);
+  assert.equal(camera.y, 222);
+});
+
+test("clicking the gate chip never throws with no active game", () => {
+  game.state = null;
+  game.input = null;
+  game.galaxy = null;
+
+  assert.doesNotThrow(() => gateChipEl.click());
 });

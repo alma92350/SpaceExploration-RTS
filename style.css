@@ -409,6 +409,39 @@ button.techchart-node:hover { border-color: var(--accent); }
    galaxy-toast at top:64px, which scenarios never show) and lift it above the bar. */
 body.scenario .under-attack { top: 64px; z-index: 6; }
 
+/* Persistent Antimatter Gate charge strip (hud.js renderHUD, docs/improvement-proposals.md lines
+   745-753): a slim always-visible readout of the player's wonder so the finale's clock stays
+   on-screen without keeping the Gate selected. Top-right so it never collides with the centered
+   under-attack banner / galaxy toast stack above it. Color warms with progress (base accent ->
+   warm -> hot) and flips to a dedicated stalled look (bad-red, pulsing like the under-attack
+   banner) when charge hasn't advanced since the last tick — the silent-stall case the proposal
+   calls out (starved feed goods or throttled Power). */
+.gate-chip {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 8px 18px;
+  background: rgba(79, 209, 255, 0.12);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;   /* clickable — jumps the camera to the Gate (hud.js) */
+}
+.gate-chip:hover { background: rgba(79, 209, 255, 0.24); }
+.gate-chip.hidden { display: none; }
+.gate-chip.warm { border-color: var(--warn); color: var(--warn); background: rgba(251, 191, 36, 0.12); }
+.gate-chip.hot { border-color: var(--bad); color: var(--bad); background: rgba(248, 113, 113, 0.12); }
+.gate-chip.stalled {
+  border-color: var(--bad);
+  color: var(--bad);
+  background: rgba(248, 113, 113, 0.18);
+  animation: alert-pulse 1.4s ease-in-out infinite;
+}
+/* Scenarios never show this chip (no Odyssey, no wonder), so no scenario-bar collision rule is
+   needed here the way body.scenario .under-attack above needs one. */
+
 /* Manual pause (P key): a centered banner over the frozen frame. Help and the Home-confirm
    modal carry their own overlays, so ONLY the manual pause shows this. pointer-events:none
    so it never intercepts a click (the camera still pans while paused). */
