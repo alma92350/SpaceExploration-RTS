@@ -57,6 +57,21 @@
    mix; Hard is 2 — it reacts to the player's composition half again as fast as
    Medium's unchanged 3. Same "Medium carries none of it" baseline as every other
    tier.
+
+   Tier 6 adds strategicCeiling (Easy only — the second identity-level dial,
+   exactly the precedent Tier 4's header sets for rusherGraduates). aiIndustry.js's
+   INDUSTRY_CHAIN climb and its RESEARCH_ORDER research both stop short of the
+   Strategic tier (antimatterforge / 'antimatter' Containment onward) when this is
+   set — which transitively withholds the Star Dock, the Leviathan, the Helium
+   Bomb, the Plasma Rig, and (Phase 7) a rival Antimatter Gate, since every one of
+   those sits downstream of that same chain. This is the identical argument this
+   file's own Tier 3 already makes for withholding marketAccess from Easy ("a new
+   player isn't shown an AI that trades in a way they can't yet see or counter")
+   applied harder to the Strategic tier: a long enough Odyssey session would
+   otherwise let even a placid Easy Economist climb to a 900-hp Leviathan and a
+   doomsday bomb, exactly the escalation Easy exists to spare a new player from.
+   Medium and Hard are untouched — a patient or graduated neighbour on either can
+   still walk the whole chain, same as today.
    ============================================================ */
 
 "use strict";
@@ -64,7 +79,7 @@
 export const DIFFICULTY_OPTIONS = [
   { label: "Easy", mult: "easy", note: "slow · no micro · predictable", aiApm: 20, aiMicro: false,
     workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85, researchPaceMult: 1.3,
-    forgiveness: 1.25, counterEvery: 0 },
+    forgiveness: 1.25, counterEvery: 0, strategicCeiling: true },
   { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false, marketAccess: true },
   { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
     workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75,
