@@ -329,6 +329,17 @@ on exactly the fog-cell contract that change produced.
   compose; they're now bounded.
 - A neighbour deploying its own colony ship (or triggering its own Helium Bomb) counted as you
   destroying one of its ships, so it soured its own stance for founding a colony.
+- **A very dense, long-idle same-owner army no longer spikes CPU when its background world
+  ticks.** Profiling a real save (reported as high sustained CPU usage) traced it to one Odyssey
+  colony that had accumulated a 642-unit standing army over about 70 minutes with nothing to
+  spend it on, almost all of it piled within a few grid cells of its rally point — the broad-phase
+  neighbor query `applySeparation` uses scales with *local density*, not army size, and 30+
+  same-owner units sharing a cell meant a single tick there ran up to ~94ms, ~15ms of it in
+  separation alone. `applySeparation` now bounds how many candidates it resolves per unit per
+  call; the scan window rotates by the unit's index and the simulation tick, so a huge pile still
+  fully settles over time instead of some units being permanently skipped over. Ordinary battles
+  never come close to the cap, so this is unobservable outside a pathological pile-up — on the
+  profiled world it cut the separation phase by ~74% and the whole tick by ~40%.
 
 ### Added
 
