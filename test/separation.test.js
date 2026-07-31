@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applySeparation } from "../engine/separation.js";
+import { applySeparation, separationWindow, MAX_SEPARATION_NEIGHBORS } from "../engine/separation.js";
 import { makeUnit } from "../engine/state.js";
 import { buildUnitGrid } from "../engine/grid.js";
 
@@ -118,4 +118,70 @@ test("overlapping same-owner units in different grid cells still get paired and 
   const endDist = Math.hypot(b.x - a.x, b.y - a.y);
 
   assert.ok(endDist > startDist, "the pair should move apart even though they sit in neighboring grid cells");
+});
+
+// A background world left to idle can accumulate a same-owner army numbering in the
+// hundreds, all piled on roughly the same rally point. queryNeighbors' candidate list
+// for a query planted inside that pile scales with local density, not army size — so
+// without a bound, a single applySeparation call over such a pile does a number of
+// separatePair evaluations quadratic in the pile's local density, which is exactly the
+// multi-millisecond per-tick cost profiled against a real save (see CHANGELOG). These
+// tests drive separationWindow, the pure helper that bounds and rotates the candidate
+// scan, directly — the arithmetic is easy to pin down exactly here instead of inferring
+// it from emergent multi-body motion.
+test("separationWindow is a no-op under the cap: identical [0, n] scan as the old unbounded for-of", () => {
+  assert.deepEqual(separationWindow(0, 0, 0), [0, 0]);
+  assert.deepEqual(separationWindow(5, 0, 0), [0, 5]);
+  assert.deepEqual(separationWindow(MAX_SEPARATION_NEIGHBORS, 17, 999), [0, MAX_SEPARATION_NEIGHBORS]);
+});
+
+test("separationWindow bounds the scan to MAX_SEPARATION_NEIGHBORS once candidates exceed it", () => {
+  const [, take] = separationWindow(200, 150, 0);
+  assert.equal(take, MAX_SEPARATION_NEIGHBORS);
+});
+
+test("separationWindow rotates its start by the querying unit's own _gi, so a big pile isn't split into an always-resolved low-index group and a never-resolved high-index remainder within one tick", () => {
+  const n = 200;
+  const [startLow] = separationWindow(n, 0, 0);
+  const [startMid] = separationWindow(n, 150, 0);
+  const [startHigh] = separationWindow(n, 199, 0);
+  assert.equal(startLow, 0);
+  assert.equal(startMid, 150);
+  assert.equal(startHigh, 199);
+  assert.notEqual(startLow, startHigh, "different queriers should scan different windows of the same candidate list");
+});
+
+test("separationWindow also slides its start with the simulation tick, so a unit sitting at a stable local density doesn't scan the same window forever", () => {
+  const n = 200, gi = 5;
+  const [startNow] = separationWindow(n, gi, 0);
+  const [startLater] = separationWindow(n, gi, 37);
+  assert.equal(startNow, 5);
+  assert.equal(startLater, 42);
+  assert.notEqual(startNow, startLater, "the same unit's window should move on as ticks pass, eventually covering every candidate");
+});
+
+test("a pathological same-owner pile-up (hundreds of units on one point) still converges to essentially the same spread as the uncapped pass, given enough ticks, via the grid broad-phase path", () => {
+  const state = { units: new Map(), tick: 0 };
+  for (let i = 0; i < 150; i++) {
+    const u = makeUnit("skiff", "ai", 900, 900);
+    state.units.set(u.id, u);
+  }
+
+  for (let i = 0; i < 2000; i++) {
+    state.unitGrid = buildUnitGrid(state);
+    applySeparation(state, 0.05);
+    state.tick++;
+  }
+
+  const units = [...state.units.values()];
+  let cx = 0, cy = 0;
+  for (const u of units) { cx += u.x; cy += u.y; }
+  cx /= units.length; cy /= units.length;
+  let maxDist = 0;
+  for (const u of units) maxDist = Math.max(maxDist, Math.hypot(u.x - cx, u.y - cy));
+
+  // An uncapped pass on the same fixture plateaus around ~95-97 (a packed circle of
+  // 150 skiffs) — well below that would mean the bound is leaving pairs permanently
+  // stuck rather than merely rate-limiting how fast they resolve.
+  assert.ok(maxDist > 70, "a 150-unit pile-up should reach a substantially resolved spread, not settle for a permanently tighter-than-necessary packing");
 });
