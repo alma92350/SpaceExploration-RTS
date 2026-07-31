@@ -4,6 +4,12 @@ import { createGalaxy, activeState, jumpCapital, snapLandingPoint, LANDING_PICK_
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
+import { generateMap } from "../engine/map.js";
+// landingPicker.js's own import graph (minimap.js -> engine/fog.js, engine/galaxy.js) touches no
+// document/window at module scope — same "pure to import, DOM only inside the function body"
+// reasoning test/boot.test.js's header comment spells out for its own statically-imported engine
+// modules — so this is safe above, before the fake document/window below even exist.
+import { openLandingPicker } from "../landingPicker.js";
 
 const commandCenters = (state, owner) =>
   [...state.buildings.values()].filter(b => b.owner === owner && b.type === "command");
@@ -253,4 +259,122 @@ test("a tampered (non-numeric / negative) lastLanding is sanitized to a safe fin
   const restored2 = deserializeGalaxy(saved2);
   const restoredPad2 = [...restored2.planets.get(destId).buildings.values()].find(b => b.id === destPad.id);
   assert.equal(restoredPad2.lastLanding, 0, "a negative value clamps to 0, never a negative timestamp");
+});
+
+// --- landingPicker.js draw(): terrain silhouette + copy ----------------------
+//
+// The picker used to draw NOTHING but a reference grid (its own header comment called the
+// destination "a total unknown"), even though the destination's static terrain is generated
+// up front for every world (createGalaxy) and is map knowledge, not battlefield intel
+// (engine/fog.js's header doctrine) — the same reasoning minimap.js's own terrain layer
+// already applies. Nothing before this exercised openLandingPicker's draw() output at all.
+//
+// openLandingPicker touches document/window directly: div/h2/p/canvas/button elements via
+// document.createElement, a 2D context to draw into, one document.body.appendChild for the
+// overlay, and window.addEventListener/removeEventListener for its Esc handler
+// (test/boot.test.js's withLandingPickDom drives the same real function indirectly through
+// boot.js's initiateJump — see its header comment for the full DOM-surface trace, empirically
+// confirmed by reading landingPicker.js in full). Rebuilt minimally here, self-contained, with
+// a RECORDING 2D context (not a no-op stub) so the terrain silhouette's actual
+// fillStyle/fillRect calls can be inspected directly, not just "did something get appended".
+
+function fakeLandingCtx() {
+  const log = [];
+  const ctx = {
+    fillStyle: null, strokeStyle: null, lineWidth: 1,
+    fillRect(x, y, w, h) { log.push({ fillStyle: ctx.fillStyle, x, y, w, h }); },
+    strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, arc() {}, fill() {}, setLineDash() {},
+  };
+  return { ctx, log };
+}
+function fakeLandingEl(tag, ctx) {
+  const attrs = {};
+  return {
+    tagName: tag, className: "", textContent: "", tabIndex: 0, disabled: false, width: 0, height: 0,
+    setAttribute(k, v) { attrs[k] = v; },
+    getAttribute(k) { return attrs[k]; },
+    addEventListener() {}, removeEventListener() {},
+    appendChild(c) { return c; }, append() {}, remove() {}, focus() {},
+    getContext() { return tag === "canvas" ? ctx : null; },
+    getBoundingClientRect() { return { left: 0, top: 0, width: 480, height: 300 }; },
+  };
+}
+// Runs `fn({ created, log })` with document/window swapped in for the duration of a real
+// openLandingPicker() call — `created` holds every element document.createElement produced (in
+// creation order), `log` holds every fillRect call the canvas's 2D context received (with the
+// fillStyle in effect at that call). Restored in a `finally` so a failing assertion can't leak
+// the swap into a later test.
+function withLandingPicker(fn) {
+  const { ctx, log } = fakeLandingCtx();
+  const created = [];
+  const originalDocument = globalThis.document, originalWindow = globalThis.window;
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  globalThis.document = {
+    activeElement: null,
+    createElement(tag) { const el = fakeLandingEl(tag, ctx); created.push(el); return el; },
+    body: { appendChild(c) { return c; } },
+  };
+  try { fn({ created, log }); }
+  finally { globalThis.document = originalDocument; globalThis.window = originalWindow; }
+}
+// A minimal `dest` shaped exactly as openLandingPicker reads it (map/buildings/units/players),
+// with NO player footprint — built directly from generateMap rather than createGameState so
+// hasFootprint is explicitly and reliably false (createGameState seeds a starting Command
+// Center, which would trip it true).
+function bareDest(planetId) {
+  return { map: generateMap(planetId, () => 0.5), buildings: new Map(), units: new Map(), players: { player: { color: "#4fd1ff" } } };
+}
+const HIGH_FILL = "rgba(255, 209, 102, 0.20)";     // minimap.js renderUnderlay's own high-ground colour
+const ROUGH_FILL = "rgba(120, 140, 180, 0.18)";    // …and its rough-ground colour
+
+test("openLandingPicker paints the destination's high ground in minimap.js's own colour", () => {
+  const dest = bareDest("pyralis");   // a central high-ground mesa (engine/map.js PLANET_MODIFIERS.pyralis)
+  withLandingPicker(({ log }) => {
+    openLandingPicker(dest, "Pyralis", { onPick() {}, onCancel() {} });
+    assert.ok(log.some(e => e.fillStyle === HIGH_FILL), "high-ground cells should be painted in minimap.js's high-ground colour");
+  });
+});
+
+test("openLandingPicker paints the destination's rough ground in minimap.js's own colour", () => {
+  const dest = bareDest("glacius");   // rough ice fields flank the midline (engine/map.js PLANET_MODIFIERS.glacius)
+  withLandingPicker(({ log }) => {
+    openLandingPicker(dest, "Glacius", { onPick() {}, onCancel() {} });
+    assert.ok(log.some(e => e.fillStyle === ROUGH_FILL), "rough-ground cells should be painted in minimap.js's rough-ground colour");
+  });
+});
+
+test("openLandingPicker draws no terrain fill on a world with no terrain features", () => {
+  const dest = bareDest("ferros");   // no PLANET_MODIFIERS entry at all -> an all-open terrain grid
+  withLandingPicker(({ log }) => {
+    openLandingPicker(dest, "Ferros Prime", { onPick() {}, onCancel() {} });
+    assert.equal(log.filter(e => e.fillStyle === HIGH_FILL || e.fillStyle === ROUGH_FILL).length, 0,
+      "open ground draws no terrain fill, same as minimap.js's own OPEN-cell skip");
+  });
+});
+
+test("openLandingPicker's blind-world copy no longer claims total fog of war — terrain is charted from orbit", () => {
+  const dest = bareDest("ferros");   // no player buildings/units -> hasFootprint is false
+  withLandingPicker(({ created }) => {
+    openLandingPicker(dest, "Ferros Prime", { onPick() {}, onCancel() {} });
+    const bodyCopy = created.find(e => e.tagName === "p" && /Spaceport/.test(e.textContent));
+    const canvas = created.find(e => e.tagName === "canvas");
+    assert.ok(bodyCopy, "fixture sanity: found the body-copy paragraph");
+    assert.ok(!/fog of war is total/i.test(bodyCopy.textContent), "the old total-blindness copy is gone");
+    assert.match(bodyCopy.textContent, /charted from orbit/i, "copy now says terrain is charted from orbit");
+    const ariaLabel = canvas.getAttribute("aria-label");
+    assert.ok(!/blind/i.test(ariaLabel), "the aria-label no longer calls the chart 'blind'");
+    assert.match(ariaLabel, /charted from orbit/i, "the aria-label reflects the now-charted terrain");
+  });
+});
+
+test("openLandingPicker's footprint copy also reflects the charted terrain, alongside the player's own marks", () => {
+  const dest = bareDest("ferros");
+  const cc = makeBuilding("command", "player", dest.map.bases.player.x, dest.map.bases.player.y);
+  dest.buildings.set(cc.id, cc);   // hasFootprint is now true
+  withLandingPicker(({ created }) => {
+    openLandingPicker(dest, "Ferros Prime", { onPick() {}, onCancel() {} });
+    const bodyCopy = created.find(e => e.tagName === "p" && /Spaceport/.test(e.textContent));
+    assert.match(bodyCopy.textContent, /charted from orbit/i, "the footprint copy also mentions the now-charted terrain");
+    assert.match(bodyCopy.textContent, /your own buildings and units/i, "…without losing the callout to the player's own marked footprint");
+  });
 });
