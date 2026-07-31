@@ -10,7 +10,12 @@
 
 import { COM } from "./data.js";
 import { isNodeDiscovered } from "./engine/fog.js";
+import { UNITS } from "./engine/entities.js";
 import { hashStr, seededRng, pathPoints, inView } from "./renderShared.js";
+
+// The same amber "running, just not at full rate" tone renderBuildings.js's producer-concern
+// badge uses (CONCERN_STYLE.warn) — a saturated node isn't dead, just diminishing.
+const SATURATION_COLOR = "#fbbf24";
 
 export function drawNodes(ctx, state, view) {
   for (const n of state.map.nodes) {
@@ -31,6 +36,23 @@ export function drawNodes(ctx, state, view) {
     ctx.textAlign = "center";
     ctx.fillStyle = "#05070f";
     ctx.fillText(COM[n.com]?.ico || "?", n.x, n.y + 3);
+
+    // Saturation cue: node.miners is retallied every tick by sim.js countMiners, but nothing used
+    // to render it, so a node six workers deep just looked like ordinary slow income with no
+    // visible cause. Once the live headcount crosses the worker's soft cap (miningEfficiency,
+    // engine/gather.js — the point where an extra miner starts pulling a diminishing share), ring
+    // it and post the live "miners/cap" count, so "spread out, then expand" reads at a glance
+    // without opening the panel.
+    if ((n.miners || 0) > UNITS.worker.minerSoftCap) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = SATURATION_COLOR;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = "9px sans-serif";
+      ctx.fillStyle = SATURATION_COLOR;
+      ctx.fillText(`${n.miners}/${UNITS.worker.minerSoftCap}`, n.x, n.y - r - 9);
+    }
   }
 }
 
