@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState } from "../engine/state.js";
+import { createGameState, makeUnit } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
+import { issuePatrol } from "../engine/commands.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 
 // The sim-owned facts, sorted by id so Map order can't matter — plus node
@@ -46,4 +47,25 @@ test("a loaded game continues identically to the original — determinism surviv
 
 test("deserializeGame rejects an unknown save version", () => {
   assert.throws(() => deserializeGame({ v: 999 }), /unsupported save version/);
+});
+
+// Patrol (docs/improvement-proposals.md "Patrol: looping attack-move waypoints"): the order's
+// `patrol` flag is a purely additive field on the existing order/orderQueue shapes persist.js
+// already serializes (serPlanet's `...u` rest-spread keeps whatever an order object carries —
+// see engine/persist.js), so this needs no dedicated persist.js code and no SAVE_VERSION bump,
+// per CONTRIBUTING's additive-field rule — this test is the empirical proof of that claim.
+test("a patrol order's flag round-trips through save/load with no dedicated persist.js code", () => {
+  const state = createGameState({ planetId: "ferros", seed: 99, rng: mulberry32(99) });
+  const skiff = makeUnit("skiff", "player", 700, 500);
+  state.units.set(skiff.id, skiff);
+  issuePatrol([skiff], [{ x: 750, y: 500 }, { x: 750, y: 400 }]);
+
+  const loaded = deserializeGame(JSON.parse(JSON.stringify(serializeGame(state))));
+  const reloaded = loaded.units.get(skiff.id);
+
+  assert.ok(reloaded, "the patrolling unit itself survived the round-trip");
+  assert.equal(reloaded.order.patrol, true, "the active leg's patrol flag survives — persist.js's order serialization is a generic rest-spread, not a field allowlist");
+  assert.equal(reloaded.orderQueue.length, skiff.orderQueue.length,
+    "the whole queue length (including the trailing copy of the active leg — see test/commands.test.js) is preserved");
+  assert.ok(reloaded.orderQueue.every(o => o.patrol === true), "every queued leg's patrol flag survives too");
 });
