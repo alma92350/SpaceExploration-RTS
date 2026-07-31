@@ -140,7 +140,13 @@ function nearestEnemyUnitWithin(state, unit, radius) {
 // upgrade multipliers and kill/event bookkeeping stay in exactly one place.
 // The attackHit event carries both endpoints and the attacker's type so
 // render.js can draw a tracer from shooter to target (a turret reads as
-// its own "turret" type), and `heavy` so a siege hit thumps deeper.
+// its own "turret" type), `heavy` so a siege hit thumps deeper, and `bonus`
+// so a counter-triangle hit (Skiff catching a Lancer, etc.) telegraphs too —
+// scoped to the per-type hard counter (bonusVs) only, distinct from `heavy`'s
+// class-wide siege bonus (bonusVsBuildings), since there's no specific
+// matchup to telegraph there. Zero sim effect — the flag is read only by the
+// UI layer (effects.js/renderEffects.js, hudSelection.js derives its "strong
+// vs / falls to" text straight from the same bonusVs tables independently).
 function performAttack(state, attacker, def, target) {
   // An ARMED Helium Bomb doesn't take damage from a hit — it detonates instead,
   // dealing distance-falloff blast damage to everything (attacker included)
@@ -152,6 +158,7 @@ function performAttack(state, attacker, def, target) {
     type: "attackHit", x: target.x, y: target.y,
     fromX: attacker.x, fromY: attacker.y, unitType: attacker.type, owner: attacker.owner,
     heavy: !!(def.bonusVsBuildings && target.kind === "building"),
+    bonus: !!(def.bonusVs && def.bonusVs[target.type]),
   });
   if (target.hp <= 0) {
     // Nothing is really destroyed: ~80% of whatever was spent building this thing

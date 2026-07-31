@@ -16,7 +16,7 @@ import { powerEfficiency } from "./engine/industry.js";
 import { rigSurvey, SURVEY_RADIUS } from "./engine/rig.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects } from "./effects.js";
-import { hexA, lerpXY } from "./renderShared.js";
+import { hexA, lerpXY, shade } from "./renderShared.js";
 import { POWER_TIER_COLOR, drawReactorBands } from "./renderBuildings.js";
 
 // Cached once: whether the viewer asked the OS to reduce motion. Used to swap
@@ -129,21 +129,25 @@ export function drawEffects(ctx) {
   const { tracers, deaths, pings, explosions, fuseWarnings } = activeEffects();
 
   for (const t of tracers) {
-    const color = tracerColor(t.unitType);
+    // A counter-triangle bonus hit (engine/combat.js's attackHit `bonus` flag, plumbed through
+    // effects.js's addTracer) telegraphs hotter and thicker than a plain hit of the same weapon,
+    // so a Skiff catching a Lancer visibly reads as connecting harder than a futile plink.
+    const color = t.bonus ? shade(tracerColor(t.unitType), 35) : tracerColor(t.unitType);
     ctx.globalAlpha = Math.max(0, 1 - t.age);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = t.bonus ? 3.5 : 2;
     ctx.beginPath();
     ctx.moveTo(t.fromX, t.fromY);
     ctx.lineTo(t.toX, t.toY);
     ctx.stroke();
     // A small impact spark where the round lands — a quick bright flash that
     // fades faster than the tracer, so a hit reads as connecting, not just a
-    // line drawn through the target.
+    // line drawn through the target. Bigger and hotter on a bonus hit, so the
+    // extra damage reads at the point of impact too.
     ctx.globalAlpha = Math.max(0, 1 - t.age * 1.6);
-    ctx.fillStyle = "#ffe9c2";
+    ctx.fillStyle = t.bonus ? "#fff7cc" : "#ffe9c2";
     ctx.beginPath();
-    ctx.arc(t.toX, t.toY, 2.5 + (1 - t.age) * 1.5, 0, Math.PI * 2);
+    ctx.arc(t.toX, t.toY, (t.bonus ? 4 : 2.5) + (1 - t.age) * (t.bonus ? 2.5 : 1.5), 0, Math.PI * 2);
     ctx.fill();
   }
 

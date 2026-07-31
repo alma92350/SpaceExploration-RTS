@@ -254,6 +254,24 @@ test("attack-move still engages an enemy encountered along the way (unlike plain
   assert.ok(enemy.hp < enemyHp, "attack-move should still fight what it runs into");
 });
 
+// A patrol leg (engine/commands.js issuePatrol) is an ordinary attack-move order with an extra
+// `patrol: true` flag combat.js never has to look at — the proposal's own claim ("combat.js
+// needs nothing") is exactly that the flag is inert here: engaging along the way works
+// identically with or without it.
+test("an attack-move order carrying patrol:true still engages an enemy encountered along the way", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const a = makeUnit("skiff", "player", 500, 500);
+  const enemy = makeUnit("skiff", "ai", 505, 500);
+  state.units.set(a.id, a);
+  state.units.set(enemy.id, enemy);
+  a.order = { type: "attack-move", x: 700, y: 500, patrol: true };
+  const enemyHp = enemy.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.ok(enemy.hp < enemyHp, "a patrol leg still fights what it runs into, exactly like a plain attack-move");
+});
+
 test("Bastion deals its bonus damage specifically against Skiff", () => {
   const state = createGameState({ planetId: "ferros" });
   const bastion = makeUnit("bastion", "player", 500, 500);
@@ -329,6 +347,56 @@ test("the rock-paper-scissors triangle is a genuine cycle: no unit also counters
   assert.ok(!UNITS.skiff.bonusVs.bastion, "Skiff must not also counter Bastion, or Skiff would beat everything");
   assert.ok(!UNITS.bastion.bonusVs.lancer, "Bastion must not also counter Lancer, or Bastion would beat everything");
   assert.ok(!UNITS.lancer.bonusVs.skiff, "Lancer must not also counter Skiff, or Lancer would beat everything");
+});
+
+// Counter-triangle readability (docs/improvement-proposals.md "Counter-triangle telegraphs"):
+// performAttack stamps a `bonus` flag on the attackHit event whenever bonusVs applied, so
+// effects.js/renderEffects.js can telegraph a counter hit instead of drawing it identically to
+// a futile plink. Pure event bookkeeping — the damage-amount assertions above already cover the
+// numbers; these only check the new event field.
+test("performAttack stamps bonus:true on the attackHit event when the attacker's bonusVs counters the target's type", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const skiff = makeUnit("skiff", "ai", 500, 500);   // Skiff.bonusVs = { lancer: 10 }
+  const lancer = makeUnit("lancer", "player", 500 + UNITS.skiff.range - 1, 500);
+  state.units.set(skiff.id, skiff);
+  state.units.set(lancer.id, lancer);
+
+  updateCombat(state, skiff, UNITS.skiff.cooldown);
+
+  const hit = state.events.find(e => e.type === "attackHit");
+  assert.ok(hit, "expected an attackHit event");
+  assert.equal(hit.bonus, true, "Skiff vs Lancer is the counter-triangle bonus matchup");
+});
+
+test("performAttack leaves the attackHit event's bonus flag falsy for a matchup with no bonusVs", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);   // two Skiffs — neither counters the other
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const hit = state.events.find(e => e.type === "attackHit");
+  assert.ok(hit, "expected an attackHit event");
+  assert.ok(!hit.bonus, "no counter-triangle bonus applies between two Skiffs");
+});
+
+// The `bonus` flag is scoped to the per-type hard counter (def.bonusVs[target.type]) only — kept
+// distinct from the pre-existing `heavy` flag (def.bonusVsBuildings, a class-wide siege bonus with
+// no specific counter-triangle matchup to telegraph). A Breacher has no bonusVs table at all, so
+// its building hits stay `heavy` but never `bonus`.
+test("performAttack's bonus flag stays falsy for a class-wide siege bonus (bonusVsBuildings), unlike the pre-existing heavy flag", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const breacher = makeUnit("breacher", "player", 500, 500);   // bonusVsBuildings: 30, no per-type bonusVs
+  const turret = makeBuilding("turret", "ai", 500 + UNITS.breacher.range - 1, 500);
+  state.units.set(breacher.id, breacher);
+  state.buildings.set(turret.id, turret);
+  breacher.order = { type: "attack", targetId: turret.id };
+
+  updateCombat(state, breacher, UNITS.breacher.cooldown);
+
+  const hit = state.events.find(e => e.type === "attackHit");
+  assert.ok(hit, "expected an attackHit event");
+  assert.equal(hit.heavy, true, "sanity: this is the same siege hit the pre-existing `heavy` flag already covers");
+  assert.ok(!hit.bonus, "bonusVsBuildings is not a bonusVs counter-triangle matchup, so bonus must stay falsy");
 });
 
 test("Skiff has no bonus damage table and deals only its base attack", () => {

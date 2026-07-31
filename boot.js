@@ -451,7 +451,7 @@ function processFrameEvents() {
         break;
       case "attackHit":
         (ev.heavy ? sound.playHeavyHit : sound.playAttackHit)(pan);
-        addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType);
+        addTracer(ev.fromX, ev.fromY, ev.x, ev.y, ev.unitType, ev.bonus);
         if (ev.owner === "ai") triggerUnderAttack(ev.x, ev.y);
         break;
       case "entityKilled":
