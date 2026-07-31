@@ -13,10 +13,17 @@ import { stepToward } from "./movement.js";
 import { UNITS, BUILDINGS, isGatherDropOff, upgradeMult } from "./entities.js";
 import { sideMod } from "./map.js";
 import { hashStr } from "./rng.js";
+import { isNodeDiscovered } from "./fog.js";
 
 const ORBIT_RADIUS = 16;   // workers ring the node instead of stacking on its exact center
 const ARRIVE_REACH = 4;
 const DROP_REACH = 30;
+
+// How far a gatherer will look for a fresh seam of the SAME commodity once its current node runs
+// dry — far enough to reach a sibling deposit in the same home cluster (UNITS.worker's own
+// "~3 home seams" comment below) without sending a worker on a cross-map trek that should really
+// be a deliberate player order.
+const RETARGET_RADIUS = 600;
 
 // Saturation: with `m` workers assigned to a node, the first `minerSoftCap`
 // each mine at full rate and every extra at `minerFalloff` of a share, so the
@@ -40,6 +47,35 @@ function orbitSpot(node, unitId) {
   return { x: node.x + Math.cos(angle) * ORBIT_RADIUS, y: node.y + Math.sin(angle) * ORBIT_RADIUS };
 }
 
+// Called from updateGather's two depletion exits (the node is already dry when its order is
+// picked up, and the deposit that drains the last of it) so a gatherer keeps working instead of
+// idling at every drained seam — the AI already self-heals this way every think (aiWorkers.js
+// assignIdleWorkers); this gives the player the same outcome inline, without waiting for a
+// separate pass. Retargets `unit` to the NEAREST same-commodity node its OWNER has discovered
+// (fog-gated via isNodeDiscovered, so a hidden cache stays hidden until scouted — same rule the
+// AI's own search already follows) within RETARGET_RADIUS of the drained node, preferring one
+// still under the miner soft cap so the crew doesn't just pile onto the next-nearest node that's
+// already saturated. Ties (and the "prefer under-cap" partition itself) break on id, never on Map/
+// array iteration order, so two same-seed runs can't diverge. Idles (unit.order = null), exactly
+// as before, when nothing qualifies.
+/** @param {State} state @param {Unit} unit @param {ResourceNode} node */
+function nextNodeAfterDepletion(state, unit, node) {
+  const fog = unit.owner === "player" ? state.fog : state.fogAI;
+  const cap = UNITS[unit.type].minerSoftCap ?? Infinity;
+  let best = null, bestUnderCap = false, bestDist = Infinity;
+  for (const n of state.map.nodes) {
+    if (n.com !== node.com || n.amount <= 0 || !isNodeDiscovered(fog, n)) continue;
+    const dist = Math.hypot(n.x - node.x, n.y - node.y);
+    if (dist > RETARGET_RADIUS) continue;
+    const underCap = (n.miners || 0) < cap;
+    const better = !best
+      || (underCap && !bestUnderCap)
+      || (underCap === bestUnderCap && (dist < bestDist || (dist === bestDist && n.id < best.id)));
+    if (better) { best = n; bestUnderCap = underCap; bestDist = dist; }
+  }
+  unit.order = best ? { type: "gather", nodeId: best.id, phase: "toNode" } : null;
+}
+
 /** @param {State} state @param {Unit} unit @param {number} dt */
 export function updateGather(state, unit, dt) {
   const def = UNITS[unit.type];
@@ -47,7 +83,8 @@ export function updateGather(state, unit, dt) {
   const node = state.map.nodesById
     ? state.map.nodesById.get(order.nodeId)
     : state.map.nodes.find(n => n.id === order.nodeId);
-  if (!node || node.amount <= 0) { unit.order = null; return; }
+  if (!node) { unit.order = null; return; }
+  if (node.amount <= 0) { nextNodeAfterDepletion(state, unit, node); return; }
   if (!order.phase) order.phase = "toNode";
 
   if (order.phase === "toNode") {
@@ -89,8 +126,8 @@ export function updateGather(state, unit, dt) {
         * upgradeMult(player.upgrades, "gatherYieldMult");
       player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + banked;
       unit.cargo.qty = 0;
-      order.phase = node.amount > 0 ? "toNode" : null;
-      if (!order.phase) unit.order = null;
+      if (node.amount > 0) order.phase = "toNode";
+      else nextNodeAfterDepletion(state, unit, node);   // this deposit drained the last of it — roll to the next seam or idle
     } else {
       stepToward(state, unit, drop.x, drop.y, def.speed, dt);
     }
