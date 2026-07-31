@@ -578,3 +578,15 @@ test("buildHelpOverlay documents Backspace (jump to last alert), Alt+drag (subtr
   assert.match(html, /Alt\+drag/, "the selection-subtraction gesture should appear in the help reference");
   assert.match(html, /Ctrl\+double-click/, "the map-wide select-all-of-type gesture should appear in the help reference");
 });
+
+// docs/improvement-proposals.md "Tech & Industry Chart overlay": docs/player-handbook.html — the
+// one place the full unlock ladder is drawn — used to be linked from nowhere in the app. It's now
+// linked from techChart.js's own overlay AND from here, the persistent help reference.
+test("buildHelpOverlay links to the full field manual, opening in a new tab", () => {
+  buildHelpOverlay();
+  const html = helpOverlayEl.innerHTML;
+
+  assert.match(html, /href="docs\/player-handbook\.html"/, "expected a link to the field manual");
+  assert.match(html, /target="_blank"/, "expected it to open in a new tab, not navigate away from the running match");
+  assert.match(html, /Full field manual/i);
+});

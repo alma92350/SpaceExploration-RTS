@@ -201,6 +201,70 @@ html, body {
 .starmap-surrender:hover { color: var(--text); border-color: #3a4c74; }
 .starmap-surrender.armed { color: var(--bad); border-color: var(--bad); background: rgba(255,80,80,0.08); }
 
+/* Tech & Industry Chart overlay (techChart.js): the unlock ladder laid out as tier COLUMNS —
+   every building, unit gate and tech/doctrine node, prereq depth left-to-right, coloured by
+   whether it's built/researched, buildable right now, or still locked. Same full-screen
+   overlay idiom as .starmap-overlay just above (own element, topbar button + hotkey + Esc). */
+.techchart-overlay {
+  position: absolute; inset: 0; z-index: 30;
+  background: rgba(3, 6, 15, 0.94);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 20px 0 0;
+}
+.techchart-overlay.hidden { display: none; }
+.techchart-head { text-align: center; padding: 0 20px; flex: 0 0 auto; }
+.techchart-head h2 { margin: 0 0 4px; color: var(--accent); letter-spacing: 0.08em; }
+.techchart-head p { margin: 0; color: var(--muted); font-size: 0.85rem; max-width: 720px; }
+/* The tier columns scroll sideways as a whole (a deep Odyssey chart easily outgrows the
+   viewport width); each column scrolls independently on the vertical axis, so a crowded
+   Tier 0 doesn't stretch every other column's cards down to match its height. */
+.techchart-body {
+  flex: 1 1 auto; width: 100%; margin-top: 14px;
+  display: flex; gap: 14px; align-items: flex-start;
+  overflow-x: auto; overflow-y: hidden;
+  padding: 0 20px 16px;
+}
+.techchart-col {
+  flex: 0 0 200px; max-height: 100%;
+  display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto; padding-right: 2px;
+}
+.techchart-col-head {
+  flex: 0 0 auto; color: var(--muted); font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; text-align: center;
+  border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 2px;
+}
+/* One node card. A plain <div> (built, or any non-building node) reads the same as a
+   <button> (a clickable building) — the state colour carries the meaning, not the tag. */
+.techchart-node {
+  display: flex; align-items: flex-start; gap: 8px; text-align: left;
+  width: 100%; padding: 7px 8px; font: inherit; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--border);
+  border-radius: 6px; cursor: default;
+}
+button.techchart-node { cursor: pointer; }
+button.techchart-node:hover { border-color: var(--accent); }
+.techchart-node .btn-icon { margin-top: 1px; flex-shrink: 0; }
+/* The text column beside the icon — name/cost/recipe/detail stack vertically here, so the
+   card reads top-to-bottom next to a single fixed-size icon tile instead of the icon repeating
+   per line. */
+.techchart-node-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.techchart-node.built { border-left-color: var(--good, #4ade80); opacity: 0.82; }
+.techchart-node.afford { border-left-color: var(--accent); background: rgba(79, 209, 255, 0.07); }
+.techchart-node.locked { border-left-color: var(--bad); opacity: 0.72; }
+.techchart-node .techchart-name { display: block; font-weight: 600; font-size: 0.82rem; }
+.techchart-node .techchart-cost { display: block; font-size: 0.7rem; color: var(--gold); margin-top: 1px; }
+.techchart-node .techchart-recipe { display: block; font-size: 0.68rem; color: var(--accent-2); margin-top: 2px; }
+.techchart-node .techchart-detail { display: block; font-size: 0.68rem; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+.techchart-node.locked .techchart-detail { color: var(--bad); opacity: 0.9; }
+.techchart-node.afford .techchart-detail { color: var(--accent); }
+.techchart-foot { color: var(--muted); font-size: 0.8rem; margin: 4px 0; flex: 0 0 auto; }
+.techchart-manual-link {
+  color: var(--accent-2); font-size: 0.8rem; text-decoration: none;
+  margin-bottom: 16px; flex: 0 0 auto;
+}
+.techchart-manual-link:hover { color: var(--accent); text-decoration: underline; }
+
 /* Odyssey market panel (hudSelection.js renderMarket): a header plus a compact
    commodity/price + trend + Sell/Sell x4/Sell All/Buy row per tradeable good. */
 .market-head { margin: 8px 0 4px; font-size: 0.8rem; color: var(--gold); letter-spacing: 0.03em; }
@@ -775,6 +839,9 @@ body.paused::after {
 }
 .help-key { flex: 0 0 155px; color: var(--accent); font-weight: 600; }
 .help-dismiss { margin: 14px 0 0; font-size: 0.74rem; color: var(--muted); font-weight: 400; }
+.help-manual { margin: 6px 0 0; font-size: 0.78rem; }
+.help-manual a { color: var(--accent-2); text-decoration: none; cursor: pointer; }
+.help-manual a:hover { color: var(--accent); text-decoration: underline; }
 
 .seed-input {
   flex: 0 0 130px;

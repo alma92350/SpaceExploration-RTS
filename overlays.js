@@ -289,6 +289,7 @@ const HELP_ROWS = [
   ["Backspace", "Jump to the last under-attack alert"],
   ["P", "Pause / resume"],
   ["M", "Odyssey — open the galaxy map"],
+  ["T", "Tech & Industry chart — the unlock ladder, coloured by what you can build/research now"],
   ["Right-click a node", "(building selected) rally new workers to mine it"],
   ["Minimap", "Left-click to jump · right-click to order"],
   ["Wheel · arrows · edge", "Zoom · pan the camera"],
@@ -313,7 +314,12 @@ export function buildHelpOverlay() {
   helpOverlayEl.innerHTML = `<div class="help-card"><h2>Controls &amp; Help</h2>`
     + `<h3 class="help-sub">Mouse &amp; keyboard</h3>${helpRows(HELP_ROWS)}`
     + `<h3 class="help-sub">Touch</h3>${helpRows(TOUCH_HELP_ROWS)}`
-    + `<p class="help-dismiss">Press F1, ?, or Esc to close</p></div>`;
+    + `<p class="help-dismiss">Press F1, ?, or Esc to close</p>`
+    // docs/player-handbook.html draws the full tier ladder + every stat table this quick
+    // reference only summarizes — linked from nowhere else in the app before techChart.js
+    // (docs/improvement-proposals.md "Tech & Industry Chart overlay"). target="_blank" so
+    // opening it never navigates away from (and loses) the running match.
+    + `<p class="help-manual"><a href="docs/player-handbook.html" target="_blank" rel="noopener">Full field manual ↗</a></p></div>`;
 }
 
 function toggleHelp(force) {
