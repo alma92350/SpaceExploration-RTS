@@ -168,6 +168,39 @@ test("the galaxy clock and last-relief time round-trip", () => {
   assert.equal(g2.lastReliefTime, 40, "lastReliefTime persists so the cooldown survives a reload");
 });
 
+/* ---------- Tier 4b hardening: a favor request (engine/diplomacy.js) carries a commodity id and
+   three numbers straight off untrusted save data — the same "commodity id used as a dynamic key"
+   shape cargo/resources already get validated for elsewhere in this file. ---------- */
+
+test("a well-formed favor request round-trips exactly; one naming a bogus commodity is dropped entirely", () => {
+  const save = JSON.parse(JSON.stringify(serializeGalaxy(settledGalaxy(6))));
+  const planet = save.planets.find(p => p.planetId === save.activeId);
+  planet.diplomacy.request = { com: "ore", qty: 50, until: 999, reward: 321 };
+  const g = deserializeGalaxy(save);
+  assert.deepEqual(activeState(g).diplomacy.request, { com: "ore", qty: 50, until: 999, reward: 321 },
+    "a legitimately-saved request is left exactly as-is (identity)");
+
+  const save2 = JSON.parse(JSON.stringify(serializeGalaxy(settledGalaxy(6))));
+  const planet2 = save2.planets.find(p => p.planetId === save2.activeId);
+  planet2.diplomacy.request = { com: "☠notacommodity", qty: 50, until: 999, reward: 321 };
+  const g2 = deserializeGalaxy(save2);
+  assert.equal(activeState(g2).diplomacy.request, null, "a request naming an unknown commodity is dropped, not trusted verbatim");
+});
+
+test("a favor request with a nonsense quantity or reward is dropped on load rather than trusted verbatim", () => {
+  const save = JSON.parse(JSON.stringify(serializeGalaxy(settledGalaxy(6))));
+  const planet = save.planets.find(p => p.planetId === save.activeId);
+  planet.diplomacy.request = { com: "ore", qty: -50, until: 999, reward: 321 };   // negative qty
+  const g = deserializeGalaxy(save);
+  assert.equal(activeState(g).diplomacy.request, null, "a non-positive qty is dropped");
+
+  const save2 = JSON.parse(JSON.stringify(serializeGalaxy(settledGalaxy(6))));
+  const planet2 = save2.planets.find(p => p.planetId === save2.activeId);
+  planet2.diplomacy.request = { com: "ore", qty: 50, until: 999, reward: "not a number" };
+  const g2 = deserializeGalaxy(save2);
+  assert.equal(activeState(g2).diplomacy.request, null, "a non-numeric reward is dropped");
+});
+
 /* ---------- Tier-1b hardening: wonder charge, order/cargo, g-id counter, research queue, transient strip ---------- */
 
 test("a wonder's charge is clamped into [0,1] on load — a hand-edited charge can't slip in (B3)", () => {
