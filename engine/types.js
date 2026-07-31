@@ -270,6 +270,12 @@
  * @property {number} [depletion]
  * @property {number} [tributes]
  * @property {number} [lastAiUnits]
+ * @property {boolean} [pacified] Domination with teeth: stamped by engine/galaxy.js checkDomination
+ *   when this world is razed — floors the drift target at APPEASE_FLOOR (Neutral) permanently
+ * @property {number} [factionEchoUntil] Faction memory (grievance direction): state.time deadline
+ *   until which forgiveness composes at FACTION_ECHO_FORGIVE_MULT, set by a faction-mate's pacification
+ * @property {number} [factionWarmth] Faction memory (allied direction): raw count of this world's
+ *   OTHER faction-mates currently Allied, refreshed by engine/galaxy.js updateFactionWarmth
  */
 
 /**
