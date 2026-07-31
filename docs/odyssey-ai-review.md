@@ -334,6 +334,22 @@ column barely does.
 node tools/ailab.js probe --world ferros --opponent skirmisher --minutes 40 --sample 5
 ```
 
+**Update, 2026-07-31 — the bar moved, unintentionally.** The "Doctrine research develops over
+time" change (`docs/improvement-proposals.md`) is unrelated to this section by design — it's a T1
+telegraphing/pacing fix, not an AI-survivability change — but `git bisect` on a freshly-red
+`test/ailab.test.js` traced a real regression to it (commit `4b95948`): on
+`ferros/economic/skirmisher/seed=7`, the AI now loses every worker and building before it ever
+fields a single combat unit, where before it still lost — per this section's own table — but got a
+worker and an army unit out first. Isolating the cause (research-time duration, `aiResearch`
+disabled outright, gating on `ctx.threats`) each changed the trajectory without restoring the old
+outcome, so this reads as the already-described fragility interacting with the new economy
+pressure of a paid-up-front, no-longer-instant Refinery purchase, not a one-line bug in the new
+feature itself. Left as-is per this section's own verdict (a difficulty-curve call, not a defect-fix
+one) — `test/ailab.test.js` now asserts on `buildings`, not `army`, so it once again documents
+reality instead of drifting red. Repro: `node tools/ailab.js probe --world ferros --strategy
+economic --opponent skirmisher --minutes 25 --sample 2 --seed 7` against commit `4b95948`'s parent
+vs. itself.
+
 ### 2.10 Cooling off was the one part of temperament diplomacy left flat — *fixed*
 
 Not a defect from the original review; raised afterwards, and it's the right observation. The

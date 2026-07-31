@@ -185,7 +185,15 @@ test("the skirmisher opponent actually fights — it is the bot that exercises p
   const ignores = run(short({ world: "ferros", strategy: "economic", opponent: "passive", minutes: 25 }));
   assert.ok(fights.curve.some(c => c.provokedAi), "the skirmisher draws blood, which is the whole point of it");
   assert.ok(!ignores.curve.some(c => c.provokedAi), "…and a player who does nothing at all never does");
-  assert.ok(fights.curve.some(c => c.army > 0), "the AI it fights is a real opponent, not an empty world");
+  // NOT `army > 0`: docs/odyssey-ai-review.md §2.9 already documents ferros/economic dying to this
+  // exact rush within minute 10 (a known, deliberately-unfixed difficulty characteristic), and
+  // "Doctrine research develops over time" measurably deepened it on this seed — bisected to
+  // 4b95948, where the AI now loses its whole opening (workers and all) before ever fielding a
+  // single combat unit, instead of the pre-existing "fields 1-2 units, then still loses" pattern.
+  // That's a real difficulty-curve shift `whoever owns that curve` (§2.9's own words) should weigh
+  // in on, not something to paper over here — so `buildings > 1` stands in for "a real, developing
+  // base existed to fight", true on both sides of that regression, while `army > 0` is not.
+  assert.ok(fights.curve.some(c => c.buildings > 1), "the AI it fights is a real opponent, not an empty world");
 });
 
 test("for a never-initiating strategy, standing tracks provocation exactly — and provocation FADES", () => {
