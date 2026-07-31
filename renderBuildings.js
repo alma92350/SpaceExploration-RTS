@@ -13,7 +13,7 @@ import { COM, RECIPES } from "./data.js";
 import { BUILDINGS, storeCapOf, storeTotal } from "./engine/entities.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
-import { POWER_TIERS, powerThrottle, buildingConcern } from "./engine/industry.js";
+import { POWER_TIERS, powerThrottle, buildingConcern, recipeOf } from "./engine/industry.js";
 import { hashStr } from "./engine/rng.js";
 import { DETAIL, facing, shade, hexA, polygonPoints, pathPoints, inView, drawHealthBar } from "./renderShared.js";
 import { drawEnemyPip } from "./renderUnits.js";
@@ -36,7 +36,10 @@ export function drawBuildingShape(ctx, state, b, color) {
   else if (b.type === "habitat") drawHabitat(ctx, state, b, color);
   else if (b.type === "market") drawMarket(ctx, b, color);
   else if (b.type === "spaceport") drawSpaceport(ctx, b, color);
-  else if (factoryGlyph(b.type)) drawFactory(ctx, state, b, color);   // Odyssey factories + reactor/datacenter/etc: stamp a function glyph
+  else if (b.type === "reactor") drawReactor(ctx, b, color);
+  else if (b.type === "combustor") drawCombustor(ctx, b, color);
+  else if (b.type === "biomassreactor") drawBiomassReactor(ctx, b, color);
+  else if (factoryGlyph(b.type)) drawFactory(ctx, state, b, color);   // Odyssey factories + datacenter/stardock/etc: stamp a function glyph
   else drawGenericBuilding(ctx, b, color);   // any future building still gets a silhouette, never an invisible blank
 }
 
@@ -509,6 +512,122 @@ function drawArsenal(ctx, b, color) {
   ctx.fillStyle = DETAIL; ctx.fill();
 }
 
+// Reactor — the grid's primary power source: a tapered cooling-tower hull (a pulled-in waist,
+// echoing the real thing) on a squat foundation, with a lit core glowing at its base. It's the
+// GRID itself, not a recipe factory, so it earns its own bespoke hull here — same art tier as the
+// Foundry/Arsenal above — instead of sharing the glyph-disc hex every recipe factory uses below
+// (drawFactory). `lit` mirrors hudSelection.js's own "is it actually fed" read (`!paused &&
+// powered`, set by engine/industry.js updateCombustors from the Reactor's own fuel larder): bright
+// gold while burning fuel, the same dim fixture color electrifiedLight uses for "currently unlit"
+// while dry or paused — so a dead grid reads off the hull, not just the corner concern badge.
+function drawReactor(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y;
+
+  ctx.fillStyle = shade(color, -25);                            // foundation slab
+  ctx.fillRect(cx - r * 0.9, cy + r * 0.55, r * 1.8, r * 0.35);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2;
+  ctx.strokeRect(cx - r * 0.9, cy + r * 0.55, r * 1.8, r * 0.35);
+
+  const top = cy - r * 1.15, bot = cy + r * 0.6;                // hourglass tower: wide rim/base, pulled-in waist
+  pathPoints(ctx, [
+    [cx - r * 0.8, bot], [cx - r * 0.32, cy - r * 0.05], [cx - r * 0.55, top],
+    [cx + r * 0.55, top], [cx + r * 0.32, cy - r * 0.05], [cx + r * 0.8, bot],
+  ]);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2; ctx.stroke();
+
+  ctx.strokeStyle = shade(color, 18); ctx.lineWidth = 1;        // waist highlight so the taper reads round, not folded
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 0.28, cy - r * 0.5);
+  ctx.lineTo(cx - r * 0.28, cy + r * 0.3);
+  ctx.stroke();
+
+  const lit = !b.paused && b.powered;
+  ctx.beginPath();                                              // the lit core
+  ctx.arc(cx, cy + r * 0.2, r * 0.3, 0, Math.PI * 2);
+  ctx.fillStyle = lit ? "#ffd166" : "#3a2f14";
+  ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+// Combustion Generator — the cheap fuel-burning alternative to the Reactor: a squat housing and a
+// fuel tank under a single stack tipped with a flame. The flare is lit only while its own larder is
+// actually feeding it (same `lit` read as the Reactor's core above); it goes to cold embers on an
+// empty larder or a paused generator, so a dead backup grid reads off the hull too.
+function drawCombustor(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y, w = r * 1.6, h = r * 0.85;
+
+  ctx.fillStyle = color;                                        // housing
+  ctx.fillRect(cx - w / 2, cy + h * 0.1, w, h * 0.6);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2;
+  ctx.strokeRect(cx - w / 2, cy + h * 0.1, w, h * 0.6);
+
+  ctx.fillStyle = shade(color, -30);                            // a fuel tank beside the stack
+  ctx.beginPath();
+  ctx.arc(cx - w * 0.26, cy + h * 0.28, r * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5; ctx.stroke();
+
+  const stackX = cx + w * 0.18, stackW = w * 0.28, stackTop = cy - r * 1.05;
+  ctx.fillStyle = shade(color, -20);                            // the stack itself
+  ctx.fillRect(stackX - stackW / 2, stackTop, stackW, cy + h * 0.1 - stackTop);
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5;
+  ctx.strokeRect(stackX - stackW / 2, stackTop, stackW, cy + h * 0.1 - stackTop);
+
+  const lit = !b.paused && b.powered;
+  pathPoints(ctx, [                                             // the flare — a teardrop lit only while actually burning fuel
+    [stackX, stackTop - r * 0.55], [stackX + stackW * 0.6, stackTop - r * 0.05],
+    [stackX, stackTop + r * 0.15], [stackX - stackW * 0.6, stackTop - r * 0.05],
+  ]);
+  ctx.fillStyle = lit ? "#ff8c42" : "#3a2412";
+  ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1; ctx.stroke();
+  if (lit) {
+    ctx.beginPath();                                            // a hot inner core to the flame
+    ctx.arc(stackX, stackTop - r * 0.15, stackW * 0.22, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd166"; ctx.fill();
+  }
+}
+
+// Biomass Reactor — the Combustion Generator's biomass-burning sibling: a rounded vat instead of a
+// hard-edged tank, glowing green while its larder is actually feeding it (same `lit` read as its
+// two siblings above), dull and murky when dry or paused. Organic where the Reactor and Combustion
+// Generator read mechanical, so the three power buildings stay distinguishable from EACH OTHER
+// too, not just from the recipe factories they no longer share a silhouette with.
+function drawBiomassReactor(ctx, b, color) {
+  const r = b.radius, cx = b.x, cy = b.y;
+
+  ctx.fillStyle = shade(color, -22);                            // collar foundation
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + r * 0.58, r * 0.85, r * 0.26, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 1.5; ctx.stroke();
+
+  ctx.beginPath();                                              // the vat body — a rounded-top tank, not a hard box
+  ctx.moveTo(cx - r * 0.72, cy + r * 0.5);
+  ctx.lineTo(cx - r * 0.62, cy - r * 0.6);
+  ctx.quadraticCurveTo(cx, cy - r * 1.05, cx + r * 0.62, cy - r * 0.6);
+  ctx.lineTo(cx + r * 0.72, cy + r * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = "#05070f"; ctx.lineWidth = 2; ctx.stroke();
+
+  const lit = !b.paused && b.powered;
+  ctx.beginPath();                                              // the biomass glow, filling most of the vat
+  ctx.ellipse(cx, cy - r * 0.05, r * 0.4, r * 0.5, 0, 0, Math.PI * 2);
+  ctx.fillStyle = lit ? "#7ed957" : "#233a1c";
+  ctx.fill();
+
+  ctx.strokeStyle = lit ? "#c8f7a8" : shade(color, -12);        // rising bubbles, brighter while actually fed
+  ctx.lineWidth = 1.2;
+  for (const dx of [-r * 0.14, r * 0.16]) {
+    ctx.beginPath();
+    ctx.moveTo(cx + dx, cy + r * 0.28);
+    ctx.lineTo(cx + dx, cy - r * 0.32);
+    ctx.stroke();
+  }
+}
+
 // A last-resort silhouette for any building type without a bespoke draw — a
 // hexagonal hull with a lit core. Nothing on the current roster falls through
 // to it (every type above is handled), but it guarantees the "every entity has
@@ -519,21 +638,61 @@ const RECIPE_OUT = Object.fromEntries(RECIPES.map(r => [r.id, r.out]));
 
 // A distinguishing glyph for buildings that otherwise share the plain hex silhouette. A
 // recipe-running factory shows the commodity it OUTPUTS; a handful of non-recipe industrial
-// buildings get an explicit emoji for what they DO — the Reactor grants Power (⚡), the Datacenter
-// runs research (🔬), the Stardock is a capital-ship yard (🛰️), the Antimatter Gate is the wonder
-// (🌀), the Substation relays the grid (🔌, engine/entities.js `powerRelay`).
-const BUILDING_GLYPH = { reactor: "⚡", combustor: "🔥", biomassreactor: "🌿", datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️", substation: "🔌" };
+// buildings get an explicit emoji for what they DO — the Datacenter runs research (🔬), the
+// Stardock is a capital-ship yard (🛰️), the Antimatter Gate is the wonder (🌀), the Plasma Rig digs
+// (⛏️), the Substation relays the grid (🔌, engine/entities.js `powerRelay`). The Reactor /
+// Combustion Generator / Biomass Reactor are the grid itself, not a recipe factory sharing this
+// hex — they get their own bespoke hulls (drawReactor/drawCombustor/drawBiomassReactor above),
+// dispatched in drawBuildingShape before this glyph fallback ever sees them.
+const BUILDING_GLYPH = { datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️", substation: "🔌" };
 function factoryGlyph(type) {
   const def = BUILDINGS[type];
   if (def && def.recipe && RECIPE_OUT[def.recipe]) return COM[RECIPE_OUT[def.recipe]]?.ico || null;
   return BUILDING_GLYPH[type] || null;
 }
 
-// Every recipe-running factory (Smelter, Assembly Plant, Chip Fab, …) and the non-recipe industrial
-// buildings above otherwise share the plain hex silhouette below — indistinguishable on the map and
-// in the build menu. Stamp the building's glyph (its product's emoji, or the explicit icon) on a
-// dark disc so each reads at a glance as what it does. Keyed on the building TYPE, so the HUD button
-// icon (spriteIcon renders this same shape) gets the glyph too.
+// True for a genuinely productive recipe factory THIS frame: completed (not still going up or
+// coming down), not paused, and buildingConcern (engine/industry.js — the exact same read
+// drawConcernBadge uses for the corner badge) comes back clean — no stall, no starvation, no
+// power throttle to flag. Checked independently of buildingConcern's OWN null cases rather than
+// trusting a bare `=== null`: buildingConcern also reads null while constructing/recycling
+// (nothing to flag yet — not the same as "running") and for any building without a recipe/rig at
+// all (nothing to concern-check — also not "running"), so both are excluded here explicitly.
+// Guards a missing `state.players` too: render.js's spriteIcon draws every building type —
+// including every recipe factory — through a stub state with no players/time/owner at all
+// (render.js:76), and buildingConcern reaches into state.players[owner] unconditionally once past
+// this function's own recipe check.
+function isRunningFactory(state, b) {
+  if (b.constructing || b.recycling || b.paused) return false;
+  if (!b.owner || !state.players) return false;
+  if (!recipeOf(b)) return false;   // scoped to recipe-running factories — not the Rig, not a wonder, not a relay
+  return buildingConcern(state, b) === null;
+}
+
+// A subtle "this factory is actually working" glow behind its glyph disc — the positive
+// counterpart to drawConcernBadge's silence-when-fine: a badge only ever appears when something's
+// WRONG, so a healthy producer used to look identical to an idle one. Only ever called for a
+// genuinely running recipe factory (isRunningFactory above). Phased by hashStr(b.id) so a base full
+// of factories doesn't breathe in lockstep, and driven by state.time, never a wall-clock — the same
+// deterministic-presentation idiom electrifiedLight uses just above.
+function drawWorkPulse(ctx, state, b, r) {
+  const t = state.time * 1.4 + (hashStr(b.id) % 100) * 0.15;
+  const glow = 0.5 + Math.sin(t) * 0.5;   // 0..1, slow breathing cycle
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, r * 0.6 + 1.5 + glow * 1.5, 0, Math.PI * 2);
+  ctx.strokeStyle = hexA("#8fd3ff", 0.25 + glow * 0.35);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// Every recipe-running factory (Smelter, Assembly Plant, Chip Fab, …) and the remaining non-recipe
+// industrial buildings (Datacenter, Star Dock, Antimatter Gate, Plasma Rig, Substation) otherwise
+// share the plain hex silhouette below — indistinguishable on the map and in the build menu. Stamp
+// the building's glyph (its product's emoji, or the explicit icon) on a dark disc so each reads at
+// a glance as what it does. Keyed on the building TYPE, so the HUD button icon (spriteIcon renders
+// this same shape) gets the glyph too. A RECIPE factory that's actually running right now gets a
+// slow work-pulse glow behind its disc as well (isRunningFactory/drawWorkPulse above) — the
+// positive read a silent concern badge alone can't give you.
 function drawFactory(ctx, state, b, color) {
   drawGenericBuilding(ctx, b, color);
   // Electrified (Odyssey): only the Star Dock among everything sharing this silhouette is
@@ -544,6 +703,7 @@ function drawFactory(ctx, state, b, color) {
   const ico = factoryGlyph(b.type);
   if (!ico) return;
   const r = b.radius;
+  if (isRunningFactory(state, b)) drawWorkPulse(ctx, state, b, r);
   ctx.beginPath();
   ctx.arc(b.x, b.y, r * 0.6, 0, Math.PI * 2);
   ctx.fillStyle = "rgba(5,7,15,0.74)"; ctx.fill();
