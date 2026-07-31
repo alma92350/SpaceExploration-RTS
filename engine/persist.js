@@ -203,6 +203,15 @@ function cleanEntity(e, def, map) {
   // mis-drawing (never crashing) the sprite. Coerce it to a finite number, or drop the field
   // entirely so the unit just falls back to its normal movement-inferred facing.
   if (e.facing !== undefined) { const f = num(e.facing, NaN); if (Number.isFinite(f)) e.facing = f; else delete e.facing; }
+  // A unit's `lastHitAt` (the state.time it last took damage — engine/combat.js performAttack/
+  // applySplash, read by the Bulwark doctrine's out-of-combat regen, engine/repair.js
+  // updateBulwarkRegen) is untrusted too: a non-numeric/non-finite value would flow straight into
+  // `state.time - unit.lastHitAt` there as NaN, which always compares false — so a bad value
+  // would just silently disable that unit's regen forever rather than crash, but drop it entirely
+  // so it reads as "never hit" instead (the same graceful-default treatment fuseUntil/facing get
+  // above, not a value worth preserving). A real saved value is already a finite number, so this
+  // is the identity for valid data.
+  if (e.lastHitAt !== undefined) { const t = num(e.lastHitAt, NaN); if (Number.isFinite(t)) e.lastHitAt = t; else delete e.lastHitAt; }
   // A producer's output buffer (building.store) and a factory's input buffer (building.input) are
   // untrusted save data — a hand-edited file could smuggle in a bogus commodity, a negative/NaN qty,
   // or an over-capacity buffer. Keep only real commodities with a positive qty, clamped to capacity —

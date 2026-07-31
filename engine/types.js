@@ -116,6 +116,7 @@
  * @property {Cargo|null} cargo
  * @property {number} attackTimer
  * @property {string|null} autoTarget
+ * @property {number} [lastHitAt]     state.time this unit last took damage (engine/combat.js performAttack/applySplash) — read by the Bulwark doctrine's out-of-combat regen (engine/repair.js updateBulwarkRegen, gated on upgrades.reinforcedBulwark/selfSealingPlating); absent reads as "never hit" (repair.js falls back to 0)
  * @property {number} [_gi]           transient broad-phase index, re-stamped each tick (grid.js)
  * @property {string|null} [focusId]  AI focus-fire target (ai.js / combat.js)
  * @property {boolean} [hold]         hold-stance flag (combat.js)

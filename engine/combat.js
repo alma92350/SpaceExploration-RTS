@@ -65,10 +65,22 @@ export function updateCombat(state, unit, dt) {
         // Hold stance: stand fast rather than chasing an out-of-range target —
         // fire only once something comes to us (a player-set defensive stance;
         // the AI never sets it, so this can't touch the resolve guarantee).
-        if (!unit.hold) stepToward(state, unit, target.x, target.y, def.speed, dt);
+        // Overcharged Core's chaseSpeedMult (Assault Tier 2, entities.js UPGRADES) closes
+        // distance ~10% faster specifically HERE — an already-acquired target being run down —
+        // never on the plain 'move' order above (that branch reads def.speed directly, untouched).
+        // "Combat drive": the tactical verb that makes Assault's Tier-2 more than a second flat
+        // damage multiplier.
+        const chaseSpeed = def.speed * upgradeMult(state.players[unit.owner]?.upgrades, "chaseSpeedMult");
+        if (!unit.hold) stepToward(state, unit, target.x, target.y, chaseSpeed, dt);
       } else if (unit.attackTimer <= 0) {
         const died = performAttack(state, unit, def, target);
-        unit.attackTimer = def.cooldown;
+        // Overdrive Actuators (Assault Tier 3, entities.js UPGRADES) shortens every cooldown
+        // reset after a landed shot via attackCooldownMult — see updateWorkerCombat below for the
+        // other reset site (a worker's explicit attack order). Deliberately NOT applied in
+        // updateBuildingCombat's own reset, further down: this is the ARMY's tempo upgrade
+        // (mobile units only), not a base-defense buff — Bulwark, not Assault, is the doctrine
+        // that already reaches structures too (reinforcedPlating's own comment, entities.js).
+        unit.attackTimer = def.cooldown * upgradeMult(state.players[unit.owner]?.upgrades, "attackCooldownMult");
         if (died && unit.order && unit.order.targetId === target.id) unit.order = null;
       } else if (state.ai?.micro && unit.owner === "ai" && def.range >= KITE_MIN_RANGE) {
         maybeKite(state, unit, def, dt);   // in range but reloading — a Tactical ranged unit stutter-steps back
@@ -157,6 +169,12 @@ function performAttack(state, attacker, def, target) {
   if (detonateIfAttacked(state, target)) return true;
   const dmg = attackDamage(state, attacker, def, target);
   target.hp -= dmg;
+  // Bulwark's out-of-combat regen (engine/repair.js updateBulwarkRegen) reads this to tell
+  // whether a unit is still "in a fight" — stamped wherever damage actually lands, unit or
+  // building alike, so a target under continuous fire can never coast into regen between two
+  // hits that land less than the doctrine's own delay apart. See applySplash below for the same
+  // stamp on splash damage.
+  target.lastHitAt = state.time;
   state.events.push({
     type: "attackHit", x: target.x, y: target.y,
     fromX: attacker.x, fromY: attacker.y, unitType: attacker.type, owner: attacker.owner,
@@ -209,6 +227,7 @@ function applySplash(state, attacker, target, dmg, splash) {
     const d = Math.hypot(e.x - target.x, e.y - target.y);
     if (d > splash.radius) continue;   // queryNeighbors is a padded superset — the exact-distance check is still ours to make
     e.hp -= dmg * splash.frac * (1 - d / splash.radius);
+    e.lastHitAt = state.time;   // splash counts as a landed hit too — see performAttack's own stamp above
     hit.push(e);
   }
   for (const e of hit) {
@@ -233,10 +252,15 @@ export function updateWorkerCombat(state, unit, def, dt) {
   const target = getEntity(state, targetId);
   const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
   if (dist > def.range) {
+    // No chaseSpeedMult here — Overcharged Core's "combat drive" is scoped to updateCombat's own
+    // chase branch above (an army unit running down an acquired target), not a worker closing on
+    // its explicit attack order; the proposal's own "Where" section names updateCombat only.
     stepToward(state, unit, target.x, target.y, def.speed, dt);
   } else if (unit.attackTimer <= 0) {
     const died = performAttack(state, unit, def, target);
-    unit.attackTimer = def.cooldown;
+    // Overdrive Actuators (Assault Tier 3) applies here too — see updateCombat's own reset site
+    // above for the shared attackCooldownMult comment.
+    unit.attackTimer = def.cooldown * upgradeMult(state.players[unit.owner]?.upgrades, "attackCooldownMult");
     if (died) unit.order = null;
   }
 }

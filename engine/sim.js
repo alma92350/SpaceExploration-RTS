@@ -11,7 +11,7 @@ import { buildUnitGrid } from "./grid.js";
 import { updateGather } from "./gather.js";
 import { updateHaul, assignHaul, updateService, assignService, updateFerry, assignFerry, assignShuttle, updateFreighterShuttle, countLogistics, payAIUpkeep, FREIGHTER_AI_TECH } from "./haul.js";
 import { updateScoutMode } from "./scout.js";
-import { updateRepair, pickRepairTarget, assignRepair, updateRepairJob, countRepairJobs, HEALED } from "./repair.js";
+import { updateRepair, updateBulwarkRegen, pickRepairTarget, assignRepair, updateRepairJob, countRepairJobs, HEALED } from "./repair.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "./combat.js";
 import { updateBombFuse, updateCraters } from "./bomb.js";
 import { updateWreckage } from "./wreckage.js";
@@ -84,6 +84,11 @@ export function tick(state, dt) {
   // Healing runs last, once every combatant and building has taken its damage
   // for the tick, so a Mender patches the freshest wounds (see repair.js).
   updateRepair(state, dt);
+  // Bulwark doctrine regen (engine/repair.js) — same "after this tick's combat" timing as the
+  // Mender pass above, so a unit hit THIS tick (lastHitAt just stamped to the still-current
+  // state.time, below) never regens on that same tick. A no-op for any player without the
+  // doctrine researched, so games without it stay byte-identical.
+  updateBulwarkRegen(state, dt);
 
   // Scenario mode settles its own win/lose inside updateScenario; Odyssey
   // (endless) only ends on losing the player's Command Center; a normal match

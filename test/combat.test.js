@@ -529,6 +529,130 @@ test("the two Assault tiers stack multiplicatively on damage dealt", () => {
   assert.ok(Math.abs((startHp - b.hp) - UNITS.skiff.attack * mult) < 1e-9, "both tiers multiply the base damage");
 });
 
+// ---- Doctrine depth redesign (docs/improvement-proposals.md, merged): Assault's Tier-2 grants a
+// chase-speed verb and its Tier-3 capstone (Overdrive Actuators) grants attack tempo — two
+// mechanically distinct identities, unlike Bulwark's regen (see test/repair.test.js for that
+// reconciliation). lastHitAt stamping (read by Bulwark's regen pass) is also pinned here since
+// it's stamped from this file's performAttack/applySplash.
+
+test("Overcharged Core (Assault Tier 2) grants chaseSpeedMult: a unit chasing an acquired-but-out-of-range target closes distance faster", () => {
+  const dt = 0.05;
+  function chaseStep(withUpgrade) {
+    const state = createGameState({ planetId: "ferros" });
+    const chaser = makeUnit("skiff", "player", 500, 500);
+    const target = makeUnit("skiff", "ai", 580, 500);   // 80 away: beyond range (40), inside aggro (120)
+    state.units.set(chaser.id, chaser);
+    state.units.set(target.id, target);
+    chaser.autoTarget = target.id;   // already acquired — isolate the chase branch from acquisition
+    if (withUpgrade) state.players.player.upgrades.overchargedCore = true;
+    updateCombat(state, chaser, dt);
+    return chaser.x - 500;
+  }
+
+  const plain = chaseStep(false);
+  const boosted = chaseStep(true);
+  assert.ok(plain > 0, "sanity: the unit actually closed distance this tick");
+  const { chaseSpeedMult } = UPGRADES.overchargedCore;
+  assert.ok(Math.abs(boosted - plain * chaseSpeedMult) < 1e-9,
+    `expected the chase step scaled by chaseSpeedMult (${chaseSpeedMult}), got ${boosted} vs plain ${plain}`);
+});
+
+test("chaseSpeedMult only speeds up the chase branch, not a plain move order", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const unit = makeUnit("skiff", "player", 500, 500);
+  state.units.set(unit.id, unit);
+  state.players.player.upgrades.overchargedCore = true;
+  unit.order = { type: "move", x: 600, y: 500 };
+
+  updateCombat(state, unit, 0.05);
+
+  assert.ok(Math.abs((unit.x - 500) - UNITS.skiff.speed * 0.05) < 1e-9,
+    "a plain move order travels at the unit's ordinary speed — chaseSpeedMult never applies here");
+});
+
+test("Overdrive Actuators (Assault Tier 3) shortens the attack cooldown reset — the main unit attack path", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  a.attackTimer = 0;
+  state.players.player.upgrades.overdriveActuators = true;
+
+  updateCombat(state, a, 0);
+
+  const { attackCooldownMult } = UPGRADES.overdriveActuators;
+  assert.ok(Math.abs(a.attackTimer - UNITS.skiff.cooldown * attackCooldownMult) < 1e-9,
+    "the reset cooldown is multiplied by attackCooldownMult");
+});
+
+test("without Overdrive Actuators, the attack cooldown resets to the unit's plain cooldown", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  a.attackTimer = 0;
+
+  updateCombat(state, a, 0);
+
+  assert.equal(a.attackTimer, UNITS.skiff.cooldown, "no capstone researched -> unmultiplied cooldown");
+});
+
+test("Overdrive Actuators also shortens the attack cooldown reset for a worker's explicit attack order", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const worker = makeUnit("worker", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 505, 500);   // 5 away, inside the worker's 15 range
+  state.units.set(worker.id, worker);
+  state.units.set(target.id, target);
+  worker.order = { type: "attack", targetId: target.id };
+  worker.attackTimer = 0;
+  state.players.player.upgrades.overdriveActuators = true;
+
+  updateWorkerCombat(state, worker, UNITS.worker, 0);
+
+  const { attackCooldownMult } = UPGRADES.overdriveActuators;
+  assert.ok(Math.abs(worker.attackTimer - UNITS.worker.cooldown * attackCooldownMult) < 1e-9);
+});
+
+test("Overdrive Actuators does not speed up static defense — a turret's cooldown is untouched (army tempo, not base defense)", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "ai", 500, 500);
+  const turret = makeBuilding("turret", "player", 510, 500);
+  state.units.set(attacker.id, attacker);
+  state.buildings.set(turret.id, turret);
+  state.players.player.upgrades.overdriveActuators = true;   // the turret owner's research
+  turret.attackTimer = 0;
+
+  updateBuildingCombat(state, turret, 0);
+
+  assert.equal(turret.attackTimer, BUILDINGS.turret.cooldown,
+    "the Assault capstone is scoped to mobile army units — a turret's fire rate is unaffected");
+});
+
+test("a landed hit stamps the target's lastHitAt to the current state.time", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  state.time = 123.5;
+  assert.equal(b.lastHitAt, undefined, "sanity: never hit yet");
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.equal(b.lastHitAt, 123.5, "the moment damage lands, the target's lastHitAt is stamped to state.time");
+});
+
+test("splash damage also stamps lastHitAt on the units it catches, not just the primary target", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.time = 77;
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const primary = makeUnit("skiff", "ai", 600, 500);     // within Colossus range (185)
+  const bystander = makeUnit("skiff", "ai", 610, 500);   // 10 away from primary — inside splash radius (26)
+  state.units.set(colossus.id, colossus);
+  state.units.set(primary.id, primary);
+  state.units.set(bystander.id, bystander);
+  colossus.attackTimer = 0;
+  colossus.autoTarget = primary.id;   // isolate splash from acquisition
+
+  updateCombat(state, colossus, 0);
+
+  assert.equal(primary.lastHitAt, 77, "the primary target is stamped");
+  assert.equal(bystander.lastHitAt, 77, "a bystander caught in the splash radius is stamped too");
+});
+
 test("a player's own upgrades don't affect damage against their own side", () => {
   const state = createGameState({ planetId: "ferros" });
   const [a, b] = faceOff(state);

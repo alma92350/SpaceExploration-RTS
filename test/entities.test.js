@@ -21,16 +21,22 @@ test("the Tier-2 units are gated behind the Foundry; the Foundry behind the Barr
   assert.deepEqual(Object.keys(BUILDINGS.foundry.cost), ["ore"], "Foundry is ore-only so Tier-2 stays reachable everywhere");
 });
 
-test("upgrades form three mutually-exclusive doctrines — two tiers each, except Logistics' third (Field Recycling)", () => {
+test("upgrades form three mutually-exclusive doctrines, all three tiers deep now (docs/improvement-proposals.md doctrine-depth redesign: Assault/Bulwark capstones match Logistics' existing Field Recycling depth)", () => {
   assert.equal(UPGRADES.overchargedWeapons.doctrine, "assault");
   assert.equal(UPGRADES.overchargedCore.doctrine, "assault");
+  assert.equal(UPGRADES.overdriveActuators.doctrine, "assault");
   assert.equal(UPGRADES.reinforcedPlating.doctrine, "bulwark");
   assert.equal(UPGRADES.reinforcedBulwark.doctrine, "bulwark");
+  assert.equal(UPGRADES.selfSealingPlating.doctrine, "bulwark");
   assert.equal(UPGRADES.logisticsNetwork.doctrine, "logistics");
   assert.equal(UPGRADES.rapidFabrication.doctrine, "logistics");
   assert.equal(UPGRADES.recycling.doctrine, "logistics");
   assert.equal(UPGRADES.overchargedWeapons.tier, 1);
   assert.equal(UPGRADES.overchargedCore.tier, 2);
+  assert.equal(UPGRADES.overdriveActuators.tier, 3);
+  assert.equal(UPGRADES.reinforcedPlating.tier, 1);
+  assert.equal(UPGRADES.reinforcedBulwark.tier, 2);
+  assert.equal(UPGRADES.selfSealingPlating.tier, 3);
   assert.equal(UPGRADES.logisticsNetwork.tier, 1);
   assert.equal(UPGRADES.rapidFabrication.tier, 2);
   assert.equal(UPGRADES.recycling.tier, 3);
@@ -38,17 +44,73 @@ test("upgrades form three mutually-exclusive doctrines — two tiers each, excep
   assert.deepEqual(UPGRADES.reinforcedBulwark.requires, ["reinforcedPlating"]);
   assert.deepEqual(UPGRADES.rapidFabrication.requires, ["logisticsNetwork"]);
   assert.deepEqual(UPGRADES.recycling.requires, ["rapidFabrication"], "T3 requires T2");
-  // Assault and Bulwark are exactly two tiers; Logistics runs a third (Field Recycling) — and
-  // every tier-2-or-later requires the tier right below it. Filtered to doctrine-bearing
-  // entries only — a difficulty-only entry like hardEdge (Hard's seeded economic edge,
-  // engine/aiDifficulty.js) has no doctrine on purpose (see committedDoctrine) and isn't
-  // part of this grouping.
+  // The two new capstones are Arsenal-gated ON TOP of their own doctrine's Tier-2 — a mixed
+  // building+upgrade requires token, the exact same machinery prereqsMet already resolves for
+  // units/buildings (see the dedicated prereqsMet test below).
+  assert.deepEqual(UPGRADES.overdriveActuators.requires, ["overchargedCore", "arsenal"]);
+  assert.deepEqual(UPGRADES.selfSealingPlating.requires, ["reinforcedBulwark", "arsenal"]);
+
+  // All three doctrines now run exactly three tiers deep — the doctrine-depth redesign brings
+  // Assault and Bulwark up to Logistics' existing depth instead of stopping at "the same number
+  // again". Filtered to doctrine-bearing entries only — a difficulty-only entry like hardEdge
+  // (Hard's seeded economic edge, engine/aiDifficulty.js) has no doctrine on purpose (see
+  // committedDoctrine) and isn't part of this grouping.
   const byDoctrine = {};
   for (const u of Object.values(UPGRADES).filter(u => u.doctrine)) (byDoctrine[u.doctrine] ??= []).push(u);
   assert.deepEqual(Object.keys(byDoctrine).sort(), ["assault", "bulwark", "logistics"]);
-  assert.equal(byDoctrine.assault.length, 2);
-  assert.equal(byDoctrine.bulwark.length, 2);
+  assert.equal(byDoctrine.assault.length, 3);
+  assert.equal(byDoctrine.bulwark.length, 3);
   assert.equal(byDoctrine.logistics.length, 3);
+});
+
+// docs/improvement-proposals.md "Give the doctrine Tier-2s a verb" (lines 217-225): each combat
+// Tier-2 keeps its damage-mult multiplier but ALSO grants a tactical verb the flat stack alone
+// never gave. Assault's is unambiguous — chase speed at T2, attack tempo at T3 — no reconciliation
+// needed (unlike Bulwark's regen, tested separately below).
+test("Assault's Tier-2 verb (chase speed) and Tier-3 capstone (attack tempo) are mechanically distinct fields, not a restatement", () => {
+  assert.equal(UPGRADES.overchargedCore.chaseSpeedMult, 1.1, "T2: closes distance on an acquired target ~10% faster");
+  assert.equal(UPGRADES.overdriveActuators.attackCooldownMult, 0.9, "T3: a different identity — 10% faster attack tempo once engaged");
+  assert.equal(UPGRADES.overdriveActuators.chaseSpeedMult, undefined, "the capstone doesn't also re-grant T2's verb");
+  assert.equal(UPGRADES.overchargedCore.attackCooldownMult, undefined, "...nor does T2 preempt T3's");
+});
+
+// THE RECONCILIATION: proposal 1's Bulwark Tier-2 ("Give the doctrine Tier-2s a verb") and
+// proposal 2's Bulwark Tier-3 capstone ("Tier-3 doctrine capstones") both independently described
+// "out-of-combat hp regen" as Bulwark's identity. This is ONE mechanic, not two — the capstone
+// deepens Tier-2's numbers (faster rate, shorter delay) rather than restating them. See
+// test/repair.test.js for the actual in-game behavioral proof (both tiers differ measurably).
+test("Bulwark's Tier-2 grant and Tier-3 capstone are ONE regen mechanic, not two separately-tracked fields", () => {
+  assert.equal(UPGRADES.reinforcedBulwark.regenRate, 0.5);
+  assert.equal(UPGRADES.reinforcedBulwark.regenDelay, 8);
+  assert.ok(UPGRADES.selfSealingPlating.regenRate > UPGRADES.reinforcedBulwark.regenRate,
+    "the capstone heals strictly faster once it kicks in — a genuine deepening");
+  assert.ok(UPGRADES.selfSealingPlating.regenDelay < UPGRADES.reinforcedBulwark.regenDelay,
+    "...and kicks in strictly sooner after the last hit");
+  // Exactly one {regenRate, regenDelay} pair per upgrade — no duplicate/legacy field name left
+  // over from treating the two proposals' overlapping ask as two independent systems.
+  assert.equal(Object.keys(UPGRADES.reinforcedBulwark).filter(k => /regen/i.test(k)).length, 2);
+  assert.equal(Object.keys(UPGRADES.selfSealingPlating).filter(k => /regen/i.test(k)).length, 2);
+});
+
+test("prereqsMet: the doctrine capstones need BOTH their own doctrine's Tier-2 upgrade AND a completed Arsenal", () => {
+  const neither = stubState([], {});
+  assert.equal(prereqsMet(neither, "player", UPGRADES.overdriveActuators), false, "neither T2 nor Arsenal -> locked");
+
+  const onlyT2 = stubState([], { overchargedCore: true });
+  assert.equal(prereqsMet(onlyT2, "player", UPGRADES.overdriveActuators), false, "T2 alone, no Arsenal -> still locked");
+
+  const onlyArsenal = stubState([{ owner: "player", type: "arsenal", constructing: false }], {});
+  assert.equal(prereqsMet(onlyArsenal, "player", UPGRADES.overdriveActuators), false, "Arsenal alone, no T2 -> still locked");
+
+  const both = stubState([{ owner: "player", type: "arsenal", constructing: false }], { overchargedCore: true });
+  assert.equal(prereqsMet(both, "player", UPGRADES.overdriveActuators), true, "both prereqs met -> unlocked");
+
+  assert.equal(prereqsMet(
+    stubState([{ owner: "player", type: "arsenal", constructing: false }], { reinforcedBulwark: true }),
+    "player", UPGRADES.selfSealingPlating), true, "the Bulwark capstone resolves the same mixed-token way");
+  assert.equal(prereqsMet(
+    stubState([{ owner: "player", type: "arsenal", constructing: true }], { reinforcedBulwark: true }),
+    "player", UPGRADES.selfSealingPlating), false, "a still-constructing Arsenal doesn't unlock it either");
 });
 
 test("the Logistics doctrine is a macro path, not a combat one: economy + tempo, no damage mults", () => {

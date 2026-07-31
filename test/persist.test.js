@@ -125,6 +125,40 @@ test("winReason round-trips through save/load once a match actually ends", () =>
 // already serializes (serPlanet's `...u` rest-spread keeps whatever an order object carries —
 // see engine/persist.js), so this needs no dedicated persist.js code and no SAVE_VERSION bump,
 // per CONTRIBUTING's additive-field rule — this test is the empirical proof of that claim.
+// Doctrine depth redesign (docs/improvement-proposals.md, merged): unit.lastHitAt (engine/
+// combat.js performAttack/applySplash) is the gate Bulwark's out-of-combat regen (engine/repair.js
+// updateBulwarkRegen) reads. Additive numeric state — CONTRIBUTING.md says this shouldn't need a
+// SAVE_VERSION bump, verified empirically (not assumed) with a real round trip, plus the
+// corruption-hardening half every other untrusted numeric field (facing, fuseUntil, lastLanding)
+// already gets in cleanEntity.
+test("a unit's lastHitAt round-trips through save/load exactly", () => {
+  const state = createGameState({ planetId: "ferros", seed: 71, rng: mulberry32(71) });
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  skiff.lastHitAt = 42.5;
+  state.units.set(skiff.id, skiff);
+
+  const loaded = deserializeGame(JSON.parse(JSON.stringify(serializeGame(state))));
+  const reloaded = loaded.units.get(skiff.id);
+
+  assert.ok(reloaded, "the unit itself survived the round-trip");
+  assert.equal(reloaded.lastHitAt, 42.5, "lastHitAt survives exactly — an additive field, no SAVE_VERSION bump needed");
+});
+
+test("a tampered lastHitAt is dropped on load rather than propagated as NaN-poisoning garbage", () => {
+  const state = createGameState({ planetId: "ferros", seed: 72, rng: mulberry32(72) });
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  skiff.lastHitAt = 10;
+  state.units.set(skiff.id, skiff);
+
+  const save = serializeGame(state);
+  const savedSkiff = save.units.find(u => u.id === skiff.id);
+  savedSkiff.lastHitAt = "a while ago";   // a hand-edited save smuggling in garbage
+
+  const loaded = deserializeGame(save);
+  assert.equal(loaded.units.get(skiff.id).lastHitAt, undefined,
+    "dropped, not left as a string that would NaN-poison state.time - lastHitAt in the Bulwark regen pass");
+});
+
 test("a patrol order's flag round-trips through save/load with no dedicated persist.js code", () => {
   const state = createGameState({ planetId: "ferros", seed: 99, rng: mulberry32(99) });
   const skiff = makeUnit("skiff", "player", 700, 500);
