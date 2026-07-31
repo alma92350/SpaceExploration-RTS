@@ -346,8 +346,15 @@ function serPlanet(state) {
     seed: state.seed, planetId: state.planetId,
     sizeMult: state.sizeMult, resourceMult: state.resourceMult,
     swapAsym: !!state.swapAsym,   // additive: which side plays which half of an asym world's matchup (engine/map.js) — default false, no version bump
+    // setup.js's Match length row override (engine/victory.js DEFAULT_MATCH_TIME_LIMIT) — additive,
+    // defaults null (no override, same as every pre-existing save) so no SAVE_VERSION bump per
+    // CONTRIBUTING's additive-field rule.
+    matchTimeLimit: state.matchTimeLimit ?? null,
     endless: !!state.endless,
     time: state.time, tick: state.tick, over: state.over, winner: state.winner,
+    // additive: why the match ended (engine/victory.js finish) — default null, same as an
+    // in-progress or pre-this-feature save; no SAVE_VERSION bump per CONTRIBUTING.
+    winReason: state.winReason ?? null,
     // One entry per side, in state.owners order — for the player-vs-ai pair this
     // serialises as { player, ai }, byte-identical to the old literal. The save
     // shape stays two-keyed (fog/fogAI below likewise): a save FORMAT built for N
@@ -457,6 +464,14 @@ function rehydratePlanet(P) {
   // Additive, coerced to a real boolean like every other untrusted save flag: a save from before
   // this field existed (or a tampered non-boolean) reads as unswapped, not throwing/undefined.
   const swapAsym = !!P.swapAsym;
+  // setup.js's Match length override (engine/victory.js DEFAULT_MATCH_TIME_LIMIT): additive and
+  // untrusted like every other save field. `null`/missing means "no override" (the common case —
+  // must NOT sanitize through num()'s Number(null)===0 coercion, which would silently turn "no
+  // override" into "end the match at time 0"). A non-null value is only trusted if it coerces to a
+  // genuinely POSITIVE finite number; anything else (0, negative, NaN, a string) falls back to the
+  // same safe "no override" null rather than a broken instant/never timeout.
+  const matchTimeLimit = P.matchTimeLimit == null ? null
+    : (Number.isFinite(Number(P.matchTimeLimit)) && Number(P.matchTimeLimit) > 0 ? Number(P.matchTimeLimit) : null);
   const map = generateMap(P.planetId, mulberry32((P.seed ?? 0) >>> 0),
     { sizeMult, resourceMult, swapAsym });
   const amounts = new Map(P.nodes.map(n => [n.id, n.amount]));
@@ -554,7 +569,8 @@ function rehydratePlanet(P) {
 
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
-    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult, swapAsym,
+    winReason: P.winReason ?? null,   // additive — why the match ended (engine/victory.js finish); null before/absent
+    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult, swapAsym, matchTimeLimit,
     endless: !!P.endless,
     map,
     owners,

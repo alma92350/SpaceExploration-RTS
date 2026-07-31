@@ -23,6 +23,7 @@ export const minimapCanvas = byId("minimap");
 export const minimapCtx = context2d(minimapCanvas);
 export const resourcesEl = byId("resources");
 export const clockEl = byId("matchClock");
+export const scoreBarEl = byId("scoreBar");
 export const panelEl = byId("selectionPanel");
 export const gameOverEl = byId("gameOver");
 export const mapSelectEl = byId("mapSelect");

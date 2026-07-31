@@ -80,7 +80,8 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
  * Build a fresh simulation world. A pure function of its inputs (seed + options): the map
  * regenerates deterministically from the seed, so two same-option runs are identical.
  * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
- *   resourceMult?: number, swapAsym?: boolean, endless?: boolean, aiApm?: number, aiMicro?: boolean,
+ *   resourceMult?: number, swapAsym?: boolean, matchTimeLimit?: number, endless?: boolean,
+ *   aiApm?: number, aiMicro?: boolean,
  *   aiStrategy?: string, difficulty?: string, playerFaction?: string, aiFaction?: string }} [opts]
  * @returns {State}
  */
@@ -126,6 +127,7 @@ export function createGameState(opts = {}) {
     tick: 0,
     over: false,
     winner: null,
+    winReason: null,   // set by engine/victory.js finish() — why the match ended, once it does
     seed: opts.seed ?? null,   // the match seed, if one was supplied — reproduces this whole game
     // The generation inputs, kept so a save can regenerate the (deterministic)
     // map from the seed instead of serialising the whole terrain/node table.
@@ -137,6 +139,13 @@ export function createGameState(opts = {}) {
     // same swap honored, not just replay the bare boolean. Defaults false (unswapped, today's
     // long-standing assignment).
     swapAsym: !!opts.swapAsym,
+    // setup.js's Match length row (Quick 20 / Standard 40 / Marathon 60 — never "unlimited"):
+    // an explicit override of engine/victory.js's DEFAULT_MATCH_TIME_LIMIT, in seconds. Defaults
+    // to null (not DEFAULT_MATCH_TIME_LIMIT's own 2400) so checkWinCondition's own `??` fallback
+    // stays the single source of truth for "no override requested" — this field only ever carries
+    // a REAL, deliberately-chosen override, never a copy of the default it would fall back to
+    // anyway.
+    matchTimeLimit: opts.matchTimeLimit ?? null,
     // Odyssey (open-world) mode: no skirmish victory — the match never ends by
     // razing the enemy, only when the player loses their single Command Center
     // (see engine/victory.js checkEndlessLoss + engine/galaxy.js).

@@ -254,9 +254,11 @@ const { sideMod, PLANET_MODIFIERS } = await import("../engine/map.js");
 // this file); no other test in this file touches it, but nothing resets it between files either.
 const ORIGINAL_DIFFICULTY = setup.difficulty, ORIGINAL_SEED = setup.seed;
 const ORIGINAL_START_WORLD = setup.startWorld, ORIGINAL_SWAP_ASYM = setup.swapAsym;
+const ORIGINAL_MATCH_TIME_LIMIT = setup.matchTimeLimit;
 function resetSetup() {
   setup.difficulty = ORIGINAL_DIFFICULTY; setup.seed = ORIGINAL_SEED;
   setup.startWorld = ORIGINAL_START_WORLD; setup.swapAsym = ORIGINAL_SWAP_ASYM;
+  setup.matchTimeLimit = ORIGINAL_MATCH_TIME_LIMIT;
 }
 
 test("difficultyDials(): a recognized difficulty key drives the created state's AI with that exact difficulty's aiApm/aiMicro", () => {
@@ -322,6 +324,22 @@ test("resolveSeed(): a null setup.seed draws a fresh, valid unsigned-32-bit seed
   // Not an exact-value assertion (it's genuinely random) — proving it's really drawing a fresh
   // value each time, not some frozen/cached one, is instead that two independent draws disagree.
   assert.notEqual(seed1, seed2, "back-to-back calls with no explicit seed must not repeat the same random seed");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
+// setup.js's Match length row (docs/improvement-proposals.md "Make the clock endgame visible,
+// honest, and configurable") — a skirmish-only pick (Quick 20 / Standard 40 / Marathon 60) plumbed
+// straight through startGame -> createGameState onto state.matchTimeLimit.
+test("setup.matchTimeLimit is plumbed through startGame onto the created state, overriding the 40-minute default", () => {
+  resetSetup();
+  setup.matchTimeLimit = 1200;   // "Quick 20"
+
+  startGame("ferros");
+
+  assert.equal(game.state.matchTimeLimit, 1200, "the picked Match length must land on state.matchTimeLimit unchanged");
 
   hideObjectives();
   game.state = null;

@@ -279,11 +279,13 @@
  * @property {number} tick
  * @property {boolean} over
  * @property {string|null} winner
+ * @property {string|null} [winReason]  why the match ended — "elimination" | "mutual-wipe-score" | "timeout-score" (engine/victory.js finish); unset for an Odyssey-sandbox finish (checkEndlessLoss/checkEndlessWin), which has no clock/score tiebreak to explain
  * @property {number|null} seed
  * @property {string} planetId
  * @property {number} sizeMult
  * @property {number} resourceMult
  * @property {boolean} swapAsym   which side plays which half of an asymmetric world's matchup (engine/map.js) — default false
+ * @property {number|null} [matchTimeLimit]  a skirmish's Quick/Standard/Marathon override of DEFAULT_MATCH_TIME_LIMIT (engine/victory.js), from setup.js's Match length row — null/unset ⇒ the 40-minute default
  * @property {boolean} endless
  * @property {GameMap} map
  * @property {string[]} owners   the world's side ids in iteration order (["player","ai"]) — drives the owner-generic scaffold

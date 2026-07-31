@@ -14,6 +14,7 @@ import { PLANET_MODIFIERS } from "./engine/map.js";
 import { archetypeFor, PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { STRATEGIES } from "./engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "./engine/aiDifficulty.js";
+import { DEFAULT_MATCH_TIME_LIMIT } from "./engine/victory.js";
 export { DIFFICULTY_OPTIONS };   // re-exported: boot.js and a few tests still import it from here
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { hasSave, loadGame, hasOdysseySave, loadOdyssey } from "./saveload.js";
@@ -45,6 +46,16 @@ const RESOURCE_OPTIONS = [
   { label: "Normal", mult: 1.0, note: "balanced" },
   { label: "Abundant", mult: 1.5, note: "rich deposits" },
 ];
+// Skirmish-only (engine/victory.js's score-tiebreak clock; Odyssey has no clock at all, and a
+// scripted scenario runs its own separate mission clock/budget instead). Every option is a real,
+// finite override of DEFAULT_MATCH_TIME_LIMIT — never "unlimited" — so checkWinCondition's
+// terminal-state guarantee (a defensive stall can't stretch to infinity, CONTRIBUTING) always
+// holds. "Standard" is DEFAULT_MATCH_TIME_LIMIT itself, so picking it is byte-identical to today.
+const MATCH_LENGTH_OPTIONS = [
+  { label: "Quick", mult: 1200, note: "20 min" },
+  { label: "Standard", mult: DEFAULT_MATCH_TIME_LIMIT, note: "40 min" },
+  { label: "Marathon", mult: 3600, note: "60 min" },
+];
 // Playable factions for the setup picker — a passive-trait identity for your side
 // (engine/factions.js). Each option's `mult` is the faction id, its note the short
 // tagline of its edge. The AI's faction comes from the world's archetype instead.
@@ -67,7 +78,8 @@ export const STRATEGY_OPTIONS = [
 ];
 export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontier", aiStrategy: "default", sizeMult: 1, resourceMult: 1, seed: null,
   startWorld: null,    // Odyssey: explicit start-world pick (a planet id), or null for the seed's own random draw
-  swapAsym: false };   // skirmish: play the swapped half of an asymmetric world's matchup (Oort, Nimbus) — see engine/map.js opts.swapAsym
+  swapAsym: false,     // skirmish: play the swapped half of an asymmetric world's matchup (Oort, Nimbus) — see engine/map.js opts.swapAsym
+  matchTimeLimit: DEFAULT_MATCH_TIME_LIMIT };   // skirmish: Match length row (Quick/Standard/Marathon) — see engine/victory.js
 
 // The game modes the splash toggles between.
 const MODES = [
@@ -216,6 +228,18 @@ function renderSetupPanel(mode) {
     resLabel.textContent = "Resources";
     resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
     panel.appendChild(resRow);
+  }
+
+  // Match length: skirmish only (see MATCH_LENGTH_OPTIONS above for why Odyssey/scenarios don't
+  // get this row).
+  if (mode === "skirmish") {
+    const lenRow = document.createElement("div");
+    lenRow.className = "setup-row";
+    const lenLabel = document.createElement("span");
+    lenLabel.className = "setup-label";
+    lenLabel.textContent = "Match length";
+    lenRow.append(lenLabel, optionGroup(setup.matchTimeLimit, MATCH_LENGTH_OPTIONS, m => { setup.matchTimeLimit = m; }));
+    panel.appendChild(lenRow);
   }
 
   // Optional seed: leave blank for a fresh random map, or enter a seed (shown on

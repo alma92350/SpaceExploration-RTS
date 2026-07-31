@@ -10,7 +10,7 @@
 
 import { game } from "./session.js";
 import {
-  resourcesEl, clockEl, idleWorkersEl,
+  resourcesEl, clockEl, scoreBarEl, idleWorkersEl,
   scenarioBarEl, scenarioBannerEl, scenarioStatusEl, repairBtn, departBtn,
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
@@ -19,17 +19,26 @@ import { UNITS } from "./engine/entities.js";
 import { powerCap, powerDraw } from "./engine/industry.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { stanceLabel, PEACE_THRESHOLD } from "./engine/diplomacy.js";
+import { playerScore, DEFAULT_MATCH_TIME_LIMIT } from "./engine/victory.js";
 import { COM } from "./data.js";
 // The per-selection button/row subsystem lives in hudSelection.js (this file drives
 // the topbar / scenario bar / group chips and orchestrates the tick); renderHUD calls
 // renderSelectionPanel each frame, and resetPanelSignature clears both guards on boot.
 import { renderSelectionPanel, resetSelectionSignature } from "./hudSelection.js";
+// The reactive opening checklist's per-tick driver — see overlays.js's own header comment on
+// updateObjectives for the signature-guard reasoning (mirrors this file's own lastTopbarSignature
+// just below).
+import { updateObjectives } from "./overlays.js";
 
 // Scenario dock actions — wired once. They read game.state at click time, and
 // re-render immediately so the button state / budget update without waiting for
 // the next HUD tick.
 repairBtn.addEventListener("click", () => { if (game.state && repairConvoy(game.state)) renderHUD(); });
 departBtn.addEventListener("click", () => { if (game.state) { departNow(game.state); renderHUD(); } });
+
+// How far from the end the clock flips from elapsed time to a countdown + score bar (see
+// renderHUD's clock block below) — 5 minutes, matching the proposal's own spec.
+const ENDGAME_WINDOW = 300;
 
 // Topbar-rebuild guard: the last signature the resource/supply/credits/power/stance
 // topbar was rebuilt for (the selection panel keeps its own guard in hudSelection.js).
@@ -128,9 +137,30 @@ export function renderHUD() {
       }
     }
 
-    const mins = Math.floor(state.time / 60);
-    const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
-    clockEl.textContent = `${mins}:${secs}`;
+    // The clock: plain elapsed time normally, but inside the FINAL 5 MINUTES of a skirmish's
+    // score-decision tiebreak (engine/victory.js checkWinCondition / DEFAULT_MATCH_TIME_LIMIT) it
+    // flips to a countdown with a compact two-sided score bar — the score is otherwise completely
+    // invisible in-game (docs/improvement-proposals.md "Make the clock endgame visible, honest,
+    // and configurable"). `state.endless` (Odyssey) has no clock/score tiebreak at all — checked
+    // here rather than via game.galaxy so a standalone endless test-fixture state behaves the same
+    // way a real Odyssey world does — so it never enters this window regardless of elapsed time.
+    const limit = state.matchTimeLimit ?? DEFAULT_MATCH_TIME_LIMIT;
+    const remain = limit - state.time;
+    if (!state.endless && remain <= ENDGAME_WINDOW) {
+      const clamped = Math.max(0, remain);   // state.time can tick a hair past `limit` before checkWinCondition ends the match
+      const m = Math.floor(clamped / 60), s = Math.floor(clamped % 60).toString().padStart(2, "0");
+      clockEl.textContent = `-${m}:${s}`;
+      clockEl.classList.add("endgame");
+      const you = Math.round(playerScore(state, "player")), foe = Math.round(playerScore(state, "ai"));
+      scoreBarEl.textContent = `⚔ You ${you} · AI ${foe}`;
+      scoreBarEl.classList.remove("hidden");
+    } else {
+      const mins = Math.floor(state.time / 60);
+      const secs = Math.floor(state.time % 60).toString().padStart(2, "0");
+      clockEl.textContent = `${mins}:${secs}`;
+      clockEl.classList.remove("endgame");
+      scoreBarEl.classList.add("hidden");
+    }
 
     // Idle-worker indicator: a lost worker on a big map is easy to miss, so surface
     // the count in the topbar (click, or `, to jump to the next one).
@@ -145,6 +175,7 @@ export function renderHUD() {
   renderScenarioBar(state);
   renderGroupChips();
   renderSelectionPanel();
+  updateObjectives(game);
 }
 
 // A small always-visible row of the player's bound control groups ("1:8  2:3") near the
