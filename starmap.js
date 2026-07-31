@@ -16,9 +16,10 @@ import { game } from "./session.js";
 import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost } from "./engine/galaxy.js";
 import { initiateJump, surrenderOdyssey, pauseLoop, resumeLoop } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
-import { planetName as worldName, LORE_FACTIONS } from "./data.js";
+import { planetName as worldName, LORE_FACTIONS, PLANETS, COM } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { stanceLabel } from "./engine/diplomacy.js";
+import { PLANET_MODIFIERS } from "./engine/map.js";
 
 export function renderStarmap() {
   const g = game.galaxy;
@@ -68,11 +69,23 @@ export function renderStarmap() {
     // markup there — as text it can only ever render as text. Industry/Tech drive the
     // "where to settle" decision, so the stats badge stays.
     const mk = (cls, text) => { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; };
+    // World dossier: deposit icons + yield (data.js PLANETS, the same table the skirmish select
+    // cards already print freely — setup.js) plus the world's PLANET_MODIFIERS rule label when
+    // it has one (engine/map.js, imported UI-side exactly as setup.js already does). Charted
+    // geography, not scouted intel — shown for every world regardless of `discovered` status,
+    // same as the industry/tech badge above.
+    const planet = PLANETS.find(pl => pl.id === w.id);
+    const mod = PLANET_MODIFIERS[w.id];
+    const depsText = planet
+      ? Object.entries(planet.deposits).map(([c, y]) => `${COM[c]?.ico || "◆"} ${y.toFixed(1)}`).join(" · ")
+      : "";
+    const dossier = mod ? `${depsText} · ${mod.label}` : depsText;
     node.append(
       mk("sm-ico", ico),
       mk("sm-name", worldName(w.id)),
       mk("sm-sub", sub),
       mk("sm-stats", `⚙ ${w.industry} · 🔬 ${w.tech}`),
+      mk("sm-deps", dossier),
     );
     node.addEventListener("click", () => onWorldClick(w));
     field.appendChild(node);
