@@ -622,12 +622,21 @@ export function canJumpTo(galaxy, destId) {
 
 const planetX = id => PLANETS.find(p => p.id === id)?.x ?? 0;
 
+// The Spaceport's tier doesn't just lift more fleet per jump (SPACEPORT_CAPACITY) — a bigger
+// pad also burns new-world fuel more efficiently. Indexed by tier (1..3) like SPACEPORT_CAPACITY;
+// index 0 (no completed pad at all) is the same x1.0 as a fresh Tier-1 pad, so building the FIRST
+// Spaceport is a pure capability unlock and never itself a hidden fuel bump.
+export const FUEL_DISCOUNT_BY_TIER = [1, 1, 0.85, 0.7];
+
 // The fuel a jump to `destId` costs: FREE to a world you already hold (any world you've
 // visited — a colony you're returning to, reinforcing, or re-settling), so bouncing between
 // your own worlds to defend or ferry a colony ship stays friction-free. Reaching a NEW world
 // costs fuel that SCALES WITH DISTANCE across the frontier (data.js planet x, 0..~18): a near
 // hop is close to the base fee, settling a distant world is a real, growing credit sink and a
 // strategic choice — so exploration spend isn't the old flat, quickly-capped ~4,000 lifetime.
+// The origin's best COMPLETED Spaceport tier (playerSpaceports(from), not the jump's actual
+// destination pad — this is about YOUR launch infrastructure) cuts that distance-scaled fuel by
+// FUEL_DISCOUNT_BY_TIER, so upgrading the pad is a real economic choice, not just a capacity knob.
 export function jumpCost(galaxy, destId) {
   // Free to a world you've already REACHED (a colony you're returning to, reinforcing, or
   // re-settling). Since the living galaxy instantiates every world up front, "reached" is the
@@ -636,7 +645,9 @@ export function jumpCost(galaxy, destId) {
   const known = galaxy.discovered ? galaxy.discovered.has(destId) : galaxy.planets.has(destId);
   if (known || playerFoothold(galaxy.planets.get(destId))) return 0;   // reached before, or a base you still hold → free
   const dist = Math.abs(planetX(destId) - planetX(galaxy.activeId));
-  return Math.round(JUMP_COST * (0.8 + dist / 18));   // ~340 next-door … ~720 across the map
+  const tier = playerSpaceports(activeState(galaxy)).reduce((max, sp) => Math.max(max, spaceportTier(sp)), 0);
+  const discount = FUEL_DISCOUNT_BY_TIER[tier] ?? 1;
+  return Math.round(JUMP_COST * discount * (0.8 + dist / 18));   // ~340 next-door … ~720 across the map, before the pad discount
 }
 
 // The player units staged near a Spaceport — the expedition that rides along on a

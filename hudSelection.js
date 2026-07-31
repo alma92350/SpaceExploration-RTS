@@ -34,7 +34,7 @@ import { TECHS, researchTech, techMult, cancelResearch } from "./engine/techtree
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine, canBuildCategory } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, spaceportTier, upgradeSpaceport,
-         SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, cargoManifest, freightCapacity,
+         SPACEPORT_MAX_TIER, SPACEPORT_UPGRADE_COST, FUEL_DISCOUNT_BY_TIER, cargoManifest, freightCapacity,
          loadFreighter, unloadFreighter, freightUsed, freightRoom,
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
@@ -1529,9 +1529,14 @@ function rebuildSelectionPanel(sel) {
     const all = jumpManifestAll(state);
     const otherPads = all.capacity > m.capacity;
 
+    // Fuel discount this pad's tier grants on NEW-world jumps (FUEL_DISCOUNT_BY_TIER,
+    // engine/galaxy.js jumpCost) — free return jumps are unaffected, so the copy only
+    // ever claims a new-world discount, never "jumps are cheaper" in general.
+    const fuelMult = FUEL_DISCOUNT_BY_TIER[tier] ?? 1;
     const tierLine = document.createElement("div");
     tierLine.className = "sel-note good";
-    tierLine.textContent = `Spaceport · Tier ${tier}/${SPACEPORT_MAX_TIER} · jump capacity ${m.capacity} supply`;
+    tierLine.textContent = `Spaceport · Tier ${tier}/${SPACEPORT_MAX_TIER} · jump capacity ${m.capacity} supply`
+      + (fuelMult < 1 ? ` · new-world fuel ×${fuelMult}` : "");
     panelEl.appendChild(tierLine);
 
     const info = document.createElement("p");
@@ -1565,14 +1570,16 @@ function rebuildSelectionPanel(sel) {
       : "No Colony Ship on the pad: you can still hop to a world you hold (to control or reinforce it). To settle a NEW world, build a Colony Ship at a Command Center and park it here first.";
     panelEl.appendChild(shipHint);
 
-    // Upgrade the launch pad (raises jump capacity) — an Odyssey fortification, like the Capital.
+    // Upgrade the launch pad (raises jump capacity AND cuts new-world fuel) — an Odyssey
+    // fortification, like the Capital.
     if (tier < SPACEPORT_MAX_TIER) {
       const upCost = SPACEPORT_UPGRADE_COST[tier + 1];
       const nextCap = jumpCapacity({ tier: tier + 1 });
+      const nextMult = FUEL_DISCOUNT_BY_TIER[tier + 1] ?? 1;
       panelEl.appendChild(makeButton(`⬆ Upgrade to Tier ${tier + 1} (${costText(upCost)}) — capacity ${nextCap}`,
         () => upgradeSpaceport(state, spaceport),
         { cost: upCost, icon: { kind: "building", type: "spaceport" },
-          tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump.` }));
+          tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump. New-world fuel drops to ×${nextMult} too.` }));
     }
 
     // Cargo hold: manufactured goods ride in the CARGO SHIPS staged for this jump — the hold is

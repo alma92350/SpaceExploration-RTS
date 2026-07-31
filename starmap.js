@@ -13,7 +13,8 @@
 
 import { starmapEl, starmapBtn } from "./dom.js";
 import { game } from "./session.js";
-import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost } from "./engine/galaxy.js";
+import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost, playerSpaceports, spaceportTier,
+         FUEL_DISCOUNT_BY_TIER } from "./engine/galaxy.js";
 import { initiateJump, surrenderOdyssey, pauseLoop, resumeLoop } from "./boot.js";
 import { showGalaxyToast } from "./overlays.js";
 import { planetName as worldName, LORE_FACTIONS, PLANETS, COM } from "./data.js";
@@ -28,10 +29,17 @@ export function renderStarmap() {
   const canLaunch = canJump(activeState(g));
   starmapEl.innerHTML = "";
 
+  // The origin's best completed Spaceport tier discounts new-world fuel (FUEL_DISCOUNT_BY_TIER,
+  // engine/galaxy.js jumpCost) — surfaced here too, since this hint is the other cost-preview
+  // call site jumpCost feeds.
+  const padTier = playerSpaceports(activeState(g)).reduce((max, sp) => Math.max(max, spaceportTier(sp)), 0);
+  const fuelMult = FUEL_DISCOUNT_BY_TIER[padTier] ?? 1;
+
   const head = document.createElement("div");
   head.className = "starmap-head";
   const hint = canLaunch
-    ? "Click a world to jump — free to a colony you hold, fuel scaled by distance to settle a new one"
+    ? `Click a world to jump — free to a colony you hold, fuel scaled by distance to settle a new one`
+      + (fuelMult < 1 ? ` (×${fuelMult} at your Tier ${padTier} pad)` : "")
     : "No Spaceport here — click a colony you already hold to fall back to it (build a Spaceport to reach new worlds)";
   // textContent, not innerHTML: `status` counts and credits derive from a (possibly
   // hand-edited) save, and building them as text can't inject markup even if a value

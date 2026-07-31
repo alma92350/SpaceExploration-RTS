@@ -6,7 +6,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGalaxy, activeState, addPlanet, sweepColonies, checkDomination, ODYSSEY_WORLDS } from "../engine/galaxy.js";
+import { createGalaxy, activeState, addPlanet, sweepColonies, checkDomination, ODYSSEY_WORLDS,
+         jumpCost, upgradeSpaceport } from "../engine/galaxy.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
@@ -70,4 +71,33 @@ test("pacifying every world fires the grand domination:all milestone", () => {
   assert.equal(g.pacified.size, g.worlds.length, "every world is pacified");
   assert.ok(g.reached.has("domination:all"), "the every-world milestone is reached (not just the 4-world one)");
   assert.ok(g.reached.has("domination"), "…and the earlier 4-world milestone too");
+});
+
+/* ---------- Spaceport tiers discount new-world jump fuel ---------- */
+
+test("a higher-tier Spaceport at the origin cuts new-world jump fuel, not just capacity", () => {
+  const g = createGalaxy({ seed: 60 });
+  const from = activeState(g);
+  const newWorld = g.worlds.find(w => !g.discovered.has(w));
+  const baseCost = jumpCost(g, newWorld);
+  assert.ok(baseCost > 0, "sanity: a never-visited world costs fuel with no pad at all");
+
+  const sp = makeBuilding("spaceport", "player", from.map.bases.player.x + 40, from.map.bases.player.y);
+  from.buildings.set(sp.id, sp);
+  const tier1Cost = jumpCost(g, newWorld);
+  assert.equal(tier1Cost, baseCost, "a Tier-1 pad charges full price (x1.0) — same as no pad at all");
+
+  from.players.player.resources.ore = 10000;
+  assert.ok(upgradeSpaceport(from, sp), "tier 2 upgrade succeeds");
+  const tier2Cost = jumpCost(g, newWorld);
+  assert.equal(tier2Cost, Math.round(baseCost * 0.85), "Tier 2 discounts new-world fuel to x0.85");
+
+  assert.ok(upgradeSpaceport(from, sp), "tier 3 upgrade succeeds");
+  const tier3Cost = jumpCost(g, newWorld);
+  assert.equal(tier3Cost, Math.round(baseCost * 0.7), "Tier 3 discounts new-world fuel to x0.7");
+
+  // Free return jumps must stay free regardless of pad tier.
+  assert.equal(jumpCost(g, g.activeId), 0, "your current seat is still free at any tier");
+  const held = [...g.discovered][0];
+  assert.equal(jumpCost(g, held), 0, "a world you've already reached is still a free return jump at any tier");
 });
