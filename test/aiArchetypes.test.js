@@ -69,6 +69,65 @@ test("the skirmish roster stays frozen at nine so skirmish replays are byte-iden
 });
 
 test("archetypeFor resolves the Odyssey-only worlds too", () => {
-  assert.equal(archetypeFor("kybernet"), ARCHETYPES.economist, "the research capital hands a patient rival");
+  // Kybernet now hands its own archetype (Technologist) rather than the generic Economist — see
+  // "A fourth archetype: the Technologist on Kybernet" below.
+  assert.equal(archetypeFor("kybernet"), ARCHETYPES.technologist, "the research capital hands its own small-elite, teched-up rival");
   assert.equal(archetypeFor("verdani"), ARCHETYPES.balanced);
+});
+
+/* ---------- A fourth archetype: the Technologist on Kybernet (docs/improvement-proposals.md) ----------
+   Eleven Odyssey worlds shared only three temperaments (rusher/economist/balanced), and no archetype
+   ever fielded the Colossus. Kybernet — tech 10, industry 8, the research capital — now gets its own
+   small-elite-army profile that rushes the tech ladder instead of playing as a generic Economist. */
+
+test("the Technologist is a small, teched-up elite army — not a wide Tier-1 spam", () => {
+  const t = ARCHETYPES.technologist;
+  assert.ok(t, "ARCHETYPES.technologist exists");
+  assert.equal(t.name, "Technologist");
+  assert.equal(t.workerTarget, 7);
+  assert.equal(t.armyAttackSize, 7);
+  assert.equal(t.attackTimeout, 220);
+  assert.equal(t.turretCount, 2);
+  assert.equal(t.maxBarracks, 2);
+  assert.equal(t.wantsRefinery, true, "the deep-industry signal — Kybernet's identity is fastest research + fastest factories");
+  assert.equal(t.doctrine, "assault");
+});
+
+test("the Technologist is the one archetype whose mix ever fields the Colossus", () => {
+  assert.deepEqual(ARCHETYPES.technologist.unitMix, ["skiff", "lancer", "lancer", "dreadnought", "colossus", "wraith"]);
+  for (const [key, a] of Object.entries(ARCHETYPES)) {
+    if (key === "technologist") continue;
+    assert.ok(!a.unitMix.includes("colossus"), `${key} should not field the Colossus — that's the point of the Technologist`);
+  }
+});
+
+test("the Technologist carries an Odyssey overlay with patient grace and high forgiveness", () => {
+  const od = ARCHETYPES.technologist.odyssey;
+  assert.ok(od, "the Technologist has an odyssey overlay");
+  assert.ok(od.graceMult > 1, "a research capital gets a longer opening peace than the stock window, not a shorter one");
+  assert.ok(od.forgiveness > (ARCHETYPES.economist.odyssey.forgiveness || 1),
+    "…and forgives even faster than the already-forgiving Economist (1.5)");
+});
+
+test("Kybernet maps to the Technologist archetype", () => {
+  assert.equal(ODYSSEY_EXTRA_ARCHETYPE.kybernet, "technologist");
+});
+
+test("createGameState on Kybernet wires the Technologist archetype onto state", () => {
+  const state = createGameState({ planetId: "kybernet", endless: true });
+  assert.equal(state.ai.archetype, ARCHETYPES.technologist);
+});
+
+test("PLANET_ARCHETYPE (the skirmish nine) is untouched by the Technologist addition — byte-identical pin", () => {
+  assert.deepEqual(PLANET_ARCHETYPE, {
+    korrath: "rusher",
+    ferros: "economist",
+    vesper: "balanced",
+    glacius: "balanced",
+    nimbus: "rusher",
+    pyralis: "balanced",
+    helix: "economist",
+    oort: "rusher",
+    forge: "economist",
+  }, "the skirmish roster's archetype keys are byte-identical to before the Technologist was added");
 });
