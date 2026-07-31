@@ -7,6 +7,7 @@ import { updateProduction } from "../engine/industry.js";
 import { updatePlasmaRig } from "../engine/rig.js";
 import { storeCapOf } from "../engine/entities.js";
 import { mulberry32 } from "../engine/rng.js";
+import { plannedMix } from "../engine/aiWorkers.js";
 
 // A SEEDED Odyssey state — createGameState falls back to Math.random for map generation when no rng
 // is passed, so pin one, else the node layout (and the AI's economy timing) varies run to run.
@@ -314,4 +315,83 @@ test("a SKIRMISH AI reserves nothing for industry — it has no industry to buil
   runAI(s, 1.5);
   assert.equal(aiOf(s, "reactor").length, 0, "no Reactor in a skirmish (aiIndustry is endless-only)");
   assert.ok(aiBarracksQueue(s).length > 0, "…so the skirmish unit cycle spends exactly as it always did");
+});
+
+/* ---------- graduation reaches the army (docs/improvement-proposals.md "Graduation reaches the
+   army"): plannedMix (engine/aiWorkers.js) extends a developing AI's mix with the Foundry/Arsenal-
+   gated units its industry climb unlocks, and aiEconomy's wantsFoundry/wantsArsenal gates now read
+   THAT extended list — not just the raw archetype.unitMix — so a graduated Rusher actually techs
+   the Foundry instead of climbing the factory chain with a Barracks stuck on Skiff/Bastion. ---------- */
+
+test("plannedMix extends a graduated Hard Rusher's mix with the graduate units, pre-filter", () => {
+  const s = seeded("korrath");   // Rusher: pure Tier-1 mix, no Foundry-gated entry of its own
+  s.ai.difficulty = "hard";
+  s.time = 1300;   // past RUSHER_GRADUATE_TIME (1200)
+  const mix = plannedMix(s, s.ai.archetype);
+  assert.deepEqual(mix, [...s.ai.archetype.unitMix, "lancer", "lancer", "dreadnought"],
+    "the base mix plus the graduate extension, appended once");
+});
+
+test("plannedMix leaves a non-graduated Rusher's mix untouched — still within its rush window", () => {
+  const s = seeded("korrath");
+  s.ai.difficulty = "hard";
+  s.time = 500;   // well before RUSHER_GRADUATE_TIME (1200)
+  assert.deepEqual(plannedMix(s, s.ai.archetype), s.ai.archetype.unitMix);
+});
+
+test("plannedMix leaves a Rusher's mix untouched on Medium, however long the game runs", () => {
+  const s = seeded("korrath");
+  s.ai.difficulty = "medium";
+  s.time = 5000;   // far past RUSHER_GRADUATE_TIME — rusherGraduates is Hard-only
+  assert.deepEqual(plannedMix(s, s.ai.archetype), s.ai.archetype.unitMix);
+});
+
+test("plannedMix also extends a Rusher's mix under the Economic strategy's wantsIndustryAlways — not just Hard's graduation", () => {
+  const s = seeded("korrath");   // default Medium difficulty — rusherGraduates never fires
+  s.ai.strategy = "economic";
+  const mix = plannedMix(s, s.ai.archetype);
+  assert.deepEqual(mix, [...s.ai.archetype.unitMix, "lancer", "lancer", "dreadnought"]);
+});
+
+test("plannedMix does not double up on an archetype whose mix already reaches the Foundry (Economist)", () => {
+  const s = seeded("ferros");   // Economist: wantsRefinery -> wantsDeepIndustry true, but the mix already has Lancer/Breacher
+  const mix = plannedMix(s, s.ai.archetype);
+  assert.deepEqual(mix, s.ai.archetype.unitMix, "already Foundry-gated — the graduate extension is a no-op");
+});
+
+test("plannedMix never extends the mix in skirmish, however far past graduation the clock runs — the state.endless gate", () => {
+  const s = seeded("korrath", false);   // NOT endless
+  s.ai.difficulty = "hard";
+  s.time = 5000;
+  assert.deepEqual(plannedMix(s, s.ai.archetype), s.ai.archetype.unitMix,
+    "skirmish stays byte-identical: no graduate extension, regardless of difficulty/time");
+});
+
+test("a graduated Hard Rusher now wants (and starts) the Foundry its extended mix needs — not just the factory chain", () => {
+  const s = aiBase("korrath");
+  s.ai.difficulty = "hard";
+  s.time = 1300;   // past RUSHER_GRADUATE_TIME
+  const built = [];
+  for (let i = 0; i < 12; i++) {
+    runAI(s, 1.5);
+    const bar = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "barracks");
+    if (bar.queue.length) { built.push(bar.queue[bar.queue.length - 1].unitType); bar.queue.length = 0; }
+  }
+  assert.ok(aiTypes(s).has("foundry"),
+    "graduated: the Rusher's now-extended mix includes a Foundry-gated unit, so wantsFoundry fires and it builds one");
+  assert.ok(built.every(t => t === "skiff" || t === "bastion"),
+    "…but the unit cycle stays Tier-1 until that Foundry actually completes — effectiveMix's existing prereq filter keeps this deadlock-free");
+});
+
+test("a skirmish Rusher AI on Hard, however long the game runs, still never wants a Foundry", () => {
+  const s = createGameState({ planetId: "korrath", endless: false, seed: 4242, rng: mulberry32(4242) });
+  s.ai.difficulty = "hard";
+  s.time = 5000;   // far past RUSHER_GRADUATE_TIME — would graduate in Odyssey
+  clearAiSeed(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  const bar = makeBuilding("barracks", "ai", 664, 500); s.buildings.set(bar.id, bar);
+  for (let i = 0; i < 7; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.players.ai.resources.ore = 3000;
+  for (let i = 0; i < 10; i++) runAI(s, 1.5);
+  assert.ok(!aiTypes(s).has("foundry"), "skirmish never extends the mix — the Foundry gate stays untouched behind state.endless");
 });

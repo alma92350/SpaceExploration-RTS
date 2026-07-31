@@ -2,9 +2,14 @@
    AI — worker assignment and the unit-mix filters. Idle-worker logistics +
    gather steering (assignAiLogistics / assignIdleWorkers), and the map-aware
    mix helpers the production phases read: which unit types this world can
-   actually sustain (effectiveMix / affordableOnSurface) and which upgrade
-   doctrine its economy favours (aiDoctrine). A leaf module — no dependency on
-   the other AI phase modules — so aiMilitary/aiEconomy can import from it freely.
+   actually sustain (effectiveMix / affordableOnSurface), whether a developing
+   AI's PLANNED mix should extend past its archetype's own tiers (plannedMix /
+   wantsDeepIndustry — the shared signal aiEconomy's Foundry/Arsenal gates and
+   aiIndustry's factory climb both key off), and which upgrade doctrine its
+   economy favours (aiDoctrine). A leaf module for the other AI PHASE modules
+   (aiMilitary/aiEconomy/aiIndustry import from it freely, never the reverse)
+   — it only reaches sideways into two pure-data tables of its own,
+   aiStrategy.js and aiDifficulty.js, neither of which imports anything back.
    ============================================================ */
 
 "use strict";
@@ -13,6 +18,8 @@ import { BUILDINGS, UNITS, UPGRADES, prereqsMet, SPENDABLE } from "./entities.js
 import { assignService, assignHaul, countLogistics } from "./haul.js";
 import { assignRepair, countRepairJobs } from "./repair.js";
 import { isNodeDiscovered } from "./fog.js";
+import { strategyFor } from "./aiStrategy.js";
+import { difficultyFor } from "./aiDifficulty.js";
 
 const SATURATION_STEER = 250;     // distance-equivalent penalty per worker a node is over the soft cap
 
@@ -109,7 +116,53 @@ export function assignIdleWorkers(state, workers) {
   });
 }
 
-// The archetype's unit mix with entries this map can never pay for dropped —
+// Tier 4 (engine/aiDifficulty.js rusherGraduates, Hard only): how long into an Odyssey world a
+// non-developing archetype's opening rush has clearly either succeeded or become a non-factor —
+// past this, on Hard, it graduates into a patient developer rather than staying a permanent
+// flatline for the rest of what can be an hours-long session. Pure time, no wave-outcome
+// tracking needed: if the game is still running this far in, "wait for the rush to resolve, then
+// judge it" and "just check the clock" converge on the same answer.
+const RUSHER_GRADUATE_TIME = 1200;   // 20 minutes
+
+// Does this AI climb past power+electrify into the deep chain (engine/aiIndustry.js) — and, by the
+// same signal, extend its PLANNED unit mix past its archetype's own tiers (plannedMix, below)? The
+// patient-developer signal (archetype.wantsRefinery), the Economic strategy's override, or Hard's
+// rusher graduation. Lives here (moved from aiIndustry.js) rather than there, so this file's own
+// plannedMix — the unit-mix half of "does this AI climb the deep chain" — and aiIndustry's factory
+// climb + industry reserve read the exact same test; aiIndustry now imports this instead of
+// defining it (see its own header comment). Leaf-safe: aiStrategy.js and aiDifficulty.js are both
+// pure data tables with no imports of their own, so reaching into them here creates no cycle.
+export function wantsDeepIndustry(state, archetype, strategy) {
+  const graduated = !!difficultyFor(state).rusherGraduates && state.time > RUSHER_GRADUATE_TIME;
+  return !!(archetype.wantsRefinery || strategy.wantsIndustryAlways || graduated);
+}
+
+// GRADUATE EXTENSION (docs/improvement-proposals.md "Graduation reaches the army"): a developing AI
+// (wantsDeepIndustry) climbs aiIndustry's Foundry/Arsenal chain, but a pure Tier-1 mix — today, only
+// the Rusher's — never mentions a single gated unit, so aiEconomy's wantsFoundry/wantsArsenal
+// (computed off the mix) stayed false even for a graduated Hard Rusher: it could reach a Star Dock
+// and field Leviathans while its Barracks cycled Skiff/Bastion forever. Appended ONCE — and only
+// when the base mix has no Foundry-gated entry of its own — so an Economist/Balanced mix (which
+// already carries a Lancer or Breacher) is a genuine no-op here; only a pure Tier-1 profile picks
+// this up.
+const GRADUATE_EXTENSION = ["lancer", "lancer", "dreadnought"];
+
+// The archetype's PLANNED unit mix — its base unitMix, extended with GRADUATE_EXTENSION for a
+// developing/graduated AI (see above) — BEFORE effectiveMix's prereq/afford filtering, which runs
+// on top of this unchanged. That keeps the extension deadlock-free: a planned Lancer only ever
+// enters the AI's ACTUAL cycle once the Foundry it now motivates aiEconomy to build has completed
+// (prereqsMet), exactly like every other gated entry already works. Skirmish is untouched: the
+// state.endless gate means a skirmish's planned mix is always exactly archetype.unitMix, whatever
+// the difficulty or elapsed time — the short game stays byte-identical.
+export function plannedMix(state, archetype) {
+  const base = archetype.unitMix || [];
+  if (!state.endless) return base;
+  if (!wantsDeepIndustry(state, archetype, strategyFor(state))) return base;
+  if (base.some(t => (UNITS[t]?.requires || []).includes("foundry"))) return base;   // already reaches the Foundry on its own
+  return [...base, ...GRADUATE_EXTENSION];
+}
+
+// The AI's planned unit mix (plannedMix, above) with entries this map can never pay for dropped —
 // a cost commodity no SURFACE deposit produces (Vesper's surface has no
 // radioactives, so its Breacher entry is skipped, leaving today's exact
 // three-unit cycle). Hidden caches are deliberately excluded: they can hold a
@@ -125,8 +178,10 @@ export function assignIdleWorkers(state, workers) {
 // affordable unit. This makes the mix change ONCE, deterministically, the tick
 // the Foundry completes; both the base cycle and the counter-pick (which only
 // adopts a counter that mix.includes) are prereq-safe through this one filter.
+// A graduated Rusher's Lancer/Dreadnought graduate entries are no exception — they're filtered by
+// this exact same prereqsMet check, so they enter the cycle only once their own gate is built.
 export function effectiveMix(state, archetype) {
-  const mix = (archetype.unitMix || []).filter(t =>
+  const mix = plannedMix(state, archetype).filter(t =>
     UNITS[t]
     && BUILDINGS.barracks.produces?.includes(t)
     && prereqsMet(state, "ai", UNITS[t])

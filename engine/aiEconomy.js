@@ -3,8 +3,9 @@
    fresh ore, raise workers/supply/Barracks and the Foundry+Arsenal tech gates,
    run the shared unit-production cycle with Turrets and the Refinery, and
    research the doctrine. Depends on aiCommon (budget + affordability), aiWorkers
-   (affordableOnSurface / aiDoctrine) and aiMilitary (pickNextUnitType); nothing
-   depends back on this module, so the import graph stays acyclic.
+   (affordableOnSurface / aiDoctrine / maxSupplyDemand / plannedMix) and aiMilitary
+   (pickNextUnitType); nothing depends back on this module, so the import graph
+   stays acyclic.
    ============================================================ */
 
 "use strict";
@@ -19,7 +20,7 @@ import { isNodeDiscovered } from "./fog.js";
 import { playerUnits } from "./state.js";
 import { deployColonyShip } from "./colony.js";
 import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
-import { affordableOnSurface, aiDoctrine, maxSupplyDemand } from "./aiWorkers.js";
+import { affordableOnSurface, aiDoctrine, maxSupplyDemand, plannedMix } from "./aiWorkers.js";
 import { pickNextUnitType, visibleEnemyForceCount } from "./aiMilitary.js";
 import { difficultyFor } from "./aiDifficulty.js";
 import { aiBarter } from "./market.js";
@@ -235,7 +236,12 @@ export function aiBaseAndTech(state, ctx) {
   // effectiveMix keeps the Tier-2 units out of the cycle until it completes —
   // so this reliably teches a patient AI up without ever stalling. Ore-only, so
   // it's affordable on every world.
-  const wantsFoundry = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("foundry") && affordableOnSurface(state, t));
+  // Reads plannedMix (engine/aiWorkers.js), not the raw archetype.unitMix — so a graduated/
+  // developing Rusher (Tier 4 rusherGraduates, or an Economic-strategy wantsIndustryAlways
+  // override) that now PLANS to field a Lancer also builds the Foundry that unlocks it, not just
+  // the factory chain aiIndustry.js separately climbs (docs/improvement-proposals.md "Graduation
+  // reaches the army"). A no-op for every archetype whose own mix already reaches the Foundry.
+  const wantsFoundry = plannedMix(state, archetype).some(t => (UNITS[t]?.requires || []).includes("foundry") && affordableOnSurface(state, t));
   let hasFoundry = buildings.some(b => b.type === "foundry");   // built or still constructing
   if (wantsFoundry && !hasFoundry && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, ctx.oreReserve)) {
@@ -258,9 +264,11 @@ export function aiBaseAndTech(state, ctx) {
   // Dreadnought). Built OPPORTUNISTICALLY from genuine surplus (no reserve
   // pausing the army for it), so it stays the Economist's late out-scaling
   // flourish without slowing its core timing — the deep Tier-3 path is primarily
-  // a strategic option for the human player. Only archetypes whose mix wants a
-  // Tier-3 unit build it.
-  const wantsArsenal = (archetype.unitMix || []).some(t => (UNITS[t]?.requires || []).includes("arsenal") && affordableOnSurface(state, t));
+  // a strategic option for the human player. Only archetypes whose PLANNED mix
+  // (plannedMix — same graduate-extension source as wantsFoundry above) wants a
+  // Tier-3 unit build it, so a graduated Rusher's Dreadnought entry reaches this
+  // gate too, not just the Foundry.
+  const wantsArsenal = plannedMix(state, archetype).some(t => (UNITS[t]?.requires || []).includes("arsenal") && affordableOnSurface(state, t));
   const hasArsenal = buildings.some(b => b.type === "arsenal");
   if (wantsArsenal && !hasArsenal && foundryHandled && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, ctx.oreReserve + BARRACKS_BUFFER)) {

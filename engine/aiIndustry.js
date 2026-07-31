@@ -3,7 +3,10 @@
    then (a patient developer only) climb the factory chain, work the Datacenter
    tech tree, and reach the capital path (Star Dock → Leviathan) and a Plasma
    Rig. Skirmish is a no-op (the endless gate), so the byte-identical short game
-   is untouched. Depends only on aiCommon (budget + affordability + builder pick).
+   is untouched. Depends on aiCommon (budget + affordability + builder pick) and
+   aiWorkers (wantsDeepIndustry — moved there so its own plannedMix, the unit-mix
+   half of "does this AI climb the deep chain", reads the exact same test this
+   file's factory climb and industry reserve do).
    ============================================================ */
 
 "use strict";
@@ -16,15 +19,7 @@ import { powerCap, powerDraw } from "./industry.js";
 import { researchTech } from "./techtree.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
-import { difficultyFor } from "./aiDifficulty.js";
-
-// Tier 4 (engine/aiDifficulty.js rusherGraduates, Hard only): how long into an Odyssey world a
-// non-developing archetype's opening rush has clearly either succeeded or become a non-factor —
-// past this, on Hard, it graduates into a patient developer rather than staying a permanent
-// flatline for the rest of what can be an hours-long session. Pure time, no wave-outcome
-// tracking needed: if the game is still running this far in, "wait for the rush to resolve, then
-// judge it" and "just check the clock" converge on the same answer.
-const RUSHER_GRADUATE_TIME = 1200;   // 20 minutes
+import { wantsDeepIndustry } from "./aiWorkers.js";
 
 // The industrial build order the AI climbs (Odyssey), lowest tier first. prereqsMet gates each on
 // its `requires` (an earlier factory + a research node), so the AI can only raise the next one once
@@ -45,14 +40,6 @@ const RESEARCH_ORDER = ["metallurgy", "reactors", "electronics", "automation", "
 // that opens the tree; past them the AI has industrial income and a longer reserve would just
 // freeze its army for the whole climb.
 const INDUSTRY_BOOTSTRAP = 2;
-
-// Does this AI climb past power+electrify into the deep chain? The patient-developer signal
-// (archetype.wantsRefinery), the Economic strategy's override, or Hard's rusher graduation —
-// factored out so aiIndustryReserve banks for exactly what aiIndustry will go on to build.
-function wantsDeepIndustry(state, archetype, strategy) {
-  const graduated = !!difficultyFor(state).rusherGraduates && state.time > RUSHER_GRADUATE_TIME;
-  return !!(archetype.wantsRefinery || strategy.wantsIndustryAlways || graduated);
-}
 
 // The ore the AI must BANK this cycle to get its industry off the ground. runAI calls this between
 // aiBaseAndTech and aiProduceAndFortify, because the phase order is production-first,
