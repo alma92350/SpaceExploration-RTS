@@ -153,6 +153,37 @@ baseline instead of assuming it was unrelated — one real, fully-anticipated in
 Foundry/Arsenal tempo change above, applied to a fixed-seed AI bench test) surfaced this way and
 was fixed at the test, not the feature.
 
+### Added
+
+- **A second static-defense tier, the Bastille.** One turret type used to serve all four tiers;
+  a Foundry-gated heavy emplacement now sits alongside it — tankier and harder-hitting, but
+  deliberately shorter-ranged than the plain Sentinel Turret, so siege units still crack a
+  turtled base exactly as before. The AI fortifies with it too, once it has a Foundry standing.
+- **An Arsenal-gated guard-aura projector, the Aegis Bastion.** Every siege unit in the game
+  already outranges static defense by design, so the late base had no way to hold longer except
+  with an army. This building doesn't change that — it still can't stop a Breacher, Colossus, or
+  Leviathan from shelling it out of range — but every friendly unit *and structure* inside its
+  bubble takes 20% less damage, buying the defender time by attrition instead of range.
+  Odyssey's charging Antimatter Gate finally has a buildable bodyguard.
+- **The Plasma Torpedo Battery**, the endgame's first real static defense: an ammo-fed structure
+  that only fires while workers keep it stocked with plasma torpedoes hauled in the same way a
+  Reactor's fuel larder is fed — real logistics, not a free-fire tower. It out-ranges the
+  Breacher, so an early siege tool alone isn't enough by the Strategic tier, but the Colossus and
+  Leviathan both still out-range *it*, so a battery line stays crackable, just not for free.
+- **Colossus splash damage** — the game's first area-damage weapon outside the Helium Bomb. A
+  hit now rattles enemy units caught near the impact point too, falling off with distance, so
+  spreading out against artillery is finally a real defensive answer instead of having no effect
+  at all; a cost-parity Skiff swarm still beats a Colossus head-on, splash included.
+
+Four proposals from Tier 2/3 and the Strategic tier of `docs/improvement-proposals.md` shipped in
+this batch (per `docs/improvement-roadmap.md`'s Phase 4) — the smallest phase so far, and the one
+the roadmap gated on Phase 2's AI counter-intelligence work landing first, since the test suite
+already proved a turret wall was uncounterable before that. The three new static-defense
+structures were built by one team as a single rationalized tier rather than three independent
+additions, keeping one balance invariant intact throughout: every siege unit still strictly
+out-ranges every static-defense structure (with the Torpedo Battery's out-ranging-the-Breacher-
+specifically as the one documented, deliberate exception). No regressions surfaced this round.
+
 
 - **How long a neighbour holds a grudge is now part of its personality.** Souring was already
   flavoured by temperament — a Warlord world turns on you twice as fast as a patient one — but
