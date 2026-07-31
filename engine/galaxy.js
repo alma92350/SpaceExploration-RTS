@@ -135,6 +135,16 @@ export const COLONY_INCOME_PER_BUILDING = 0.3;
 // meaningless up-only number. The cap bounds a colony's yield to a real economy's worth.
 export const COLONY_INCOME_CAP = 6;
 
+// DOMINATION WITH TEETH, optional occupation dividend (docs/improvement-proposals.md 663): a
+// pacified world pays a small flat credits/sec just for being held down — no player building
+// required, since the point is that razing the neighbour's capital and keeping it razed is worth
+// something on its own, distinct from (and additive with) whatever a colony you've also founded
+// there separately earns above. Same universal-credits currency as COLONY_INCOME_PER_BUILDING and
+// a small fraction of what a single well-built colony can pay at its cap (COLONY_INCOME_PER_BUILDING
+// * COLONY_INCOME_CAP = 1.8/s), so conquest is a genuine but modest reward, not a better economy
+// than actually building one.
+export const PACIFIED_INCOME = 0.1;   // credits/sec per pacified world (~6/min)
+
 const playerBuildingCount = state => {
   let n = 0;
   for (const b of state.buildings.values()) if (b.owner === "player") n++;
@@ -224,6 +234,7 @@ export function sweepColonies(galaxy, dt = 0) {
     if (!state.background) continue;
     const buildings = playerBuildingCount(state);
     galaxy.credits += incomeBuildingCount(state) * COLONY_INCOME_PER_BUILDING * dt;   // capped, turret-excluded passive income
+    if (galaxy.pacified && galaxy.pacified.has(id)) galaxy.credits += PACIFIED_INCOME * dt;   // occupation dividend, additive
     const rec = galaxy.colonyNotes.get(id) || { hadColony: false, colonyLost: false };
     // A standing colony resets the lost latch, so retaking and rebuilding a world re-arms
     // its alerts — without this, a world lost once was muted forever (a second razing never

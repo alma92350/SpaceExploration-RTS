@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, addPlanet, checkDomination, galaxyStatus, DOMINATION_TARGET,
-         updateFactionWarmth } from "../engine/galaxy.js";
+         updateFactionWarmth, sweepColonies } from "../engine/galaxy.js";
 import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding } from "../engine/state.js";
 import { updateDiplomacy, atPeace, PEACE_THRESHOLD, FACTION_ECHO_PENALTY } from "../engine/diplomacy.js";
@@ -249,4 +249,35 @@ test("composition: pacifying A echoes onto B, then pacifying B later still lets 
 
   // A, already pacified when B was pacified, must not have received a second echo from B's own conquest.
   assert.equal(aState.diplomacy.factionEchoUntil, undefined, "an already-pacified faction-mate never receives the echo");
+});
+
+/* ============================================================
+   Optional (docs/improvement-proposals.md 663): an occupation dividend — pacified worlds pay a
+   small credits/min stream, mirroring the existing COLONY_INCOME_PER_BUILDING pattern, so a
+   razed-but-unsettled world isn't worth strictly zero.
+   ============================================================ */
+
+test("a pacified world pays a small occupation dividend, even with no player buildings there", () => {
+  const g = createGalaxy({ seed: 46 });
+  const otherId = g.worlds.find(w => w !== g.activeId);
+  const other = g.planets.get(otherId);
+  razeAiCommand(other);   // pacify it — the player never founds a colony here
+  checkDomination(g);
+  assert.ok(g.pacified.has(otherId), "sanity: the world is pacified");
+  assert.equal([...other.buildings.values()].filter(b => b.owner === "player").length, 0,
+    "sanity: no player buildings on this world at all");
+
+  g.credits = 1000;
+  const before = g.credits;
+  sweepColonies(g, 10);
+  assert.ok(g.credits > before, "a pacified world contributes a small occupation dividend even without a player colony");
+});
+
+test("an unpacified background world pays no occupation dividend", () => {
+  const g = createGalaxy({ seed: 47 });
+  const otherId = g.worlds.find(w => w !== g.activeId);   // fresh, background, AI foothold intact — not pacified
+  g.credits = 1000;
+  const before = g.credits;
+  sweepColonies(g, 10);
+  assert.equal(g.credits, before, "no dividend without pacification, and no player buildings to pay ordinary colony income either");
 });
