@@ -54,6 +54,26 @@ const GLUT_RECOVERY = 1 / 480;    // glut relaxes over ~8 min — far slower tha
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 function buySpread(com) { return RAW.has(com) ? RAW_SPREAD : SPREAD; }
 
+// ALLIED TRADE DISCOUNT (Gifts and favor requests: an actual road to Allied, engine/diplomacy.js):
+// once a world's neighbour reaches Allied (diplomacy.js stanceLabel's own >= 0.6 band), the
+// market rewards the friendship by tightening the buy-side spread — trust as a market yield, not
+// just a peaceful border. Ramps linearly from the ordinary spread AT the Allied threshold to
+// ALLIED_SPREAD at full alliance (stance 1.0), so crossing into Allied is a promise of more to
+// come, not a cliff. A local constant rather than an import from diplomacy.js: diplomacy.js
+// already imports TRADE_LOT/unitPrice FROM this module (its own favor-request pricing), so the
+// other direction would be a cycle — market.js only ever reads state.diplomacy.stance as plain
+// data, per the proposal's own framing.
+const ALLIED_STANCE = 0.6;
+const ALLIED_SPREAD = 1.05;
+
+function effectiveBuySpread(state, com) {
+  const spread = buySpread(com);
+  const stance = state && state.diplomacy && state.diplomacy.stance;
+  if (!(stance >= ALLIED_STANCE)) return spread;   // no diplomacy (skirmish), or short of Allied ⇒ unchanged
+  const t = clamp((stance - ALLIED_STANCE) / (1 - ALLIED_STANCE), 0, 1);
+  return spread - (spread - ALLIED_SPREAD) * t;
+}
+
 // Build a planet's price book: equilibrium price per tradeable commodity, scaled
 // by how abundant that commodity is in the planet's own deposits.
 // Manufactured goods (engine/industry.js) that no world deposits — priced by the
@@ -94,10 +114,16 @@ export function createMarket(state) {
 // both push the equilibrium price down as you sell; the buy side pays the tier spread
 // on top. Glut applies only to produced goods (it's zero for raws), so it's the lever
 // that saturates a factory-output market without touching raw-commodity pricing.
-export function unitPrice(market, com, side = "sell") {
+// `state` is optional and ONLY changes the buy side: pass it (buy() and the HUD's own buy
+// preview do) to apply the Allied trade discount above; every other call site (aiBarter, the
+// many `unitPrice(market, com, side)` 3-arg reads throughout this file and hudSelection.js's
+// sell-side quotes) is byte-identical to before — omitting it is not an approximation, it's the
+// same ordinary-spread formula this function has always used.
+export function unitPrice(market, com, side = "sell", state = null) {
   const glut = PRODUCED.has(com) ? (market.glut?.[com] || 0) : 0;
   const p = market.base[com] * (1 + (market.pressure[com] || 0)) * (1 - glut);
-  return side === "buy" ? p * buySpread(com) : p;
+  if (side !== "buy") return p;
+  return p * (state ? effectiveBuySpread(state, com) : buySpread(com));
 }
 
 // Move `com`'s pressure (and, for produced goods, its glut) by one lot's worth of trade,
@@ -156,12 +182,13 @@ export function quoteSell(market, com, qty) {
 // Buy up to `qty` of `com` with galaxy credits (capped by what you can afford), walking the
 // price UP across the trade in lots — the buy-side mirror of sell(). Each lot is priced and
 // afford-checked at the current (rising) price; the trade stops at the first lot the player
-// can't cover. Returns the credits spent (0 if nothing bought).
+// can't cover. Returns the credits spent (0 if nothing bought). Passes `state` into unitPrice so
+// an Allied world (state.diplomacy.stance) buys at the tightened spread — see effectiveBuySpread.
 export function buy(galaxy, state, com, qty) {
   const res = state.players.player.resources;
   let remaining = qty, cost = 0, bought = 0;
   while (remaining > 0) {
-    const price = unitPrice(state.market, com, "buy");
+    const price = unitPrice(state.market, com, "buy", state);
     const lot = Math.min(TRADE_LOT, remaining);
     const affordable = Math.min(lot, Math.floor((galaxy.credits - cost) / price));
     if (affordable <= 0) break;

@@ -138,6 +138,72 @@ test("RAW_SPREAD is pinned exactly: buying one lot of a raw good, on a fresh mar
     "a drift in RAW_SPREAD (the wide raw-input buy spread that closes the credit-printer loop) fails this exact pin");
 });
 
+// ---- Allied trade discount (Gifts and favor requests: an actual road to Allied) ----------------
+// Once a world's neighbour reaches Allied (engine/diplomacy.js stanceLabel's own >= 0.6 band),
+// buy() tightens its spread toward ALLIED_SPREAD (1.05) — friendship as a market yield, not just a
+// peaceful border. unitPrice's existing 3-arg call stays byte-identical (the two SPREAD/RAW_SPREAD
+// pins above already prove that with no diplomacy on the fixture at all) — the discount only
+// applies when a 4th `state` argument carrying diplomacy is threaded through, which only buy()
+// (and the HUD's own buy-price preview) does.
+
+test("short of Allied, buy() still charges the ordinary SPREAD exactly", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  s.diplomacy.stance = 0.59;   // Cordial — just short of Allied (stanceLabel's own 0.6 line)
+  const base = s.market.base.machinery;
+  const expected = Math.round(base * 1.15 * TRADE_LOT);
+  assert.equal(buy(g, s, "machinery", TRADE_LOT), expected, "short of Allied, buy() must charge the ordinary spread");
+});
+
+test("exactly AT the Allied threshold (stance 0.6), the spread is still the ordinary one — the discount ramps FROM here, not before", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  s.diplomacy.stance = 0.6;
+  const base = s.market.base.machinery;
+  const expected = Math.round(base * 1.15 * TRADE_LOT);
+  assert.equal(buy(g, s, "machinery", TRADE_LOT), expected, "at the threshold itself, t=0 ⇒ unchanged spread");
+});
+
+test("a fully Allied world buys at exactly the tightened ALLIED_SPREAD (1.05), not the ordinary SPREAD", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  s.diplomacy.stance = 1.0;   // fully allied
+  const base = s.market.base.machinery;
+  const expected = Math.round(base * 1.05 * TRADE_LOT);
+  assert.equal(buy(g, s, "machinery", TRADE_LOT), expected,
+    "fully Allied ⇒ exactly ALLIED_SPREAD — a drift in the constant fails this pin");
+});
+
+test("the Allied discount ramps continuously between the threshold and full alliance, not a cliff", () => {
+  const g1 = createGalaxy({ seed: 7 });
+  const s1 = activeState(g1);
+  g1.credits = 1000000;
+  s1.diplomacy.stance = 0.8;   // halfway from Allied threshold (0.6) to fully allied (1.0)
+
+  const g2 = createGalaxy({ seed: 7 });
+  const s2 = activeState(g2);
+  g2.credits = 1000000;
+  s2.diplomacy.stance = 1.0;
+
+  const atHalf = buy(g1, s1, "machinery", TRADE_LOT);
+  const atFull = buy(g2, s2, "machinery", TRADE_LOT);
+  const ordinary = Math.round(s1.market.base.machinery * 1.15 * TRADE_LOT);
+  assert.ok(atFull < atHalf && atHalf < ordinary, "deeper into Allied buys cheaper still, not a flat step");
+});
+
+test("unitPrice's bare 3-arg buy-side call ignores diplomacy entirely, even on an Allied world's own market object", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  s.diplomacy.stance = 1.0;
+  // Every pre-existing call site (aiBarter, the exact-value pins above) uses this 3-arg form and
+  // must keep seeing the ordinary spread — the Allied discount only ever applies via the optional
+  // 4th `state` argument, which only buy() (and the HUD's own preview) passes.
+  assert.equal(unitPrice(s.market, "machinery", "buy"), s.market.base.machinery * 1.15);
+});
+
 test("PRESSURE_FLOOR is pinned exactly: heavy selling bottoms a raw good's price at 40% of equilibrium, not some other clamp", () => {
   const g = createGalaxy({ seed: 7 });
   const s = activeState(g);

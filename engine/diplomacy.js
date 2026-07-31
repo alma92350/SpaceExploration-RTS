@@ -28,6 +28,8 @@ import { BUILDINGS, UNITS } from "./entities.js";
 import { TECHS } from "./techtree.js";
 import { strategyFor } from "./aiStrategy.js";
 import { difficultyFor } from "./aiDifficulty.js";
+import { mulberry32, hashStr } from "./rng.js";
+import { TRADE_LOT, unitPrice } from "./market.js";
 
 // Above this stance the neighbour holds its fire (peace); at or below it, war.
 export const PEACE_THRESHOLD = -0.15;
@@ -90,6 +92,37 @@ const APPEASE_FLOOR = 0.0;            // the truce target: holds fire (Neutral),
 export const TRIBUTE_BASE_COST = 200; // credits for the first appeasement
 const TRIBUTE_COST_GROWTH = 1.55;     // each further tribute costs 1.55× more
 
+// GOODWILL (Tier 4b — gifts): the OTHER lever, and the only one that can push a stance past
+// Cordial into Allied (stanceLabel's >= 0.6 band) — tribute's own APPEASE_FLOOR caps out at
+// Neutral by design. A gift (offerGift, below) converts local stockpile value into this decaying
+// pool, which lifts the drift TARGET the same bounded way aiDevelopment's DEV_SOFT_CAP already
+// does (a second additive term, not a direct stance snap) — so a single huge dump can't buy
+// +1.0 outright: the pool itself clamps at a cap (stacking gifts back-to-back returns
+// diminishing goodwill), and the ordinary DRIFT_RATE still has to chase the lifted target like
+// every other pull on this dial.
+export const GOODWILL_CAP = 0.8;        // …but big enough, sustained, to out-vote even a fairly
+                                         // depleted scarcity target and reach Allied — unlike tribute
+const GOODWILL_PER_CREDIT = 0.0001;     // stance-pool gained per credit of local market value gifted
+const GOODWILL_DECAY = 1 / 240;         // relaxes back toward 0 over ~4 minutes absent further gifts —
+                                         // the same exponential-decay idiom as the market's own
+                                         // pressure/glut (engine/market.js updateMarket)
+
+// FAVOR REQUESTS (Tier 4b): every few minutes, a PEACEFUL neighbour asks for whatever commodity
+// its own market prices richest right now (the scarcest good on this world) — fulfilling it
+// (fulfillRequest, below) before the deadline pays a premium in credits plus a GOODWILL bump, the
+// active counterpart to tribute's passive brake. Deterministic: seeded off this WORLD's own seed
+// (state.seed, already a planetSeed-style hash of the galaxy seed + planetId — see
+// engine/galaxy.js's own planetSeed) plus a coarse TIME BUCKET, via mulberry32/hashStr
+// (engine/rng.js) — no wall clock, so a replay from the same seed rolls the identical schedule.
+export const FAVOR_INTERVAL = 240;      // a fresh roll every ~4 minutes ("every few minutes")
+const FAVOR_CHANCE = 0.6;               // …not guaranteed every interval, so the cadence isn't a metronome
+export const FAVOR_WINDOW = 90;         // seconds to fulfill before the ask is withdrawn, unfulfilled
+const FAVOR_QTY_LOTS_MIN = 1, FAVOR_QTY_LOTS_MAX = 4;   // 1-4 TRADE_LOTs — the same range the bulk-trade
+                                                          // UI itself now offers (Sell x4 / Sell All)
+const FAVOR_REWARD_MULT = 1.6;          // paid at a premium over the going local sell rate
+export const FAVOR_GOODWILL = 0.15;     // stance-pool gain per fulfilled favor — a deliberate one-off
+                                         // reward, bigger than a single small gift
+
 // Odyssey is an economy-builder: the win path is ~25–35 minutes, so the neighbour
 // must give you room to establish before it can turn. A GRACE window floors the
 // scarcity target at cordial for the opening (empirically, two economies sharing a
@@ -145,7 +178,8 @@ export function effectiveDiplomacyMults(state) {
 }
 
 export function createDiplomacy() {
-  return { stance: START_STANCE, depletion: 0, tributes: 0, provokedAt: null };
+  return { stance: START_STANCE, depletion: 0, tributes: 0, provokedAt: null,
+           goodwill: 0, request: null, lastFavorBucket: -1 };
 }
 
 // Has the PLAYER done something to this neighbour that a strategy which "never attacks
@@ -193,6 +227,48 @@ export function offerTribute(galaxy, state) {
   dip.stance = clamp(Math.max(dip.stance, APPEASE_FLOOR), -1, 1);   // instant stand-down to the truce line
   dip.appeaseUntil = state.time + APPEASE_TIME;       // the floor that decays — bought peace is temporary
   dip.warAnnounced = false;                           // so a later relapse re-fires the war toast
+  return true;
+}
+
+// Hand the neighbour `qty` of `com` from the player's LOCAL stockpile (engine/market.js's
+// resources, capped by what's actually held — the same guard sell() uses; never a negative
+// stockpile). A one-way GIFT, not a sale: it leaves the stockpile but earns no credits and applies
+// no market slippage (that's sell()'s job). Its local market value (unitPrice's sell side) lifts
+// the decaying goodwill pool by GOODWILL_PER_CREDIT, clamped at GOODWILL_CAP so a single big dump
+// can't buy the whole climb to Allied at once — updateDiplomacy folds the pool into the stance's
+// drift target every tick (bounded, same idiom as aiDevelopment's DEV_SOFT_CAP) and decays it back
+// down absent further gifts. Odyssey-only (mirrors offerTribute's own gate) and needs a real
+// market to price the gift against. Pure and deterministic — no RNG, no wall clock. Returns
+// whether it happened.
+export function offerGift(state, com, qty) {
+  const dip = state && state.diplomacy;
+  if (!dip || !state.market) return false;             // skirmish, or no market yet ⇒ no-op
+  const res = state.players.player.resources;
+  const amount = Math.min(qty, Math.floor(res[com] || 0));
+  if (amount <= 0) return false;
+  res[com] -= amount;
+  const value = amount * unitPrice(state.market, com, "sell");
+  dip.goodwill = clamp((dip.goodwill || 0) + value * GOODWILL_PER_CREDIT, 0, GOODWILL_CAP);
+  return true;
+}
+
+// Pay off the neighbour's standing favor request (dip.request, generated by updateDiplomacy
+// below): the EXACT quantity asked for, in full — no partial credit, this is a specific favor, not
+// a market trade. Deducts the local stockpile, pays `reward` universal credits (galaxy.credits —
+// the tribute idiom, not a local-economy cost) and bumps goodwill by FAVOR_GOODWILL (the same pool
+// offerGift feeds), then clears the request so a fresh one can roll later. A no-op (false, nothing
+// touched) with no galaxy/diplomacy, no live request, an already-expired one, or insufficient
+// stock to cover it in full.
+export function fulfillRequest(galaxy, state) {
+  const dip = state && state.diplomacy;
+  const req = dip && dip.request;
+  if (!dip || !galaxy || !req || state.time >= req.until) return false;
+  const res = state.players.player.resources;
+  if (Math.floor(res[req.com] || 0) < req.qty) return false;
+  res[req.com] -= req.qty;
+  galaxy.credits += req.reward;
+  dip.goodwill = clamp((dip.goodwill || 0) + FAVOR_GOODWILL, 0, GOODWILL_CAP);
+  dip.request = null;
   return true;
 }
 
@@ -265,6 +341,13 @@ export function updateDiplomacy(state, dt) {
   // depletion. Applied to the SCARCITY target before creep/grace/finale, so those still layer on top.
   target += Math.min(DEV_SOFT_CAP, aiDevelopment(state) * DEV_SOFT_PER);
 
+  // GOODWILL (gifts, offerGift above): decays exponentially like the market's own pressure/glut
+  // (engine/market.js updateMarket), then lifts the target the same bounded way development does
+  // just above — a second additive term, not a separate mechanism — so a maintained gifting habit
+  // can keep pushing toward Allied, but stop gifting and it fades back out.
+  if (dip.goodwill) dip.goodwill = Math.max(0, dip.goodwill - dip.goodwill * Math.min(1, dt * GOODWILL_DECAY));
+  target += Math.min(GOODWILL_CAP, dip.goodwill || 0);
+
   // LATE-GAME CREEP: past grace, resentment grows linearly and without bound, so the
   // hostility curve never plateaus. Zero at grace-end (onset stays scarcity-driven),
   // it only bites deep into a long game — an overstay turns lethal, a mined-out world
@@ -306,6 +389,33 @@ export function updateDiplomacy(state, dt) {
   if (wasPeaceful && dip.stance <= PEACE_THRESHOLD && !dip.warAnnounced) {
     dip.warAnnounced = true;
     state.events.push({ type: "neighbourHostile", owner: "player" });
+  }
+
+  // DETERMINISTIC FAVOR REQUESTS: every few minutes, while the neighbour is at peace, it asks for
+  // whatever commodity its own market currently prices richest — the scarcest good on this world —
+  // via fulfillRequest (above) before the deadline for a premium plus a goodwill bump. Seeded off
+  // this WORLD's own seed (state.seed — already a planetSeed-style hash of the galaxy seed +
+  // planetId, see engine/galaxy.js's own planetSeed) plus a coarse TIME BUCKET, so a replay from
+  // the same seed rolls the identical schedule — no wall clock, no unseeded randomness. Needs a real
+  // market to price "scarcest" against; a bare fixture with diplomacy but no market (several exist
+  // in this test suite) simply never rolls one, same as any other Odyssey-only lever here that
+  // reads state.market.
+  if (state.market) {
+    if (dip.request && state.time >= dip.request.until) dip.request = null;   // deadline passed, unfulfilled ⇒ withdrawn
+
+    const bucket = Math.floor(state.time / FAVOR_INTERVAL);
+    if (dip.stance > PEACE_THRESHOLD && !dip.request && bucket !== dip.lastFavorBucket) {
+      dip.lastFavorBucket = bucket;
+      const pick = mulberry32(hashStr(`${state.planetId}:${state.seed}:favor:${bucket}`));
+      if (pick() < FAVOR_CHANCE) {
+        let com = null, best = -Infinity;
+        for (const c in state.market.base) if (state.market.base[c] > best) { best = state.market.base[c]; com = c; }
+        const lots = FAVOR_QTY_LOTS_MIN + Math.floor(pick() * (FAVOR_QTY_LOTS_MAX - FAVOR_QTY_LOTS_MIN + 1));
+        const qty = lots * TRADE_LOT;
+        const reward = Math.round(qty * unitPrice(state.market, com, "sell") * FAVOR_REWARD_MULT);
+        dip.request = { com, qty, until: state.time + FAVOR_WINDOW, reward };
+      }
+    }
   }
 }
 
