@@ -1708,8 +1708,8 @@ function rebuildSelectionPanel(sel) {
     // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
     // (the worker build-capability check), which is applied independently via canBuild.
     const GROUPS = [
-      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "assembler", "chipfab",
-                   "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
+      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "chemplant", "assembler",
+                   "fabricator", "chipfab", "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
       ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion", "torpedobattery", "habitat", "stardock"]],
       ["Endgame", ["antimatter_gate"]],
       ["Travel", ["spaceport"]],
