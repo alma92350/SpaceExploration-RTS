@@ -120,6 +120,7 @@ const { renderSelectionPanel, resetSelectionSignature } = await import("../hudSe
 const { queueProduction, researchUpgrade } = await import("../engine/production.js");
 const { UNITS, UPGRADES } = await import("../engine/entities.js");
 const { createMarket, TRADE_LOT } = await import("../engine/market.js");
+const { researchTech, TECHS } = await import("../engine/techtree.js");
 
 // Mirrors hudSelection.js's own module-private costText() (hudSelection.js:1509) — kept local so
 // a button's label is matched against UNITS' REAL cost, not a hand-typed "50 ore" that could
@@ -535,6 +536,52 @@ test("Refinery research: a queued upgrade shows a live progress row and drops ou
   assert.ok(row.textContent.includes("0%"), "starts at 0%, not landed instantly");
   assert.ok(!findButton(upgradeButtonLabel(UPGRADES.reinforcedPlating)),
     "the now-queued upgrade drops out of the plain button list — the progress row above already says it's underway");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Cancelable research queue with refunds (docs/improvement-proposals.md): the Datacenter's
+   research row gets the production-queue's own cancel-button idiom (renderQueueRows) — one row
+   per queued node, each with its own × button calling cancelResearch and re-rendering.
+   --------------------------------------------------------------------------------------------- */
+
+function selectDatacenter(state) {
+  const dc = makeBuilding("datacenter", "player", 600, 500);
+  state.buildings.set(dc.id, dc);
+  state.selection = [dc.id];
+  return dc;
+}
+
+test("Datacenter research: a queued node gets its own cancel button, and clicking it fully refunds and dequeues", () => {
+  const { state } = setup(215);
+  const dc = selectDatacenter(state);
+  state.players.player.resources.crystals = 1000;
+
+  assert.equal(researchTech(state, dc.id, "metallurgy"), true, "sanity: queues Metallurgy");
+  const before = state.players.player.resources.crystals;
+  renderSelectionPanel();
+
+  const cancelBtn = panelEl.querySelector(".queue-cancel");
+  assert.ok(cancelBtn, "expected a cancel button on the Datacenter's queued research row, same idiom as the production queue");
+  cancelBtn.click();
+
+  assert.equal(dc.researchQueue.length, 0, "cancelling empties the queue");
+  assert.equal(state.players.player.resources.crystals, before + TECHS.metallurgy.cost.crystals, "…and fully refunds it");
+});
+
+test("Datacenter research: queued-behind nodes each get their own row and cancel button, and cancelling the head cascades the panel too", () => {
+  const { state } = setup(216);
+  const dc = selectDatacenter(state);
+  state.players.player.resources.crystals = 1000;
+
+  researchTech(state, dc.id, "metallurgy");
+  researchTech(state, dc.id, "electronics");   // requires metallurgy — queued ahead of it, a second row
+  renderSelectionPanel();
+
+  const cancelBtns = panelEl.querySelectorAll(".queue-cancel");
+  assert.equal(cancelBtns.length, 2, "one cancel button per queued research job");
+
+  cancelBtns[0].click();   // cancel Metallurgy (the head) — Electronics depends on it and must cascade out too
+  assert.equal(dc.researchQueue.length, 0, "the dependent cascades out of the queue along with its prereq");
 });
 
 /* ---------------------------------------------------------------------------------------------

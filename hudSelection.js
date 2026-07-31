@@ -30,7 +30,7 @@ import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powe
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
 import { lightFuse, BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE, BOMB_FUSE_DELAY } from "./engine/bomb.js";
-import { TECHS, researchTech, techMult } from "./engine/techtree.js";
+import { TECHS, researchTech, techMult, cancelResearch } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine, canBuildCategory } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, spaceportTier, upgradeSpaceport,
@@ -372,10 +372,18 @@ export function renderSelectionPanel() {
   // Same live patch for a Refinery's doctrine research OR a Datacenter's tech research (each
   // building's own researchQueue, resolved against the right node table by building.type — same
   // split engine/techtree.js's updateResearch itself makes) — otherwise the "Researching … — N%"
-  // row would sit frozen at whatever % it had on the last rebuild.
+  // row(s) would sit frozen at whatever % they had on the last rebuild. The Datacenter renders one
+  // cancel-button row PER queued node (renderResearchQueueRows, cancelable research queue); the
+  // Refinery still renders the single combined summary row it always has (no cancel button there —
+  // see the Datacenter block below for why the two aren't symmetric yet).
   if (building && building.researchQueue && building.researchQueue.length) {
-    const row = panelEl.querySelector(".research-progress");
-    if (row) row.textContent = researchRowText(building.researchQueue, building.type === "refinery" ? UPGRADES : TECHS);
+    if (building.type === "datacenter") {
+      const rows = panelEl.querySelectorAll(".research-queue-label");
+      building.researchQueue.forEach((job, i) => { if (rows[i]) rows[i].textContent = researchQueueRowText(job, TECHS[job.techId], i); });
+    } else {
+      const row = panelEl.querySelector(".research-progress");
+      if (row) row.textContent = researchRowText(building.researchQueue, UPGRADES);
+    }
   }
 
   // Same live patch for an in-progress Recycle — one row per currently-recycling selected
@@ -426,6 +434,44 @@ function renderQueueRows(building) {
     cancelBtn.textContent = "×";
     cancelBtn.title = "Cancel (full refund)";
     cancelBtn.addEventListener("click", () => { cancelProduction(state, building.id, i); renderHUD(); });
+    row.appendChild(cancelBtn);
+
+    panelEl.appendChild(row);
+  });
+}
+
+// One research-queue row's label text ("🔩 Researching Heavy Alloys — 40%" for the head job,
+// "🔩 Heavy Alloys (queued)" for anything queued behind it) — shared by renderResearchQueueRows'
+// initial build and the live per-tick patch above so the two can never drift apart, same rule
+// researchRowText/recycleRowText already follow for their own rows. `def` may be missing for a
+// stale techId (a tampered save) — falls back to the raw id rather than throwing.
+function researchQueueRowText(job, def, index) {
+  const label = def ? `${def.ico ? def.ico + " " : ""}${def.name}` : job.techId;
+  return index === 0 ? `${label} — ${Math.round(job.progress * 100)}%` : `${label} (queued)`;
+}
+
+// Cancelable research queue with refunds: the Datacenter's research row gets the SAME
+// cancel-button-per-job idiom renderQueueRows gives the production queue above — one row per
+// queued node, a live "% done" label for the head job and a static "(queued)" for the rest, each
+// with its own × button (cancelResearch: full refund, cascading over any queued node that named
+// the cancelled one in its own `requires`). `table` is whichever node table this building's queue
+// resolves against (TECHS for a Datacenter today — the only caller).
+function renderResearchQueueRows(building, table) {
+  const { state } = game;
+  building.researchQueue.forEach((job, i) => {
+    const row = document.createElement("div");
+    row.className = "sel-row queue-row";
+
+    const label = document.createElement("span");
+    label.className = "research-queue-label";
+    label.textContent = researchQueueRowText(job, table[job.techId], i);
+    row.appendChild(label);
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "queue-cancel";
+    cancelBtn.textContent = "×";
+    cancelBtn.title = "Cancel (full refund)";
+    cancelBtn.addEventListener("click", () => { cancelResearch(state, building.id, i); renderHUD(); });
     row.appendChild(cancelBtn);
 
     panelEl.appendChild(row);
@@ -696,8 +742,11 @@ function factoryStatus(state, b, recipe) {
   if (throttle < 0.995) return { cls: "warn", text: `Throttled ${Math.round(throttle * 100)}% — low Power` };
 
   const def = BUILDINGS[b.type], ups = state.players[b.owner].upgrades;
+  // yieldMult is scoped by building type (techtree.js techMult/appliesTo — e.g. Heavy Alloys names
+  // only the Smelter/Assembly Plant) so this predicted rate never overstates a factory outside that
+  // list, matching exactly what updateProduction (engine/industry.js) actually banks.
   const rate = (def.prodRate || 1) * techMult(ups, "rateMult") * planetIndustryScale(state)
-    * throttle * recipe.qty * techMult(ups, "yieldMult");
+    * throttle * recipe.qty * techMult(ups, "yieldMult", b.type);
   return { cls: "good", text: `Running · +${rate.toFixed(1)} ${COM[recipe.out]?.name || recipe.out}/s` };
 }
 
@@ -1054,12 +1103,10 @@ function rebuildSelectionPanel(sel) {
     const upgrades = state.players.player.upgrades;
     const queue = datacenter.researchQueue || [];
     const queued = new Set(queue.map(j => j.techId));
-    if (queue.length) {
-      const row = document.createElement("div");
-      row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
-      row.textContent = researchRowText(queue, TECHS);
-      panelEl.appendChild(row);
-    }
+    // Cancelable research queue with refunds: one row per queued node, each with its own ×
+    // cancel button (renderResearchQueueRows — the production-queue's renderQueueRows idiom),
+    // instead of the single un-cancelable summary row the Refinery's doctrine research still uses.
+    if (queue.length) renderResearchQueueRows(datacenter, TECHS);
     // Already-queued nodes are dropped here (reflected in the progress row's "+N queued" above,
     // not repeated below), so the collapsible count matches exactly what the list itself shows.
     const visibleTechs = Object.values(TECHS).filter(t => !queued.has(t.id));
@@ -1484,14 +1531,14 @@ function rebuildSelectionPanel(sel) {
     // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
     // (the worker build-capability check), which is applied independently via canBuild.
     const GROUPS = [
-      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
+      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "assembler", "chipfab",
                    "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
       ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
       ["Endgame", ["antimatter_gate"]],
       ["Travel", ["spaceport"]],
     ];
     const alwaysShow = new Set(["market", "barracks", "foundry", "arsenal", "refinery", "turret",
-                                "habitat", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "spaceport"]);
+                                "habitat", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "spaceport"]);
     // What's actually SHOWN (not just category-eligible) in each mode — the header's count
     // mirrors this exactly, so "▸ Build (N)" never promises more than expanding reveals.
     const shownGroups = state.endless

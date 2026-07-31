@@ -5,6 +5,7 @@ import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip, hasColonyShip } from "../engine/colony.js";
 import { sell } from "../engine/market.js";
+import { researchTech, cancelResearch, TECHS } from "../engine/techtree.js";
 
 // A comparable fingerprint of a whole galaxy (rounded to dodge FP noise).
 function snapshot(g) {
@@ -112,6 +113,34 @@ test("researched tech and an in-progress Datacenter project survive a save/load"
   assert.ok(rdc && rdc.researchQueue && rdc.researchQueue[0].techId === "electronics", "the in-progress project persists on the building");
   assert.ok(Math.abs(rdc.researchQueue[0].progress - 0.4) < 1e-9, "…with its progress intact");
   assert.equal(rdc.researchQueue.length, 2, "…and the rest of the queue survives too");
+});
+
+// Cancelable research queue with refunds (docs/improvement-proposals.md): a cancelled node's
+// shrunk queue and refunded treasury both need to survive the exact same save/load round trip a
+// completed one already does above.
+test("a cancelled research job's shrunk queue and refund survive a save/load", () => {
+  const g = createGalaxy({ seed: 9 });
+  const s = activeState(g);
+  s.players.player.resources.crystals = 500;
+  const dc = makeBuilding("datacenter", "player", 600, 500);
+  s.buildings.set(dc.id, dc);
+  researchTech(s, dc.id, "metallurgy");
+  researchTech(s, dc.id, "heavyalloys");   // requires metallurgy — queued ahead of it, so it cascades too
+  const spent = s.players.player.resources.crystals;
+  assert.ok(spent < 500, "sanity: both nodes were actually paid for on enqueue");
+
+  const ok = cancelResearch(s, dc.id, 0);   // cancel metallurgy — heavyalloys cascades out with it
+  assert.equal(ok, true);
+  assert.equal(dc.researchQueue.length, 0, "sanity: the whole chain cancelled before saving");
+  const refunded = s.players.player.resources.crystals;
+  assert.equal(refunded, 500, "sanity: fully refunded before the round trip");
+
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  const rs = activeState(restored);
+  const rdc = [...rs.buildings.values()].find(b => b.type === "datacenter");
+  assert.equal(rdc.researchQueue.length, 0, "the emptied queue survives a save/load, not a phantom re-appearance");
+  assert.equal(rs.players.player.resources.crystals, refunded, "the refunded balance survives a save/load");
+  assert.equal(rs.players.player.upgrades.metallurgy, undefined, "the cancelled node never landed as researched");
 });
 
 test("the galaxy save is seed+delta (no terrain), and guards its version", () => {

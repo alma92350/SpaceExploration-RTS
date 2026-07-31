@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { canAfford, payCost, prereqsMet, committedDoctrine, isDropOff, UNITS, BUILDINGS, UPGRADES,
-  canBuildCategory, canBuildType, canGatherType, canLogisticsType } from "../engine/entities.js";
+  canBuildCategory, canBuildType, canGatherType, canLogisticsType, structureMult } from "../engine/entities.js";
 
 // Minimal state stub for prereqsMet: it only reads state.buildings and
 // state.players[owner].upgrades.
@@ -101,6 +101,42 @@ test("committedDoctrine also commits from a doctrine upgrade that's queued but n
   assert.equal(committedDoctrine(s, "player"), "assault",
     "a queued-but-developing upgrade commits its doctrine exactly like a completed one");
   assert.equal(committedDoctrine(s, "ai"), null, "a different owner's Refinery queue never leaks across sides");
+});
+
+// Foundry and Arsenal keep working after the unlock (docs/improvement-proposals.md): a standing
+// bonus, live-scanned the same way committedDoctrine scans for a doctrine commitment — the bonus
+// is gone the instant the building is, with nothing further to track.
+test("structureMult multiplies a live-scanned field across an owner's own COMPLETED buildings that carry it", () => {
+  const s = { buildings: new Map() };
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "nothing standing → no-op (identity)");
+
+  s.buildings.set("f1", { id: "f1", owner: "player", type: "foundry", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), BUILDINGS.foundry.produceTimeMult,
+    "a single standing Foundry applies its own field");
+
+  s.buildings.set("a1", { id: "a1", owner: "player", type: "arsenal", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), BUILDINGS.foundry.produceTimeMult * BUILDINGS.arsenal.produceTimeMult,
+    "a standing Arsenal stacks a second step atop the Foundry's, same multiplicative rule as upgradeMult/techMult");
+});
+
+test("structureMult ignores a still-constructing building, an enemy's building, and a building with no such field", () => {
+  const s = { buildings: new Map() };
+  s.buildings.set("f1", { id: "f1", owner: "player", type: "foundry", constructing: true });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "still going up → no bonus yet");
+
+  s.buildings.set("f2", { id: "f2", owner: "ai", type: "foundry", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "the enemy's Foundry never bonuses the player");
+
+  s.buildings.set("b1", { id: "b1", owner: "player", type: "barracks", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "a building whose def carries no such field is a no-op");
+});
+
+test("razing the Foundry drops its bonus on the very next read (live-scanned, not a one-time flag)", () => {
+  const s = { buildings: new Map() };
+  s.buildings.set("f1", { id: "f1", owner: "player", type: "foundry", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), BUILDINGS.foundry.produceTimeMult);
+  s.buildings.delete("f1");
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "razed → the bonus is gone immediately");
 });
 
 test("committedDoctrine's queue scan never crosses a Datacenter's TECHS queue into the doctrine system", () => {
@@ -351,6 +387,14 @@ test("Foundry and Arsenal are Industrial, not Military, despite gating combat te
   assert.equal(BUILDINGS.barracks.category, "military");
   assert.equal(BUILDINGS.turret.category, "military");
   assert.equal(BUILDINGS.stardock.category, "military");
+});
+
+test("Foundry and Arsenal each carry a standing produceTimeMult — they keep working after the unlock", () => {
+  assert.ok(BUILDINGS.foundry.produceTimeMult > 0 && BUILDINGS.foundry.produceTimeMult < 1, "a speed-up, not a slow-down");
+  assert.ok(BUILDINGS.arsenal.produceTimeMult > 0 && BUILDINGS.arsenal.produceTimeMult < 1);
+  // ~8% each, per the proposal — close to 0.92, not some other unrelated tuning.
+  assert.ok(Math.abs(BUILDINGS.foundry.produceTimeMult - 0.92) < 0.001);
+  assert.ok(Math.abs(BUILDINGS.arsenal.produceTimeMult - 0.92) < 0.001);
 });
 
 test("the Market is the cheap, ungated first Odyssey building — buildable by the Worker, not the CC", () => {

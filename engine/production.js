@@ -4,7 +4,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult, isElectrifiable, canGatherType } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult, structureMult, isElectrifiable, canGatherType } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { electrifyBoost } from "./industry.js";
@@ -77,8 +77,13 @@ export function updateProductionQueue(state, building, dt) {
   // Same build-time modifier applies to unit production (a factory world trains
   // faster too), per-side on an asymmetric world — and the same Logistics
   // production-speed upgrade compounds here too.
+  // Foundry/Arsenal standing bonus (entities.js structureMult): while completed, each speeds
+  // MILITARY unit production ~8% (they stack), live-scanned so razing either loses the bonus
+  // immediately. Scoped to role:"combat" jobs only — a Worker/Ranger/freighter at the Command
+  // Center is untouched, matching the proposal's "military unit production" wording exactly.
   const bt = def.buildTime * sideMod(state, building.owner, "buildTimeMult")
-    * upgradeMult(state.players?.[building.owner]?.upgrades, "produceTimeMult");
+    * upgradeMult(state.players?.[building.owner]?.upgrades, "produceTimeMult")
+    * (def.role === "combat" ? structureMult(state, building.owner, "produceTimeMult") : 1);
   // Electrification (Odyssey): a producer wired into the power grid trains 30% faster — the boost
   // tapers with the grid throttle (engine/industry.js). Guarded on the flag so the skirmish path,
   // which never electrifies, advances the queue byte-identically (boost stays 0, no branch taken).

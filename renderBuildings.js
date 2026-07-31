@@ -520,8 +520,9 @@ const RECIPE_OUT = Object.fromEntries(RECIPES.map(r => [r.id, r.out]));
 // A distinguishing glyph for buildings that otherwise share the plain hex silhouette. A
 // recipe-running factory shows the commodity it OUTPUTS; a handful of non-recipe industrial
 // buildings get an explicit emoji for what they DO — the Reactor grants Power (⚡), the Datacenter
-// runs research (🔬), the Stardock is a capital-ship yard (🛰️), the Antimatter Gate is the wonder (🌀).
-const BUILDING_GLYPH = { reactor: "⚡", combustor: "🔥", biomassreactor: "🌿", datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️" };
+// runs research (🔬), the Stardock is a capital-ship yard (🛰️), the Antimatter Gate is the wonder
+// (🌀), the Substation relays the grid (🔌, engine/entities.js `powerRelay`).
+const BUILDING_GLYPH = { reactor: "⚡", combustor: "🔥", biomassreactor: "🌿", datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️", substation: "🔌" };
 function factoryGlyph(type) {
   const def = BUILDINGS[type];
   if (def && def.recipe && RECIPE_OUT[def.recipe]) return COM[RECIPE_OUT[def.recipe]]?.ico || null;

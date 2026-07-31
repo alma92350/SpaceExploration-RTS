@@ -5,7 +5,7 @@ import { storeTotal } from "../engine/entities.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
-import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep, buildingConcern } from "../engine/industry.js";
+import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep, buildingConcern, ELECTRIFY_POWER } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
 import { deployColonyShip } from "../engine/colony.js";
 
@@ -26,7 +26,9 @@ function stub(buildings = [], resources = {}) {
 const reactor = (o = {}) => ({ type: "reactor", powered: true, ...o });
 const smelter = (o = {}) => ({ type: "smelter", ...o });
 const assembler = (o = {}) => ({ type: "assembler", ...o });
+const chipfab = (o = {}) => ({ type: "chipfab", ...o });
 const plasmarig = (o = {}) => ({ type: "plasmarig", ...o });
+const substation = (o = {}) => ({ type: "substation", ...o });
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
 test("powerCap sums Reactors' grants; a constructing Reactor grants nothing", () => {
@@ -389,4 +391,72 @@ test("industry is Odyssey-only: the buildings are flagged, and a skirmish makes 
     assert.equal(state.players[owner].resources.metals || 0, 0, "no factories in a skirmish → no metals");
     assert.equal(state.players[owner].resources.alloys || 0, 0, "…and no alloys");
   }
+});
+
+test("Heavy Alloys is scoped to the Smelter/Assembly Plant it names — a Chip Fab batch is unaffected", () => {
+  const plain = stub([reactor(), chipfab({ input: { crystals: 1000, metals: 1000 } })], {});
+  const teched = stub([reactor(), chipfab({ input: { crystals: 1000, metals: 1000 } })], {});
+  teched.players.player.upgrades = { heavyalloys: true };
+  const cf1 = [...plain.buildings.values()].find(b => b.type === "chipfab");
+  const cf2 = [...teched.buildings.values()].find(b => b.type === "chipfab");
+  updateProduction(plain, cf1, 0.1);
+  updateProduction(teched, cf2, 0.1);
+  assert.ok(near(cf1.store.electronics, cf2.store.electronics),
+    "Heavy Alloys' tooltip names only the Smelter/Assembly Plant — a Chip Fab batch must come out identical either way");
+});
+
+/* ---------- Grid Substation: a passive one-hop relay that extends power-grid reach ----------
+   A cheap odysseyOnly relay (BUILDINGS.substation: no energyGrants, no fuel) that, while it stands
+   within an active source's own 'linked' band, counts as a second, shorter-range virtual source
+   point for grid-TIER purposes only — power CAPACITY still only ever comes from a fuelled station
+   (powerCap sums energyGrants alone, untouched by a relay). One hop only: a relay never chains
+   through another relay (bestGridDist's relay pass qualifies each one against REAL sources alone). */
+
+test("a Substation relay, linked to an active source, improves a far consumer's grid tier", () => {
+  // Reactor at the origin (powerRange 1: linked <=190, near <=320). A relay 160px out is
+  // comfortably inside the Reactor's own linked band, so it qualifies as a virtual source. A spot
+  // 260px from the Reactor (comfortably "near", not "linked", on its own) sits only 100px from the
+  // relay — comfortably inside the relay's OWN (shorter, ~0.8×) linked reach.
+  const withoutRelay = stub([reactor({ x: 0, y: 0 })]);
+  const withRelay = stub([reactor({ x: 0, y: 0 }), substation({ x: 160, y: 0 })]);
+
+  const bare = powerEfficiency(withoutRelay, "player", 260, 0);
+  const relayed = powerEfficiency(withRelay, "player", 260, 0);
+
+  assert.equal(bare.name, "near", "sanity: 260px direct from the Reactor is only 'near'");
+  assert.equal(relayed.name, "linked", "…but a linked relay 100px away pulls the same spot onto 'linked'");
+  assert.ok(relayed.mult < bare.mult, "the relay strictly improves the draw multiplier, never worsens it");
+});
+
+test("a Substation relay with no active source in reach relays nothing", () => {
+  // The relay sits 1000px from the Reactor — nowhere near the 190px 'linked' band — so it never
+  // qualifies as a virtual source. A consumer parked right next to the unlinked relay gets no help
+  // from it at all: the exact same tier as if the relay didn't exist.
+  const noRelay = stub([reactor({ x: 0, y: 0 })]);
+  const unlinkedRelay = stub([reactor({ x: 0, y: 0 }), substation({ x: 1000, y: 0 })]);
+  const spot = { x: 1050, y: 0 };   // right beside the unlinked relay
+
+  assert.equal(powerEfficiency(unlinkedRelay, "player", spot.x, spot.y).name,
+    powerEfficiency(noRelay, "player", spot.x, spot.y).name,
+    "an unlinked relay contributes nothing — same tier with or without it");
+  assert.equal(powerEfficiency(noRelay, "player", spot.x, spot.y).name, "isolated",
+    "sanity: this spot really is isolated without a linked relay's help");
+});
+
+test("a still-constructing Substation doesn't relay power yet", () => {
+  const going = stub([reactor({ x: 0, y: 0 }), substation({ x: 160, y: 0, constructing: true })]);
+  assert.equal(powerEfficiency(going, "player", 260, 0).name, "near",
+    "a relay that hasn't finished building doesn't count as a virtual source yet");
+});
+
+test("powerCap: a Substation relay grants no Power capacity of its own — only fuelled stations do", () => {
+  assert.equal(BUILDINGS.substation.energyGrants, undefined, "no energyGrants — capacity still only comes from fuelled stations");
+  assert.equal(powerCap(stub([substation({ x: 0, y: 0 })]), "player"), 0, "a relay alone grants zero Power capacity");
+  assert.equal(powerCap(stub([reactor({ x: 0, y: 0 }), substation({ x: 10, y: 0 })]), "player"), BUILDINGS.reactor.energyGrants,
+    "a relay alongside a Reactor adds nothing to capacity — only extends reach");
+});
+
+test("powerDraw: a linked Substation relay adds its own small flat grid draw (the ELECTRIFY_POWER idiom)", () => {
+  const s = stub([reactor({ x: 0, y: 0 }), substation({ x: 50, y: 0 })]);   // well within the linked band → full efficiency
+  assert.ok(near(powerDraw(s, "player"), ELECTRIFY_POWER), "a well-linked relay draws the flat relay amount at full (×1.0) efficiency");
 });
