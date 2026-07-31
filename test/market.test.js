@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST, loadFreighter, unloadFreighter } from "../engine/galaxy.js";
-import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT, aiBarter } from "../engine/market.js";
+import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT, aiBarter, quoteSell } from "../engine/market.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { SPENDABLE, UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
@@ -170,6 +170,42 @@ test("GLUT_CEIL is pinned exactly: dumping a produced good saturates its glut at
   const expected = s.market.base.machinery * (1 + (-0.6)) * (1 - 0.85);   // base × (1+PRESSURE_FLOOR) × (1-GLUT_CEIL)
   assert.equal(unitPrice(s.market, "machinery", "sell"), expected,
     "a fully-glutted, fully-pressured sell price lands exactly here — a drift in GLUT_CEIL fails this pin");
+});
+
+// ---- quoteSell: a pure dry-run preview for the bulk-trade UI (Sell x4 / Sell All) --------------
+// hudSelection.js's tooltip previews what a bulk sell will actually pay by calling this instead of
+// re-deriving the lot-walk math itself — these tests pin that the preview can never drift from the
+// real sale, per the proposal's own "so a UI preview can never drift from engine math".
+
+test("quoteSell previews exactly what sell() will actually pay, and never mutates the market", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  s.players.player.resources.ore = 1000;
+  const pressureBefore = s.market.pressure.ore || 0;
+
+  const preview = quoteSell(s.market, "ore", 100);   // 4 lots
+  assert.equal(s.market.pressure.ore || 0, pressureBefore, "a dry run must not move the real market's pressure");
+
+  const proceeds = sell(g, s, "ore", 100);
+  assert.equal(preview, proceeds, "the preview must match what the real sale actually pays, to the credit");
+});
+
+test("quoteSell reflects marginal pricing across multiple lots — 4 lots earn less than 4x the first lot's price", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  const oneLot = quoteSell(s.market, "ore", TRADE_LOT);
+  const fourLots = quoteSell(s.market, "ore", TRADE_LOT * 4);
+  assert.ok(fourLots > 0 && fourLots < oneLot * 4,
+    "each successive lot sells at a lower marginal price (the same walk sell() itself does)");
+});
+
+test("quoteSell returns 0 for a zero or negative quantity, and touches nothing", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  const before = { ...s.market.pressure };
+  assert.equal(quoteSell(s.market, "ore", 0), 0);
+  assert.equal(quoteSell(s.market, "ore", -50), 0);
+  assert.deepEqual(s.market.pressure, before, "no mutation from a no-op preview");
 });
 
 // ---- zero/negative quantity guards -------------------------------------------------------------

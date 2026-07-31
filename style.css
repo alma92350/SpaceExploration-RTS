@@ -201,8 +201,8 @@ html, body {
 .starmap-surrender:hover { color: var(--text); border-color: #3a4c74; }
 .starmap-surrender.armed { color: var(--bad); border-color: var(--bad); background: rgba(255,80,80,0.08); }
 
-/* Odyssey market panel (hud.js renderMarket): a header plus a compact
-   commodity/price + Sell/Buy row per tradeable good. */
+/* Odyssey market panel (hudSelection.js renderMarket): a header plus a compact
+   commodity/price + trend + Sell/Sell x4/Sell All/Buy row per tradeable good. */
 .market-head { margin: 8px 0 4px; font-size: 0.8rem; color: var(--gold); letter-spacing: 0.03em; }
 .market-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .market-com { flex: 1; font-size: 0.82rem; color: var(--text); text-transform: capitalize; }
@@ -213,6 +213,10 @@ html, body {
 }
 .market-btn:hover { background: #1e2c4d; }
 .market-btn.disabled { opacity: 0.4; cursor: default; }
+
+/* The glut/pressure trend glyph (marketTrend, hudSelection.js): a small pre-buttons readout so a
+   deep, slow glut (worth exporting around) reads apart from an ordinary, fast-recovering dip. */
+.market-trend { font-size: 0.72rem; white-space: nowrap; color: var(--muted); }
 
 .clock {
   font-variant-numeric: tabular-nums;

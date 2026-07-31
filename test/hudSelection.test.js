@@ -119,7 +119,7 @@ const { panelEl } = await import("../dom.js");
 const { renderSelectionPanel, resetSelectionSignature } = await import("../hudSelection.js");
 const { queueProduction, researchUpgrade } = await import("../engine/production.js");
 const { UNITS, UPGRADES } = await import("../engine/entities.js");
-const { createMarket, TRADE_LOT } = await import("../engine/market.js");
+const { createMarket, TRADE_LOT, quoteSell, updateMarket } = await import("../engine/market.js");
 const { researchTech, TECHS } = await import("../engine/techtree.js");
 
 // Mirrors hudSelection.js's own module-private costText() (hudSelection.js:1509) — kept local so
@@ -681,6 +681,121 @@ test("the Market panel's live patch survives an UNRELATED renderSelectionPanel t
   assert.equal(marketRow("ore"), row, "an unrelated tick must not rebuild the row either");
   assert.equal(marketRow("ore").querySelector(".market-com").textContent, priceAfterSell,
     "the price must stay exactly what the trades set it to — not drift, not revert");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 8 — Bulk trading UI + glut/pressure trend readout (docs/improvement-proposals.md): each
+   Market row also gets a Sell x4 and a Sell All button — both pass the FULL qty straight to the
+   real sell() (engine/market.js), which self-limits via marginal pricing, so nothing new to gate
+   here beyond "at least one lot held" — plus a small trend glyph derived from
+   state.market.pressure/glut so a glutted commodity reads at a glance instead of requiring a
+   mental price-history comparison.
+   --------------------------------------------------------------------------------------------- */
+
+test("the Market panel offers Sell x4 and Sell All buttons per row, alongside the existing Sell/Buy pair", () => {
+  setupMarket(311);
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  assert.ok(row.querySelector(".market-sell"), "sanity: the plain Sell button is still there");
+  assert.ok(row.querySelector(".market-buy"), "sanity: the plain Buy button is still there");
+  const sell4 = row.querySelector(".market-sell4");
+  const sellAll = row.querySelector(".market-sellall");
+  assert.ok(sell4, "expected a Sell x4 button");
+  assert.ok(sellAll, "expected a Sell All button");
+  assert.equal(sell4.textContent, `Sell ${TRADE_LOT * 4}`);
+  assert.equal(sellAll.textContent, "Sell All");
+});
+
+test("Sell x4 sells exactly 4 lots through the real sell(), and its tooltip previews quoteSell's real proceeds", () => {
+  const { state } = setupMarket(312);
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  const oreBefore = state.players.player.resources.ore;
+  const creditsBefore = game.galaxy.credits;
+  const preview = quoteSell(state.market, "ore", TRADE_LOT * 4);
+  assert.ok(row.querySelector(".market-sell4").title.includes(String(preview)),
+    `expected the Sell x4 tooltip to quote quoteSell's own ${preview}, got: ${JSON.stringify(row.querySelector(".market-sell4").title)}`);
+
+  row.querySelector(".market-sell4").click();
+
+  assert.equal(state.players.player.resources.ore, oreBefore - TRADE_LOT * 4, "sold exactly 4 lots");
+  assert.equal(game.galaxy.credits, creditsBefore + preview,
+    "the real sale must earn exactly what the preview quoted — a UI preview that could drift from engine math is the bug this guards");
+});
+
+test("Sell All sells the player's full remaining holding, including a partial final lot", () => {
+  const { state } = setupMarket(313);
+  state.players.player.resources.ore = TRADE_LOT * 5 + 10;   // 5 full lots plus a partial one
+  renderSelectionPanel();
+  const row = marketRow("ore");
+
+  row.querySelector(".market-sellall").click();
+
+  assert.equal(state.players.player.resources.ore, 0, "Sell All must clear the entire holding, partial lot included");
+  assert.ok(game.galaxy.credits > 1e9, "credits went up by the sale proceeds");
+});
+
+test("Sell x4 and Sell All are disabled and inert below one full lot, same gate as the plain Sell button", () => {
+  const { state } = setupMarket(314);
+  state.players.player.resources.ore = TRADE_LOT - 1;   // short of even one lot
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  const sell4 = row.querySelector(".market-sell4"), sellAll = row.querySelector(".market-sellall");
+  assert.ok(sell4.classList.contains("disabled"), "Sell x4 must grey out short of one lot");
+  assert.ok(sellAll.classList.contains("disabled"), "Sell All must grey out short of one lot");
+
+  const before = state.players.player.resources.ore;
+  sell4.click();
+  sellAll.click();
+  assert.equal(state.players.player.resources.ore, before, "a disabled bulk-sell click must never sell anything");
+});
+
+test("Sell x4/Sell All live-patch their tooltip across an unrelated renderSelectionPanel tick, same as the plain Sell/Buy pair", () => {
+  const { state } = setupMarket(315);
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  const titleBefore = row.querySelector(".market-sell4").title;
+
+  for (let i = 0; i < PROBE_LOTS; i++) row.querySelector(".market-sell").click();
+  renderSelectionPanel();   // an ordinary tick
+
+  assert.equal(marketRow("ore"), row, "an unrelated tick must not rebuild the row");
+  assert.notEqual(marketRow("ore").querySelector(".market-sell4").title, titleBefore,
+    "the Sell x4 tooltip must track the price the earlier Sell clicks just moved, not stay frozen");
+});
+
+test("a fresh market row shows no trend glyph — nothing notable to flag at equilibrium", () => {
+  setupMarket(316);
+  renderSelectionPanel();
+  const trend = marketRow("ore").querySelector(".market-trend");
+  assert.ok(trend, "expected a trend span in the row");
+  assert.equal(trend.textContent, "", "a freshly-created market has no pressure/glut yet to read a trend from");
+});
+
+test("heavy selling of a produced good reads as glutted — 'still falling' right after, then 'recovering' once the fast pressure alone relaxes", () => {
+  const { state } = setupMarket(317);
+  state.players.player.resources.machinery = 5000;   // a produced good — the only tier glut ever applies to
+  renderSelectionPanel();
+
+  for (let i = 0; i < 20; i++) marketRow("machinery").querySelector(".market-sell").click();   // saturate pressure AND glut
+  renderSelectionPanel();
+  const justAfter = marketRow("machinery").querySelector(".market-trend").textContent;
+  assert.equal(justAfter, "▼ Glutted, still falling",
+    "fresh off heavy selling, the fast pressure term is still deeply negative too");
+
+  updateMarket(state, 20);   // dt=20 fully relaxes the ~17s-constant pressure in one step, but barely dents the ~8min glut
+  renderSelectionPanel();
+  const later = marketRow("machinery").querySelector(".market-trend").textContent;
+  assert.equal(later, "▼ Glutted, recovering",
+    "pressure has relaxed but the slow glut hasn't — the trend glyph must distinguish the two, not conflate them");
+});
+
+test("heavy buying (no glut on the buy side) reads as elevated", () => {
+  setupMarket(318);
+  renderSelectionPanel();
+  for (let i = 0; i < 15; i++) marketRow("ore").querySelector(".market-buy").click();
+  renderSelectionPanel();
+  assert.equal(marketRow("ore").querySelector(".market-trend").textContent, "↑ Elevated");
 });
 
 /* ---------------------------------------------------------------------------------------------

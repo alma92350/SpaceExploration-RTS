@@ -39,7 +39,7 @@ import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, space
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip, packCommandCenter, PACK_COST } from "./engine/colony.js";
-import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
+import { sell, buy, unitPrice, tradeables, TRADE_LOT, quoteSell } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
 import { initiateJump } from "./boot.js";
 import { FORMATION_SHAPES } from "./engine/formation.js";
@@ -478,9 +478,33 @@ function renderResearchQueueRows(building, table) {
   });
 }
 
-// One market row's live numbers — the label's price and both buttons' afford text/state.
-// Shared by renderMarket (the initial build, right below) and refreshMarketRows (the every-tick
-// live patch further below) so the two can never drift apart.
+// Thresholds below which the market's pressure/glut are everyday single-click noise, not worth a
+// glance-able flag — a lone Sell/Buy click (~0.05 pressure) never lights the glyph up, but a few
+// lots' worth of bulk trading (Sell x4 / Sell All below, or the AI's own barter) does.
+const TREND_PRESSURE_NOTABLE = 0.15;
+const TREND_GLUT_NOTABLE = 0.1;
+
+// A short glyph reading this row's price trend off the two numbers engine/market.js already
+// simulates but never surfaced: the FAST pressure (relaxes in ~17s) and, for produced goods only,
+// the SLOW glut (relaxes over ~8min) — so a player can tell a briefly-depressed price apart from a
+// deep glut worth exporting around instead of selling into (the proposal's own "▼ glutted ·
+// recovering" example). Pure string math off two numbers — kept here rather than in
+// engine/market.js since it's a presentation-only readout, not simulation.
+function marketTrend(market, com) {
+  const pressure = market.pressure[com] || 0;
+  const glut = market.glut?.[com] || 0;
+  if (glut > TREND_GLUT_NOTABLE)
+    return pressure < -TREND_PRESSURE_NOTABLE ? "▼ Glutted, still falling" : "▼ Glutted, recovering";
+  if (pressure < -TREND_PRESSURE_NOTABLE) return "↓ Depressed, recovering";
+  if (pressure > TREND_PRESSURE_NOTABLE) return "↑ Elevated";
+  return "";
+}
+
+// One market row's live numbers — the label's price, the trend glyph, and every button's afford
+// text/state. Shared by renderMarket (the initial build, right below) and refreshMarketRows (the
+// every-tick live patch further below) so the two can never drift apart. Sell x4/Sell All quote
+// their real marginal proceeds via quoteSell (engine/market.js) — a dry run of the exact lot walk
+// sell() itself uses, so the tooltip can never promise more than the click will actually pay.
 function marketRowFields(state, com) {
   // Reuse the commodity's data icon (data.js COM) — the same emblem the resource readout uses.
   const meta = COM[com];
@@ -488,10 +512,21 @@ function marketRowFields(state, com) {
   const have = Math.floor(res[com] || 0);
   const sellPrice = unitPrice(state.market, com, "sell");
   const buyPrice = unitPrice(state.market, com, "buy");
+  const sell4Qty = Math.min(TRADE_LOT * 4, have);
+  const bulkLocked = have < TRADE_LOT;
   return {
     label: `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} ◈${Math.round(sellPrice)}`,
-    sellDisabled: have < TRADE_LOT,
+    trend: marketTrend(state.market, com),
+    sellDisabled: bulkLocked,
     sellTitle: `Sell ${TRADE_LOT} ${com} for ~◈${Math.round(sellPrice * TRADE_LOT)}`,
+    sell4Disabled: bulkLocked,
+    sell4Title: bulkLocked
+      ? `Sell ${TRADE_LOT * 4} ${com} — need at least ${TRADE_LOT}`
+      : `Sell ${sell4Qty} ${com} for ~◈${quoteSell(state.market, com, sell4Qty)}`,
+    sellAllDisabled: bulkLocked,
+    sellAllTitle: bulkLocked
+      ? `Sell All — need at least ${TRADE_LOT}`
+      : `Sell all ${have} ${com} for ~◈${quoteSell(state.market, com, have)}`,
     buyDisabled: !(game.galaxy.credits >= buyPrice * TRADE_LOT),
     buyTitle: `Buy ${TRADE_LOT} ${com} for ~◈${Math.round(buyPrice * TRADE_LOT)}`,
   };
@@ -512,8 +547,14 @@ function refreshMarketRows(state) {
     const fields = marketRowFields(state, row.dataset.com);
     const label = row.querySelector(".market-com");
     if (label) label.textContent = fields.label;
+    const trend = row.querySelector(".market-trend");
+    if (trend) trend.textContent = fields.trend;
     const sellBtn = row.querySelector(".market-sell");
     if (sellBtn) { sellBtn.className = "market-btn market-sell" + (fields.sellDisabled ? " disabled" : ""); sellBtn.title = fields.sellTitle; }
+    const sell4Btn = row.querySelector(".market-sell4");
+    if (sell4Btn) { sell4Btn.className = "market-btn market-sell4" + (fields.sell4Disabled ? " disabled" : ""); sell4Btn.title = fields.sell4Title; }
+    const sellAllBtn = row.querySelector(".market-sellall");
+    if (sellAllBtn) { sellAllBtn.className = "market-btn market-sellall" + (fields.sellAllDisabled ? " disabled" : ""); sellAllBtn.title = fields.sellAllTitle; }
     const buyBtn = row.querySelector(".market-buy");
     if (buyBtn) { buyBtn.className = "market-btn market-buy" + (fields.buyDisabled ? " disabled" : ""); buyBtn.title = fields.buyTitle; }
   });
@@ -551,6 +592,10 @@ function renderMarket(state) {
     label.className = "market-com";
     row.appendChild(label);
 
+    const trend = document.createElement("span");
+    trend.className = "market-trend";
+    row.appendChild(trend);
+
     const sellBtn = document.createElement("button");
     sellBtn.className = "market-btn market-sell";
     sellBtn.textContent = `Sell ${TRADE_LOT}`;
@@ -559,6 +604,30 @@ function renderMarket(state) {
       else sound.playProductionBlocked();
     });
     row.appendChild(sellBtn);
+
+    // Sell x4 / Sell All both pass their FULL held qty straight to the real sell() — it already
+    // self-limits via marginal lot pricing (engine/market.js), so there's nothing to compute here
+    // beyond "how much do we actually hold right now" (re-read fresh at click time, same as the
+    // plain Sell button just above).
+    const sell4Btn = document.createElement("button");
+    sell4Btn.className = "market-btn market-sell4";
+    sell4Btn.textContent = `Sell ${TRADE_LOT * 4}`;
+    sell4Btn.addEventListener("click", () => {
+      const qty = Math.min(TRADE_LOT * 4, Math.floor(res[com] || 0));
+      if (qty >= TRADE_LOT) { sell(game.galaxy, state, com, qty); renderHUD(); }
+      else sound.playProductionBlocked();
+    });
+    row.appendChild(sell4Btn);
+
+    const sellAllBtn = document.createElement("button");
+    sellAllBtn.className = "market-btn market-sellall";
+    sellAllBtn.textContent = "Sell All";
+    sellAllBtn.addEventListener("click", () => {
+      const qty = Math.floor(res[com] || 0);
+      if (qty >= TRADE_LOT) { sell(game.galaxy, state, com, qty); renderHUD(); }
+      else sound.playProductionBlocked();
+    });
+    row.appendChild(sellAllBtn);
 
     const buyBtn = document.createElement("button");
     buyBtn.className = "market-btn market-buy";

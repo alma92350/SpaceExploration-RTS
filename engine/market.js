@@ -130,6 +130,29 @@ export function sell(galaxy, state, com, qty) {
   return proceeds;
 }
 
+// Dry-run sell()'s exact lot walk without touching the real market or the player's stock — the
+// bulk-trade UI's Sell x4 / Sell All tooltip calls this so its preview can never drift from what
+// sell() will actually pay (the whole reason this exists instead of the UI re-deriving marginal
+// pricing itself). Walks the SAME TRADE_LOT chunks against a scratch copy of just the two fields
+// applySlippage mutates (pressure/glut for this one commodity) — cheaper than cloning the whole
+// market, and just as isolated, since nothing else sell()'s loop reads or writes is touched.
+// Returns the credits it would earn (0 for a zero/negative qty). Callers are expected to have
+// already clamped `qty` to what's actually held (sell() itself clamps again regardless), same as
+// every other quantity this module takes.
+export function quoteSell(market, com, qty) {
+  let remaining = Math.floor(qty);
+  if (!(remaining > 0)) return 0;
+  const scratch = { base: market.base, pressure: { ...market.pressure }, glut: { ...market.glut } };
+  let proceeds = 0;
+  while (remaining > 0) {
+    const lot = Math.min(TRADE_LOT, remaining);
+    proceeds += Math.round(unitPrice(scratch, com, "sell") * lot);
+    applySlippage(scratch, com, lot / TRADE_LOT, -1);
+    remaining -= lot;
+  }
+  return proceeds;
+}
+
 // Buy up to `qty` of `com` with galaxy credits (capped by what you can afford), walking the
 // price UP across the trade in lots — the buy-side mirror of sell(). Each lot is priced and
 // afford-checked at the current (rising) price; the trade stops at the first lot the player
