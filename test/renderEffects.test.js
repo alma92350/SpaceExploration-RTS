@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
-import { BUILDINGS } from "../engine/entities.js";
-import { drawBuildGhost, drawEffects } from "../renderEffects.js";
+import { UNITS, BUILDINGS } from "../engine/entities.js";
+import { drawBuildGhost, drawEffects, TRACER_STYLE } from "../renderEffects.js";
 import { addTracer, resetEffects } from "../effects.js";
 
 // A stub 2D context that no-ops any method the drawing code happens to call, instead of
@@ -126,4 +126,69 @@ test("a tracer with no bonus argument at all renders exactly like an explicit bo
 
   assert.equal(omitted.maxLineWidth(), explicit.maxLineWidth());
   assert.deepEqual(omitted.colors(), explicit.colors());
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Per-weapon fire signatures (docs/improvement-proposals.md "Per-weapon fire signatures for the
+   counter-triangle"): TRACER_STYLE replaces the old two-case tracerColor() special-case (only
+   bastion/lancer were colored; skiff, breacher, turret, dreadnought, wraith and colossus all fell
+   to the same hostile-red default, including the player's OWN units). Every unit/building type
+   that can actually fire (UNITS[].attack or BUILDINGS[].attack truthy) must own a real entry, not
+   silently fall through to `default`.
+   --------------------------------------------------------------------------------------------- */
+
+// Every armed type in the roster today, by the same test combat.js's attackHit event actually
+// uses for its `unitType` field (a unit's own `attack` stat, or a static-defense building's —
+// engine/combat.js's comment: "a turret reads as its own 'turret' type").
+const ARMED_TYPES = [
+  ...Object.values(UNITS).filter(u => u.attack).map(u => u.id),
+  ...Object.values(BUILDINGS).filter(b => b.attack).map(b => b.id),
+];
+
+test("every armed unit/building type owns its own TRACER_STYLE entry, not the shared default", () => {
+  assert.ok(ARMED_TYPES.length > 0, "sanity: at least one armed type exists to check");
+  for (const type of ARMED_TYPES) {
+    assert.ok(TRACER_STYLE[type], `expected TRACER_STYLE.${type} to exist (armed types must not fall to the anonymous default)`);
+  }
+});
+
+test("the Skiff/Bastion/Lancer counter-triangle each render in a distinct color — the whole point of the readability fix", () => {
+  const { skiff, bastion, lancer } = TRACER_STYLE;
+  assert.notEqual(skiff.color, bastion.color);
+  assert.notEqual(bastion.color, lancer.color);
+  assert.notEqual(skiff.color, lancer.color);
+});
+
+test("a turret (static defense) renders in its own hue, distinct from every mobile hull's color", () => {
+  const mobileColors = new Set(Object.values(UNITS).filter(u => u.attack).map(u => TRACER_STYLE[u.id]?.color));
+  assert.ok(!mobileColors.has(TRACER_STYLE.turret.color), "the turret's hue must not collide with any mobile unit's");
+});
+
+test("TRACER_STYLE's fallback `default` entry is not the old hostile-red — a gap here should read as unclassified, not enemy", () => {
+  assert.notEqual(TRACER_STYLE.default.color, "#f87171", "the old hostile-red default must not survive as the new fallback color");
+});
+
+// One fresh tracer per armed type, both with and without the counter-triangle bonus flag, drawn
+// immediately (age≈0, so this also exercises the new muzzle-flash branch) — regression coverage
+// against a crash in any per-shape branch (dart/bolt/beam/arc/default) for any real roster type.
+test("drawEffects does not throw for any armed type's tracer, bonus or plain, freshly fired", () => {
+  for (const type of ARMED_TYPES) {
+    for (const bonus of [false, true]) {
+      resetEffects();
+      addTracer(100, 100, 260, 180, type, bonus);
+      assert.doesNotThrow(() => drawEffects(fakeCtx()), `drawEffects threw for ${type} (bonus=${bonus})`);
+    }
+  }
+});
+
+// Same roster, but drawn well past the muzzle-flash window (age >= 0.3 of the 120ms tracer
+// lifetime) — proves the "no muzzle flash past this point" branch is equally crash-free, which
+// the immediate (age≈0) test above can't reach on its own.
+test("drawEffects does not throw once a tracer has aged past its muzzle-flash window", async () => {
+  for (const type of ARMED_TYPES) {
+    resetEffects();
+    addTracer(100, 100, 260, 180, type, true);
+    await new Promise(r => setTimeout(r, 45));   // > 0.3 * TRACER_LIFETIME_MS (120ms) — flash is long gone, tracer still fading
+    assert.doesNotThrow(() => drawEffects(fakeCtx()), `drawEffects threw for an aged ${type} tracer`);
+  }
 });
