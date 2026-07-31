@@ -280,6 +280,36 @@ test("the Gate finale is unappeasable — a tribute can't buy out of the endgame
   assert.equal(atPeace(s), false, "the finale clause overrides the paid truce");
 });
 
+// ---- Domination with teeth: the pacified floor vs. the Gate finale (proposal ordering) ----
+//
+// docs/improvement-proposals.md 663-665: the pacified-floor clause is placed AFTER the Gate-finale
+// clause in updateDiplomacy, so pacifying a world is specifically what EXEMPTS it from finale
+// mobilization — conquest becomes the military counter to your own Gate's provocation. An unpacified
+// world must still answer the finale exactly as before (the guard is inert unless dip.pacified).
+
+test("a pacified world is exempt from the Gate finale — the pacified floor sits AFTER the finale clause and overrides it", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  s.diplomacy.pacified = true;                          // as checkDomination (engine/galaxy.js) would stamp it
+  s.time = 500;                                          // past grace, so the finale clause is live
+  const gate = makeBuilding("antimatter_gate", "player", 600, 500);
+  gate.charge = 0.95;                                    // a near-complete Gate — the finale at its most aggressive
+  s.buildings.set(gate.id, gate);
+  for (let i = 0; i < 2000; i++) updateDiplomacy(s, 0.1);
+  assert.ok(atPeace(s), "conquest is the military counter to your own Gate's provocation — a pacified world stays down");
+});
+
+test("an UNPACIFIED world is unaffected by the new clause — the Gate finale still drags it to war exactly as before", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();                       // dip.pacified is unset
+  s.time = 500;
+  const gate = makeBuilding("antimatter_gate", "player", 600, 500);
+  gate.charge = 0.95;
+  s.buildings.set(gate.id, gate);
+  for (let i = 0; i < 2000; i++) updateDiplomacy(s, 0.1);
+  assert.equal(atPeace(s), false, "regression check: the pacified guard must not weaken the finale for a world that isn't pacified");
+});
+
 // ---- Tier 4: tribute (diplomacy agency) ----
 
 test("tribute snaps the neighbour to a truce and spends galaxy credits", () => {

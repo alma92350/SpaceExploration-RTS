@@ -159,6 +159,35 @@ export const MAX_FORGIVENESS = 2.5;
 // so you have to genuinely stop fighting, not just pause between pushes.
 export const PROVOKE_MEMORY = 300;
 
+// FACTION MEMORY (Tier 4c): diplomacy stopped being 11 sealed dyads the moment factions started
+// spreading across the galaxy (engine/galaxy.js checkExpansion) — so a faction should react as a
+// BODY POLITIC, not eleven strangers who happen to share a name. Two directions, both DRIVEN from
+// the galaxy layer (engine/galaxy.js: checkDomination for the grievance below, updateFactionWarmth
+// for the Allied lift), since only that layer can see across worlds; this file only ever consumes
+// what it's handed, the same arm's-length relationship it already has with aiDevelopment.
+//
+// GRIEVANCE: razing one world's neighbour capital (checkDomination) doesn't just pacify that
+// world — every OTHER unpacified world of the same faction takes a bounded, ONE-TIME stance hit.
+// checkDomination applies it directly to dip.stance (not the target), so it can't fight the
+// ordinary scarcity/development drift — it just yanks the current reading down once — and the
+// world recovers more slowly for a while afterward: forgiveness composes at
+// FACTION_ECHO_FORGIVE_MULT for FACTION_ECHO_DURATION seconds (dip.factionEchoUntil, keyed off
+// this world's own state.time — no wall clock). A domination spree now visibly snowballs
+// resistance across a faction instead of leaving its other worlds exactly as cordial as before.
+export const FACTION_ECHO_PENALTY = 0.2;          // stance lost, once, by each unpacified faction-mate
+export const FACTION_ECHO_DURATION = 180;         // seconds the slower recovery lasts afterward
+export const FACTION_ECHO_FORGIVE_MULT = 0.8;     // forgiveness composes at this multiplier while it lasts
+
+// ALLIED LIFT: the mirror — holding Allied on one world lifts its faction-mates' drift TARGET a
+// little, the same bounded-additive shape aiDevelopment's DEV_SOFT_PER/DEV_SOFT_CAP already use
+// (a raw count times a per-unit weight, capped), just fed by a different count. Unlike the
+// grievance echo above this isn't a one-time event — it's a continuously-held CONDITION, so
+// engine/galaxy.js recomputes dip.factionWarmth (how many of a world's OTHER faction-mates are
+// currently Allied) on its own throttled scan rather than latching it from an event; this file
+// only ever reads the count.
+export const ALLY_ECHO_PER = 0.05;
+export const ALLY_ECHO_CAP = 0.15;
+
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 // The composed-and-bounded grace/grievance multipliers for this world. Exported so the bounds are
@@ -348,6 +377,12 @@ export function updateDiplomacy(state, dt) {
   if (dip.goodwill) dip.goodwill = Math.max(0, dip.goodwill - dip.goodwill * Math.min(1, dt * GOODWILL_DECAY));
   target += Math.min(GOODWILL_CAP, dip.goodwill || 0);
 
+  // FACTION MEMORY, allied direction: dip.factionWarmth is a raw count (how many of this world's
+  // OTHER faction-mates are currently Allied), refreshed by engine/galaxy.js's updateFactionWarmth
+  // on the same throttled scan checkDomination/checkExpansion run on — this file only ever reads
+  // it, bounded the same additive way DEV_SOFT is, just above.
+  target += Math.min(ALLY_ECHO_CAP, (dip.factionWarmth || 0) * ALLY_ECHO_PER);
+
   // LATE-GAME CREEP: past grace, resentment grows linearly and without bound, so the
   // hostility curve never plateaus. Zero at grace-end (onset stays scarcity-driven),
   // it only bites deep into a long game — an overstay turns lethal, a mined-out world
@@ -375,11 +410,25 @@ export function updateDiplomacy(state, dt) {
   if (gate && state.time >= grace)
     target = Math.min(target, GATE_WAR_TARGET - GATE_WAR_SLOPE * gate.charge);
 
+  // DOMINATION WITH TEETH: a world you've pacified (checkDomination, engine/galaxy.js) never drifts
+  // back to war — its target is floored at APPEASE_FLOOR (Neutral) PERMANENTLY (dip.pacified never
+  // clears, unlike the decaying tribute window above). Placed AFTER the finale clause so pacifying a
+  // world is specifically what EXEMPTS it from Gate-mobilization: conquest becomes the military
+  // counter to your own Gate's provocation, tying the two endgames together.
+  if (dip.pacified) target = Math.max(target, APPEASE_FLOOR);
+
   // ASYMMETRIC drift: souring runs at the stock rate (grievanceMult is what flavours THAT), while
   // recovery — cooling off after you've bled them — runs at this neighbour's forgiveness. So the
   // two directions are separate dials, and a temperament that forgives slowly doesn't also turn
   // hostile slowly.
-  const rate = DRIFT_RATE * (target > dip.stance ? forgiveness : 1);
+  //
+  // FACTION MEMORY: while a fresh grievance echo is still live (dip.factionEchoUntil, stamped by
+  // checkDomination), recovery composes at FACTION_ECHO_FORGIVE_MULT of that — the same forgiveness
+  // dial, just temporarily reduced, not a second rate — so a domination spree's echo genuinely
+  // stings for a while instead of drifting straight back out under the world's normal forgiveness.
+  const echoedForgiveness = (dip.factionEchoUntil !== undefined && state.time < dip.factionEchoUntil)
+    ? forgiveness * FACTION_ECHO_FORGIVE_MULT : forgiveness;
+  const rate = DRIFT_RATE * (target > dip.stance ? echoedForgiveness : 1);
   dip.stance = clamp(dip.stance + (target - dip.stance) * Math.min(1, dt * rate), -1, 1);
 
   // The moment the neighbour crosses from peace into war, fire a one-time heads-up
@@ -438,11 +487,16 @@ export function hostility(state) {
   return clamp((PEACE_THRESHOLD - s) / (PEACE_THRESHOLD + 1), 0, 1);   // -0.15→0, -0.5→~0.41, -1→1
 }
 
+// The "Allied" stance band's own lower bound — exported so a cross-world reading (the faction
+// echo's Allied lift, engine/galaxy.js updateFactionWarmth) tests the exact same boundary as the
+// HUD's label below, rather than a second magic number that could quietly drift out of sync with it.
+export const ALLIED_THRESHOLD = 0.6;
+
 // A human-readable band for the HUD.
 export function stanceLabel(stance) {
   if (stance <= -0.5) return "Hostile";
   if (stance <= PEACE_THRESHOLD) return "Wary";
   if (stance < 0.25) return "Neutral";
-  if (stance < 0.6) return "Cordial";
+  if (stance < ALLIED_THRESHOLD) return "Cordial";
   return "Allied";
 }
