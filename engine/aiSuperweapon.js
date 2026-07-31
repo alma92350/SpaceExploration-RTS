@@ -17,7 +17,12 @@
    Economic strategy wants (engine/aiStrategy.js), not just an Aggressive
    flourish. Aggressive strategy is the only one that also spends it
    offensively: walked unarmed (risk-free in transit) to the AI's current
-   attack target, then armed and triggered right at the doorstep.
+   attack target, then armed and triggered right at the doorstep — but ONLY
+   while a real attack wave is committed and moving on that same target, so
+   it travels embedded in the escort instead of alone and unprotected; an
+   unescorted bomb walking solo ahead of (or instead of) any wave is exactly
+   what a defended player's turrets and army used to shoot down long before
+   arrival, so it held home otherwise.
    ============================================================ */
 
 "use strict";
@@ -37,6 +42,15 @@ import { UNITS } from "./entities.js";
 // unexplored point) has neither, so 0 — arriving at all is "close enough" to a bare point.
 function targetRadius(target) {
   return UNITS[target.type]?.radius ?? target.radius ?? 0;
+}
+
+// The strike force's average position — same shape as aiMilitary.js's own (module-private)
+// threatCentroid, duplicated locally rather than exported/imported across a file boundary for one
+// tiny reduction. `attackers` is never empty at the one call site below (guarded there).
+function attackerCentroid(attackers) {
+  let x = 0, y = 0;
+  for (const a of attackers) { x += a.x; y += a.y; }
+  return { x: x / attackers.length, y: y / attackers.length };
 }
 
 /** @param {State} state @param {AiContext} ctx */
@@ -74,8 +88,24 @@ export function aiSuperweapon(state, ctx) {
   const d = Math.hypot(bomb.x - target.x, bomb.y - target.y);
   if (d <= arriveRadius) {
     if (canAct(state)) { bomb.armed = true; lightFuse(state, bomb); spend(state); }
-  } else if (!bomb.order && canAct(state)) {
-    issueMove([bomb], target.x, target.y);
+    return;
+  }
+
+  // TRAVELS WITH THE WAVE, not alone: an unescorted bomb walking solo gets shot down by the
+  // player's turrets/army long before it arrives, so it only ADVANCES while a committed attack
+  // force exists — units already on an 'attack-move' order, the same test aiOffense
+  // (engine/aiMilitary.js) uses to tell a committed wave from idle/still-rallying units. No wave
+  // committed yet (or the last one was wiped or recalled) — hold it home instead of walking it
+  // into the open by itself.
+  const attackers = ctx.army.filter(u => u.order && u.order.type === "attack-move");
+  if (!attackers.length) return;
+  if (!bomb.order && canAct(state)) {
+    // Route toward whichever is closer right now, the wave's own centroid or the target itself —
+    // so it travels embedded in the escort rather than racing ahead of (or lagging behind) it,
+    // naturally converging on the target as the wave itself closes in.
+    const centroid = attackerCentroid(attackers);
+    const dest = Math.hypot(bomb.x - centroid.x, bomb.y - centroid.y) < d ? centroid : target;
+    issueMove([bomb], dest.x, dest.y);
     spend(state);
   }
 }

@@ -128,7 +128,10 @@ test("the offensive bomb no longer arms at the old flat ARRIVE_RADIUS (70) — i
   assert.equal(bomb.order?.type, "move", "still closing the last distance to the Gate's rim");
 });
 
-test("Aggressive strategy walks a Helium Bomb (unarmed) toward a distant target instead of arming on the spot", () => {
+test("Aggressive strategy holds a Helium Bomb home when no attack wave is committed, even with a distant target chosen", () => {
+  // The bomb travels WITH the wave, not alone (engine/aiSuperweapon.js) — an unescorted solo walk
+  // is exactly what used to get it shot down long before arrival. With no AI army at all here,
+  // there's nothing on an attack-move order — no committed wave for it to travel inside of.
   const state = createGameState({ planetId: "ferros", endless: true, aiStrategy: "aggressive" });
   const base = state.map.bases.ai;
   const cc = makeBuilding("command", "ai", base.x, base.y); state.buildings.set(cc.id, cc);
@@ -138,6 +141,30 @@ test("Aggressive strategy walks a Helium Bomb (unarmed) toward a distant target 
 
   runAI(state, THINK_INTERVAL);
 
-  assert.ok(!bomb.armed, "still in transit — it only arms once it arrives");
-  assert.equal(bomb.order?.type, "move", "issued a plain move toward the target — free to travel at no risk while unarmed (engine/bomb.js)");
+  assert.ok(!bomb.armed, "nowhere near arriving");
+  assert.equal(bomb.order, null, "holds position — no committed wave to travel inside of, so it doesn't walk out alone");
+});
+
+test("the bomb holds position against a defended target until an attack wave actually commits, then advances with it", () => {
+  const state = createGameState({ planetId: "ferros", endless: true, aiStrategy: "aggressive" });
+  const base = state.map.bases.ai;
+  const cc = makeBuilding("command", "ai", base.x, base.y); state.buildings.set(cc.id, cc);
+  const bomb = makeUnit("heliumbomb", "ai", base.x, base.y); state.units.set(bomb.id, bomb);
+  // A defended enemy target, comfortably beyond the arrival threshold, so it's the walk (or the
+  // hold) under test here, not an immediate arm-on-the-spot.
+  const enemyCC = makeBuilding("command", "player", base.x + 150, base.y); state.buildings.set(enemyCC.id, enemyCC);
+  const enemyTurret = makeBuilding("turret", "player", base.x + 190, base.y); state.buildings.set(enemyTurret.id, enemyTurret);
+
+  runAI(state, THINK_INTERVAL);
+  assert.equal(bomb.order, null, "no committed attack-move wave yet — the bomb holds position instead of walking out alone");
+  assert.ok(!bomb.armed);
+
+  // Commit a wave: a real attack-move order, the same order.type aiMilitary's own strike force
+  // carries (engine/aiMilitary.js aiOffense).
+  const raider = makeUnit("skiff", "ai", base.x + 30, base.y);
+  raider.order = { type: "attack-move", x: enemyCC.x, y: enemyCC.y };
+  state.units.set(raider.id, raider);
+
+  runAI(state, THINK_INTERVAL);
+  assert.equal(bomb.order?.type, "move", "a wave is now committed — the bomb travels with it instead of holding home");
 });
