@@ -93,20 +93,28 @@ test("the turtle bot actually builds an economy — it's a yardstick, not a stat
 });
 
 test("the tech bot climbs past the Barracks and fields more than Skiffs — the composition yardstick", () => {
+  // Per this file's own header, this suite "guards the harness, not the AI" — the question
+  // is whether the tech bot's OWN build order reaches a Foundry and fields Tier-2/3 units,
+  // not whether its base survives 20 minutes against a real, symmetrically-tempo'd medium
+  // opponent (a Foundry/Arsenal standing bonus applies to both sides via the shared
+  // updateProductionQueue, and can now let a real AI win this race outright on some seeds —
+  // an anticipated consequence of that feature, not a harness defect). So the milestones are
+  // checked across the whole run, not just the final snapshot: reaching them once and later
+  // losing the base still proves the build order works, which is all this test claims.
   const { state, bot } = labWorld({ world: "ferros", strategy: "default", difficulty: "medium",
                                      opponent: "tech", seed: 7 });
   const dt = 0.1;   // mirrors ailab.js's own fixed sim step (DT)
   let sinceThink = 0;
+  let sawFoundry = false;
+  let guardTypes = new Set();
   for (let i = 0; i < Math.round(20 * 60 / dt); i++) {
     tick(state, dt);
     sinceThink += dt;
     if (sinceThink >= 1.5) { sinceThink = 0; bot.think(state); }   // mirrors ailab.js's own THINK cadence
+    if (!sawFoundry && [...state.buildings.values()].some(b => b.owner === "player" && !b.constructing && b.type === "foundry")) sawFoundry = true;
+    for (const u of state.units.values()) if (u.owner === "player" && u.type !== "worker") guardTypes.add(u.type);
   }
-  const done = [...state.buildings.values()].filter(b => b.owner === "player" && !b.constructing);
-  assert.ok(done.some(b => b.type === "foundry"), "the tech bot should raise a Foundry within 20 minutes");
-  const guardTypes = new Set([...state.units.values()]
-    .filter(u => u.owner === "player" && u.type !== "worker")
-    .map(u => u.type));
+  assert.ok(sawFoundry, "the tech bot should raise a Foundry within 20 minutes");
   assert.ok([...guardTypes].some(t => t !== "skiff"),
     `the tech bot's guard should include Tier-2/3 units, not just Skiffs (got: ${[...guardTypes].join(", ") || "none"})`);
 });

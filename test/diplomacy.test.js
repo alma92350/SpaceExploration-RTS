@@ -8,6 +8,9 @@ import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { runAI } from "../engine/ai.js";
 import { GRACE_TIME, MIN_GRACE_FRAC, MAX_GRIEVANCE_MULT, effectiveDiplomacyMults } from "../engine/diplomacy.js";
+import { offerGift, fulfillRequest, GOODWILL_CAP, FAVOR_INTERVAL } from "../engine/diplomacy.js";
+import { createMarket } from "../engine/market.js";
+import { COM } from "../data.js";
 
 // Deploy the Odyssey start colony ships so a world has bases (the pre-colony-ship layout).
 function settle(state) {
@@ -563,4 +566,226 @@ test("a charging Gate provokes for as long as it charges, whatever the memory sa
   gate.charge = 0.5;
   s.buildings.set(gate.id, gate);
   assert.ok(provoked(s), "a live bid to win the galaxy is a standing provocation, not a memory");
+});
+
+/* =================================================================================================
+   Gifts and favor requests: an actual road to Allied. Two additions, both goods-funded: offerGift
+   (hand the neighbour local stockpile, lifting a decaying goodwill pool with diminishing returns)
+   and deterministic favor requests (updateDiplomacy occasionally asks for this world's scarcest
+   commodity; fulfillRequest pays a premium + a goodwill bump before the deadline). Unlike tribute's
+   hard APPEASE_FLOOR ceiling, goodwill has no ceiling short of Allied (stanceLabel's >= 0.6 band).
+   ================================================================================================= */
+
+/* ---------- offerGift ---------- */
+
+test("offerGift deducts the gifted commodity from local stock and lifts the goodwill pool", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.metals = 500;
+  const before = s.diplomacy.goodwill || 0;
+
+  assert.equal(offerGift(s, "metals", 100), true);
+  assert.equal(s.players.player.resources.metals, 400, "the gift leaves the local stockpile");
+  assert.ok((s.diplomacy.goodwill || 0) > before, "the gift lifts the goodwill pool");
+});
+
+test("offerGift gifts only what's actually held, like sell() — never a negative stockpile", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.metals = 10;
+  assert.equal(offerGift(s, "metals", 100), true, "still happens, just capped");
+  assert.equal(s.players.player.resources.metals, 0, "gifted only the 10 actually held");
+});
+
+test("offerGift is a no-op with nothing to gift", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.metals = 0;
+  const before = s.diplomacy.goodwill || 0;
+  assert.equal(offerGift(s, "metals", 100), false);
+  assert.equal(s.diplomacy.goodwill || 0, before, "no goodwill from an empty gift");
+});
+
+test("offerGift is a no-op without diplomacy (a skirmish) or without a market to price the gift against", () => {
+  const bare = createGameState({ planetId: "ferros" });   // no diplomacy, no market — a plain skirmish
+  bare.players.player.resources.metals = 500;
+  assert.equal(offerGift(bare, "metals", 100), false, "no diplomacy ⇒ no-op");
+  assert.equal(bare.players.player.resources.metals, 500, "…and nothing spent");
+
+  const noMarket = createGameState({ planetId: "ferros", endless: true });
+  noMarket.diplomacy = createDiplomacy();
+  noMarket.players.player.resources.metals = 500;
+  assert.equal(offerGift(noMarket, "metals", 100), false, "diplomacy but no market ⇒ no-op");
+});
+
+test("a single huge gift saturates the goodwill pool at its cap — it can't buy +1.0 in one dump", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.metals = 1e6;
+  offerGift(s, "metals", 1e6);   // an absurdly large single dump
+  assert.equal(s.diplomacy.goodwill, GOODWILL_CAP, "clamped at the cap, not proportional to the dump's size");
+});
+
+test("goodwill decays back toward 0 over time absent further gifts, same relaxation idiom as the market's own pressure/glut", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.metals = 500;
+  offerGift(s, "metals", 300);
+  const peak = s.diplomacy.goodwill;
+  assert.ok(peak > 0, "sanity: the gift actually raised the pool");
+  for (let i = 0; i < 600; i++) updateDiplomacy(s, 1);   // 600 sim-seconds, no further gifts
+  assert.ok(s.diplomacy.goodwill < peak, "goodwill relaxes back down without maintenance");
+});
+
+test("sustained gifting can push a world's stance all the way to Allied that scarcity alone would hold well short of", () => {
+  const control = createGalaxy({ seed: 11 });
+  const cs = activeState(control);
+  for (const n of cs.map.nodes) n.amount = n.max * 0.55;   // moderately depleted — scarcity target well under Allied
+  cs.time = 500;                                            // past grace
+  for (let i = 0; i < 1500; i++) updateDiplomacy(cs, 1);
+  assert.ok(cs.diplomacy.stance < 0.6, `sanity: scarcity ALONE keeps this world short of Allied (${cs.diplomacy.stance.toFixed(3)})`);
+
+  const g = createGalaxy({ seed: 11 });
+  const s = activeState(g);
+  for (const n of s.map.nodes) n.amount = n.max * 0.55;
+  s.time = 500;
+  s.players.player.resources.metals = 1e6;
+  // Gift on a cadence tight enough that the decaying pool never drains far below its cap between
+  // gifts (GOODWILL_DECAY's ~4min time constant vs a gift every 20 sim-seconds here) — a much
+  // wider gap (tried: every 100s) still keeps goodwill's TIME-AVERAGE well above zero, but the
+  // resulting sawtooth swings low enough between gifts that the stance's own (slower) drift only
+  // ever tracks the average, not the peaks, and that average alone isn't always enough to clear
+  // the Allied line — so this pins the cadence a sustained gifting habit actually needs, not just
+  // "gift occasionally forever".
+  for (let i = 0; i < 1500; i++) {
+    if (i % 20 === 0) offerGift(s, "metals", 500);
+    updateDiplomacy(s, 1);
+  }
+  assert.ok(s.diplomacy.stance >= 0.6, `sustained gifting must be able to reach Allied (got ${s.diplomacy.stance.toFixed(3)})`);
+  assert.equal(stanceLabel(s.diplomacy.stance), "Allied");
+});
+
+/* ---------- fulfillRequest ---------- */
+
+test("fulfillRequest pays the reward, deducts the exact requested qty, bumps goodwill, and clears the request", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.ore = 200;
+  s.diplomacy.request = { com: "ore", qty: 50, until: s.time + 60, reward: 321 };
+  const creditsBefore = g.credits, goodwillBefore = s.diplomacy.goodwill || 0;
+
+  assert.equal(fulfillRequest(g, s), true);
+  assert.equal(s.players.player.resources.ore, 150, "the exact requested qty is deducted");
+  assert.equal(g.credits, creditsBefore + 321, "the reward is paid in universal credits");
+  assert.ok((s.diplomacy.goodwill || 0) > goodwillBefore, "fulfilling bumps goodwill too");
+  assert.equal(s.diplomacy.request, null, "the request is cleared once fulfilled");
+});
+
+test("fulfillRequest fails, and changes nothing, without enough stock to cover the exact ask", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.ore = 10;   // short of the 50 asked — no partial credit, this is a favor, not a trade
+  s.diplomacy.request = { com: "ore", qty: 50, until: s.time + 60, reward: 321 };
+  const creditsBefore = g.credits;
+
+  assert.equal(fulfillRequest(g, s), false);
+  assert.equal(s.players.player.resources.ore, 10, "nothing spent on a failed fulfillment");
+  assert.equal(g.credits, creditsBefore, "no reward paid");
+  assert.ok(s.diplomacy.request, "the request stays pending, not silently cleared");
+});
+
+test("fulfillRequest fails once the request has expired", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.ore = 200;
+  s.time = 1000;
+  s.diplomacy.request = { com: "ore", qty: 50, until: 999, reward: 321 };   // deadline already passed
+  assert.equal(fulfillRequest(g, s), false, "an expired request can no longer be fulfilled");
+});
+
+test("fulfillRequest fails cleanly with no pending request, or with no galaxy", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  assert.equal(s.diplomacy.request, null, "sanity: nothing pending yet");
+  assert.equal(fulfillRequest(g, s), false, "no request ⇒ no-op");
+
+  s.diplomacy.request = { com: "ore", qty: 50, until: s.time + 60, reward: 321 };
+  assert.equal(fulfillRequest(null, s), false, "no galaxy ⇒ no-op, mirrors offerTribute's own gate");
+});
+
+/* ---------- deterministic favor-request generation (updateDiplomacy) ---------- */
+
+test("a peaceful world eventually rolls a favor request with a sane shape", () => {
+  const g = createGalaxy({ seed: 21 });
+  const s = activeState(g);   // a fresh, undisturbed world stays comfortably peaceful throughout
+  let seen = null;
+  for (let i = 0; i < 3000 && !seen; i++) { updateDiplomacy(s, 1); if (s.diplomacy.request) seen = s.diplomacy.request; }
+  assert.ok(seen, "expected a favor request to roll within a reasonable simulated span");
+  assert.ok(COM[seen.com], "names a real, tradeable commodity");
+  assert.ok(Number.isInteger(seen.qty) && seen.qty > 0, "a whole, positive quantity");
+  assert.ok(seen.reward > 0, "a positive credit reward");
+  assert.ok(seen.until > s.time - 1e-9, "the deadline lies ahead of (or at) the moment it rolled");
+});
+
+test("no favor request rolls on a hostile world", () => {
+  const s = createGameState({ planetId: "ferros", seed: 3, endless: true });
+  s.diplomacy = createDiplomacy();
+  s.market = createMarket(s);
+  s.time = 1000;
+  drainNodes(s, 0.02);   // nearly mined out -> hostile, mirrors the existing scarcity test above
+  for (let i = 0; i < 4000; i++) updateDiplomacy(s, 0.1);
+  assert.equal(atPeace(s), false, "sanity: this world is indeed at war");
+  assert.equal(s.diplomacy.request, null, "a hostile neighbour doesn't ask favors");
+});
+
+test("a pending request is never overwritten while still live, even across a favor-bucket boundary", () => {
+  const g = createGalaxy({ seed: 21 });
+  const s = activeState(g);
+  s.diplomacy.stance = 0.5;                          // comfortably peaceful
+  s.time = FAVOR_INTERVAL - 5;                        // 5s from a bucket boundary
+  const planted = { com: "ore", qty: 50, until: s.time + 500, reward: 999 };
+  s.diplomacy.request = { ...planted };
+  s.diplomacy.lastFavorBucket = Math.floor(s.time / FAVOR_INTERVAL);   // as if it had just rolled THIS bucket
+
+  for (let i = 0; i < 100; i++) updateDiplomacy(s, 1);   // crosses at least one bucket boundary, well inside `until`
+  assert.deepEqual(s.diplomacy.request, planted, "a still-pending request must never be replaced while unexpired");
+});
+
+test("an expired, unfulfilled request clears itself on the next tick, freeing the slot", () => {
+  const g = createGalaxy({ seed: 21 });
+  const s = activeState(g);
+  s.diplomacy.stance = -0.9;   // hostile, so a fresh roll can't land in the very same tick and mask the clear
+  s.time = 1000;
+  s.diplomacy.request = { com: "ore", qty: 50, until: 999, reward: 10 };   // already past its deadline
+  updateDiplomacy(s, 0.1);
+  assert.equal(s.diplomacy.request, null, "an expired request is withdrawn, unfulfilled");
+});
+
+test("the favor-request schedule is deterministic — two identical runs from the same seed stay in lockstep", () => {
+  const g1 = createGalaxy({ seed: 33 });
+  const s1 = activeState(g1);
+  const g2 = createGalaxy({ seed: 33 });
+  const s2 = activeState(g2);
+  for (let i = 0; i < 3000; i++) { updateDiplomacy(s1, 1); updateDiplomacy(s2, 1); }
+  assert.deepEqual(s1.diplomacy, s2.diplomacy,
+    "same seed ⇒ byte-identical diplomacy state, including whatever favor request happened to roll and when");
+});
+
+/* ---------- persistence: dip fields (goodwill, a pending request) persist for free ---------- */
+// persist.js's serializeGalaxy spreads the WHOLE state.diplomacy object (`{ ...state.diplomacy }`),
+// and deserializeGalaxy rehydrates via `{ ...createDiplomacy(), ...P.diplomacy }` — so any field
+// createDiplomacy() states is covered without persist.js needing to name it. Verified end-to-end
+// here rather than just trusted from reading the source.
+
+test("gift/favor diplomacy fields (goodwill, a pending request) round-trip a galaxy save/load", () => {
+  const g = createGalaxy({ seed: 5 });
+  const s = activeState(g);
+  s.players.player.resources.metals = 500;
+  offerGift(s, "metals", 200);
+  s.diplomacy.request = { com: "ore", qty: 50, until: s.time + 60, reward: 321 };
+
+  const restored = deserializeGalaxy(JSON.parse(JSON.stringify(serializeGalaxy(g))));
+  const rd = activeState(restored).diplomacy;
+  assert.ok(Math.abs(rd.goodwill - s.diplomacy.goodwill) < 1e-9, "goodwill survives the round-trip");
+  assert.deepEqual(rd.request, s.diplomacy.request, "a pending favor request survives the round-trip");
 });

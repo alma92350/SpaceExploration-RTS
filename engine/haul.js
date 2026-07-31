@@ -92,6 +92,26 @@ const SUPPLY_BATCHES = 12;        // keep a factory topped up to ~this many batc
 // dependency on the tech tree — a plain flag on player.upgrades either way.
 export const FREIGHTER_AI_TECH = "freighterai";
 
+// A building's per-building LOGISTICS PRIORITY (engine/commands.js issueSetLogiPriority, toggled
+// from a building-panel cycle button — hudSelection.js): high/normal/low. A pure weight on the
+// SAME distance-then-id nearest-first scoring nearestBacklogProducer and assignService's scanFor
+// already use, so "keep the Reactor fed before the Smelter" doesn't need a permanently-dedicated,
+// micro-managed worker (order.manual) — just a per-building dial. Exported so commands.js
+// (issueSetLogiPriority) and persist.js (cleanEntity's load-time enum coercion) share this exact
+// enum rather than each hand-rolling their own copy of it.
+export const LOGI_PRIORITIES = ["high", "normal", "low"];
+
+// HIGH halves a building's EFFECTIVE distance in the auto-assign scans (so it's drawn to from
+// further away, ahead of an equal-or-nearer normal-priority rival) and — separately, at each
+// scanFor's own cap check below — lifts its assignment cap by +1; LOW quadruples effective
+// distance, so it only draws labour once nothing higher-priority needs it. Missing/unrecognised
+// (an old save predates the field, or persist.js's cleanEntity dropped a bogus one) reads as
+// "normal": weight 1, the plain distance already scored on before this feature existed.
+// Deterministic — a pure function of the enum, no clock/RNG.
+function priorityWeight(b) {
+  return b.logiPriority === "high" ? 0.5 : b.logiPriority === "low" ? 4 : 1;
+}
+
 // AI Cores burned per second by an AUTONOMOUS freighter (aiLogistics on), scaled by its own
 // cargoHold — a bigger hold is a bigger crew/compute footprint to run unmanned. At this rate a
 // Hauler (250) costs ~0.1/s, a Heavy Hauler (650) ~0.26/s, a Bulk Freighter (1600) ~0.64/s: a real,
@@ -255,9 +275,9 @@ function nearestBacklogProducer(state, owner, x, y, minFraction = ASSIGN_FRACTIO
       const cap = storeCapOf(b.type);
       const total = storeTotal(b);
       if (cap <= 0 || total <= 0 || total < cap * minFraction) continue;   // total<=0: a minFraction of 0 must still require SOME backlog
-      if ((b.haulers || 0) >= MAX_HAULERS) continue;
+      if ((b.haulers || 0) >= MAX_HAULERS + (b.logiPriority === "high" ? 1 : 0)) continue;
       if (inZone && !inZone(b.x, b.y)) continue;
-      const d = Math.hypot(b.x - x, b.y - y);
+      const d = Math.hypot(b.x - x, b.y - y) * priorityWeight(b);
       if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
     }
     return best;
@@ -293,12 +313,12 @@ export function assignService(state, unit) {
     for (const b of state.buildings.values()) {
       if (b.owner !== unit.owner || b.constructing) continue;
       const needs = inputNeedsOf(b);
-      if (!needs || (b.servers || 0) >= MAX_SERVERS) continue;
+      if (!needs || (b.servers || 0) >= MAX_SERVERS + (b.logiPriority === "high" ? 1 : 0)) continue;
       const needsIn = neededInput(b, needs, res);   // already room-checked per-commodity (see neededInput)
       const needsOut = storeCapOf(b.type) > 0 && storeTotal(b) >= storeCapOf(b.type) * ASSIGN_FRACTION;
       if (!needsIn && !needsOut) continue;
       if (inZone && !inZone(b.x, b.y)) continue;
-      const d = Math.hypot(b.x - unit.x, b.y - unit.y);
+      const d = Math.hypot(b.x - unit.x, b.y - unit.y) * priorityWeight(b);
       if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
     }
     return best;

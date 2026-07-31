@@ -846,6 +846,62 @@ test("terrain's combatMult is genuinely applied to a live attack, not just read 
   assert.ok(highDamage > flatDamage, "and that's strictly more than the flat-ground baseline");
 });
 
+// ---- High ground extends weapon acquisition, not just fog sight: fog reveal already
+// scales by the source tile's terrain sightMult (engine/fog.js updateFog srcMult), but
+// aggro (acquireTarget/stillEngageable) only ever multiplied by the sideMod sightMult,
+// never terrain — so a unit on a mesa/ridge could SEE an enemy it refused to ENGAGE.
+// Nothing before this exercised aggro range against terrain at all.
+
+test("a unit on high ground acquires a fresh target beyond its flat-ground aggro range; the same distance on open ground does not", () => {
+  // helix's central ridge is high ground (engine/map.js PLANET_MODIFIERS.helix) with NO
+  // world-level sightMult of its own (unlike pyralis/nimbus above), so the only aggro
+  // multiplier in play is the terrain one — isolates this fix from the pre-existing
+  // sideMod(sightMult) path this file's other tests already cover.
+  // Skiff aggroRange 120 * TERRAIN.high.sightMult 1.25 = 150.
+  const D = 135;   // strictly beyond flat aggro (120), strictly inside high-ground aggro (150)
+
+  const flat = createGameState({ planetId: "ferros" });   // no terrain at all -> sightMult/combatMult both 1 everywhere
+  const flatAttacker = makeUnit("skiff", "player", 500, 500);
+  const flatTarget = makeUnit("skiff", "ai", 500 + D, 500);
+  flat.units.set(flatAttacker.id, flatAttacker);
+  flat.units.set(flatTarget.id, flatTarget);
+  updateCombat(flat, flatAttacker, 0.1);
+  assert.equal(flatAttacker.autoTarget, null, "flat ground: the target sits beyond the un-extended aggro range");
+
+  const high = createGameState({ planetId: "helix" });
+  const map = high.map;
+  const highAttacker = makeUnit("skiff", "player", map.width * 0.5, map.height * 0.5);
+  const highTarget = makeUnit("skiff", "ai", map.width * 0.5 + D, map.height * 0.5);
+  high.units.set(highAttacker.id, highAttacker);
+  high.units.set(highTarget.id, highTarget);
+  const tile = sampleTerrain(map.terrain, highAttacker.x, highAttacker.y);
+  assert.equal(tile.name, "high", "fixture sanity: the attacker is standing on the ridge");
+
+  updateCombat(high, highAttacker, 0.1);
+  assert.equal(highAttacker.autoTarget, highTarget.id, "high ground: the identical distance is now inside the terrain-extended aggro range");
+});
+
+test("stillEngageable also folds in terrain: a high-ground unit keeps its already-locked target instead of switching to a closer one", () => {
+  const D = 135;   // beyond flat aggro (120), inside this attacker's high-ground aggro (150)
+  const high = createGameState({ planetId: "helix" });
+  const map = high.map;
+  const attacker = makeUnit("skiff", "player", map.width * 0.5, map.height * 0.5);
+  // Locked from a (simulated) previous tick, out at the terrain-extended range.
+  const lockedTarget = makeUnit("skiff", "ai", map.width * 0.5 + D, map.height * 0.5);
+  // Well within the FLAT aggro range too — what acquireTarget would prefer if stillEngageable
+  // ever fell through to it (nearer target, unmodified by the fix being tested here).
+  const closerTarget = makeUnit("skiff", "ai", map.width * 0.5 + 60, map.height * 0.5);
+  high.units.set(attacker.id, attacker);
+  high.units.set(lockedTarget.id, lockedTarget);
+  high.units.set(closerTarget.id, closerTarget);
+  attacker.autoTarget = lockedTarget.id;
+
+  updateCombat(high, attacker, 0.1);
+
+  assert.equal(attacker.autoTarget, lockedTarget.id,
+    "stillEngageable's own terrain-extended aggro holds the original lock, rather than falling through to acquireTarget and picking the closer enemy");
+});
+
 // ---- anvilAura (the Aegis's guardAura): reduces damage taken by allies inside
 // its bubble. Nothing before this landed a real hit through it.
 

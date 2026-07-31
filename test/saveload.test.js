@@ -93,7 +93,57 @@ globalThis.document = {
   removeEventListener() {},
 };
 
-const { hasSave, hasOdysseySave, storedSaveVersions } = await import("../saveload.js");
+const { hasSave, hasOdysseySave, storedSaveVersions, autoSave, loadGame, loadOdyssey, recordAutoSaveOutcome } = await import("../saveload.js");
+
+// session.js is DOM/window-free (a plain data object — see its own header comment), so it's safe
+// to import here, well before the window/AudioContext stubs further down: the two-generation
+// rotation tests just need to set game.state/game.galaxy directly, not drive a full bootState/
+// bootGalaxy boot. The "drive the real Load path" section below reuses this SAME singleton —
+// there is only one `game` binding in this file now, imported once, here.
+const { game } = await import("../session.js");
+
+// The module's own literal keys (not exported) — pinned again by the "documented literal storage
+// keys" test below; redeclared here so the two-generation tests can address the exact same
+// localStorage slots saveload.js itself reads/writes.
+const SAVE_KEY = "stellarfrontier.save.v1";
+const ODYSSEY_KEY = "stellarfrontier.odyssey.v1";
+
+// A minimal in-memory localStorage — same idiom as test/update.test.js's / test/overlays.test.js's
+// own fakeLocalStorage (this Node install has no real `localStorage` global by default; the
+// "environment sanity" test below pins that down). Assigned fresh INSIDE each test that needs a
+// working store — never at this file's own top level — so the "localStorage is unavailable" tests
+// right below keep observing exactly that: node:test only starts running test BODIES after this
+// whole module has finished its synchronous load, so a module-scope assignment here would flip
+// every test in the file — including the ones declared earlier in the file — onto a live store.
+function fakeLocalStorage() {
+  const store = new Map();
+  return {
+    getItem(k) { return store.has(k) ? store.get(k) : null; },
+    setItem(k, v) { store.set(k, String(v)); },
+    removeItem(k) { store.delete(k); },
+    clear() { store.clear(); },
+  };
+}
+
+// A quota-simulating variant: setItem throws a QuotaExceededError-shaped error the next `n` calls
+// (armed via `_failNext`), then behaves normally — for the "a setItem quota throw drops the .prev
+// backup and retries once" test below. Deliberately call-count-based rather than byte-accurate: it
+// exercises the exact same retry code path without the test being sensitive to exactly how large a
+// real serialized save happens to be.
+function quotaLocalStorage() {
+  const store = new Map();
+  let failNext = 0;
+  return {
+    getItem(k) { return store.has(k) ? store.get(k) : null; },
+    setItem(k, v) {
+      if (failNext > 0) { failNext--; const e = new Error("QuotaExceededError"); e.name = "QuotaExceededError"; throw e; }
+      store.set(k, String(v));
+    },
+    removeItem(k) { store.delete(k); },
+    clear() { store.clear(); },
+    _failNext(n) { failNext = n; },
+  };
+}
 
 // --- environment check: is `localStorage` a real global under this Node install? -------------
 // Node 22 gained an experimental, opt-in Web Storage implementation (see `node --help` ->
@@ -147,6 +197,95 @@ test("the module reads the documented literal storage keys", () => {
   const src = readFileSync(fileURLToPath(new URL("../saveload.js", import.meta.url)), "utf8");
   assert.match(src, /SAVE_KEY\s*=\s*"stellarfrontier\.save\.v1"/);
   assert.match(src, /ODYSSEY_KEY\s*=\s*"stellarfrontier\.odyssey\.v1"/);
+  // The previous-generation suffix (docs/improvement-proposals.md: "move the current value to
+  // KEY+'.prev'") — pinned the same way, so a silent rename here can't silently orphan every
+  // player's fallback generation either.
+  assert.match(src, /PREV_SUFFIX\s*=\s*"\.prev"/);
+});
+
+/* ============================================================
+   Two-generation autosave with fallback load and surfaced failure (docs/improvement-proposals.md
+   "Two-generation autosave with fallback load and surfaced failure"): autoSave() rotates the
+   current primary into KEY+'.prev' before writing a fresh generation, loadGame/loadOdyssey fall
+   back to '.prev' when the primary fails to deserialize, hasSave/hasOdysseySave/storedSaveVersions
+   read both generations, a setItem quota throw drops '.prev' and retries once, and the periodic
+   autosave caller counts consecutive failures toward a one-time "autosave is failing" toast.
+   ============================================================ */
+
+test("autoSave rotates generations: the previous primary value moves to KEY+'.prev' before the fresh write lands", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  game.state = createGameState({ seed: 501, planetId: "ferros", rng: mulberry32(501) });
+  game.galaxy = null;
+
+  assert.equal(autoSave(), true, "first autosave: nothing to rotate yet, just writes the primary");
+  assert.equal(localStorage.getItem(SAVE_KEY + ".prev"), null,
+    "no .prev yet — there was nothing stored to rotate on the very first write");
+  const firstPrimary = localStorage.getItem(SAVE_KEY);
+  assert.ok(firstPrimary, "the primary now holds the first generation");
+
+  game.state = createGameState({ seed: 502, planetId: "ferros", rng: mulberry32(502) });
+  assert.equal(autoSave(), true, "second autosave");
+  assert.equal(localStorage.getItem(SAVE_KEY + ".prev"), firstPrimary, "the OLD primary rotated into .prev");
+  assert.notEqual(localStorage.getItem(SAVE_KEY), firstPrimary, "the primary now holds the fresh (second) generation");
+
+  game.state = null;   // leave the shared session clean for later tests
+});
+
+test("hasSave/hasOdysseySave report true when only the .prev generation survives", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  assert.equal(hasSave(), false);
+  assert.equal(hasOdysseySave(), false);
+
+  localStorage.setItem(SAVE_KEY + ".prev", "anything");
+  assert.equal(hasSave(), true, "a .prev-only save should still offer Continue — loadGame reads both");
+  assert.equal(hasOdysseySave(), false, "the Odyssey key is untouched");
+
+  localStorage.setItem(ODYSSEY_KEY + ".prev", "anything");
+  assert.equal(hasOdysseySave(), true);
+});
+
+test("storedSaveVersions falls back to .prev's version when the primary is missing or unparseable", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  localStorage.setItem(SAVE_KEY + ".prev", JSON.stringify({ v: 7 }));
+  assert.equal(storedSaveVersions().skirmish, 7, "no primary at all — read .prev's version");
+
+  localStorage.setItem(SAVE_KEY, "{ not valid json");
+  assert.equal(storedSaveVersions().skirmish, 7, "an unparseable primary still falls back to .prev's version");
+
+  localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 9 }));
+  assert.equal(storedSaveVersions().skirmish, 9, "a valid primary wins over .prev");
+});
+
+test("autoSave: a setItem quota throw drops the .prev backup and retries once, so the backup can never starve the primary", () => {
+  const ls = quotaLocalStorage();
+  globalThis.localStorage = ls;
+  ls.setItem(SAVE_KEY, "stale-primary");
+  ls.setItem(SAVE_KEY + ".prev", "stale-prev");
+  game.state = createGameState({ seed: 503, planetId: "ferros", rng: mulberry32(503) });
+  game.galaxy = null;
+
+  ls._failNext(1);   // the very next setItem call (rotating the stale primary into .prev) throws once
+  assert.equal(autoSave(), true, "one retry after dropping .prev should still land the primary write");
+  assert.equal(ls.getItem(SAVE_KEY + ".prev"), null, "the .prev backup was sacrificed to make room");
+  assert.ok(ls.getItem(SAVE_KEY) && ls.getItem(SAVE_KEY) !== "stale-primary", "the fresh primary write landed");
+
+  ls._failNext(2);   // truly out of room: even the retry (after dropping .prev) fails
+  assert.equal(autoSave(), false, "no room left even after sacrificing .prev — fails cleanly, doesn't throw");
+
+  game.state = null;
+});
+
+test("recordAutoSaveOutcome warns exactly once, on the 3rd CONSECUTIVE failure, and a success resets the streak (but never re-arms the one-time flag)", () => {
+  assert.equal(recordAutoSaveOutcome(true), false, "a success never warns");
+  assert.equal(recordAutoSaveOutcome(false), false, "1st consecutive failure: too early");
+  assert.equal(recordAutoSaveOutcome(true), false, "a success in between resets the streak");
+  assert.equal(recordAutoSaveOutcome(false), false, "1st failure again (streak was reset): too early");
+  assert.equal(recordAutoSaveOutcome(false), false, "2nd consecutive failure: still too early");
+  assert.equal(recordAutoSaveOutcome(false), true, "3rd consecutive failure: warn now");
+  assert.equal(recordAutoSaveOutcome(true), false, "a later success doesn't itself warn");
+  assert.equal(recordAutoSaveOutcome(false), false, "1st failure of a brand-new streak");
+  assert.equal(recordAutoSaveOutcome(false), false, "2nd");
+  assert.equal(recordAutoSaveOutcome(false), false, "3rd again — already warned once this session, stays quiet for good");
 });
 
 // --- driving the REAL file-Load path: loadBtn -> loadFromFile -> importSave -> bootState/bootGalaxy ---
@@ -215,11 +354,11 @@ globalThis.cancelAnimationFrame = () => {};
 // dom.js resolves its handles (loadBtn included) once, at ITS OWN import time, off the document
 // stub set up near the top of this file — importing it again here just returns that already-
 // cached module, the IDENTICAL object saveload.js's module-scope
-// `loadBtn.addEventListener("click", loadFromFile)` already attached its listener to. session.js's
-// `game` is the same live singleton every UI module reads/writes — bootState/bootGalaxy mutate it
-// for real, so it's what the tests below observe.
+// `loadBtn.addEventListener("click", loadFromFile)` already attached its listener to. `game`
+// (session.js) was already imported near the top of this file — bootState/bootGalaxy mutate that
+// same live singleton for real, so it's what every test below (including the earlier
+// two-generation rotation tests) observes.
 const { loadBtn } = await import("../dom.js");
-const { game } = await import("../session.js");
 
 // Real fixtures, not hand-typed JSON: run the actual serializers (engine/persist.js) over a real
 // createGameState/createGalaxy, so the payload fed through the fake file below is byte-for-byte
@@ -288,4 +427,57 @@ test("a file containing invalid JSON is caught gracefully by the try/catch aroun
   assert.equal(loadBtn.textContent, "Load failed");
   assert.equal(game.state, before.state, "a failed import must not disturb the current game");
   assert.equal(game.galaxy, before.galaxy, "a failed import must not disturb the current game");
+});
+
+// --- driving the REAL localStorage Continue path: loadGame/loadOdyssey's primary → .prev fallback ---
+// Same "drive the real thing, don't reimplement it" spirit as the file-Load tests above, now against
+// the setup "Continue"/"Continue Odyssey" buttons' own path (loadGame/loadOdyssey), reusing the
+// window/AudioContext/requestAnimationFrame stubs already established for bootState/bootGalaxy above.
+
+test("loadGame falls back to the .prev generation when the primary fails to deserialize, and boots it", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  game.state = null; game.galaxy = "sentinel";
+  localStorage.setItem(SAVE_KEY, "{ not valid json");
+  localStorage.setItem(SAVE_KEY + ".prev", JSON.stringify(skirmishSave));
+  loadBtn.textContent = "Load";
+
+  loadGame();
+
+  assert.equal(game.state && game.state.seed, skirmishSave.seed, "the .prev generation was booted");
+  assert.equal(game.galaxy, null, "booting a skirmish (even via fallback) still clears game.galaxy");
+  assert.equal(loadBtn.textContent, "Load", "a successful fallback load doesn't flash any failure text");
+});
+
+test("loadOdyssey falls back to the .prev generation when the primary fails to deserialize, and boots it", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  game.state = null; game.galaxy = null;
+  localStorage.setItem(ODYSSEY_KEY, "{ not valid json");
+  localStorage.setItem(ODYSSEY_KEY + ".prev", JSON.stringify(galaxySave));
+  loadBtn.textContent = "Load";
+
+  loadOdyssey();
+
+  assert.equal(game.galaxy && game.galaxy.seed, galaxySave.seed, "the .prev generation was booted");
+  assert.equal(loadBtn.textContent, "Load", "a successful fallback load doesn't flash any failure text");
+});
+
+test("loadGame flashes 'Load failed' and leaves the current game untouched when BOTH generations are corrupt", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  const before = createGameState({ seed: 909, planetId: "ferros", rng: mulberry32(909) });
+  game.state = before; game.galaxy = null;
+  localStorage.setItem(SAVE_KEY, "{ not valid json");
+  localStorage.setItem(SAVE_KEY + ".prev", "{ also not valid json");
+  loadBtn.textContent = "Load";
+
+  loadGame();
+
+  assert.equal(loadBtn.textContent, "Load failed");
+  assert.equal(game.state, before, "a failed fallback load must not disturb the current game");
+});
+
+test("loadGame flashes 'No save' when neither generation exists at all", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  loadBtn.textContent = "Load";
+  loadGame();
+  assert.equal(loadBtn.textContent, "No save");
 });

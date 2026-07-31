@@ -271,22 +271,25 @@ export function flashHint(msg) {
 // A persistent hotkey reference, openable at ANY time (unlike the selection-panel
 // legend, which is only there when nothing is selected).
 const HELP_ROWS = [
-  ["Left-drag", "Select units · Ctrl+drag adds to selection"],
+  ["Left-drag", "Select units · Ctrl+drag adds to selection · Alt+drag subtracts from it"],
   ["Right-click", "Move · attack an enemy · gather a node"],
   ["Right-click and drag", "…the drag direction also becomes the group's (or a lone unit's) facing"],
   ["A, then click", "Attack-move — advance and engage on the way"],
   ["Ctrl+right-click", "Queue a waypoint (chain a path)"],
   ["1–9 / Shift+1–9", "Recall / bind a control group"],
   ["Double-click", "Select every unit of that type on screen"],
+  ["Ctrl+double-click", "Select every unit of that type across the WHOLE map, not just what's on screen"],
   ["Q · E · X", "Select army · Ranger scout mode · stop"],
   ["H", "Hold position — fire in range, don't chase"],
   ["R", "Patrol — loop the current waypoint chain, engaging anything met along the way"],
   ["F", "Form up — hold the chosen formation shape right here"],
   ["Z C V B N", "Produce / build the selected panel's Nth option"],
   ["`", "Jump to the next idle worker"],
-  ["Space", "Jump the camera to your base"],
+  ["Space", "Jump the camera to your base — press again quickly to cycle through every base"],
+  ["Backspace", "Jump to the last under-attack alert"],
   ["P", "Pause / resume"],
   ["M", "Odyssey — open the galaxy map"],
+  ["T", "Tech & Industry chart — the unlock ladder, coloured by what you can build/research now"],
   ["Right-click a node", "(building selected) rally new workers to mine it"],
   ["Minimap", "Left-click to jump · right-click to order"],
   ["Wheel · arrows · edge", "Zoom · pan the camera"],
@@ -311,7 +314,12 @@ export function buildHelpOverlay() {
   helpOverlayEl.innerHTML = `<div class="help-card"><h2>Controls &amp; Help</h2>`
     + `<h3 class="help-sub">Mouse &amp; keyboard</h3>${helpRows(HELP_ROWS)}`
     + `<h3 class="help-sub">Touch</h3>${helpRows(TOUCH_HELP_ROWS)}`
-    + `<p class="help-dismiss">Press F1, ?, or Esc to close</p></div>`;
+    + `<p class="help-dismiss">Press F1, ?, or Esc to close</p>`
+    // docs/player-handbook.html draws the full tier ladder + every stat table this quick
+    // reference only summarizes — linked from nowhere else in the app before techChart.js
+    // (docs/improvement-proposals.md "Tech & Industry Chart overlay"). target="_blank" so
+    // opening it never navigates away from (and loses) the running match.
+    + `<p class="help-manual"><a href="docs/player-handbook.html" target="_blank" rel="noopener">Full field manual ↗</a></p></div>`;
 }
 
 function toggleHelp(force) {

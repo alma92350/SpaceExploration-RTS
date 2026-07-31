@@ -537,3 +537,74 @@ test("Rapid Fabrication (Logistics T2) cuts production time", () => {
   };
   assert.ok(timeToBuild(true) < timeToBuild(false), "a worker builds faster with Rapid Fabrication");
 });
+
+/* ---------- Foundry and Arsenal keep working after the unlock (docs/improvement-proposals.md) ----------
+   Both are documented pure prerequisite buildings with zero ongoing value once their gate is
+   served. A completed Foundry now speeds MILITARY unit production ~8%; a standing Arsenal stacks a
+   second ~8% step. Live-scanned (entities.js structureMult): losing the building loses the bonus. */
+
+test("a standing Foundry speeds military unit production ~8%", () => {
+  const timeToTrain = withFoundryStanding => {
+    const state = createGameState({ planetId: "ferros" });
+    const barracks = makeBuilding("barracks", "player", 500, 500);
+    state.buildings.set(barracks.id, barracks);
+    if (withFoundryStanding) withFoundry(state);
+    barracks.queue.push({ unitType: "skiff", progress: 0 });   // the ungated fallback — no tech gate to fight through
+    let t = 0;
+    while (barracks.queue.length && t < 100) { updateProductionQueue(state, barracks, 0.1); t += 0.1; }
+    return t;
+  };
+  assert.ok(timeToTrain(true) < timeToTrain(false), "a Skiff trains faster with a completed Foundry standing");
+});
+
+test("a standing Arsenal stacks a second ~8% step atop a standing Foundry's", () => {
+  const timeToTrain = structures => {
+    const state = createGameState({ planetId: "ferros" });
+    const barracks = makeBuilding("barracks", "player", 500, 500);
+    state.buildings.set(barracks.id, barracks);
+    if (structures >= 1) withFoundry(state);
+    if (structures >= 2) { const ars = makeBuilding("arsenal", "player", 640, 560); state.buildings.set(ars.id, ars); }
+    barracks.queue.push({ unitType: "skiff", progress: 0 });
+    let t = 0;
+    while (barracks.queue.length && t < 100) { updateProductionQueue(state, barracks, 0.1); t += 0.1; }
+    return t;
+  };
+  const neither = timeToTrain(0), foundryOnly = timeToTrain(1), both = timeToTrain(2);
+  assert.ok(foundryOnly < neither, "sanity: the Foundry alone still speeds it up");
+  assert.ok(both < foundryOnly, "the Arsenal stacks a further speed-up on top of the Foundry's, not a flat replacement");
+});
+
+test("razing the Foundry removes its production bonus immediately (live-scanned, not a one-time flag)", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const barracks = makeBuilding("barracks", "player", 500, 500);
+  state.buildings.set(barracks.id, barracks);
+  const foundry = withFoundry(state);
+
+  barracks.queue.push({ unitType: "skiff", progress: 0 });
+  updateProductionQueue(state, barracks, 0.1);
+  const progressWithFoundry = barracks.queue[0].progress;
+
+  state.buildings.delete(foundry.id);   // razed
+  barracks.queue[0].progress = 0;
+  updateProductionQueue(state, barracks, 0.1);
+  const progressWithoutFoundry = barracks.queue[0].progress;
+
+  assert.ok(progressWithFoundry > progressWithoutFoundry, "losing the Foundry immediately loses the speed bonus — no lingering flag");
+});
+
+test("the Foundry/Arsenal standing bonus never touches non-military production (a Worker at the Command Center)", () => {
+  const progressAfterOneTick = withStructures => {
+    const state = createGameState({ planetId: "ferros" });
+    const cc = commandCenterOf(state, "player");
+    if (withStructures) {
+      withFoundry(state);
+      const ars = makeBuilding("arsenal", "player", 640, 560);
+      state.buildings.set(ars.id, ars);
+    }
+    cc.queue.push({ unitType: "worker", progress: 0 });
+    updateProductionQueue(state, cc, 0.1);
+    return cc.queue[0].progress;
+  };
+  assert.equal(progressAfterOneTick(true), progressAfterOneTick(false),
+    "a Worker's build time is untouched by a standing Foundry/Arsenal — that bonus is for military units, not the economy");
+});

@@ -119,7 +119,9 @@ const { panelEl } = await import("../dom.js");
 const { renderSelectionPanel, resetSelectionSignature } = await import("../hudSelection.js");
 const { queueProduction, researchUpgrade } = await import("../engine/production.js");
 const { UNITS, UPGRADES } = await import("../engine/entities.js");
-const { createMarket, TRADE_LOT } = await import("../engine/market.js");
+const { createMarket, TRADE_LOT, quoteSell, updateMarket } = await import("../engine/market.js");
+const { researchTech, TECHS } = await import("../engine/techtree.js");
+const { createDiplomacy, GOODWILL_CAP } = await import("../engine/diplomacy.js");
 
 // Mirrors hudSelection.js's own module-private costText() (hudSelection.js:1509) — kept local so
 // a button's label is matched against UNITS' REAL cost, not a hand-typed "50 ore" that could
@@ -538,6 +540,52 @@ test("Refinery research: a queued upgrade shows a live progress row and drops ou
 });
 
 /* ---------------------------------------------------------------------------------------------
+   Cancelable research queue with refunds (docs/improvement-proposals.md): the Datacenter's
+   research row gets the production-queue's own cancel-button idiom (renderQueueRows) — one row
+   per queued node, each with its own × button calling cancelResearch and re-rendering.
+   --------------------------------------------------------------------------------------------- */
+
+function selectDatacenter(state) {
+  const dc = makeBuilding("datacenter", "player", 600, 500);
+  state.buildings.set(dc.id, dc);
+  state.selection = [dc.id];
+  return dc;
+}
+
+test("Datacenter research: a queued node gets its own cancel button, and clicking it fully refunds and dequeues", () => {
+  const { state } = setup(215);
+  const dc = selectDatacenter(state);
+  state.players.player.resources.crystals = 1000;
+
+  assert.equal(researchTech(state, dc.id, "metallurgy"), true, "sanity: queues Metallurgy");
+  const before = state.players.player.resources.crystals;
+  renderSelectionPanel();
+
+  const cancelBtn = panelEl.querySelector(".queue-cancel");
+  assert.ok(cancelBtn, "expected a cancel button on the Datacenter's queued research row, same idiom as the production queue");
+  cancelBtn.click();
+
+  assert.equal(dc.researchQueue.length, 0, "cancelling empties the queue");
+  assert.equal(state.players.player.resources.crystals, before + TECHS.metallurgy.cost.crystals, "…and fully refunds it");
+});
+
+test("Datacenter research: queued-behind nodes each get their own row and cancel button, and cancelling the head cascades the panel too", () => {
+  const { state } = setup(216);
+  const dc = selectDatacenter(state);
+  state.players.player.resources.crystals = 1000;
+
+  researchTech(state, dc.id, "metallurgy");
+  researchTech(state, dc.id, "electronics");   // requires metallurgy — queued ahead of it, a second row
+  renderSelectionPanel();
+
+  const cancelBtns = panelEl.querySelectorAll(".queue-cancel");
+  assert.equal(cancelBtns.length, 2, "one cancel button per queued research job");
+
+  cancelBtns[0].click();   // cancel Metallurgy (the head) — Electronics depends on it and must cascade out too
+  assert.equal(dc.researchQueue.length, 0, "the dependent cascades out of the queue along with its prereq");
+});
+
+/* ---------------------------------------------------------------------------------------------
    TARGET 5 — the reported bug: the Market panel's price/afford-state live patch
    (hudSelection.js's marketRowFields/refreshMarketRows). A Buy or Sell trade mutates
    engine/market.js's trade pressure, but touches nothing renderSelectionPanel's rebuild
@@ -634,6 +682,121 @@ test("the Market panel's live patch survives an UNRELATED renderSelectionPanel t
   assert.equal(marketRow("ore"), row, "an unrelated tick must not rebuild the row either");
   assert.equal(marketRow("ore").querySelector(".market-com").textContent, priceAfterSell,
     "the price must stay exactly what the trades set it to — not drift, not revert");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 8 — Bulk trading UI + glut/pressure trend readout (docs/improvement-proposals.md): each
+   Market row also gets a Sell x4 and a Sell All button — both pass the FULL qty straight to the
+   real sell() (engine/market.js), which self-limits via marginal pricing, so nothing new to gate
+   here beyond "at least one lot held" — plus a small trend glyph derived from
+   state.market.pressure/glut so a glutted commodity reads at a glance instead of requiring a
+   mental price-history comparison.
+   --------------------------------------------------------------------------------------------- */
+
+test("the Market panel offers Sell x4 and Sell All buttons per row, alongside the existing Sell/Buy pair", () => {
+  setupMarket(311);
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  assert.ok(row.querySelector(".market-sell"), "sanity: the plain Sell button is still there");
+  assert.ok(row.querySelector(".market-buy"), "sanity: the plain Buy button is still there");
+  const sell4 = row.querySelector(".market-sell4");
+  const sellAll = row.querySelector(".market-sellall");
+  assert.ok(sell4, "expected a Sell x4 button");
+  assert.ok(sellAll, "expected a Sell All button");
+  assert.equal(sell4.textContent, `Sell ${TRADE_LOT * 4}`);
+  assert.equal(sellAll.textContent, "Sell All");
+});
+
+test("Sell x4 sells exactly 4 lots through the real sell(), and its tooltip previews quoteSell's real proceeds", () => {
+  const { state } = setupMarket(312);
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  const oreBefore = state.players.player.resources.ore;
+  const creditsBefore = game.galaxy.credits;
+  const preview = quoteSell(state.market, "ore", TRADE_LOT * 4);
+  assert.ok(row.querySelector(".market-sell4").title.includes(String(preview)),
+    `expected the Sell x4 tooltip to quote quoteSell's own ${preview}, got: ${JSON.stringify(row.querySelector(".market-sell4").title)}`);
+
+  row.querySelector(".market-sell4").click();
+
+  assert.equal(state.players.player.resources.ore, oreBefore - TRADE_LOT * 4, "sold exactly 4 lots");
+  assert.equal(game.galaxy.credits, creditsBefore + preview,
+    "the real sale must earn exactly what the preview quoted — a UI preview that could drift from engine math is the bug this guards");
+});
+
+test("Sell All sells the player's full remaining holding, including a partial final lot", () => {
+  const { state } = setupMarket(313);
+  state.players.player.resources.ore = TRADE_LOT * 5 + 10;   // 5 full lots plus a partial one
+  renderSelectionPanel();
+  const row = marketRow("ore");
+
+  row.querySelector(".market-sellall").click();
+
+  assert.equal(state.players.player.resources.ore, 0, "Sell All must clear the entire holding, partial lot included");
+  assert.ok(game.galaxy.credits > 1e9, "credits went up by the sale proceeds");
+});
+
+test("Sell x4 and Sell All are disabled and inert below one full lot, same gate as the plain Sell button", () => {
+  const { state } = setupMarket(314);
+  state.players.player.resources.ore = TRADE_LOT - 1;   // short of even one lot
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  const sell4 = row.querySelector(".market-sell4"), sellAll = row.querySelector(".market-sellall");
+  assert.ok(sell4.classList.contains("disabled"), "Sell x4 must grey out short of one lot");
+  assert.ok(sellAll.classList.contains("disabled"), "Sell All must grey out short of one lot");
+
+  const before = state.players.player.resources.ore;
+  sell4.click();
+  sellAll.click();
+  assert.equal(state.players.player.resources.ore, before, "a disabled bulk-sell click must never sell anything");
+});
+
+test("Sell x4/Sell All live-patch their tooltip across an unrelated renderSelectionPanel tick, same as the plain Sell/Buy pair", () => {
+  const { state } = setupMarket(315);
+  renderSelectionPanel();
+  const row = marketRow("ore");
+  const titleBefore = row.querySelector(".market-sell4").title;
+
+  for (let i = 0; i < PROBE_LOTS; i++) row.querySelector(".market-sell").click();
+  renderSelectionPanel();   // an ordinary tick
+
+  assert.equal(marketRow("ore"), row, "an unrelated tick must not rebuild the row");
+  assert.notEqual(marketRow("ore").querySelector(".market-sell4").title, titleBefore,
+    "the Sell x4 tooltip must track the price the earlier Sell clicks just moved, not stay frozen");
+});
+
+test("a fresh market row shows no trend glyph — nothing notable to flag at equilibrium", () => {
+  setupMarket(316);
+  renderSelectionPanel();
+  const trend = marketRow("ore").querySelector(".market-trend");
+  assert.ok(trend, "expected a trend span in the row");
+  assert.equal(trend.textContent, "", "a freshly-created market has no pressure/glut yet to read a trend from");
+});
+
+test("heavy selling of a produced good reads as glutted — 'still falling' right after, then 'recovering' once the fast pressure alone relaxes", () => {
+  const { state } = setupMarket(317);
+  state.players.player.resources.machinery = 5000;   // a produced good — the only tier glut ever applies to
+  renderSelectionPanel();
+
+  for (let i = 0; i < 20; i++) marketRow("machinery").querySelector(".market-sell").click();   // saturate pressure AND glut
+  renderSelectionPanel();
+  const justAfter = marketRow("machinery").querySelector(".market-trend").textContent;
+  assert.equal(justAfter, "▼ Glutted, still falling",
+    "fresh off heavy selling, the fast pressure term is still deeply negative too");
+
+  updateMarket(state, 20);   // dt=20 fully relaxes the ~17s-constant pressure in one step, but barely dents the ~8min glut
+  renderSelectionPanel();
+  const later = marketRow("machinery").querySelector(".market-trend").textContent;
+  assert.equal(later, "▼ Glutted, recovering",
+    "pressure has relaxed but the slow glut hasn't — the trend glyph must distinguish the two, not conflate them");
+});
+
+test("heavy buying (no glut on the buy side) reads as elevated", () => {
+  setupMarket(318);
+  renderSelectionPanel();
+  for (let i = 0; i < 15; i++) marketRow("ore").querySelector(".market-buy").click();
+  renderSelectionPanel();
+  assert.equal(marketRow("ore").querySelector(".market-trend").textContent, "↑ Elevated");
 });
 
 /* ---------------------------------------------------------------------------------------------
@@ -797,4 +960,126 @@ test("the aggregated row's counter suffix survives the live hp-only patch too, n
   assert.ok(skiffRow, "expected the live-patched Skiff row");
   assert.ok(skiffRow.textContent.includes("▼ falls to Bastion"),
     `expected the live-patched row to still carry the counter suffix, got: ${skiffRow.textContent}`);
+});
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 9 — Gifts and favor requests: an actual road to Allied (docs/improvement-proposals.md):
+   the Diplomacy panel now stays visible across the WHOLE stance range (not just Neutral-or-worse
+   — gifts/favors are exactly what a comfortably-Cordial-or-better player would use, pushing toward
+   Allied), and grows a gift picker (one row per held commodity, engine/diplomacy.js offerGift) and
+   a favor-request row (fulfillRequest) alongside the pre-existing, still-conditional tribute button.
+   --------------------------------------------------------------------------------------------- */
+
+function setupDiplomacy(seed, stance = 0.35) {
+  const { state, cc } = setup(seed);
+  state.diplomacy = createDiplomacy();
+  state.diplomacy.stance = stance;
+  state.market = createMarket(state);
+  game.galaxy = { credits: 1e9 };
+  return { state, cc };
+}
+
+function diplomacyHead() {
+  return panelEl.children.find(c => c.tagName === "div" && (c.textContent || "").startsWith("Diplomacy —"));
+}
+function giftRow(com) {
+  return panelEl.querySelectorAll(".market-row").find(r => r.dataset.com === com);
+}
+
+test("the Diplomacy panel stays visible even when the neighbour is comfortably Cordial or Allied", () => {
+  setupDiplomacy(601, 0.9);   // deep into Allied — the old gate (stance < 0.25) used to hide the whole panel here
+  renderSelectionPanel();
+  assert.ok(diplomacyHead(), "expected the Diplomacy panel to render regardless of how friendly the neighbour already is");
+});
+
+test("the tribute button itself still only shows once the neighbour has cooled to Neutral-or-worse", () => {
+  const { state } = setupDiplomacy(602, 0.5);   // Cordial — comfortably at peace
+  renderSelectionPanel();
+  assert.ok(!findButton("Send tribute"), "no point paying tribute while comfortably cordial");
+
+  state.diplomacy.stance = 0.1;   // Neutral
+  renderSelectionPanel();
+  assert.ok(findButton("Send tribute"), "the tribute lever reappears once the stance actually cools");
+});
+
+test("the gift picker offers a row per held commodity, and gifting deducts stock and raises goodwill", () => {
+  const { state } = setupDiplomacy(603, 0.35);
+  state.players.player.resources.metals = 100;
+  renderSelectionPanel();
+
+  const row = giftRow("metals");
+  assert.ok(row, "expected a gift row for the held metals");
+  const giftBtn = row.querySelector(".market-btn");
+  assert.ok(giftBtn, "expected a Gift button in the row");
+  assert.equal(giftBtn.textContent, `Gift ${TRADE_LOT}`);
+
+  const goodwillBefore = state.diplomacy.goodwill || 0;
+  giftBtn.click();
+  assert.equal(state.players.player.resources.metals, 100 - TRADE_LOT, "the gift left the stockpile");
+  assert.ok((state.diplomacy.goodwill || 0) > goodwillBefore, "the gift raised the goodwill pool");
+  assert.ok(state.diplomacy.goodwill <= GOODWILL_CAP, "…without exceeding the pool's own cap");
+});
+
+test("a commodity short of a full lot gets no gift row", () => {
+  const { state } = setupDiplomacy(604, 0.35);
+  state.players.player.resources.metals = TRADE_LOT - 1;
+  renderSelectionPanel();
+  assert.equal(giftRow("metals"), undefined, "nothing to gift below one lot");
+});
+
+test("no favor row appears without a pending request", () => {
+  setupDiplomacy(605, 0.35);
+  renderSelectionPanel();
+  assert.ok(!panelEl.querySelector(".favor-progress"), "no live request ⇒ no favor row");
+});
+
+test("a pending favor request shows a Fulfill button that pays the reward and clears the request", () => {
+  const { state } = setupDiplomacy(606, 0.35);
+  state.players.player.resources.ore = 200;
+  state.diplomacy.request = { com: "ore", qty: 50, until: state.time + 60, reward: 321 };
+  renderSelectionPanel();
+
+  const progress = panelEl.querySelector(".favor-progress");
+  assert.ok(progress, "expected a live favor-progress row");
+  assert.equal(progress.textContent, "⭐ Favor requested — 60s left");
+
+  const btn = findButton("Fulfill:");
+  assert.ok(btn, "expected a Fulfill button");
+  assert.ok(!btn.classList.contains("disabled"), "affordable ⇒ not locked");
+
+  const creditsBefore = game.galaxy.credits;
+  btn.click();
+  assert.equal(state.players.player.resources.ore, 150, "the exact requested qty is deducted");
+  assert.equal(game.galaxy.credits, creditsBefore + 321, "the reward is paid");
+  assert.ok(!panelEl.querySelector(".favor-progress"), "the favor row disappears once fulfilled");
+});
+
+test("the Fulfill button is disabled and inert without enough stock to cover the ask", () => {
+  const { state } = setupDiplomacy(607, 0.35);
+  state.players.player.resources.ore = 10;   // short of the 50 asked
+  state.diplomacy.request = { com: "ore", qty: 50, until: state.time + 60, reward: 321 };
+  renderSelectionPanel();
+
+  const btn = findButton("Fulfill:");
+  assert.ok(btn, "expected a Fulfill button even though it's locked");
+  assert.ok(btn.classList.contains("disabled"));
+
+  const creditsBefore = game.galaxy.credits;
+  btn.click();
+  assert.equal(state.players.player.resources.ore, 10, "a locked Fulfill click must never spend stock");
+  assert.equal(game.galaxy.credits, creditsBefore, "…or pay out a reward");
+});
+
+test("the favor countdown live-patches across an unrelated renderSelectionPanel tick", () => {
+  const { state } = setupDiplomacy(608, 0.35);
+  state.players.player.resources.ore = 200;
+  state.time = 0;
+  state.diplomacy.request = { com: "ore", qty: 50, until: 60, reward: 321 };
+  renderSelectionPanel();
+  const before = panelEl.querySelector(".favor-progress").textContent;
+
+  state.time = 30;   // 30s closer to the deadline — nothing else about the selection changed
+  renderSelectionPanel();
+  const after = panelEl.querySelector(".favor-progress").textContent;
+  assert.notEqual(after, before, "the countdown must not freeze at whatever it read on the panel's last rebuild");
 });

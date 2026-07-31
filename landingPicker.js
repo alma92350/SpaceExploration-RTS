@@ -3,15 +3,18 @@
    world with no player Spaceport standing on it (engine/galaxy.js's
    landingZone falls back to a player-chosen point in exactly that case — see
    its header comment). With no beacon to home in on, the player picks an
-   approximate touchdown spot themselves, blind: the canvas here draws NO
-   terrain, fog, enemy units/buildings or resource nodes — genuinely nothing
-   but a faint reference grid — because a world you've never set foot on (the
-   overwhelmingly common case this fires for) really is a total unknown. The
-   pick itself is necessarily coarse (a minimap click, not a coordinate
-   field), and engine/galaxy.js's snapLandingPoint further snaps it onto a
-   fixed grid — so the dashed ring drawn around the marker previews that same
-   imprecision rather than promising a precision the landing won't actually
-   have.
+   approximate touchdown spot themselves: the canvas here draws the world's
+   static terrain silhouette (rough and high ground, in the same faint shades
+   minimap.js's own terrain layer uses) — geography is charted map knowledge
+   from orbit, not battlefield intel, the same doctrine engine/fog.js's own
+   header states — but otherwise still nothing: no fog, no enemy units or
+   buildings, no resource nodes, because what's actually happening down there
+   on a world you've never set foot on (the overwhelmingly common case this
+   fires for) really is unknown until you land. The pick itself is necessarily
+   coarse (a minimap click, not a coordinate field), and engine/galaxy.js's
+   snapLandingPoint further snaps it onto a fixed grid — so the dashed ring
+   drawn around the marker previews that same imprecision rather than
+   promising a precision the landing won't actually have.
 
    This picker isn't ONLY reached for total unknowns, though: `needsPick`
    (boot.js's initiateJump) fires whenever no COMPLETED player Spaceport
@@ -67,8 +70,8 @@ export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
 
   const p = document.createElement("p");
   p.textContent = hasFootprint
-    ? "No completed Spaceport here to guide the fleet in. Your own buildings and units are marked on the chart below — pick an approximate site; a minimap pick is never exact."
-    : "No Spaceport beacon here to guide the fleet in. Fog of war is total — pick an approximate site on the chart below; a minimap pick is never exact.";
+    ? "No completed Spaceport here to guide the fleet in. Terrain is charted from orbit, and your own buildings and units are marked on the chart below — pick an approximate site; a minimap pick is never exact."
+    : "No Spaceport beacon here to guide the fleet in. Terrain is charted from orbit — pick an approximate site on the chart below; a minimap pick is never exact.";
 
   const canvasWrap = document.createElement("div");
   canvasWrap.className = "landing-pick-canvas-wrap";
@@ -78,8 +81,8 @@ export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
   canvas.tabIndex = 0;
   canvas.setAttribute("role", "img");
   canvas.setAttribute("aria-label", hasFootprint
-    ? "Starmap chart marked with your own buildings and units — click to mark an approximate landing site"
-    : "Blind starmap chart — click to mark an approximate landing site");
+    ? "Starmap chart charted from orbit and marked with your own buildings and units — click to mark an approximate landing site"
+    : "Terrain charted from orbit — click to mark an approximate landing site");
   canvasWrap.appendChild(canvas);
 
   const hint = document.createElement("p");
@@ -105,8 +108,29 @@ export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
   const draw = () => {
     ctx.fillStyle = "#05070f";
     ctx.fillRect(0, 0, mmW, mmH);
-    // A faint reference grid — spatial context (roughly where on the chart you're clicking)
-    // without revealing a single scouted thing about the world itself.
+    const sx = mmW / map.width, sy = mmH / map.height;
+
+    // The destination's static terrain silhouette — rough and high ground, in the same
+    // faint shades minimap.js's own terrain layer uses (minimap.js renderUnderlay). Geography
+    // is charted map knowledge from orbit, not battlefield intel (see the header comment) —
+    // but deposits, fog and any enemy/unit intel besides the player's own footprint below stay
+    // exactly as hidden as before; only the terrain TYPE grid is read here. Feature cells only
+    // (OPEN draws nothing), same as minimap.js.
+    const terr = map.terrain;
+    if (terr) {
+      for (let gy = 0; gy < terr.rows; gy++) {
+        const row = gy * terr.cols;
+        for (let gx = 0; gx < terr.cols; gx++) {
+          const code = terr.type[row + gx];
+          if (!code) continue;
+          ctx.fillStyle = code === 2 ? "rgba(255, 209, 102, 0.20)" : "rgba(120, 140, 180, 0.18)";
+          ctx.fillRect(gx * terr.cell * sx, gy * terr.cell * sy, terr.cell * sx + 1, terr.cell * sy + 1);
+        }
+      }
+    }
+
+    // A faint reference grid on top of the terrain — spatial context (roughly where on the
+    // chart you're clicking) without revealing anything else about the world.
     ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
     ctx.lineWidth = 1;
     for (let gx = 1; gx < 4; gx++) { const x = (mmW / 4) * gx; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, mmH); ctx.stroke(); }
@@ -117,7 +141,6 @@ export function openLandingPicker(dest, worldLabel, { onPick, onCancel }) {
     // The player's own footprint on this world, if any — see the header comment. Never
     // fog-gated (it's the player's own owned intel), and drawn every time regardless of
     // `picked` so it's visible before the first click, not just after.
-    const sx = mmW / map.width, sy = mmH / map.height;
     ctx.fillStyle = dest.players?.player?.color || "#4fd1ff";
     for (const b of dest.buildings.values()) {
       if (b.owner !== "player") continue;

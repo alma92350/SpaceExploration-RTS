@@ -9,8 +9,8 @@
 import { BUILDINGS, UNITS, canAfford, payCost, prereqsMet, canGatherType, canLogisticsType, canBuildCategory } from "./entities.js";
 import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
-import { formationSlots } from "./formation.js";
-import { FREIGHTER_AI_TECH } from "./haul.js";
+import { formationSlots, resolveHeading } from "./formation.js";
+import { FREIGHTER_AI_TECH, LOGI_PRIORITIES } from "./haul.js";
 import { canRecycle, beginRecycle, cancelRecycle } from "./recycle.js";
 
 // Give a unit an order, either replacing what it's doing (a plain command)
@@ -68,6 +68,39 @@ function groupSpeedCap(units) {
   return Number.isFinite(speed) ? speed * FORMATION_PACE : undefined;
 }
 
+// Range-layered formation ranks: re-pair `units.slice(1)` (the followers) with `spots.slice(1)`
+// (their assigned slots) by weapon range instead of raw selection-array order — a wedge or line
+// otherwise interleaves a Bastion and a Breacher arbitrarily, purely by which order the player
+// happened to add them to the selection. `forwardness` is each follower slot's projection onto the
+// SAME heading formationSlots itself just oriented the shape around (resolveHeading, engine/
+// formation.js — deliberately not unit-normalized, which is fine: a positive scalar multiple never
+// changes which of two spots projects further forward, only relative order matters here). Units
+// are sorted by (UNITS[type].range ?? Infinity) ascending, id tie-break (deterministic — a string
+// comparison, unlike object/Map iteration order); slots are sorted by forwardness descending; the
+// two lists are zipped index-for-index — so the shortest-ranged unit (Bastion, Skiff) lands on the
+// most forward slot, the longest-ranged (Lancer, Breacher, Colossus) trail behind, and any unarmed
+// unit (Mender, a freighter caught in a squad select) sinks to the rearmost slot of all — the
+// missing-range fallback has to sort LAST, not first, or an unarmed support unit would rank as the
+// single shortest range in the group and lead the charge. Returns a
+// new spots array, same length and leader-first as the input, so callers keep reading `spots[i]`
+// exactly as before; `spots[0]` (the leader's own slot) passes through untouched — the leader is a
+// documented player choice (engine/formation.js header), never re-picked by a stat.
+function rankSlotsByRange(units, spots, x, y, formation) {
+  const leaderSpot = spots[0];
+  const heading = resolveHeading(units, x, y, formation);
+  const byRange = units.slice(1).sort((a, b) => {
+    const ra = UNITS[a.type]?.range ?? Infinity, rb = UNITS[b.type]?.range ?? Infinity;
+    return ra !== rb ? ra - rb : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  });
+  const byForwardness = spots.slice(1).sort((s1, s2) => {
+    const f1 = (s1.x - leaderSpot.x) * heading.x + (s1.y - leaderSpot.y) * heading.y;
+    const f2 = (s2.x - leaderSpot.x) * heading.x + (s2.y - leaderSpot.y) * heading.y;
+    return f2 - f1;
+  });
+  const spotFor = new Map(byRange.map((u, i) => [u, byForwardness[i]]));
+  return [leaderSpot, ...units.slice(1).map(u => spotFor.get(u))];
+}
+
 // The shared machinery behind issueMove/issueAttackMove/issueHoldFormation: lay the group out
 // in `formation`'s shape, give the LEADER (units[0] — see engine/formation.js) its own real
 // order via `makeLeaderOrder(point)`, and give every OTHER unit a persistent "follow-leader"
@@ -111,7 +144,14 @@ function dispatchFormation(units, x, y, formation, queue, makeLeaderOrder) {
     return;
   }
 
-  const spots = formationSlots(units, x, y, formation);
+  let spots = formationSlots(units, x, y, formation);
+  // Range-layered ranks (see rankSlotsByRange above): only for an opt-in SHAPED formation, never
+  // the legacy grid spread and never when the caller passed no formation at all (formationSlots'
+  // own shape default is "grid" either way) — the AI/owner-less path above already returned before
+  // reaching here, so this only ever reorders a real player leader/follower squad.
+  if (formation && formation.shape && formation.shape !== "grid") {
+    spots = rankSlotsByRange(units, spots, x, y, formation);
+  }
   const leaderSpot = spots[0];
   const newFollowers = units.slice(1);
 
@@ -244,6 +284,24 @@ export function issueSetCollectPoint(units, on) {
     u.collectPoint = on;
     if (on) u.anchor = { x: u.x, y: u.y };
   });
+}
+
+// Toggle a building's per-building LOGISTICS PRIORITY — high/normal/low, a building-panel cycle
+// button (hudSelection.js) on a factory or fuel-burning power station. A pure weight on the SAME
+// distance-then-id nearest-first scans every producer/factory already competes on
+// (engine/haul.js priorityWeight, read by nearestBacklogProducer and assignService's scanFor):
+// "keep the Reactor fed before the Smelter" without dedicating a worker to it by hand
+// (order.manual, issueServiceBuilding). Same idiom as issueSetCollectPoint just above: a plain
+// field flip, no cost, no prereq. Takes a single building (by id), not a unit selection — this is
+// a property of the BUILDING being serviced, not of whoever's servicing it. An unknown building id
+// is a silent no-op (the panel button that calls this only ever names the currently selected
+// building); an unrecognised priority string collapses to "normal" — the same fallback
+// engine/haul.js's priorityWeight already applies to a missing field, so a building can never end
+// up in an unrecognised state.
+export function issueSetLogiPriority(state, buildingId, priority) {
+  const b = state.buildings.get(buildingId);
+  if (!b) return;
+  b.logiPriority = LOGI_PRIORITIES.includes(priority) ? priority : "normal";
 }
 
 // Only ARMED units (or a support drone, whose 'attack' order updateSupport reinterprets

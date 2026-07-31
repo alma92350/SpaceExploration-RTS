@@ -14,7 +14,7 @@
 import { game } from "./session.js";
 import {
   canvas, ctx, minimapCanvas, minimapCtx, muteBtn, volumeEl,
-  idleWorkersEl, sheetToggleEl, MINIMAP_W, MINIMAP_H, isTouchMode,
+  idleWorkersEl, idleProductionEl, sheetToggleEl, MINIMAP_W, MINIMAP_H, isTouchMode,
 } from "./dom.js";
 import { clampCamera } from "./camera.js";
 import { minimapToWorld } from "./minimap.js";
@@ -27,6 +27,7 @@ import "./starmap.js";   // self-wires the galaxy-map button + M key
 import "./update.js";    // self-wires the version chip + auto-update check
 
 idleWorkersEl.addEventListener("click", () => { if (game.input) game.input.focusIdleWorker(); });
+idleProductionEl.addEventListener("click", () => { if (game.input) game.input.focusIdleProducer(); });
 
 muteBtn.addEventListener("click", () => {
   const next = !sound.isMuted();

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { issueMove, issueAttackMove, issueAttack, issueGather, issueBuild, issueAssistBuild, issueSetRally, issueStop, issueHold, issueHoldFormation, issueServiceBuilding, issueRepair, issueSetHomeBase, issuePatrol } from "../engine/commands.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
+import { formationSlots } from "../engine/formation.js";
 
 // Selectable units carry a real `type` — issueAttack now validates it (a weaponless
 // type is filtered out so it can't NaN-poison a target), so a faithful stand-in needs
@@ -69,6 +70,60 @@ test("issueAttackMove passes its formation option through the same way as issueM
   units.forEach(u => assert.equal(u.order.type, "attack-move"));
   const avgX = units.reduce((s, u) => s + u.order.x, 0) / units.length;
   assert.ok(Math.abs(avgX - 1000) < 1, "still centers on the target point");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Range-layered formation ranks (docs/improvement-proposals.md): a shaped (non-grid) formation's
+   dispatchFormation re-pairs followers with slots by weapon range instead of raw selection-array
+   order — see test/formation.test.js for the bulk of this coverage (issueMove/issueHoldFormation,
+   both shapes and the degenerate hold-in-place heading). These two round out the picture: the
+   same reorder also applies via issueAttackMove (not just issueMove), and the legacy grid path
+   stays byte-identical for a real PLAYER squad specifically — every dummyUnits() fixture above is
+   deliberately owner-less, so it only ever exercises the AI/no-squad branch of dispatchFormation,
+   never the player leader/follower path the reorder actually lives in.
+   --------------------------------------------------------------------------------------------- */
+
+// A player-owned, typed stand-in — a real `type` so UNITS[type].range resolves, and
+// `owner:"player"` so dispatchFormation takes the leader/follower squad path (the range-layered
+// reorder only ever runs there — see the file header comment above).
+function playerUnit(id, type, x = 0, y = 0) {
+  return { id, type, x, y, owner: "player", order: null };
+}
+
+test("issueAttackMove also range-ranks a shaped formation's followers, the same as issueMove", () => {
+  const leader = playerUnit("L", "skiff");
+  const r1 = playerUnit("R1", "breacher");   // range 150
+  const b1 = playerUnit("B1", "bastion");    // range 44
+  const r2 = playerUnit("R2", "breacher");
+  const b2 = playerUnit("B2", "bastion");
+  const units = [leader, r1, b1, r2, b2];
+
+  issueAttackMove(units, 1000, 0, false, { shape: "wedge", leaderPos: "front" });
+
+  const bastionFwd = [b1, b2].map(u => u.order.offsetX);
+  const breacherFwd = [r1, r2].map(u => u.order.offsetX);
+  assert.ok(Math.min(...bastionFwd) > Math.max(...breacherFwd),
+    "issueAttackMove's shaped formation screens Bastions ahead of Breachers too");
+});
+
+test("a grid-shaped formation never range-reorders a real PLAYER squad — the legacy path stays byte-identical", () => {
+  const leader = playerUnit("L", "skiff");
+  const r1 = playerUnit("R1", "breacher");   // long range, listed first among followers
+  const b1 = playerUnit("B1", "bastion");    // short range, listed second
+  const units = [leader, r1, b1];
+
+  // formationSlots' own raw grid spread — dispatchFormation must pass this straight through with
+  // no range-based re-pairing when shape is "grid".
+  const rawSpots = formationSlots(units, 1000, 0, { shape: "grid" });
+
+  issueMove(units, 1000, 0, false, { shape: "grid" });
+
+  assert.deepEqual({ x: r1.order.offsetX, y: r1.order.offsetY },
+    { x: rawSpots[1].x - rawSpots[0].x, y: rawSpots[1].y - rawSpots[0].y },
+    "the breacher (listed first among followers) keeps formationSlots' own raw slot 1, not reassigned by range");
+  assert.deepEqual({ x: b1.order.offsetX, y: b1.order.offsetY },
+    { x: rawSpots[2].x - rawSpots[0].x, y: rawSpots[2].y - rawSpots[0].y },
+    "the bastion keeps formationSlots' own raw slot 2");
 });
 
 test("issueAttack sends every unit at the same explicit target id (focus fire, no spreading)", () => {

@@ -60,7 +60,9 @@ function renderUnderlay(state, mmW, mmH) {
   }
 }
 
-export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH) {
+// `pings` (effects.js activePings(), threaded in by boot.js's render callback) is optional and
+// defaults to none, so any other caller that hasn't been updated keeps working unchanged.
+export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH, pings = []) {
   const { map } = state;
   const sx = mmW / map.width, sy = mmH / map.height;
 
@@ -95,6 +97,28 @@ export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH) 
     if (u.owner !== "player" && !isVisibleAt(fog, u.x, u.y)) continue;
     ctx.fillStyle = state.players[u.owner].color;
     ctx.fillRect(u.x * sx - 1, u.y * sy - 1, 2, 2);
+  }
+
+  // Attack-ping alert rings (docs/improvement-proposals.md "Attack pings on the minimap plus a
+  // jump-to-last-alert key"): a pulsing red ring at each live under-attack ping (effects.js
+  // activePings(), which keeps a ping around far longer than the world-space one so a raid on a
+  // distant flank is still findable here long after the on-screen banner has faded — input.js's
+  // Backspace jump-to-last-alert targets that very same spot). Position is scaled into minimap
+  // space the same way every other marker above is (x*sx, y*sy); the radius itself stays in
+  // fixed minimap pixels (scaling an already-small ring by sx/sy too would shrink it to
+  // sub-pixel). `age` is already a 0 (just fired) -> 1 (about to expire) fraction, from
+  // activePings() itself.
+  if (pings.length) {
+    ctx.strokeStyle = "#f87171";
+    ctx.lineWidth = 1.5;
+    for (const p of pings) {
+      const pulse = (p.age * 7.5) % 1;   // ~4 pulses over the ping's full life, same cadence as the world-space ring
+      ctx.globalAlpha = Math.max(0, (1 - pulse) * (1 - p.age));
+      ctx.beginPath();
+      ctx.arc(p.x * sx, p.y * sy, 3 + pulse * 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
   }
 
   // Camera viewport rectangle, so the minimap also shows where on the

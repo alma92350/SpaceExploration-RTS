@@ -131,17 +131,43 @@ function sourceActive(building, def) {
   return def.combust ? !!building.powered : true;
 }
 
-// The best (smallest) grid-distance from (x,y) to any ACTIVE own power source, each source's
-// distance divided by its `powerRange` — so a short-range Generator's efficiency zones shrink and
-// a consumer must huddle much closer to it than to a Reactor. Infinity if the owner has no active
-// source in reach. Guards non-finite coordinates (the industry unit-test stubs omit x/y) so they
-// read as co-located rather than NaN-poisoning the scan.
-function bestGridDist(state, owner, x, y) {
+// The best (smallest) grid-distance from (x,y) to any ACTIVE own power source (a fuelled Reactor/
+// Generator — NOT a Substation relay, see bestGridDist below), each source's distance divided by
+// its `powerRange` — so a short-range Generator's efficiency zones shrink and a consumer must
+// huddle much closer to it than to a Reactor. Infinity if the owner has no active source in reach.
+// Guards non-finite coordinates (the industry unit-test stubs omit x/y) so they read as co-located
+// rather than NaN-poisoning the scan. Kept separate from bestGridDist's own relay pass so a
+// Substation's OWN "am I linked?" qualification check (below) can never be satisfied by another
+// relay — one hop only, no chaining.
+function bestSourceDist(state, owner, x, y) {
   let best = Infinity;
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing) continue;
     const def = BUILDINGS[b.type];
     if (!(def?.energyGrants > 0) || !sourceActive(b, def)) continue;
+    const d = Math.hypot(b.x - x, b.y - y) / (def.powerRange || 1);
+    if (Number.isFinite(d) && d < best) best = d;
+  }
+  return best;
+}
+
+// The best (smallest) grid-distance from (x,y) to any ACTIVE own power source OR qualifying
+// Substation relay (engine/entities.js BUILDINGS.substation, `powerRelay: true`). A relay
+// QUALIFIES as a virtual source point only while it stands within POWER_TIERS[0].max ("linked") of
+// a REAL active source — bestSourceDist just above, which only ever looks at real sources, is
+// exactly the same distance math bestGridDist itself uses, so "linked" means the identical band
+// either way. A relay that doesn't qualify contributes nothing, same as if it didn't exist. One
+// hop only: qualification is checked against bestSourceDist (real sources alone), never against
+// another relay, so a relay can never extend the grid through a second relay — the scan stays
+// O(sources × relays), not an open-ended chain. A qualifying relay is then just another candidate
+// source point for (x,y), scaled by its OWN (shorter) powerRange, same shape as a real source.
+function bestGridDist(state, owner, x, y) {
+  let best = bestSourceDist(state, owner, x, y);
+  for (const b of state.buildings.values()) {
+    if (b.owner !== owner || b.constructing) continue;
+    const def = BUILDINGS[b.type];
+    if (!def?.powerRelay) continue;
+    if (bestSourceDist(state, owner, b.x, b.y) > POWER_TIERS[0].max) continue;   // not linked to a real source → relays nothing
     const d = Math.hypot(b.x - x, b.y - y) / (def.powerRange || 1);
     if (Number.isFinite(d) && d < best) best = d;
   }
@@ -244,6 +270,11 @@ export function powerDraw(state, owner) {
     // An electrified non-power building (Odyssey) adds its own modest, grid-scaled load — the
     // upgrade's running cost, so wiring up the whole base actually competes for Reactor Power.
     else if (b.electrified && isElectrifiable(b.type)) draw += ELECTRIFY_POWER * eff;
+    // A Substation relay (engine/entities.js) grants no Power of its own, but running its
+    // transceiver still loads the grid a little — the same flat-draw idiom as an electrified
+    // building (ELECTRIFY_POWER) — so extending the grid's reach with relays still costs capacity,
+    // whether or not this particular relay is currently linked to a real source (bestGridDist).
+    else if (def?.powerRelay) draw += ELECTRIFY_POWER * eff;
   }
   return draw;
 }
@@ -334,8 +365,10 @@ export function updateProduction(state, building, dt) {
     if (com === "energy") continue;
     frac = Math.min(frac, (input[com] || 0) / (recipe.in[com] * iceMult));   // only what's in the larder
   }
-  // Heavy Alloys (techtree.js `heavyalloys`) lifts output per batch — same inputs, more out.
-  const outPerBatch = recipe.qty * techMult(ups, "yieldMult");
+  // Heavy Alloys (techtree.js `heavyalloys`) lifts output per batch — same inputs, more out — but
+  // ONLY for the Smelter/Assembly Plant its tooltip names (appliesTo); building.type is what scopes
+  // it, same as techMult's own doc comment describes.
+  const outPerBatch = recipe.qty * techMult(ups, "yieldMult", building.type);
   if (outPerBatch > 0) frac = Math.min(frac, storeRoom(building) / outPerBatch);   // don't overfill the output buffer
   if (!(frac > 0)) return;
   if (iceMult < 1) chargeIceUpkeep(state, building.owner, dt);   // the coolant itself costs ice while it's running

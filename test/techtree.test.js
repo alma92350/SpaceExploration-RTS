@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding } from "../engine/state.js";
-import { TECHS, researchTech, updateResearch, researchTimeScale, techMult } from "../engine/techtree.js";
+import { TECHS, researchTech, updateResearch, researchTimeScale, techMult, cancelResearch } from "../engine/techtree.js";
 import { BUILDINGS, UPGRADES, prereqsMet } from "../engine/entities.js";
 
 // A datacenter on an endless world, with commodities to burn — owned by the player by
@@ -147,6 +147,29 @@ test("passive nodes multiply industry through techMult; unlock nodes carry no pa
   assert.equal(techMult({ metallurgy: true }, "powerMult"), 1, "an unlock node has no passive field");
 });
 
+// Scope Heavy Alloys to the factories its tooltip names (docs/improvement-proposals.md): the
+// tooltip promises "+40% output from the Smelter and Assembly Plant" specifically, so techMult
+// must honor an appliesTo list and skip the node for any OTHER asking building type.
+test("heavyalloys' appliesTo names exactly the Smelter and Assembly Plant, matching its tooltip", () => {
+  assert.deepEqual(TECHS.heavyalloys.appliesTo, ["smelter", "assembler"]);
+});
+
+test("techMult's optional building-type argument scopes an appliesTo-limited node to only the types it names", () => {
+  assert.equal(techMult({ heavyalloys: true }, "yieldMult", "smelter"), 1.4, "applies to the Smelter it names");
+  assert.equal(techMult({ heavyalloys: true }, "yieldMult", "assembler"), 1.4, "…and the Assembly Plant it names");
+  assert.equal(techMult({ heavyalloys: true }, "yieldMult", "chipfab"), 1, "…but NOT the Chip Fab its tooltip never mentions");
+  assert.equal(techMult({ heavyalloys: true }, "yieldMult", "antimatterforge"), 1, "…nor any other deeper factory");
+});
+
+test("techMult omitting a building type keeps the plain un-scoped product (back-compat for every pre-existing call site)", () => {
+  assert.equal(techMult({ heavyalloys: true }, "yieldMult"), 1.4, "the 2-arg form ignores appliesTo entirely");
+});
+
+test("techMult: a node with no appliesTo field stays global regardless of what building type asks", () => {
+  assert.equal(techMult({ reactors: true }, "powerMult", "chipfab"), 1.5, "reactors carries no appliesTo — every building type sees it");
+  assert.equal(techMult({ automation: true }, "rateMult", "antimatterforge"), 1.25, "automation likewise stays global");
+});
+
 /* ---------- generalized to the Refinery's doctrine upgrades too (Tier 1: "Doctrine research
    develops over time instead of landing instantly", docs/improvement-proposals.md) ----------
    updateResearch now resolves ITS node table by building.type — datacenter -> TECHS (above),
@@ -215,4 +238,74 @@ test("the research + deeper-industry buildings are Odyssey-only and tech-gated t
   assert.equal(prereqsMet(state, "player", BUILDINGS.assembler), false, "no metallurgy → Assembly Plant locked");
   state.players.player.upgrades.metallurgy = true;
   assert.equal(prereqsMet(state, "player", BUILDINGS.assembler), true, "metallurgy researched → unlocked");
+});
+
+/* ---------- Cancelable research queue with refunds (docs/improvement-proposals.md) ----------
+   researchTech pays on enqueue with no way back out — a mis-click or a strategy pivot otherwise
+   strands the cost in a queue the player can't touch. cancelResearch mirrors production.js's
+   cancelProduction full-refund convention, and cascades over any queued node that named the
+   cancelled one in its own `requires` (researchTech's "queued ahead counts as met" allowance means
+   a dependent can only ever sit BEHIND its prereq in the queue, never ahead of it). */
+
+test("cancelResearch fully refunds a queued node and removes it from the queue", () => {
+  const { state, dc } = odysseyWithDatacenter();
+  const before = state.players.player.resources.crystals;
+  researchTech(state, dc.id, "metallurgy");
+
+  const ok = cancelResearch(state, dc.id, 0);
+
+  assert.equal(ok, true);
+  assert.equal(dc.researchQueue.length, 0);
+  assert.equal(state.players.player.resources.crystals, before, "cancelling refunds the full cost, same as production.js's cancelProduction");
+});
+
+test("cancelResearch cascades over a whole dependent chain, refunding every cascaded node too", () => {
+  const { state, dc } = odysseyWithDatacenter();
+  const before = state.players.player.resources.crystals;
+  researchTech(state, dc.id, "metallurgy");
+  researchTech(state, dc.id, "electronics");   // requires metallurgy, queued ahead of it
+  researchTech(state, dc.id, "machining");     // requires electronics, queued ahead of THAT
+  assert.equal(dc.researchQueue.length, 3, "sanity: the whole chain queued");
+
+  const ok = cancelResearch(state, dc.id, 0);   // cancel metallurgy, the root of the chain
+
+  assert.equal(ok, true);
+  assert.equal(dc.researchQueue.length, 0,
+    "electronics and machining both cascade out — neither's prereq can ever be met now, so the queue can't hold an unsatisfiable job");
+  assert.equal(state.players.player.resources.crystals, before, "every cascaded node's cost is refunded, not just the one directly cancelled");
+});
+
+test("cancelResearch leaves an unrelated queued node untouched by the cascade", () => {
+  const { state, dc } = odysseyWithDatacenter();
+  researchTech(state, dc.id, "metallurgy");
+  researchTech(state, dc.id, "reactors");      // independent passive — no relation to metallurgy
+  researchTech(state, dc.id, "electronics");   // requires metallurgy — the dependent
+
+  cancelResearch(state, dc.id, 0);   // cancel metallurgy
+
+  assert.deepEqual(dc.researchQueue.map(j => j.techId), ["reactors"],
+    "reactors (unrelated) survives; electronics (the dependent) cascades out");
+});
+
+test("cancelResearch refuses an out-of-range index instead of corrupting the queue", () => {
+  const { state, dc } = odysseyWithDatacenter();
+  researchTech(state, dc.id, "metallurgy");
+
+  const ok = cancelResearch(state, dc.id, 5);
+
+  assert.equal(ok, false);
+  assert.equal(dc.researchQueue.length, 1, "the real job is untouched");
+});
+
+test("cancelResearch also refunds a Refinery's queued doctrine research (the same shared research loop, UPGRADES table)", () => {
+  const { state, refinery } = withRefinery();
+  state.players.player.resources.crystals = 1000;
+  refinery.researchQueue = [{ techId: "reinforcedPlating", progress: 0.2 }];
+
+  const ok = cancelResearch(state, refinery.id, 0);
+
+  assert.equal(ok, true);
+  assert.equal(refinery.researchQueue.length, 0);
+  assert.equal(state.players.player.resources.crystals, 1000 + UPGRADES.reinforcedPlating.cost.crystals,
+    "refunds the Refinery upgrade's own cost, resolved against UPGRADES instead of TECHS");
 });

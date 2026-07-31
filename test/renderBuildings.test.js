@@ -2,12 +2,51 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFog, updateFog } from "../engine/fog.js";
 import { makeUnit, makeBuilding } from "../engine/state.js";
+import { BUILDINGS } from "../engine/entities.js";
 import { drawBuildings, drawBuildingShape, drawBuildingBars } from "../renderBuildings.js";
 
 // A stub 2D context that no-ops any method the drawing code happens to call, instead of
 // hand-enumerating the canvas API — keeps this test robust to unrelated rendering changes.
 function fakeCtx() {
   return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
+}
+
+// Extends test/render-roster.test.js's own richer variant: RECORDS each ctx method call as a
+// (name, rounded-args) tuple instead of swallowing it, so a test can tell two draws apart — e.g.
+// "did this draw something extra" or "did a numeric argument actually change" — without
+// hand-enumerating the canvas API either. Also traces plain property ASSIGNMENTS (ctx.fillStyle =
+// "…"), which a get-only Proxy trap can't see at all (a `ctx.fillStyle = x` assignment never calls
+// `get`) — needed here because several of the cues below (electrifiedLight's own on/off colour
+// swap, and the new lit/dark power-building cores that match its idiom) are ONLY a fillStyle/
+// strokeStyle colour change, no differing method-call argument. `round` keeps float noise from
+// making two otherwise-identical calls/sets compare unequal.
+function round(a) { return typeof a === "number" ? Math.round(a * 100) / 100 : a; }
+function tracedCtx() {
+  const calls = [];
+  const ctx = new Proxy({}, {
+    get: (t, p) => (p in t ? t[p] : (...args) => { calls.push([p, args.map(round)]); }),
+    set: (t, p, v) => { calls.push([`set:${String(p)}`, round(v)]); t[p] = v; return true; },
+  });
+  return { ctx, calls };
+}
+
+// A state solid enough for engine/industry.js's own reads (buildingConcern, powerThrottle, …) —
+// same minimal-stub idiom as test/industry.test.js's and test/combustor.test.js's own `stub`,
+// just with the `time`/`units`/`fog` fields renderBuildings.js additionally touches.
+function economyState(buildingDefs, time = 0) {
+  const buildings = new Map();
+  buildingDefs.forEach((b, i) => {
+    const id = b.id || `eco${i}`;
+    buildings.set(id, { id, owner: "player", constructing: false, ...b });
+  });
+  return {
+    time,
+    buildings,
+    units: new Map(),
+    selection: [],
+    fog: createFog({ width: 400, height: 400 }),
+    players: { player: { color: "#5ec8ff", upgrades: {}, resources: {} } },
+  };
 }
 
 // Regression test for the crash where renderBuildings.js called drawEnemyPip without
@@ -106,5 +145,110 @@ test("drawBuildingBars does not throw for a fresh, a paused, or an unpowered fac
       assert.doesNotThrow(() => drawBuildingBars(fakeCtx(), state, null, new Set()),
         `withReactor=${withReactor} paused=${paused}`);
     }
+  }
+});
+
+/* ============================================================
+   Bespoke power-plant hulls + the deterministic "working" pulse
+   (docs/improvement-proposals.md "Bespoke power-plant hulls and a deterministic 'working' pulse
+   for running factories"): the Reactor / Combustion Generator / Biomass Reactor stop sharing the
+   generic glyph-disc hex every recipe factory uses, and a genuinely running recipe factory gets a
+   subtle work-pulse glow the way electrifiedLight already glows an electrified building.
+   ============================================================ */
+
+// Before this change, all three power buildings fell through to the shared drawFactory glyph-disc
+// hex (BUILDING_GLYPH ⚡/🔥/🌿 stamped as emoji text). They're the grid, not a recipe factory, so
+// they should now render bespoke vector art instead — no emoji text call at all.
+test("Reactor, Combustion Generator, and Biomass Reactor get bespoke silhouettes, not the shared emoji-glyph disc", () => {
+  const stub = { units: new Map(), buildings: new Map() };
+  for (const type of ["reactor", "combustor", "biomassreactor"]) {
+    const b = { id: `smoke-${type}`, type, x: 0, y: 0, radius: BUILDINGS[type].radius };
+    const { ctx, calls } = tracedCtx();
+    drawBuildingShape(ctx, stub, b, "#5ec8ff");
+    assert.ok(!calls.some(([name]) => name === "fillText"),
+      `${type} should render bespoke vector art, not the shared BUILDING_GLYPH emoji disc (fillText)`);
+  }
+});
+
+// The three power buildings' own bespoke hulls should read their `powered` state directly (the
+// same "is it actually fed" signal hudSelection.js's panel already shows as `!gen.paused &&
+// gen.powered`) — a lit core/flame/vat glow, not a fixture that looks identical whether the grid
+// is humming or stone dead.
+test("Reactor, Combustion Generator, and Biomass Reactor hulls visibly differ between powered and unfed", () => {
+  const stub = { units: new Map(), buildings: new Map() };
+  for (const type of ["reactor", "combustor", "biomassreactor"]) {
+    const lit = { id: `lit-${type}`, type, x: 0, y: 0, radius: BUILDINGS[type].radius, powered: true };
+    const dark = { id: `dark-${type}`, type, x: 0, y: 0, radius: BUILDINGS[type].radius, powered: false };
+    const a = tracedCtx(); drawBuildingShape(a.ctx, stub, lit, "#5ec8ff");
+    const b = tracedCtx(); drawBuildingShape(b.ctx, stub, dark, "#5ec8ff");
+    assert.notDeepEqual(a.calls, b.calls, `${type}'s hull should read powered vs unfed`);
+  }
+});
+
+// A recipe factory (Smelter — completed, unpaused, fed, buffer clear, full power) should draw
+// something extra a starved/paused/still-constructing one doesn't: the work-pulse glow. Note that
+// buildingConcern ITSELF reads null both while genuinely running AND while constructing/recycling
+// (nothing to flag yet either way) — so "running" has to gate on completion independently, not
+// trust a bare `buildingConcern === null`.
+test("a genuinely running recipe factory draws an extra work-pulse a starved/paused/constructing one doesn't", () => {
+  const reactorDef = { id: "r1", type: "reactor", x: 0, y: 0, radius: BUILDINGS.reactor.radius, powered: true };
+  const smelterDef = { id: "s1", type: "smelter", x: 40, y: 0, radius: BUILDINGS.smelter.radius, input: { ore: 100 } };
+
+  const runningState = economyState([reactorDef, smelterDef]);
+  const running = runningState.buildings.get("s1");
+  const runningTrace = tracedCtx();
+  drawBuildingShape(runningTrace.ctx, runningState, running, "#5ec8ff");
+
+  const cases = {
+    starved: { ...smelterDef, input: { ore: 0 } },
+    paused: { ...smelterDef, paused: true },
+    constructing: { ...smelterDef, constructing: true },
+  };
+  for (const [label, def] of Object.entries(cases)) {
+    const state = economyState([reactorDef, def]);
+    const b = state.buildings.get("s1");
+    const trace = tracedCtx();
+    drawBuildingShape(trace.ctx, state, b, "#5ec8ff");
+    assert.notDeepEqual(runningTrace.calls, trace.calls,
+      `a running factory should draw something a ${label} one doesn't (the work pulse)`);
+  }
+});
+
+// The pulse is a slow CYCLE, driven by state.time — not a one-shot "running = lit" flag — so the
+// same genuinely-running factory must render differently at different points in time (else it's a
+// static overlay, not a "pulse").
+test("the work pulse animates with state.time, not a static overlay", () => {
+  const reactorDef = { id: "r1", type: "reactor", x: 0, y: 0, radius: BUILDINGS.reactor.radius, powered: true };
+  const smelterDef = { id: "s1", type: "smelter", x: 40, y: 0, radius: BUILDINGS.smelter.radius, input: { ore: 100 } };
+  const traces = [0, 1, 2, 3].map(time => {
+    const state = economyState([reactorDef, { ...smelterDef }], time);
+    const { ctx, calls } = tracedCtx();
+    drawBuildingShape(ctx, state, state.buildings.get("s1"), "#5ec8ff");
+    return JSON.stringify(calls);
+  });
+  assert.ok(new Set(traces).size > 1, "the glow should read differently across different state.time values");
+});
+
+// The pulse is scoped to RECIPE factories specifically (buildingConcern reads null for a
+// non-recipe, non-rig building unconditionally — e.g. the Datacenter — which would make a naive
+// `buildingConcern === null` check pulse a building that never runs anything at all).
+test("the work pulse never fires for a non-recipe building sharing the glyph-disc hex (Datacenter)", () => {
+  const dcDef = { id: "d1", type: "datacenter", x: 0, y: 0, radius: BUILDINGS.datacenter.radius };
+  const s0 = economyState([dcDef], 0);
+  const s1 = economyState([{ ...dcDef }], 50);   // a very different state.time
+  const a = tracedCtx(); drawBuildingShape(a.ctx, s0, s0.buildings.get("d1"), "#5ec8ff");
+  const b = tracedCtx(); drawBuildingShape(b.ctx, s1, s1.buildings.get("d1"), "#5ec8ff");
+  assert.deepEqual(a.calls, b.calls, "a Datacenter runs no recipe, so its render must be time-invariant — no stray pulse");
+});
+
+// render.js's spriteIcon (the HUD build-menu button art) draws EVERY building type, including
+// recipe factories, through a stub state with no players/time/owner at all (render.js:76). The new
+// running-pulse check reaches into buildingConcern, which reaches into state.players[owner] — this
+// pins that the icon path still can't throw for a recipe factory now that that lookup exists.
+test("drawBuildingShape tolerates the icon stub state (no players/time/owner) for every recipe factory type", () => {
+  const stub = { units: new Map(), buildings: new Map() };
+  for (const t of ["smelter", "assembler", "chipfab", "machineworks", "antimatterforge", "aifoundry", "torpedoworks"]) {
+    const b = { id: "__icon__", type: t, x: 0, y: 0, radius: BUILDINGS[t].radius };
+    assert.doesNotThrow(() => drawBuildingShape(fakeCtx(), stub, b, "#5ec8ff"), t);
   }
 });

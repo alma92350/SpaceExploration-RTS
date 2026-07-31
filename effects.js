@@ -16,6 +16,12 @@
 const TRACER_LIFETIME_MS = 120;
 const DEATH_LIFETIME_MS = 280;
 const PING_LIFETIME_MS = 3000;
+// How long an under-attack ping stays alive for the MINIMAP's own alert ring (minimap.js,
+// activePings() below) — deliberately much longer than the world-space ping's PING_LIFETIME_MS
+// above (which only needs to outlast the ~2.5s banner), so a raid on a distant flank is still
+// findable on the minimap long after the banner and the on-screen ping have both faded
+// (docs/improvement-proposals.md "Attack pings on the minimap plus a jump-to-last-alert key").
+const MINIMAP_PING_LIFETIME_MS = 9000;
 const FIREWORK_LIFETIME_MS = 1500;
 // Long enough for the shockwave ring (renderEffects.js) to visibly crawl
 // out to its real blast radius rather than snapping there in a couple of
@@ -112,7 +118,13 @@ export function activeEffects() {
   const now = performance.now();
   tracers = tracers.filter(t => now - t.born < TRACER_LIFETIME_MS);
   deaths = deaths.filter(d => now - d.born < DEATH_LIFETIME_MS);
-  pings = pings.filter(p => now - p.born < PING_LIFETIME_MS);
+  // Pruned against the LONGER minimap lifetime, not the short PING_LIFETIME_MS used for the
+  // world-space age below — this is the same shared array activePings() (just past this
+  // function) reads for the minimap's own alert ring, and it must never lose an entry the
+  // minimap still wants. The world-space ping's own fade/pulse timing is unaffected: its `age`
+  // still divides by the short PING_LIFETIME_MS, so it reads as fully faded (alpha clamped to 0
+  // by renderEffects.js's drawEffects) long before MINIMAP_PING_LIFETIME_MS is actually up.
+  pings = pings.filter(p => now - p.born < MINIMAP_PING_LIFETIME_MS);
   explosions = explosions.filter(e => now - e.born < EXPLOSION_LIFETIME_MS);
   fuseWarnings = fuseWarnings.filter(f => now - f.born < f.life);
   return {
@@ -122,6 +134,20 @@ export function activeEffects() {
     explosions: explosions.map(e => ({ ...e, age: (now - e.born) / EXPLOSION_LIFETIME_MS })),
     fuseWarnings: fuseWarnings.map(f => ({ ...f, age: (now - f.born) / f.life })),
   };
+}
+
+// The minimap's own read of the same pings addUnderAttackPing feeds above (drawMinimap in
+// minimap.js, wired in via boot.js's render callback) — kept alive far longer than the
+// world-space ping (MINIMAP_PING_LIFETIME_MS, not PING_LIFETIME_MS), so a raid on a distant flank
+// is still findable on the minimap long after the on-screen banner + world-space ping have both
+// faded. Filters defensively against the same lifetime activeEffects() prunes the shared array
+// to, so this reads correctly even called on its own — a render pass that draws the minimap
+// before the main view, or a unit test that never calls activeEffects() at all.
+export function activePings() {
+  const now = performance.now();
+  return pings
+    .filter(p => now - p.born < MINIMAP_PING_LIFETIME_MS)
+    .map(p => ({ ...p, age: (now - p.born) / MINIMAP_PING_LIFETIME_MS }));
 }
 
 // Cleared on a fresh game start so effects from a previous match don't

@@ -46,8 +46,12 @@ export const TECHS = {
     desc: "Unlock the Assembly Plant — refine metals into alloys." },
   reactors: { id: "reactors", name: "Fusion Containment", ico: "⚡", cost: { crystals: 70 }, time: 18,
     powerMult: 1.5, desc: "+50% Power from every Reactor." },
+  // appliesTo scopes the passive to exactly the building types its own tooltip names — without
+  // it, techMult would apply yieldMult to EVERY recipe building (Chip Fab, Antimatter Forge, …),
+  // silently over-boosting strategic-good throughput far past this cheap early node's advertised
+  // role. Nodes with no appliesTo field (reactors/automation above) stay global, unchanged.
   heavyalloys: { id: "heavyalloys", name: "Heavy Alloys", ico: "🔩", cost: { crystals: 110 }, time: 24, requires: ["metallurgy"],
-    yieldMult: 1.4, desc: "+40% output from the Smelter and Assembly Plant." },
+    yieldMult: 1.4, appliesTo: ["smelter", "assembler"], desc: "+40% output from the Smelter and Assembly Plant." },
   electronics: { id: "electronics", name: "Microelectronics", ico: "🖥️", cost: { crystals: 120 }, time: 28, requires: ["metallurgy"],
     desc: "Unlock the Chip Fab — make electronics from crystals and metals." },
   automation: { id: "automation", name: "Factory Automation", ico: "🤖", cost: { crystals: 130, radioactives: 40 }, time: 30, requires: ["electronics"],
@@ -91,10 +95,23 @@ export function researchTimeScale(state) {
 // (1 when none apply) — the tech-tree twin of entities.js upgradeMult, reading
 // TECHS instead of UPGRADES. Inert in skirmish (no TECH id is ever in a skirmish
 // player.upgrades).
-export function techMult(upgrades, field) {
+//
+// `buildingType` is optional and scopes a node whose def carries an `appliesTo` list (e.g.
+// heavyalloys -> ["smelter","assembler"]) to only the types it names — a node with no appliesTo
+// field stays global regardless. Passing NO buildingType (the plain 2-arg form) skips the
+// appliesTo check entirely and returns the un-scoped product, so every pre-existing call site
+// keeps its old behavior untouched; only a caller that names the asking building (industry.js
+// updateProduction's yieldMult site, hudSelection.js's mirrored rate preview) gets the scoping.
+export function techMult(upgrades, field, buildingType) {
   let m = 1;
   if (!upgrades) return m;
-  for (const id in upgrades) if (upgrades[id] && TECHS[id] && TECHS[id][field]) m *= TECHS[id][field];
+  for (const id in upgrades) {
+    if (!upgrades[id]) continue;
+    const def = TECHS[id];
+    if (!def || !def[field]) continue;
+    if (def.appliesTo && buildingType !== undefined && !def.appliesTo.includes(buildingType)) continue;
+    m *= def[field];
+  }
   return m;
 }
 
@@ -167,5 +184,56 @@ export function researchTech(state, buildingId, techId) {
   if (!canAfford(player.resources, def.cost)) return false;
   payCost(player.resources, def.cost);
   queue.push({ techId, progress: 0 });
+  return true;
+}
+
+// Negate a cost map so payCost can be used to REFUND it — the 2-line helper production.js's own
+// cancelProduction uses, duplicated locally rather than imported: techtree.js already sits
+// upstream of production.js in the import graph (production.js -> industry.js -> techtree.js for
+// techMult), so importing back the other way would open a cycle.
+function negate(cost) {
+  return Object.fromEntries(Object.entries(cost).map(([com, qty]) => [com, -qty]));
+}
+
+// Cancel a queued research job (in progress or still waiting, either one — mirrors
+// production.js's cancelProduction: the simplest, most player-friendly convention, and consistent
+// with nothing but the commodity cost having been spent on it yet) and fully refund it. If any
+// OTHER queued job on the SAME building named the cancelled techId in its own `requires`, cancel
+// and refund that too, cascading (a chain of 3+ nodes cascades all the way through) — researchTech
+// only ever lets a dependent queue AHEAD of an unmet prereq by way of the prereq ALREADY sitting in
+// the queue, so a job can only ever depend on something queued before it, never after; the queue
+// can then never be left holding a job whose prereq just vanished out from under it.
+export function cancelResearch(state, buildingId, index) {
+  const building = state.buildings.get(buildingId);
+  if (!building) return false;
+  const table = RESEARCH_TABLE_BY_BUILDING[building.type];
+  const queue = building.researchQueue;
+  if (!table || !queue || !queue[index]) return false;
+  const player = state.players[building.owner];
+
+  // Cancel one job by queue index: refund its cost (nothing to refund for a stale/unresolvable
+  // techId — updateResearch would have silently dropped it anyway, so nothing was ever banked
+  // against it here) and splice it out. Returns the cancelled techId so the caller can track it.
+  const cancelOne = i => {
+    const job = queue[i];
+    const def = table[job.techId];
+    queue.splice(i, 1);
+    if (def) payCost(player.resources, negate(def.cost));
+    return job.techId;
+  };
+
+  const cancelledIds = new Set([cancelOne(index)]);
+  let again = true;
+  while (again) {
+    again = false;
+    for (let i = 0; i < queue.length; i++) {
+      const def = table[queue[i].techId];
+      if (def && (def.requires || []).some(r => cancelledIds.has(r))) {
+        cancelledIds.add(cancelOne(i));
+        again = true;
+        break;   // the queue just shrank under us — restart the scan from the top
+      }
+    }
+  }
   return true;
 }

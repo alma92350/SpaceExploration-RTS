@@ -22,15 +22,15 @@ import {
   starmapBtn, saveBtn, loadBtn, groupChipsEl, pauseBtn,
 } from "./dom.js";
 import { queueProduction, cancelProduction, researchUpgrade } from "./engine/production.js";
-import { issueSetAILogistics, issueSetCollectPoint, issueRecycle, issueCancelRecycle } from "./engine/commands.js";
+import { issueSetAILogistics, issueSetCollectPoint, issueSetLogiPriority, issueRecycle, issueCancelRecycle } from "./engine/commands.js";
 import { canRecycle, recycleFrac, recycleValue } from "./engine/recycle.js";
-import { FREIGHTER_AI_TECH, aiUpkeepRate } from "./engine/haul.js";
+import { FREIGHTER_AI_TECH, aiUpkeepRate, LOGI_PRIORITIES } from "./engine/haul.js";
 import { supplyUsed, supplyCap } from "./engine/supply.js";
 import { powerCap, powerDraw, recipeOf, powerThrottle, planetIndustryScale, powerEfficiency, onPowerGrid, electrifyBoost, ELECTRIFY_POWER, iceCoolantMult } from "./engine/industry.js";
 import { storeTotal, storeCapOf, storeRoom, inputTotal, inputCapOf, isElectrifiable } from "./engine/entities.js";
 import { rigInfo } from "./engine/rig.js";
 import { lightFuse, BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE, BOMB_FUSE_DELAY } from "./engine/bomb.js";
-import { TECHS, researchTech, techMult } from "./engine/techtree.js";
+import { TECHS, researchTech, techMult, cancelResearch } from "./engine/techtree.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet, committedDoctrine, canBuildCategory } from "./engine/entities.js";
 import { repairCost, repairConvoy, departNow } from "./engine/scenarios.js";
 import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, spaceportTier, upgradeSpaceport,
@@ -39,8 +39,9 @@ import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, space
          upgradeToCapital, jumpVessel, CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT } from "./engine/galaxy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip, packCommandCenter, PACK_COST } from "./engine/colony.js";
-import { sell, buy, unitPrice, tradeables, TRADE_LOT } from "./engine/market.js";
-import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME } from "./engine/diplomacy.js";
+import { sell, buy, unitPrice, tradeables, TRADE_LOT, quoteSell } from "./engine/market.js";
+import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME,
+         offerGift, fulfillRequest, GOODWILL_CAP } from "./engine/diplomacy.js";
 import { initiateJump } from "./boot.js";
 import { FORMATION_SHAPES } from "./engine/formation.js";
 import { flashHint } from "./overlays.js";
@@ -176,10 +177,12 @@ function factorySignature(sel) {
   if (!f) return "";
   // Include the grid-efficiency tier (rebuilds the "Grid: …" line when a Reactor is built/razed
   // nearby), the input/output buffer levels (so the larder + output lines stay live as workers
-  // carry goods in and out, quantised so it doesn't rebuild every frame), and whether ice coolant
-  // is banked (so the Ice Coolant row flips the instant the treasury's ice crosses zero either way).
+  // carry goods in and out, quantised so it doesn't rebuild every frame), whether ice coolant
+  // is banked (so the Ice Coolant row flips the instant the treasury's ice crosses zero either way),
+  // and the Logistics Priority cycle button's own label (high/normal/low).
   return factoryStatus(state, f, recipeOf(f)).cls + ":" + powerEfficiency(state, f.owner, f.x, f.y).name
-    + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4) + ":" + (iceCoolantMult(state, f.owner) < 1);
+    + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4) + ":" + (iceCoolantMult(state, f.owner) < 1)
+    + ":" + (f.logiPriority || "normal");
 }
 
 export function renderSelectionPanel() {
@@ -236,11 +239,17 @@ export function renderSelectionPanel() {
           const node = state.map.nodesById ? state.map.nodesById.get(e.order.nodeId) : state.map.nodes.find(n => n.id === e.order.nodeId);
           return node ? node.miners || 0 : "";
         }).join(",")
-    // Rebuild when the Odyssey diplomacy panel would appear/disappear (stance crossing
-    // the 0.25 band) or its tribute button's cost/affordability would flip — so the
-    // appease lever surfaces the moment the neighbour cools, without a per-tick rebuild.
+    // Rebuild when the Odyssey diplomacy panel's tribute button would appear/disappear (stance
+    // crossing the 0.25 band) or its cost/affordability would flip, a favor request appears/
+    // expires/becomes (un)affordable, or the gift picker's own row set would change — so every
+    // lever surfaces the moment it applies, without a per-tick rebuild. (The favor countdown's
+    // seconds-left text is NOT here on purpose — it's patched every tick further below instead,
+    // same split refreshMarketRows already draws for the market's own live price.)
     + "|" + (game.galaxy && state.diplomacy
         ? `${state.diplomacy.stance < 0.25}:${tributeCost(state.diplomacy)}:${game.galaxy.credits >= tributeCost(state.diplomacy)}`
+          + `:${!!state.diplomacy.request}:${state.diplomacy.request
+              ? Math.floor(state.players.player.resources[state.diplomacy.request.com] || 0) >= state.diplomacy.request.qty : ""}`
+          + `:${Object.keys(COM).filter(c => Math.floor(state.players.player.resources[c] || 0) >= TRADE_LOT).join(",")}`
         : "")
     // Rebuild when the Capital state changes (a CC upgraded to Capital → anchored note), a
     // staged colony ship appears/vanishes (the jump panel's "ship loaded?" hint), or the
@@ -314,7 +323,7 @@ export function renderSelectionPanel() {
         const gen = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.combust && !e.constructing);
         if (!gen) return "";
         const fuels = BUILDINGS[gen.type].combust.fuels.map(f => Math.round((gen.input?.[f] || 0) / 4)).join(",");
-        return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}:${iceCoolantMult(state, gen.owner) < 1}`;
+        return `${!!gen.paused}:${!!gen.powered}:${gen.fuel || ""}:${fuels}:${iceCoolantMult(state, gen.owner) < 1}:${gen.logiPriority || "normal"}`;
       })()
     // Rebuild the Mender panel when its auto-repair toggle or on-grid power state flips.
     + "|" + (() => {
@@ -370,10 +379,18 @@ export function renderSelectionPanel() {
   // Same live patch for a Refinery's doctrine research OR a Datacenter's tech research (each
   // building's own researchQueue, resolved against the right node table by building.type — same
   // split engine/techtree.js's updateResearch itself makes) — otherwise the "Researching … — N%"
-  // row would sit frozen at whatever % it had on the last rebuild.
+  // row(s) would sit frozen at whatever % they had on the last rebuild. The Datacenter renders one
+  // cancel-button row PER queued node (renderResearchQueueRows, cancelable research queue); the
+  // Refinery still renders the single combined summary row it always has (no cancel button there —
+  // see the Datacenter block below for why the two aren't symmetric yet).
   if (building && building.researchQueue && building.researchQueue.length) {
-    const row = panelEl.querySelector(".research-progress");
-    if (row) row.textContent = researchRowText(building.researchQueue, building.type === "refinery" ? UPGRADES : TECHS);
+    if (building.type === "datacenter") {
+      const rows = panelEl.querySelectorAll(".research-queue-label");
+      building.researchQueue.forEach((job, i) => { if (rows[i]) rows[i].textContent = researchQueueRowText(job, TECHS[job.techId], i); });
+    } else {
+      const row = panelEl.querySelector(".research-progress");
+      if (row) row.textContent = researchRowText(building.researchQueue, UPGRADES);
+    }
   }
 
   // Same live patch for an in-progress Recycle — one row per currently-recycling selected
@@ -388,6 +405,14 @@ export function renderSelectionPanel() {
   // refreshMarketRows (above renderMarket) for why trading can't just rely on the rebuild
   // signature the patches above lean on.
   if (game.galaxy && state.market) refreshMarketRows(state);
+
+  // Same live patch for a pending favor request's "Xs left" countdown — it ticks down every
+  // second, and (deliberately, see the signature comment above) isn't part of the rebuild
+  // signature, so a rendered row would otherwise freeze at whatever it read on the last rebuild.
+  if (game.galaxy && state.diplomacy && state.diplomacy.request) {
+    const row = panelEl.querySelector(".favor-progress");
+    if (row) row.textContent = favorRowText(state, state.diplomacy.request);
+  }
 }
 
 // "♻ Recycling Plasma Rig — 42%" — shared by the rebuild and the live patch so they never drift.
@@ -430,9 +455,71 @@ function renderQueueRows(building) {
   });
 }
 
-// One market row's live numbers — the label's price and both buttons' afford text/state.
-// Shared by renderMarket (the initial build, right below) and refreshMarketRows (the every-tick
-// live patch further below) so the two can never drift apart.
+// One research-queue row's label text ("🔩 Researching Heavy Alloys — 40%" for the head job,
+// "🔩 Heavy Alloys (queued)" for anything queued behind it) — shared by renderResearchQueueRows'
+// initial build and the live per-tick patch above so the two can never drift apart, same rule
+// researchRowText/recycleRowText already follow for their own rows. `def` may be missing for a
+// stale techId (a tampered save) — falls back to the raw id rather than throwing.
+function researchQueueRowText(job, def, index) {
+  const label = def ? `${def.ico ? def.ico + " " : ""}${def.name}` : job.techId;
+  return index === 0 ? `${label} — ${Math.round(job.progress * 100)}%` : `${label} (queued)`;
+}
+
+// Cancelable research queue with refunds: the Datacenter's research row gets the SAME
+// cancel-button-per-job idiom renderQueueRows gives the production queue above — one row per
+// queued node, a live "% done" label for the head job and a static "(queued)" for the rest, each
+// with its own × button (cancelResearch: full refund, cascading over any queued node that named
+// the cancelled one in its own `requires`). `table` is whichever node table this building's queue
+// resolves against (TECHS for a Datacenter today — the only caller).
+function renderResearchQueueRows(building, table) {
+  const { state } = game;
+  building.researchQueue.forEach((job, i) => {
+    const row = document.createElement("div");
+    row.className = "sel-row queue-row";
+
+    const label = document.createElement("span");
+    label.className = "research-queue-label";
+    label.textContent = researchQueueRowText(job, table[job.techId], i);
+    row.appendChild(label);
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "queue-cancel";
+    cancelBtn.textContent = "×";
+    cancelBtn.title = "Cancel (full refund)";
+    cancelBtn.addEventListener("click", () => { cancelResearch(state, building.id, i); renderHUD(); });
+    row.appendChild(cancelBtn);
+
+    panelEl.appendChild(row);
+  });
+}
+
+// Thresholds below which the market's pressure/glut are everyday single-click noise, not worth a
+// glance-able flag — a lone Sell/Buy click (~0.05 pressure) never lights the glyph up, but a few
+// lots' worth of bulk trading (Sell x4 / Sell All below, or the AI's own barter) does.
+const TREND_PRESSURE_NOTABLE = 0.15;
+const TREND_GLUT_NOTABLE = 0.1;
+
+// A short glyph reading this row's price trend off the two numbers engine/market.js already
+// simulates but never surfaced: the FAST pressure (relaxes in ~17s) and, for produced goods only,
+// the SLOW glut (relaxes over ~8min) — so a player can tell a briefly-depressed price apart from a
+// deep glut worth exporting around instead of selling into (the proposal's own "▼ glutted ·
+// recovering" example). Pure string math off two numbers — kept here rather than in
+// engine/market.js since it's a presentation-only readout, not simulation.
+function marketTrend(market, com) {
+  const pressure = market.pressure[com] || 0;
+  const glut = market.glut?.[com] || 0;
+  if (glut > TREND_GLUT_NOTABLE)
+    return pressure < -TREND_PRESSURE_NOTABLE ? "▼ Glutted, still falling" : "▼ Glutted, recovering";
+  if (pressure < -TREND_PRESSURE_NOTABLE) return "↓ Depressed, recovering";
+  if (pressure > TREND_PRESSURE_NOTABLE) return "↑ Elevated";
+  return "";
+}
+
+// One market row's live numbers — the label's price, the trend glyph, and every button's afford
+// text/state. Shared by renderMarket (the initial build, right below) and refreshMarketRows (the
+// every-tick live patch further below) so the two can never drift apart. Sell x4/Sell All quote
+// their real marginal proceeds via quoteSell (engine/market.js) — a dry run of the exact lot walk
+// sell() itself uses, so the tooltip can never promise more than the click will actually pay.
 function marketRowFields(state, com) {
   // Reuse the commodity's data icon (data.js COM) — the same emblem the resource readout uses.
   const meta = COM[com];
@@ -440,10 +527,21 @@ function marketRowFields(state, com) {
   const have = Math.floor(res[com] || 0);
   const sellPrice = unitPrice(state.market, com, "sell");
   const buyPrice = unitPrice(state.market, com, "buy");
+  const sell4Qty = Math.min(TRADE_LOT * 4, have);
+  const bulkLocked = have < TRADE_LOT;
   return {
     label: `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com} ◈${Math.round(sellPrice)}`,
-    sellDisabled: have < TRADE_LOT,
+    trend: marketTrend(state.market, com),
+    sellDisabled: bulkLocked,
     sellTitle: `Sell ${TRADE_LOT} ${com} for ~◈${Math.round(sellPrice * TRADE_LOT)}`,
+    sell4Disabled: bulkLocked,
+    sell4Title: bulkLocked
+      ? `Sell ${TRADE_LOT * 4} ${com} — need at least ${TRADE_LOT}`
+      : `Sell ${sell4Qty} ${com} for ~◈${quoteSell(state.market, com, sell4Qty)}`,
+    sellAllDisabled: bulkLocked,
+    sellAllTitle: bulkLocked
+      ? `Sell All — need at least ${TRADE_LOT}`
+      : `Sell all ${have} ${com} for ~◈${quoteSell(state.market, com, have)}`,
     buyDisabled: !(game.galaxy.credits >= buyPrice * TRADE_LOT),
     buyTitle: `Buy ${TRADE_LOT} ${com} for ~◈${Math.round(buyPrice * TRADE_LOT)}`,
   };
@@ -464,8 +562,14 @@ function refreshMarketRows(state) {
     const fields = marketRowFields(state, row.dataset.com);
     const label = row.querySelector(".market-com");
     if (label) label.textContent = fields.label;
+    const trend = row.querySelector(".market-trend");
+    if (trend) trend.textContent = fields.trend;
     const sellBtn = row.querySelector(".market-sell");
     if (sellBtn) { sellBtn.className = "market-btn market-sell" + (fields.sellDisabled ? " disabled" : ""); sellBtn.title = fields.sellTitle; }
+    const sell4Btn = row.querySelector(".market-sell4");
+    if (sell4Btn) { sell4Btn.className = "market-btn market-sell4" + (fields.sell4Disabled ? " disabled" : ""); sell4Btn.title = fields.sell4Title; }
+    const sellAllBtn = row.querySelector(".market-sellall");
+    if (sellAllBtn) { sellAllBtn.className = "market-btn market-sellall" + (fields.sellAllDisabled ? " disabled" : ""); sellAllBtn.title = fields.sellAllTitle; }
     const buyBtn = row.querySelector(".market-buy");
     if (buyBtn) { buyBtn.className = "market-btn market-buy" + (fields.buyDisabled ? " disabled" : ""); buyBtn.title = fields.buyTitle; }
   });
@@ -503,6 +607,10 @@ function renderMarket(state) {
     label.className = "market-com";
     row.appendChild(label);
 
+    const trend = document.createElement("span");
+    trend.className = "market-trend";
+    row.appendChild(trend);
+
     const sellBtn = document.createElement("button");
     sellBtn.className = "market-btn market-sell";
     sellBtn.textContent = `Sell ${TRADE_LOT}`;
@@ -511,6 +619,30 @@ function renderMarket(state) {
       else sound.playProductionBlocked();
     });
     row.appendChild(sellBtn);
+
+    // Sell x4 / Sell All both pass their FULL held qty straight to the real sell() — it already
+    // self-limits via marginal lot pricing (engine/market.js), so there's nothing to compute here
+    // beyond "how much do we actually hold right now" (re-read fresh at click time, same as the
+    // plain Sell button just above).
+    const sell4Btn = document.createElement("button");
+    sell4Btn.className = "market-btn market-sell4";
+    sell4Btn.textContent = `Sell ${TRADE_LOT * 4}`;
+    sell4Btn.addEventListener("click", () => {
+      const qty = Math.min(TRADE_LOT * 4, Math.floor(res[com] || 0));
+      if (qty >= TRADE_LOT) { sell(game.galaxy, state, com, qty); renderHUD(); }
+      else sound.playProductionBlocked();
+    });
+    row.appendChild(sell4Btn);
+
+    const sellAllBtn = document.createElement("button");
+    sellAllBtn.className = "market-btn market-sellall";
+    sellAllBtn.textContent = "Sell All";
+    sellAllBtn.addEventListener("click", () => {
+      const qty = Math.floor(res[com] || 0);
+      if (qty >= TRADE_LOT) { sell(game.galaxy, state, com, qty); renderHUD(); }
+      else sound.playProductionBlocked();
+    });
+    row.appendChild(sellAllBtn);
 
     const buyBtn = document.createElement("button");
     buyBtn.className = "market-btn market-buy";
@@ -694,8 +826,11 @@ function factoryStatus(state, b, recipe) {
   if (throttle < 0.995) return { cls: "warn", text: `Throttled ${Math.round(throttle * 100)}% — low Power` };
 
   const def = BUILDINGS[b.type], ups = state.players[b.owner].upgrades;
+  // yieldMult is scoped by building type (techtree.js techMult/appliesTo — e.g. Heavy Alloys names
+  // only the Smelter/Assembly Plant) so this predicted rate never overstates a factory outside that
+  // list, matching exactly what updateProduction (engine/industry.js) actually banks.
   const rate = (def.prodRate || 1) * techMult(ups, "rateMult") * planetIndustryScale(state)
-    * throttle * recipe.qty * techMult(ups, "yieldMult");
+    * throttle * recipe.qty * techMult(ups, "yieldMult", b.type);
   return { cls: "good", text: `Running · +${rate.toFixed(1)} ${COM[recipe.out]?.name || recipe.out}/s` };
 }
 
@@ -731,26 +866,126 @@ function iceCoolantRow(state, owner) {
   return row;
 }
 
-// The Odyssey diplomacy panel, under the Command Center's market: pay universal
-// credits to appease the neighbour for a while (engine/diplomacy.js offerTribute).
-// The cost escalates per tribute and the truce decays, so it's a stopgap — buy time
-// to weather a wave or finish a jump, not a permanent peace. A charging Antimatter
-// Gate is unappeasable, by design. Credit-gated via locked/lockTip (NOT makeButton's
-// `cost`, which checks the LOCAL economy), the same idiom as the Spaceport jump.
+// A factory/power-station's per-building LOGISTICS PRIORITY (engine/commands.js
+// issueSetLogiPriority, engine/haul.js priorityWeight): a cycle button, high -> normal -> low ->
+// high on each click — "keep the Reactor fed before the Smelter" without dedicating a
+// permanently-manual worker to it. Shared by the factory and fuel-burning power-station panels
+// below, same idiom as gridEfficiencyRow/iceCoolantRow just above.
+const LOGI_PRIORITY_NEXT = { high: "low", normal: "high", low: "normal" };
+const LOGI_PRIORITY_LABEL = { high: "▲ High", normal: "● Normal", low: "▽ Low" };
+function renderLogiPriority(state, b) {
+  const cur = LOGI_PRIORITIES.includes(b.logiPriority) ? b.logiPriority : "normal";
+  panelEl.appendChild(makeButton(`Logistics priority: ${LOGI_PRIORITY_LABEL[cur]}`,
+    () => { issueSetLogiPriority(state, b.id, LOGI_PRIORITY_NEXT[cur]); renderHUD(); },
+    { tip: cur === "high" ? "Draws haulers from further away and gets one extra hauler/server slot — click to drop to Low"
+        : cur === "low" ? "Only served once nothing higher-priority needs the worker — click to reset to Normal"
+        : "Even weight with every other building — click to raise to High" }));
+}
+
+// The Odyssey diplomacy panel, under the Command Center's market. Three independent levers:
+// tribute (brake — appease a cooling-or-worse neighbour with credits), gifts (accelerator — hand
+// over local goods to build goodwill toward Allied) and favor requests (an occasional bespoke ask
+// that pays a premium). Unlike tribute, gifts/favors are useful precisely once the neighbour is
+// ALREADY comfortably cordial — pushing further, toward Allied — so this panel (unlike tribute's
+// own button below) stays visible across the whole stance range, not just once it's cooled.
 function renderDiplomacy(state) {
-  const cost = tributeCost(state.diplomacy);
-  const afford = game.galaxy.credits >= cost;
+  const dip = state.diplomacy;
 
   const head = document.createElement("div");
   head.className = "market-head";
-  head.textContent = `Diplomacy — ${stanceLabel(state.diplomacy.stance)} neighbour`;
+  head.textContent = `Diplomacy — ${stanceLabel(dip.stance)} neighbour`;
   panelEl.appendChild(head);
 
-  panelEl.appendChild(makeButton(`Send tribute (◈${cost})`,
-    () => { offerTribute(game.galaxy, state); },   // makeButton adds renderHUD() on the affordable path
-    { tip: `Buy ~${APPEASE_TIME}s of peace — the neighbour stands down, but the truce decays and each tribute costs more. A charging Gate can't be bought off.`,
+  // Tribute: pay universal credits to appease the neighbour for a while (engine/diplomacy.js
+  // offerTribute). The cost escalates per tribute and the truce decays, so it's a stopgap — buy
+  // time to weather a wave or finish a jump, not a permanent peace. A charging Antimatter Gate is
+  // unappeasable, by design. Credit-gated via locked/lockTip (NOT makeButton's `cost`, which
+  // checks the LOCAL economy), the same idiom as the Spaceport jump. Shown only once the stance
+  // has cooled to Neutral-or-worse — no point paying to appease while comfortably cordial.
+  if (dip.stance < 0.25) {
+    const cost = tributeCost(dip);
+    const afford = game.galaxy.credits >= cost;
+    panelEl.appendChild(makeButton(`Send tribute (◈${cost})`,
+      () => { offerTribute(game.galaxy, state); },   // makeButton adds renderHUD() on the affordable path
+      { tip: `Buy ~${APPEASE_TIME}s of peace — the neighbour stands down, but the truce decays and each tribute costs more. A charging Gate can't be bought off.`,
+        locked: !afford,
+        lockTip: `Need ◈${cost} — you have ◈${Math.floor(game.galaxy.credits)}` }));
+  }
+
+  renderFavorRequest(state);
+  renderGiftPicker(state);
+}
+
+// "⭐ Favor requested — 42s left" plus a Fulfill button, shown only while dip.request is live
+// (engine/diplomacy.js updateDiplomacy rolls one every few minutes for a peaceful neighbour, and
+// clears it on its own once the deadline passes). Fulfilling pays the exact ask in full — no
+// partial credit, this is a favor, not a market trade — for a credit reward plus a goodwill bump.
+// The countdown text carries its own ".favor-progress" class so renderSelectionPanel's per-tick
+// patch (right after refreshMarketRows) can keep it live without a full rebuild, same reasoning
+// as the market rows' price patch.
+function renderFavorRequest(state) {
+  const req = state.diplomacy.request;
+  if (!req || state.time >= req.until) return;
+  const meta = COM[req.com];
+  const have = Math.floor(state.players.player.resources[req.com] || 0);
+  const afford = have >= req.qty;
+
+  const head = document.createElement("div");
+  head.className = "market-head favor-progress";
+  head.textContent = favorRowText(state, req);
+  panelEl.appendChild(head);
+
+  panelEl.appendChild(makeButton(
+    `Fulfill: ${req.qty} ${meta?.ico ? meta.ico + " " : ""}${meta?.name || req.com} (◈${req.reward})`,
+    () => { fulfillRequest(game.galaxy, state); },
+    { tip: `The neighbour needs ${req.qty} ${meta?.name || req.com} — bring it before the deadline for ◈${req.reward} credits and a goodwill bump toward Allied`,
       locked: !afford,
-      lockTip: `Need ◈${cost} — you have ◈${Math.floor(game.galaxy.credits)}` }));
+      lockTip: `Need ${req.qty} ${meta?.name || req.com} — you have ${have}` }));
+}
+
+// "⭐ Favor requested — 42s left" — shared by renderFavorRequest (the initial build) and the
+// per-tick live patch below so the two can never drift apart, same rule researchRowText/
+// recycleRowText already follow for their own progress rows.
+function favorRowText(state, req) {
+  return `⭐ Favor requested — ${Math.max(0, Math.ceil(req.until - state.time))}s left`;
+}
+
+// One row per commodity the player currently holds at least a full lot of (engine/market.js
+// TRADE_LOT — the same increment Gift hands over): a Gift button that calls offerGift, reusing
+// the market row's own styling. No afford-gating needed beyond that filter — every row shown is
+// already gift-able for the full TRADE_LOT. Silent (no header, no rows) once nothing qualifies,
+// so a bare-stockpile early game doesn't clutter the panel with an empty picker.
+function renderGiftPicker(state) {
+  const res = state.players.player.resources;
+  const held = Object.keys(COM).filter(c => Math.floor(res[c] || 0) >= TRADE_LOT);
+  if (!held.length) return;
+
+  const pct = Math.round(((state.diplomacy.goodwill || 0) / GOODWILL_CAP) * 100);
+  const head = document.createElement("div");
+  head.className = "market-head";
+  head.textContent = `Gift goods — raise goodwill toward Allied (${pct}% banked)`;
+  panelEl.appendChild(head);
+
+  for (const com of held) {
+    const meta = COM[com];
+    const row = document.createElement("div");
+    row.className = "market-row";
+    row.dataset.com = com;
+
+    const label = document.createElement("span");
+    label.className = "market-com";
+    label.textContent = `${meta?.ico ? meta.ico + " " : ""}${meta?.name || com}`;
+    row.appendChild(label);
+
+    const giftBtn = document.createElement("button");
+    giftBtn.className = "market-btn";
+    giftBtn.textContent = `Gift ${TRADE_LOT}`;
+    giftBtn.title = `Hand over ${TRADE_LOT} ${meta?.name || com} (~◈${Math.round(TRADE_LOT * unitPrice(state.market, com, "sell"))} of local value) to build goodwill toward Allied`;
+    giftBtn.addEventListener("click", () => { offerGift(state, com, TRADE_LOT); renderHUD(); });
+    row.appendChild(giftBtn);
+
+    panelEl.appendChild(row);
+  }
 }
 
 // The Odyssey Capital control on a Command Center: this CC is already the anchored
@@ -958,9 +1193,11 @@ function rebuildSelectionPanel(sel) {
     }
     if (cc.queue.length) renderQueueRows(cc);
     if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
-    // Odyssey diplomacy: appease the neighbour with credits — shown only once the
-    // stance has cooled to Neutral-or-worse (no point paying while comfortably cordial).
-    if (game.galaxy && state.diplomacy && state.diplomacy.stance < 0.25) renderDiplomacy(state);
+    // Odyssey diplomacy: tribute (appease), gifts, and favor requests — the panel itself always
+    // shows once there's a neighbour to have one with; renderDiplomacy gates its OWN tribute
+    // button to Neutral-or-worse, but gifts/favors matter across the whole stance range (they're
+    // the lever that pushes an already-cordial world on toward Allied).
+    if (game.galaxy && state.diplomacy) renderDiplomacy(state);
   }
 
   const market = sel.find(e => e.kind === "building" && e.type === "market" && !e.constructing);
@@ -1036,12 +1273,10 @@ function rebuildSelectionPanel(sel) {
     const upgrades = state.players.player.upgrades;
     const queue = datacenter.researchQueue || [];
     const queued = new Set(queue.map(j => j.techId));
-    if (queue.length) {
-      const row = document.createElement("div");
-      row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
-      row.textContent = researchRowText(queue, TECHS);
-      panelEl.appendChild(row);
-    }
+    // Cancelable research queue with refunds: one row per queued node, each with its own ×
+    // cancel button (renderResearchQueueRows — the production-queue's renderQueueRows idiom),
+    // instead of the single un-cancelable summary row the Refinery's doctrine research still uses.
+    if (queue.length) renderResearchQueueRows(datacenter, TECHS);
     // Already-queued nodes are dropped here (reflected in the progress row's "+N queued" above,
     // not repeated below), so the collapsible count matches exactly what the list itself shows.
     const visibleTechs = Object.values(TECHS).filter(t => !queued.has(t.id));
@@ -1144,6 +1379,7 @@ function rebuildSelectionPanel(sel) {
 
     panelEl.appendChild(gridEfficiencyRow(state, factory));
     panelEl.appendChild(iceCoolantRow(state, factory.owner));
+    renderLogiPriority(state, factory);
 
     // Pause toggle: stop this factory drawing down its inputs — the way to keep a hungry
     // Smelter from eating all your ore, or to free most of the grid for the Gate (a paused
@@ -1228,6 +1464,7 @@ function rebuildSelectionPanel(sel) {
       + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's input, or pause it.`;
     panelEl.appendChild(note);
     panelEl.appendChild(iceCoolantRow(state, gen.owner));
+    renderLogiPriority(state, gen);
     panelEl.appendChild(makeButton(gen.paused ? "▶ Resume" : "⏸ Pause",
       () => { gen.paused = !gen.paused; },
       { tip: gen.paused ? "Bring it back online, feeding the grid again" : "Take it off the grid until resumed, without demolishing it" }));
@@ -1464,14 +1701,14 @@ function rebuildSelectionPanel(sel) {
     // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
     // (the worker build-capability check), which is applied independently via canBuild.
     const GROUPS = [
-      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "assembler", "chipfab",
+      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "assembler", "chipfab",
                    "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
       ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
       ["Endgame", ["antimatter_gate"]],
       ["Travel", ["spaceport"]],
     ];
     const alwaysShow = new Set(["market", "barracks", "foundry", "arsenal", "refinery", "turret",
-                                "habitat", "reactor", "combustor", "biomassreactor", "smelter", "datacenter", "spaceport"]);
+                                "habitat", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "spaceport"]);
     // What's actually SHOWN (not just category-eligible) in each mode — the header's count
     // mirrors this exactly, so "▸ Build (N)" never promises more than expanding reveals.
     const shownGroups = state.endless
@@ -1659,14 +1896,15 @@ function controlsLegend() {
     ["▾ handle", "hide / show this panel"],
     ["?", "all controls"],
   ] : [
-    ["Left-drag", "select · Ctrl+drag adds"],
+    ["Left-drag", "select · Ctrl adds · Alt subtracts"],
     ["Right-click", "move / attack / gather"],
     ["Right-drag", "…and face that direction"],
     ["A + click", "attack-move"],
     ["Ctrl+right", "queue a waypoint"],
     ["Shift+1–9", "set group · 1–9 recall"],
-    ["Double-click", "select all of that type"],
+    ["Double-click", "select type · Ctrl+dbl = whole map"],
     ["Q · E · X · H · F", "army · scout · stop · hold · form up"],
+    ["Backspace", "jump to last attack"],
     ["Minimap", "left jumps · right orders"],
     ["Wheel", "zoom · arrows / edge-scroll pan"],
     ["F1 / ?", "all controls"],

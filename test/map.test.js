@@ -288,6 +288,62 @@ test("bigger maps seed more hidden caches to fill the larger contested space", (
   assert.ok(caches(4) > caches(1), "a Gigantic map should hide more caches than a Small one");
 });
 
+// ---- Frontier belts: bigger maps add contested expansion fields, not just distance.
+// sizeMult used to only grow the HIDDEN caches; a Small map's contested middle held
+// nothing VISIBLE to fight over. Nothing before this exercised a belt at all.
+
+test("sizeMult 1 (Small) seeds no frontier belt at all", () => {
+  const map = generateMap("ferros", () => 0.5);
+  assert.equal(map.nodes.filter(n => n.frontier).length, 0, "the Small map keeps today's two-base-band layout only");
+});
+
+test("sizeMult 1 draws no extra rng for the belt, so the byte-identical layout is untouched", () => {
+  // Same rng seed, sizeMult passed explicitly vs left implicit — if the belt block ever
+  // consumed an rng draw at sizeMult 1 this would desync and fail, exactly like the
+  // existing "byte-for-byte" pin above but naming the belt explicitly for intent.
+  const a = generateMap("ferros", lcg(7));
+  const b = generateMap("ferros", lcg(7), { sizeMult: 1 });
+  assert.deepEqual(a.nodes, b.nodes);
+});
+
+test("sizeMult >= 2 seeds a mirrored frontier belt of full-size visible clusters in the contested middle", () => {
+  for (const size of [2, 3, 4]) {
+    const map = generateMap("ferros", () => 0.5, { sizeMult: size });
+    const belt = map.nodes.filter(n => n.frontier);
+    assert.equal(belt.length, (size - 1) * 2, `${size}x: one additional MIRRORED set per size step above 1`);
+    for (const n of belt) {
+      assert.ok(!n.hidden, "belt clusters are visible on the map, not hidden caches");
+      const xf = n.x / map.width;
+      const inContestedBand = (xf >= 0.35 - 1e-6 && xf <= 0.45 + 1e-6) || (xf >= 0.55 - 1e-6 && xf <= 0.65 + 1e-6);
+      assert.ok(inContestedBand, `belt node x-fraction ${xf.toFixed(3)} should sit in the contested middle (~0.35-0.45, mirrored), not a base-side band`);
+    }
+    const left = belt.filter(n => n.x < map.width / 2), right = belt.filter(n => n.x >= map.width / 2);
+    assert.equal(left.length, right.length, "the belt is mirrored across the centreline");
+    assert.equal(left.reduce((s, n) => s + n.amount, 0), right.reduce((s, n) => s + n.amount, 0), "mirrored halves hold equal amounts");
+  }
+});
+
+test("frontier belt clusters are full-size (600 * yieldMult), not the smaller hidden-cache amount", () => {
+  const map = generateMap("ferros", () => 0.5, { sizeMult: 2 });
+  const belt = map.nodes.filter(n => n.frontier);
+  assert.ok(belt.length > 0, "fixture sanity: a belt exists at 2x");
+  for (const n of belt) {
+    const yieldMult = PLANETS.find(p => p.id === "ferros").deposits[n.com] || 1;
+    assert.equal(n.max, Math.round(600 * yieldMult), `${n.com} belt node should size like a full deposit cluster, not a 0.6x cache`);
+  }
+});
+
+test("the frontier belt cycles the world's own deposit commodities, growing by one mirrored set per size step", () => {
+  const deposits = Object.keys(PLANETS.find(p => p.id === "helix").deposits);   // ore, crystals, radioactives
+  const map3 = generateMap("helix", () => 0.5, { sizeMult: 3 });   // 2 belt sets -> cycles the first two commodities
+  const coms3 = map3.nodes.filter(n => n.frontier).map(n => n.com);
+  assert.deepEqual([...new Set(coms3)].sort(), deposits.slice(0, 2).sort());
+
+  const map4 = generateMap("helix", () => 0.5, { sizeMult: 4 });   // 3 belt sets -> the whole 3-commodity table
+  const coms4 = map4.nodes.filter(n => n.frontier).map(n => n.com);
+  assert.deepEqual([...new Set(coms4)].sort(), deposits.slice().sort());
+});
+
 test("every modified world is a real planet with a nonempty label, and has an archetype", () => {
   for (const [id, mod] of Object.entries(PLANET_MODIFIERS)) {
     assert.ok(PLANETS.some(p => p.id === id), `${id} should be a real planet`);

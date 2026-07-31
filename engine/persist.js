@@ -19,6 +19,7 @@ import { createFog, updateFog } from "./fog.js";
 import { archetypeFor } from "./aiArchetypes.js";
 import { CRATER_NODE_AMOUNT } from "./bomb.js";
 import { WRECK_SPAWN_DELAY } from "./wreckage.js";
+import { LOGI_PRIORITIES } from "./haul.js";   // the enum a building's logiPriority (below) is coerced against
 // peekEntityId/restoreEntityId (called at ~4 sites below: gamePayload, deserializeGame,
 // galaxyPayload, deserializeGalaxy) read and overwrite `nextEntityId` in engine/state.js — a
 // SINGLE module-global counter, not per-state. Reading it (peek, on save) is safe any time, but
@@ -151,6 +152,12 @@ function cleanEntity(e, def, map) {
       e.anchor.y = Math.max(0, Math.min(num(e.anchor.y, 0), map.height));
     }
   }
+  // A building's per-building logistics priority (engine/commands.js issueSetLogiPriority,
+  // engine/haul.js LOGI_PRIORITIES/priorityWeight) is untrusted too: keep it only if it's a real
+  // enum value ("high"/"normal"/"low"), else drop the field entirely — the same "reads as the
+  // default" treatment `anchor` above gets, since priorityWeight already falls back to weight 1
+  // (normal) for a missing field. Additive: an old save simply predates the field.
+  if (e.logiPriority !== undefined && !LOGI_PRIORITIES.includes(e.logiPriority)) delete e.logiPriority;
   // A Plasma Rig's dig state is untrusted too: clamp digProgress into a sane band (a tampered huge
   // value would otherwise drive the dig loop to mint resources) and floor the dig counter.
   if (def.rig) {
@@ -708,6 +715,15 @@ export function deserializeGalaxy(input) {
     Object.assign(state.market.pressure, P.market.pressure); // ...then overlay the saved running pressure...
     if (P.market.glut) Object.assign(state.market.glut, P.market.glut);   // ...and the slow produced-goods glut
     state.diplomacy = { ...createDiplomacy(), ...P.diplomacy };
+    // dip.request (engine/diplomacy.js) carries a commodity id and three numbers straight off
+    // untrusted save data — validate the shape (the same rule cargo/resources get elsewhere in
+    // this file: `if (!COM[com]) …`) rather than trust it verbatim. An invalid/corrupt request is
+    // simply dropped, same as a malformed cargo entry is nulled above — the world just rolls a
+    // fresh one on its own schedule rather than the game trusting a hand-edited favor forever.
+    const req = state.diplomacy.request;
+    if (req && (typeof req !== "object" || !COM[req.com] || !(req.qty > 0) || !Number.isFinite(req.qty)
+        || !(req.reward >= 0) || !Number.isFinite(req.reward) || !Number.isFinite(req.until)))
+      state.diplomacy.request = null;
     state.background = !!P.background;
     state.inGalaxy = true;                                    // galaxy member → galaxy-wide defeat (engine/galaxy.js)
     galaxy.planets.set(P.planetId, state);

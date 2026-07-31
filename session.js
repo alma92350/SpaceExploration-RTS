@@ -23,6 +23,12 @@ export const game = {
   // production attempt: written by boot.js's frame-event pump, read by hud.js's
   // renderHUD. Kept here because it crosses that module boundary.
   supplyBlockedUntil: 0,
+  // World-space {x,y} of the most recent under-attack alert, or null before the first one this
+  // game — written by boot.js's frame-event pump (triggerUnderAttack), read by input.js's
+  // Backspace "jump to last alert" keybind and by boot.js's own under-attack banner click
+  // handler. Kept here, next to supplyBlockedUntil above, for the same reason: it crosses that
+  // same module boundary.
+  lastAttackAt: null,
   // Control groups, keyed per planet id → { digit: [unitIds] }. Lives on the session (not
   // in the per-game input controller) so a group survives an Odyssey jump — which tears down
   // and rebuilds attachInput — and can be shown in the HUD and persisted UI-side. Never part

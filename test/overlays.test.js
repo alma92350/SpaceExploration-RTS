@@ -128,8 +128,8 @@ function fakeLocalStorage() {
 }
 globalThis.localStorage = fakeLocalStorage();
 
-const { showGalaxyToast, showObjectives, hideObjectives, renderObjectives, updateObjectives, showGameOver } = await import("../overlays.js");
-const { galaxyToastEl, objectivesEl, gameOverEl } = await import("../dom.js");
+const { showGalaxyToast, showObjectives, hideObjectives, renderObjectives, updateObjectives, showGameOver, buildHelpOverlay } = await import("../overlays.js");
+const { galaxyToastEl, objectivesEl, gameOverEl, helpOverlayEl } = await import("../dom.js");
 const { game } = await import("../session.js");
 
 // showGameOver (below) unconditionally calls sound.playVictory()/playDefeat(), which would
@@ -560,4 +560,33 @@ test("showGameOver: 'Choose another battlefield' still invokes onRestart, same a
   again.click();
   assert.equal(restarted, true);
   assert.equal(gameOverEl.classList.contains("hidden"), true);
+});
+
+/* ============================================================
+   HELP_ROWS coverage for this batch's UX/input proposals (docs/improvement-proposals.md "Attack
+   pings on the minimap plus a jump-to-last-alert key" and "Selection subtraction and map-wide
+   select-all-of-type"): buildHelpOverlay() renders HELP_ROWS straight into helpOverlayEl's
+   innerHTML, so a plain string-content check is enough to prove each new hotkey/gesture is
+   actually documented, without needing HELP_ROWS itself exported.
+   ============================================================ */
+
+test("buildHelpOverlay documents Backspace (jump to last alert), Alt+drag (subtract), and Ctrl+double-click (map-wide select)", () => {
+  buildHelpOverlay();
+  const html = helpOverlayEl.innerHTML;
+
+  assert.match(html, /Backspace/, "the jump-to-last-alert key should appear in the help reference");
+  assert.match(html, /Alt\+drag/, "the selection-subtraction gesture should appear in the help reference");
+  assert.match(html, /Ctrl\+double-click/, "the map-wide select-all-of-type gesture should appear in the help reference");
+});
+
+// docs/improvement-proposals.md "Tech & Industry Chart overlay": docs/player-handbook.html — the
+// one place the full unlock ladder is drawn — used to be linked from nowhere in the app. It's now
+// linked from techChart.js's own overlay AND from here, the persistent help reference.
+test("buildHelpOverlay links to the full field manual, opening in a new tab", () => {
+  buildHelpOverlay();
+  const html = helpOverlayEl.innerHTML;
+
+  assert.match(html, /href="docs\/player-handbook\.html"/, "expected a link to the field manual");
+  assert.match(html, /target="_blank"/, "expected it to open in a new tab, not navigate away from the running match");
+  assert.match(html, /Full field manual/i);
 });

@@ -170,6 +170,7 @@
  * @property {Object.<string, number>} [input]  a factory's finite input larder, commodity → qty (engine/haul.js)
  * @property {number} [haulers]       transient per-tick count of workers hauling from this producer (engine/haul.js)
  * @property {number} [servers]       transient per-tick count of workers servicing this factory (engine/haul.js)
+ * @property {"high"|"normal"|"low"} [logiPriority]  per-building auto-haulage priority (engine/commands.js issueSetLogiPriority, engine/haul.js LOGI_PRIORITIES/priorityWeight) — missing reads as "normal"
  * @property {boolean} [powered]      transient: a Combustion Generator is fed & granting Power this tick (engine/industry.js)
  * @property {string} [fuel]          transient: which fuel the Generator burned this tick (HUD)
  * @property {number} [menderClaims]  transient: auto-repair Menders committed to this building this tick (engine/sim.js)

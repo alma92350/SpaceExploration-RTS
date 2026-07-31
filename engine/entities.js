@@ -70,6 +70,12 @@ export const BUILDINGS = {
     // Category is "industrial" (not "military") despite gating Tier-2 combat units —
     // it groups with the other production-tech buildings in the build menu.
     category: "industrial",
+    // Standing bonus: while a COMPLETED Foundry stands, military unit production runs ~8%
+    // faster — not just the Lancer/Breacher it gates, so razing it costs an ongoing tempo edge,
+    // not just access to Tier-2 units. Live-scanned (structureMult below, mirroring
+    // committedDoctrine's own live scan) — production.js's updateProductionQueue applies it only
+    // to role:"combat" jobs, so economy production (Workers, Rangers, freighters, …) is untouched.
+    produceTimeMult: 0.92,
   },
   arsenal: {
     id: "arsenal", name: "Arsenal", hp: 550, radius: 18,
@@ -79,6 +85,9 @@ export const BUILDINGS = {
     // stays reachable on every world.
     requires: ["foundry"],
     category: "industrial",   // same reasoning as the Foundry above
+    // A standing Arsenal stacks a SECOND ~8% step atop a standing Foundry's — structureMult
+    // multiplies every standing structure's own field, so both apply together if both stand.
+    produceTimeMult: 0.92,
   },
   spaceport: {
     id: "spaceport", name: "Spaceport", hp: 600, radius: 22,
@@ -150,6 +159,24 @@ export const BUILDINGS = {
     // worker hauling it in the same way (engine/haul.js SERVICE, engine/industry.js updateCombustors).
     energyGrants: 15, powerRange: 0.55,
     combust: { fuels: ["biomass"], rate: 0.06 },
+    odysseyOnly: true,
+    category: "industrial",
+  },
+  substation: {
+    id: "substation", name: "Grid Substation", hp: 180, radius: 11,
+    cost: { ore: 60, crystals: 30 }, buildTime: 10, sight: 90,
+    // A passive one-hop RELAY, not a power station — no `energyGrants` (it grants zero Power
+    // capacity of its own) and no `combust` (it burns no fuel). Every base otherwise collapses
+    // into one dense blob around its Reactors, because the only remedy for grid tax used to be
+    // ANOTHER fuel-burning station; this is the cheap alternative: while it stands within the
+    // 'linked' band of one of the owner's own ACTIVE power sources, it counts as a second,
+    // shorter-range virtual source point for GRID-TIER purposes (engine/industry.js bestGridDist's
+    // relay pass) — so a factory too far from the Reactor to be worth powering directly can
+    // huddle near a cheap relay instead. One hop only: a relay never extends through another
+    // relay, so the grid-distance scan stays O(sources × relays), trivially deterministic.
+    // `powerRange` here is the relay's OWN (shorter) reach for whoever measures distance TO it —
+    // unrelated to the reach it itself needs to reach a real source (POWER_TIERS[0], fixed).
+    powerRelay: true, powerRange: 0.8,
     odysseyOnly: true,
     category: "industrial",
   },
@@ -586,6 +613,24 @@ export function committedDoctrine(state, owner) {
     for (const job of b.researchQueue) { const def = UPGRADES[job.techId]; if (def?.doctrine) return def.doctrine; }
   }
   return null;
+}
+
+// A STANDING structure's bonus: the product of a multiplier field across a player's own
+// COMPLETED buildings whose def carries it (e.g. produceTimeMult on the Foundry/Arsenal above) —
+// the live-scanned counterpart to upgradeMult/techMult, which read a RESEARCHED id instead of a
+// building that has to keep standing. Mirrors committedDoctrine's own live scan just above: razing
+// the building drops the bonus on the very next read, with no separate flag to track or clear.
+// Multiple standing structures with the same field STACK multiplicatively (a Foundry AND an
+// Arsenal both apply), same rule upgradeMult/techMult already use for stacking research. 1 (no-op)
+// for an owner with no completed building carrying that field.
+export function structureMult(state, owner, field) {
+  let m = 1;
+  for (const b of state.buildings?.values() || []) {
+    if (b.owner !== owner || b.constructing) continue;
+    const def = BUILDINGS[b.type];
+    if (def && def[field]) m *= def[field];
+  }
+  return m;
 }
 
 // Skiff, Bastion and Lancer form a deliberate rock-paper-scissors: each

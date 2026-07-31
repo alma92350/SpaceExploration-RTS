@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, jumpCapital, jumpCost, JUMP_COST, loadFreighter, unloadFreighter } from "../engine/galaxy.js";
-import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT, aiBarter } from "../engine/market.js";
+import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT, aiBarter, quoteSell } from "../engine/market.js";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { SPENDABLE, UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
@@ -138,6 +138,72 @@ test("RAW_SPREAD is pinned exactly: buying one lot of a raw good, on a fresh mar
     "a drift in RAW_SPREAD (the wide raw-input buy spread that closes the credit-printer loop) fails this exact pin");
 });
 
+// ---- Allied trade discount (Gifts and favor requests: an actual road to Allied) ----------------
+// Once a world's neighbour reaches Allied (engine/diplomacy.js stanceLabel's own >= 0.6 band),
+// buy() tightens its spread toward ALLIED_SPREAD (1.05) — friendship as a market yield, not just a
+// peaceful border. unitPrice's existing 3-arg call stays byte-identical (the two SPREAD/RAW_SPREAD
+// pins above already prove that with no diplomacy on the fixture at all) — the discount only
+// applies when a 4th `state` argument carrying diplomacy is threaded through, which only buy()
+// (and the HUD's own buy-price preview) does.
+
+test("short of Allied, buy() still charges the ordinary SPREAD exactly", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  s.diplomacy.stance = 0.59;   // Cordial — just short of Allied (stanceLabel's own 0.6 line)
+  const base = s.market.base.machinery;
+  const expected = Math.round(base * 1.15 * TRADE_LOT);
+  assert.equal(buy(g, s, "machinery", TRADE_LOT), expected, "short of Allied, buy() must charge the ordinary spread");
+});
+
+test("exactly AT the Allied threshold (stance 0.6), the spread is still the ordinary one — the discount ramps FROM here, not before", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  s.diplomacy.stance = 0.6;
+  const base = s.market.base.machinery;
+  const expected = Math.round(base * 1.15 * TRADE_LOT);
+  assert.equal(buy(g, s, "machinery", TRADE_LOT), expected, "at the threshold itself, t=0 ⇒ unchanged spread");
+});
+
+test("a fully Allied world buys at exactly the tightened ALLIED_SPREAD (1.05), not the ordinary SPREAD", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  g.credits = 1000000;
+  s.diplomacy.stance = 1.0;   // fully allied
+  const base = s.market.base.machinery;
+  const expected = Math.round(base * 1.05 * TRADE_LOT);
+  assert.equal(buy(g, s, "machinery", TRADE_LOT), expected,
+    "fully Allied ⇒ exactly ALLIED_SPREAD — a drift in the constant fails this pin");
+});
+
+test("the Allied discount ramps continuously between the threshold and full alliance, not a cliff", () => {
+  const g1 = createGalaxy({ seed: 7 });
+  const s1 = activeState(g1);
+  g1.credits = 1000000;
+  s1.diplomacy.stance = 0.8;   // halfway from Allied threshold (0.6) to fully allied (1.0)
+
+  const g2 = createGalaxy({ seed: 7 });
+  const s2 = activeState(g2);
+  g2.credits = 1000000;
+  s2.diplomacy.stance = 1.0;
+
+  const atHalf = buy(g1, s1, "machinery", TRADE_LOT);
+  const atFull = buy(g2, s2, "machinery", TRADE_LOT);
+  const ordinary = Math.round(s1.market.base.machinery * 1.15 * TRADE_LOT);
+  assert.ok(atFull < atHalf && atHalf < ordinary, "deeper into Allied buys cheaper still, not a flat step");
+});
+
+test("unitPrice's bare 3-arg buy-side call ignores diplomacy entirely, even on an Allied world's own market object", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  s.diplomacy.stance = 1.0;
+  // Every pre-existing call site (aiBarter, the exact-value pins above) uses this 3-arg form and
+  // must keep seeing the ordinary spread — the Allied discount only ever applies via the optional
+  // 4th `state` argument, which only buy() (and the HUD's own preview) passes.
+  assert.equal(unitPrice(s.market, "machinery", "buy"), s.market.base.machinery * 1.15);
+});
+
 test("PRESSURE_FLOOR is pinned exactly: heavy selling bottoms a raw good's price at 40% of equilibrium, not some other clamp", () => {
   const g = createGalaxy({ seed: 7 });
   const s = activeState(g);
@@ -170,6 +236,42 @@ test("GLUT_CEIL is pinned exactly: dumping a produced good saturates its glut at
   const expected = s.market.base.machinery * (1 + (-0.6)) * (1 - 0.85);   // base × (1+PRESSURE_FLOOR) × (1-GLUT_CEIL)
   assert.equal(unitPrice(s.market, "machinery", "sell"), expected,
     "a fully-glutted, fully-pressured sell price lands exactly here — a drift in GLUT_CEIL fails this pin");
+});
+
+// ---- quoteSell: a pure dry-run preview for the bulk-trade UI (Sell x4 / Sell All) --------------
+// hudSelection.js's tooltip previews what a bulk sell will actually pay by calling this instead of
+// re-deriving the lot-walk math itself — these tests pin that the preview can never drift from the
+// real sale, per the proposal's own "so a UI preview can never drift from engine math".
+
+test("quoteSell previews exactly what sell() will actually pay, and never mutates the market", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  s.players.player.resources.ore = 1000;
+  const pressureBefore = s.market.pressure.ore || 0;
+
+  const preview = quoteSell(s.market, "ore", 100);   // 4 lots
+  assert.equal(s.market.pressure.ore || 0, pressureBefore, "a dry run must not move the real market's pressure");
+
+  const proceeds = sell(g, s, "ore", 100);
+  assert.equal(preview, proceeds, "the preview must match what the real sale actually pays, to the credit");
+});
+
+test("quoteSell reflects marginal pricing across multiple lots — 4 lots earn less than 4x the first lot's price", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  const oneLot = quoteSell(s.market, "ore", TRADE_LOT);
+  const fourLots = quoteSell(s.market, "ore", TRADE_LOT * 4);
+  assert.ok(fourLots > 0 && fourLots < oneLot * 4,
+    "each successive lot sells at a lower marginal price (the same walk sell() itself does)");
+});
+
+test("quoteSell returns 0 for a zero or negative quantity, and touches nothing", () => {
+  const g = createGalaxy({ seed: 7 });
+  const s = activeState(g);
+  const before = { ...s.market.pressure };
+  assert.equal(quoteSell(s.market, "ore", 0), 0);
+  assert.equal(quoteSell(s.market, "ore", -50), 0);
+  assert.deepEqual(s.market.pressure, before, "no mutation from a no-op preview");
 });
 
 // ---- zero/negative quantity guards -------------------------------------------------------------
