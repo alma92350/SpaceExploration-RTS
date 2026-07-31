@@ -686,6 +686,11 @@ export const UNITS = {
     // is the class-wide structure bonus below plus outranging the turret.
     bonusVsBuildings: 30,
     prefersBuildings: true,
+    // Not a bonusVs-derived hard counter (this adds no new combat math) — a
+    // cost-parity Skiff swarm still crushes it in practice (test/balance.test.js),
+    // "folds to massed Skiffs for a fraction of its cost" per README. Data the
+    // AI's counter-pick (engine/aiMilitary.js COUNTER_OF) can fold in directly.
+    counteredBy: "skiff",
     requires: ["foundry"],   // Tier-2 siege: a tech investment, not a turn-one option
   },
   dreadnought: {
@@ -699,6 +704,7 @@ export const UNITS = {
     // any type and nothing bonuses against it, and its steep cost + 4 supply
     // mean cheaper massed units still trade cost-effectively into it — so it
     // anchors an army rather than hard-countering it.
+    counteredBy: "skiff",   // the cost-efficiency answer above, certified by test/balance.test.js's supply-parity duel
     requires: ["arsenal"],
   },
   mender: {
@@ -769,6 +775,7 @@ export const UNITS = {
     // hardest hitter per shot, but paper-thin — a glass cannon that shreds a
     // line and then melts to any focused fire. Gas turns a dead deposit into
     // the fuel for raids.
+    counteredBy: "skiff",   // "melts to any focused fire" above, certified by test/balance.test.js's cost-parity duel
     requires: ["arsenal"],
   },
   aegis: {
@@ -783,6 +790,13 @@ export const UNITS = {
     // wall, and enemy targeting doesn't have to cooperate. The anvil to the Wraith's hammer.
     // Faster now (48) so it can keep formation with the line it shields. Ice is its armour.
     guardAura: { range: 96, damageTakenMult: 0.82 },
+    // Out-shot, not out-tanked: armies are supply-capped lategame, not cost-capped
+    // (cost parity actually favours the Aegis — its hp pool buys more survivability
+    // per ore than the Lancer's), but at equal SUPPLY the Lancer's armor-piercing
+    // rounds out-DPS the almost-token gun before the huge hp pool matters — the
+    // Wraith's hammer needed an anvil; the Aegis needed a sharper spear. Certified
+    // by test/balance.test.js's supply-parity duel.
+    counteredBy: "lancer",
     requires: ["arsenal"],
   },
   colossus: {
@@ -796,6 +810,10 @@ export const UNITS = {
     // be screened or it's sniped/rushed down. A flat structure bonus makes it a
     // base-cracker. Relics (ancient tech) are its ammunition.
     bonusVsBuildings: 25,
+    // "must be screened or it's sniped/rushed down" above, certified by
+    // test/balance.test.js's supply-parity duel: fragile and slow-firing, it
+    // folds to a mass it can't kill fast enough.
+    counteredBy: "skiff",
     requires: ["arsenal"],
   },
   leviathan: {

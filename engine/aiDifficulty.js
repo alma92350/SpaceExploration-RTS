@@ -49,18 +49,26 @@
    a patient developer would, the same third condition strategy.wantsIndustryAlways
    already is on that gate. Skirmish is untouched by construction (aiIndustry.js
    returns on !state.endless before this is ever read).
+
+   Tier 5 adds counterEvery — aiMilitary.js's pickNextUnitType reads it directly
+   (not a multiplier: a cadence override, `?? COUNTER_EVERY` at the read site, so
+   an absent value composes as today's fixed-3 cadence). Easy is 0 — it never
+   counter-picks, so its army stays exactly its learnable, exploitable archetype
+   mix; Hard is 2 — it reacts to the player's composition half again as fast as
+   Medium's unchanged 3. Same "Medium carries none of it" baseline as every other
+   tier.
    ============================================================ */
 
 "use strict";
 
 export const DIFFICULTY_OPTIONS = [
-  { label: "Easy", mult: "easy", note: "slow · no micro", aiApm: 20, aiMicro: false,
+  { label: "Easy", mult: "easy", note: "slow · no micro · predictable", aiApm: 20, aiMicro: false,
     workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85, researchPaceMult: 1.3,
-    forgiveness: 1.25 },
+    forgiveness: 1.25, counterEvery: 0 },
   { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false, marketAccess: true },
   { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
     workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75,
-    marketAccess: true, rusherGraduates: true, forgiveness: 0.8 },
+    marketAccess: true, rusherGraduates: true, forgiveness: 0.8, counterEvery: 2 },
 ];
 
 /** The active difficulty entry for this match — DIFFICULTY_OPTIONS' medium entry when

@@ -9,7 +9,7 @@
 
 "use strict";
 
-import { UNITS } from "./entities.js";
+import { UNITS, BUILDINGS } from "./entities.js";
 import { issueAttackMove, issueMove } from "./commands.js";
 import { isVisibleAt, isExploredAt, nearestUnexploredPoint } from "./fog.js";
 import { hostility, provoked } from "./diplomacy.js";
@@ -17,17 +17,38 @@ import { chargingPlayerWonder } from "./wonder.js";
 import { canAct, spend } from "./aiCommon.js";
 import { effectiveMix } from "./aiWorkers.js";
 import { playerUnits, playerBuildings } from "./state.js";
+import { difficultyFor } from "./aiDifficulty.js";
 
-const COUNTER_EVERY = 3;   // 1 in every 3 units built reacts to the player's army instead of following the mix
+const COUNTER_EVERY = 3;   // default cadence: 1 in every 3 units built reacts to the player's army instead of following the mix — difficulty-shaped via aiDifficulty.js's counterEvery (Easy 0, Hard 2), see pickNextUnitType
 
 // Derived once from each unit's bonusVs table (entities.js), rather than
 // hardcoded here, so this stays correct automatically if the roster or
 // its counter relationships ever change: COUNTER_OF['lancer'] === 'skiff'
-// means Skiff is the type that holds bonus damage against Lancer.
+// means Skiff is the type that holds bonus damage against Lancer. Also folds
+// in each out-of-triangle unit's own optional `counteredBy` (entities.js) —
+// not a new bonusVs, just data: the cost-efficiency answer test/balance.test.js
+// certifies with a real duel, so COUNTER_OF covers the whole roster while
+// staying data-derived, never hardcoded here.
 const COUNTER_OF = Object.values(UNITS).reduce((map, def) => {
   if (def.bonusVs) for (const targetType of Object.keys(def.bonusVs)) map[targetType] = def.id;
+  if (def.counteredBy) map[def.id] = def.counteredBy;
   return map;
 }, {});
+
+// Curated fallback for whatever COUNTER_OF still misses — sourced from each
+// unit's own design-doc comment (entities.js) / README.md, not invented: this
+// teaches the AI the cost-efficiency answer the design text already states, no
+// new bonus damage anywhere. Deliberately overlaps COUNTER_OF's counteredBy
+// entries above (breacher/dreadnought/wraith/colossus -> skiff): COUNTER_OF
+// wins whenever both exist, so this stays a defensive fallback that keeps
+// working even if a unit's counteredBy is ever removed, and it's the ONLY
+// source for the Odyssey-only Leviathan, which has no counteredBy of its own.
+const SOFT_ANSWER = {
+  breacher: "skiff", dreadnought: "skiff", colossus: "skiff", leviathan: "skiff",
+  wraith: "skiff", aegis: "lancer",
+};
+
+const TURRET_WALL_COUNT = 3;   // more visible static defense than this alone reads as a wall — test/balance.test.js's 4-turret line is the proof
 
 const PROBE_MIN = 3;              // Odyssey: smallest wave a wary neighbour sends — it harasses, never doomstacks
 const WAVE_CADENCE_FRAC = 0.3;    // Odyssey: probe spacing as a fraction of attackTimeout, tightening with hostility
@@ -361,16 +382,19 @@ export function chooseAttackTarget(state, cc) {
   return nearestUnexploredPoint(state.fogAI, from.x, from.y) || start;   // else search the map for a hidden CC
 }
 
-// The next unit to build: normally the next entry in the archetype's mix,
-// but every COUNTER_EVERY-th unit it instead builds the hard counter to
-// whatever the player fields most. Both draw from effectiveMix — the mix
+// The next unit to build: normally the next entry in the archetype's mix, but
+// every `every`-th unit (COUNTER_EVERY by default; difficulty-shaped — Easy
+// never counter-picks, Hard reacts half again as fast, see aiDifficulty.js's
+// counterEvery) it instead builds the counter to whatever the player fields
+// most, per counterToPlayerArmy below. Both draw from effectiveMix — the mix
 // with entries this map can't pay for dropped (e.g. the Breacher on a world
 // with no radioactives) — so the cycle never stalls on an unbuildable type,
 // and a counter is only chosen when this map can actually build it.
 export function pickNextUnitType(state, archetype) {
   const mix = effectiveMix(state, archetype);
   const built = state.ai.unitsBuilt || 0;
-  if (built > 0 && built % COUNTER_EVERY === 0) {
+  const every = difficultyFor(state).counterEvery ?? COUNTER_EVERY;
+  if (every > 0 && built > 0 && built % every === 0) {
     const counter = counterToPlayerArmy(state);
     if (counter && mix.includes(counter)) return counter;
   }
@@ -379,10 +403,20 @@ export function pickNextUnitType(state, archetype) {
 
 // Whatever combat type the player currently fields the most of — among only
 // the units the AI can actually SEE right now (its own fog) — mapped to its
-// hard counter. No vision of the player's army means no counter-pick, so the
-// AI has to scout or fight to earn that intel, the same as the player. Ties
-// keep whichever type was seen first; there's no meaningfully "correct" pick
-// between two equally common threats.
+// counter: COUNTER_OF's hard (bonusVs- or counteredBy-derived) counter first,
+// else the curated SOFT_ANSWER cost-efficiency fallback. No vision of the
+// player's army means no counter-pick, so the AI has to scout or fight to earn
+// that intel, the same as the player. Ties keep whichever type was seen first;
+// there's no meaningfully "correct" pick between two equally common threats.
+//
+// Static defense is invisible to that unit scan, so a turtling player fielding
+// no army at all was never answered — a separate pass counts visible player
+// buildings that can shoot (fogAI-gated, same discipline as the unit scan) and
+// answers with "breacher" whenever the wall would beat the dominant seen unit
+// type, or is simply large enough to read as a wall on its own (the
+// test/balance.test.js turret-line proof), overriding the unit-type counter
+// above — prefersBuildings targeting and its 150 range (outranging the
+// turret's 130) do the rest once it's queued.
 function counterToPlayerArmy(state) {
   const counts = {};
   for (const u of state.units.values()) {
@@ -394,7 +428,17 @@ function counterToPlayerArmy(state) {
   for (const [type, count] of Object.entries(counts)) {
     if (count > bestCount) { bestCount = count; best = type; }
   }
-  return best ? COUNTER_OF[best] : null;
+  let staticDefense = 0;
+  for (const b of state.buildings.values()) {
+    // BUILDINGS[b.type]?.attack (not a hardcoded "turret" check) so a future
+    // second static-defense tier (docs/improvement-roadmap.md Phase 4, gated on
+    // this landing first) is read for free. Only "turret" qualifies today.
+    if (b.owner !== "player" || b.constructing || !BUILDINGS[b.type]?.attack) continue;
+    if (!isVisibleAt(state.fogAI, b.x, b.y)) continue;   // same fog discipline as the unit scan
+    staticDefense++;
+  }
+  if (staticDefense > 0 && (staticDefense > bestCount || staticDefense > TURRET_WALL_COUNT)) return "breacher";
+  return best ? (COUNTER_OF[best] || SOFT_ANSWER[best] || null) : null;
 }
 
 // Keep one spare unit ranging across the contested middle so the AI earns its
