@@ -116,6 +116,8 @@ export const TRACER_STYLE = {
   colossus:    { shape: "arc",  color: "#fb7185", width: 4 },
   leviathan:   { shape: "arc",  color: "#facc15", width: 5 },
   turret:      { shape: "beam", color: "#a78bfa", width: 2 },   // static defense — its own hue, distinct from every mobile hull
+  bastille:       { shape: "bolt", color: "#c026d3", width: 3.5 },   // the turret's tankier, heavier-hitting sibling
+  torpedobattery: { shape: "arc",  color: "#34d399", width: 4 },     // ammo-fed endgame siege — a heavy lobbed plasma hit
   worker:      { shape: "default", color: "#e2e8f0", width: 1.5 },
   ranger:      { shape: "default", color: "#e2e8f0", width: 1.5 },
   default:     { shape: "default", color: "#e2e8f0", width: 2 },
@@ -215,6 +217,20 @@ function drawTracer(ctx, t) {
   ctx.beginPath();
   ctx.arc(t.toX, t.toY, (t.bonus ? 4 : 2.5) + (1 - t.age) * (t.bonus ? 2.5 : 1.5), 0, Math.PI * 2);
   ctx.fill();
+
+  // A splash hit (engine/combat.js's attackHit `splashRadius` field — def.splash, Colossus
+  // first) also draws a fading ring at the true impact radius, in the same per-weapon color this
+  // shot already picked above — so an area hit reads as such at a glance, distinct from every
+  // single-target tracer's plain impact spark just above. Falsy (0) for every non-splash hit, so
+  // this is purely additive and data-driven for any future splash-capable unit.
+  if (t.splashRadius) {
+    ctx.globalAlpha = Math.max(0, 0.55 * (1 - t.age));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(t.toX, t.toY, t.splashRadius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 }
 
 // The Helium Bomb shockwave (see drawEffects below): the fireball collapses

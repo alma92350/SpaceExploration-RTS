@@ -48,6 +48,44 @@ export const BUILDINGS = {
     attack: 20, range: 130, cooldown: 1, aggroRange: 130,
     category: "military",
   },
+  // ---- Static-defense ladder, tiers 2-3 (docs/improvement-proposals.md). One turret type used
+  // to serve all four tiers; these two round it out into a real ladder, each rationalized against
+  // the SAME invariant: every siege unit (Breacher 150, Colossus 185, Leviathan 200) must still
+  // strictly outrange every static defense structure here — static defense holds ground by hp and
+  // attrition, never by out-ranging siege. See the Torpedo Battery below (Strategic tier) for the
+  // one deliberate, documented narrowing of that rule.
+  bastille: {
+    id: "bastille", name: "Bastille", hp: 600, radius: 16,
+    cost: { ore: 200, crystals: 150, radioactives: 60 }, buildTime: 22,
+    sight: 150,
+    // A second, Foundry-gated static-defense tier: a TANKIER, SHORTER-ranged brawler than the
+    // Sentinel Turret (115 vs 130) — deliberately not a longer-ranged sniper, so the "outranging
+    // the turret" siege identity (and the cracksBase balance invariant) survives intact even
+    // though this hits harder and soaks more. Same combat stat field NAMES the turret uses, so
+    // combat.js's updateBuildingCombat works on it verbatim, zero changes to that function.
+    // Crystals + radioactives priced (same rare goods an attacker spends on Breachers/doctrines),
+    // so the defender's fortification investment scales with the same economy the Foundry gates.
+    attack: 32, range: 115, cooldown: 1.4, aggroRange: 115,
+    requires: ["foundry"],
+    category: "military",
+  },
+  aegisbastion: {
+    id: "aegisbastion", name: "Aegis Bastion", hp: 500, radius: 16,
+    cost: { ore: 250, crystals: 180 }, buildTime: 26,
+    sight: 150,
+    // Arsenal-gated static guard-aura projector: no `attack` of its own — it never fires, and
+    // combat.js's updateBuildingCombat is already a no-op for any building without one. Instead it
+    // projects the SAME kind of cryo-armour bubble the Aegis UNIT's guardAura does (see UNITS.aegis
+    // above): every friendly unit AND building inside `range` takes `damageTakenMult` less damage
+    // (engine/sim.js collectAnvils' buildings pass feeds engine/combat.js's anvilAura). It defends
+    // by ATTRITION MATH, never by out-ranging siege — Breacher/Colossus/Leviathan can all still
+    // shell it (or anything it shields) with impunity from outside its 130-range bubble; it just
+    // buys the defender time for an army to answer. No `produces`/`supplyGrants`, so
+    // isElectrifiable already excludes it, same as the Refinery/Foundry/Arsenal above.
+    guardAura: { range: 130, damageTakenMult: 0.8 },
+    requires: ["arsenal"],
+    category: "military",
+  },
   habitat: {
     id: "habitat", name: "Habitat", hp: 250, radius: 14,
     cost: { ore: 75 }, buildTime: 10,
@@ -289,6 +327,26 @@ export const BUILDINGS = {
     odysseyOnly: true,
     category: "military",
   },
+  torpedobattery: {
+    id: "torpedobattery", name: "Plasma Torpedo Battery", hp: 420, radius: 14,
+    cost: { ore: 250, alloys: 10 }, buildTime: 24, sight: 210,
+    // The static-defense ladder's Strategic-tier rung: the Sentinel Turret is wallpaper by
+    // this point, exactly when the player needs to hold ground for the Antimatter Gate's 150s
+    // charge. Real ammo-fed logistics, not a free-fire structure: `ammo` joins recipe/combust as
+    // a real haulable input commodity (realInputComs/inputCapOf below), so engine/haul.js's
+    // existing SERVICE machinery delivers plasma torpedoes into building.input the same way a
+    // Reactor's fuel larder gets fed — engine/combat.js's updateBuildingCombat then requires
+    // input[ammo.com] >= ammo.perShot before firing, decrementing on every shot; a dry battery
+    // holds fire rather than shooting for free.
+    attack: 55, range: 180, cooldown: 2.5, aggroRange: 180,
+    ammo: { com: "plasmatorp", perShot: 0.25 },
+    // Deliberately out-ranges the Breacher (150) — by the Strategic tier the early siege tool
+    // stops being enough on its own — but the Colossus (185) and Leviathan (200) both still
+    // out-range it, so sieging a battery line stays the intended top-tier answer.
+    requires: ["torpedoworks"],
+    odysseyOnly: true,
+    category: "military",
+  },
   antimatter_gate: {
     id: "antimatter_gate", name: "Antimatter Gate", hp: 1200, radius: 28,
     cost: { ore: 800 }, buildTime: 60, sight: 200,
@@ -417,17 +475,19 @@ export function storeCapOf(type) {
 
 // The REAL (haulable) input commodities a building needs hauled in — a recipe's ingredients
 // (every key but "energy", which is a live per-tick Power draw, engine/industry.js, never a
-// hauled/stored good), or a fuel-burning power station's acceptable fuels (def.combust.fuels —
+// hauled/stored good), a fuel-burning power station's acceptable fuels (def.combust.fuels —
 // gas for the Combustion Generator, biomass for the Biomass Reactor; a building CAN accept more
 // than one — ANY ONE of them keeps it running, not all at once — see haul.js inputNeedsOf/
 // neededInput, which already treats "pick whichever's neediest" the same way for both an
-// AND-recipe and an OR-fuel-choice). Empty for a building with neither (or an unknown recipe id —
-// belt-and-suspenders for stale data).
+// AND-recipe and an OR-fuel-choice), or an ammo-fed static defense's single feed commodity
+// (def.ammo.com — the Torpedo Battery's plasmatorp). Empty for a building with none of the
+// three (or an unknown recipe id — belt-and-suspenders for stale data).
 function realInputComs(type) {
   const def = BUILDINGS[type];
   const recipe = RECIPE_BY_ID[def?.recipe];
   if (recipe) return Object.keys(recipe.in).filter(c => c !== "energy");
   if (def?.combust) return def.combust.fuels;
+  if (def?.ammo) return [def.ammo.com];
   return [];
 }
 
@@ -438,12 +498,12 @@ function realInputComs(type) {
 // plenty of) can fill the WHOLE shared pool on its own, leaving zero room for whichever OTHER
 // input the recipe is actually starved of — the factory then sits stalled forever on a "Starved"
 // input it can never actually receive, since haul.js's inputRoom check (below) always reads 0.
-/** The per-commodity input-buffer capacity of a building type (a factory OR a fuel-burning power
- * station), or 0 if it has none. */
+/** The per-commodity input-buffer capacity of a building type (a factory, a fuel-burning power
+ * station, or an ammo-fed static defense), or 0 if it has none. */
 export function inputCapOf(type) {
   const def = BUILDINGS[type];
   if (!def) return 0;
-  const total = def.inputCap != null ? def.inputCap : ((def.recipe || def.combust) ? DEFAULT_FACTORY_INPUT : 0);
+  const total = def.inputCap != null ? def.inputCap : ((def.recipe || def.combust || def.ammo) ? DEFAULT_FACTORY_INPUT : 0);
   if (total <= 0) return 0;
   const n = realInputComs(type).length;
   return n > 0 ? total / n : total;
@@ -855,6 +915,17 @@ export const UNITS = {
     // be screened or it's sniped/rushed down. A flat structure bonus makes it a
     // base-cracker. Relics (ancient tech) are its ammunition.
     bonusVsBuildings: 25,
+    // The T3 anti-mass verb (docs/improvement-proposals.md "Colossus splash"): the primary hit
+    // also rattles enemy units caught within `radius` of the impact point, for `frac` of this
+    // hit's damage, falling off linearly to zero at the edge (engine/combat.js performAttack).
+    // This is the mechanical answer to "spread out vs artillery" — a packed formation (exactly
+    // what separation.js's own same-owner packing produces) eats real splash; a spread one barely
+    // does. Enemy-only and units-only by construction (performAttack only ever walks
+    // state.unitGrid/state.units, never state.buildings) — never the Colossus's own side, and
+    // never a building, however close one stands to the impact. Tuned against
+    // test/balance.test.js the same way SALVAGE_FRAC once was: the Skiff counter (below) must
+    // still win head-on, cost-parity, splash included.
+    splash: { radius: 26, frac: 0.5 },
     // "must be screened or it's sniped/rushed down" above, certified by
     // test/balance.test.js's supply-parity duel: fragile and slow-firing, it
     // folds to a mass it can't kill fast enough.

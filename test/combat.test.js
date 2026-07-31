@@ -948,3 +948,372 @@ test("the Aegis's aura doesn't shield itself — the source's explicit exclusion
   assert.equal(startHp - aegis.hp, UNITS.skiff.attack,
     "full damage landed — an Aegis standing inside its own aura radius doesn't reduce its own damage taken");
 });
+
+// ---- Colossus splash (docs/improvement-proposals.md "Colossus splash: def-driven area damage
+// as the T3 anti-mass verb"): a generic def.splash = {radius, frac} mechanic, shipped on the
+// Colossus first. After the primary hit lands, enemy units near the impact point (the primary
+// target's own position) take dmg*frac*(1 - d/radius) falloff damage — punishing exactly the
+// clumped, same-owner-packed formations separation.js produces. Enemy-only (never the attacker's
+// own side) and units-only (never a building, however close one stands to the impact).
+
+test("a splash attack damages a nearby enemy unit around the impact point, on top of the primary target's own hit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);   // the primary hit, within weapon range
+  const nearby = makeUnit("skiff", "ai", target.x + 10, target.y);              // 10 away from the impact — inside splash radius
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(nearby.id, nearby);
+  // Pin the primary target explicitly: with two enemies now in aggro range, the ordinary
+  // dispersed auto-acquire (spreadEnemy) could otherwise fan onto either one — irrelevant to
+  // what this test checks (splash's own falloff math), so an explicit order removes the ambiguity.
+  colossus.order = { type: "attack", targetId: target.id };
+  const targetStartHp = target.hp, nearbyStartHp = nearby.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  const { radius, frac } = UNITS.colossus.splash;
+  const expectedSplash = UNITS.colossus.attack * frac * (1 - 10 / radius);
+  assert.ok(expectedSplash > 0, "sanity: 10 units is inside the tuned splash radius");
+  assert.ok(Math.abs((nearbyStartHp - nearby.hp) - expectedSplash) < 1e-9,
+    `expected splash damage ${expectedSplash}, got ${nearbyStartHp - nearby.hp}`);
+  assert.equal(targetStartHp - target.hp, UNITS.colossus.attack,
+    "the primary target itself takes only its plain direct hit — splash punishes units caught nearby, not a double-dip on the target");
+});
+
+test("splash damage falls off linearly with distance from the impact point", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const near = makeUnit("skiff", "ai", target.x + 5, target.y);
+  const far = makeUnit("skiff", "ai", target.x - 20, target.y);   // farther, but still inside the splash radius
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(near.id, near);
+  state.units.set(far.id, far);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const nearStartHp = near.hp, farStartHp = far.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  const nearDamage = nearStartHp - near.hp, farDamage = farStartHp - far.hp;
+  assert.ok(farDamage > 0, "the farther bystander still takes some splash damage");
+  assert.ok(nearDamage > farDamage, "the closer bystander takes strictly more splash damage than the farther one");
+});
+
+test("splash never reaches an enemy unit outside the splash radius", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const { radius } = UNITS.colossus.splash;
+  const outside = makeUnit("skiff", "ai", target.x + radius + 5, target.y);   // just past the splash radius
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(outside.id, outside);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const outsideHp = outside.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(outside.hp, outsideHp, "an enemy outside the splash radius takes no splash damage at all");
+});
+
+test("splash never damages the attacker's own side, even standing right next to the impact point", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const friendly = makeUnit("skiff", "player", target.x + 5, target.y);   // player-owned, well inside the blast
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(friendly.id, friendly);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const friendlyHp = friendly.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(friendly.hp, friendlyHp, "a friendly unit inside the blast radius takes zero splash damage — no friendly fire");
+});
+
+test("splash never damages a building, even one standing well within the splash radius of a unit impact", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  // A building parked essentially on top of the impact point — colliders.js's canPlaceBuilding
+  // only ever gates a BUILDING's placement against other buildings/nodes, never against units
+  // ("Deliberately ignores units: they move"), so a unit standing this close to an enemy
+  // building is a real in-game configuration, not a contrived one.
+  const barracks = makeBuilding("barracks", "ai", target.x + 2, target.y);
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.buildings.set(barracks.id, barracks);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const barracksHp = barracks.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(barracks.hp, barracksHp, "a building must never take splash damage, however close it stands to the impact");
+});
+
+test("a splash death still leaves battle wreckage and pushes its own entityKilled event, same as an ordinary kill", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const nearby = makeUnit("skiff", "ai", target.x + 5, target.y);
+  nearby.hp = 1;   // its share of splash is easily enough to kill it outright
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(nearby.id, nearby);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(state.units.has(nearby.id), false, "the splash-killed bystander is removed from state");
+  assert.ok(state.events.some(e => e.type === "entityKilled" && e.x === nearby.x && e.y === nearby.y),
+    "the splash kill pushes its own entityKilled event");
+  assert.equal(state.wrecks.length, 1, "the splash kill deposits battle wreckage through the same depositWreckage path");
+});
+
+test("multiple nearby enemies each take independently-computed splash damage from one primary hit — order-independent", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const doomed = makeUnit("skiff", "ai", target.x + 5, target.y);    // close — dies to its share of splash
+  const far = makeUnit("skiff", "ai", target.x - 20, target.y);      // farther — survives with a smaller hit
+  doomed.hp = 5;
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(doomed.id, doomed);
+  state.units.set(far.id, far);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  const farStartHp = far.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.equal(state.units.has(doomed.id), false, "the closer, low-hp bystander dies to splash");
+  const { radius, frac } = UNITS.colossus.splash;
+  const expectedFarDamage = UNITS.colossus.attack * frac * (1 - 20 / radius);
+  assert.ok(Math.abs((farStartHp - far.hp) - expectedFarDamage) < 1e-9,
+    "the surviving bystander's own damage is unaffected by the other bystander dying in the same splash pass");
+});
+
+test("splash finds nearby enemies through the populated broad-phase grid too, not just the no-grid fallback", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 1000, 500);         // grid column ~10
+  const target = makeUnit("skiff", "ai", 1000 + UNITS.colossus.range - 1, 500);
+  const nearby = makeUnit("skiff", "ai", target.x + 10, target.y);
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(nearby.id, nearby);
+  colossus.order = { type: "attack", targetId: target.id };   // pin the primary target — see comment above
+  state.unitGrid = buildUnitGrid(state);   // the real per-tick broad-phase index (engine/grid.js), same as sim.js builds every tick
+  const nearbyHp = nearby.hp;
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  assert.ok(nearby.hp < nearbyHp, "splash should find and damage the nearby enemy through the grid path too");
+});
+
+test("a non-splash attacker never applies any splash damage — def.splash is opt-in per unit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  const bystander = makeUnit("skiff", "ai", b.x + 5, b.y);   // right next to the plain Skiff's own target
+  state.units.set(bystander.id, bystander);
+  a.order = { type: "attack", targetId: b.id };   // pin the target — two enemies now in aggro, and this test cares
+                                                    // only about splash, not which one the plain dispersed pick lands on
+  const bystanderHp = bystander.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.equal(bystander.hp, bystanderHp, "a Skiff (no def.splash) never applies splash damage to anything nearby");
+});
+
+test("performAttack stamps splashRadius on the attackHit event for a splash attacker, and leaves it falsy for a plain one", () => {
+  const splashState = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  splashState.units.set(colossus.id, colossus);
+  splashState.units.set(target.id, target);
+
+  updateCombat(splashState, colossus, UNITS.colossus.cooldown);
+
+  const splashHit = splashState.events.find(e => e.type === "attackHit");
+  assert.ok(splashHit, "expected an attackHit event");
+  assert.equal(splashHit.splashRadius, UNITS.colossus.splash.radius);
+
+  const plainState = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(plainState);
+
+  updateCombat(plainState, a, UNITS.skiff.cooldown);
+
+  const plainHit = plainState.events.find(e => e.type === "attackHit");
+  assert.ok(plainHit, "expected an attackHit event");
+  assert.ok(!plainHit.splashRadius, "a non-splash attacker's attackHit event carries no splashRadius");
+});
+
+// ---- The static-defense ladder (docs/improvement-proposals.md) ---------------------------------
+
+// ---- Aegis Bastion (a static guard-aura projector, entities.js BUILDINGS.aegisbastion): the
+// same anvilAura mechanic the Aegis UNIT's own guardAura already proves above (line ~908), now
+// sourced from a BUILDING via sim.js collectAnvils' buildings pass. Positions mirror that existing
+// unit-sourced test's own offsets/reasoning: the shield sits within its OWN 130-range aura of the
+// target (100 away) but past the ATTACKER's aggro range (139 away, over the Skiff's 120), so the
+// attacker can never acquire the shield itself instead of the intended target.
+
+test("an Aegis Bastion's aura reduces damage taken by a friendly BUILDING inside its bubble, the same way the Aegis unit's aura shields a unit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const target = makeBuilding("barracks", "ai", 500 + UNITS.skiff.range - 1, 500);   // within melee range, no attack of its own
+  const aegisBastion = makeBuilding("aegisbastion", "ai", target.x + 100, target.y);   // within the projector's own 130-range aura
+  state.units.set(attacker.id, attacker);
+  state.buildings.set(target.id, target);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = target.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  const dmg = startHp - target.hp;
+  const expected = UNITS.skiff.attack * BUILDINGS.aegisbastion.guardAura.damageTakenMult;
+  assert.ok(Math.abs(dmg - expected) < 1e-9, `expected exactly ${expected} with the aura's damage-taken multiplier applied, got ${dmg}`);
+});
+
+test("an Aegis Bastion's aura reduces damage taken by a friendly UNIT inside its bubble too — anvilAura is target-kind-agnostic", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.skiff.range - 1, 500);
+  const aegisBastion = makeBuilding("aegisbastion", "ai", target.x + 100, target.y);
+  state.units.set(attacker.id, attacker);
+  state.units.set(target.id, target);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = target.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  const dmg = startHp - target.hp;
+  const expected = UNITS.skiff.attack * BUILDINGS.aegisbastion.guardAura.damageTakenMult;
+  assert.ok(Math.abs(dmg - expected) < 1e-9, `expected exactly ${expected}, got ${dmg}`);
+});
+
+test("an Aegis Bastion's aura doesn't shield itself — anvilAura's existing id-exclusion check already covers a building source, not just a unit one", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const aegisBastion = makeBuilding("aegisbastion", "ai", 500 + UNITS.skiff.range - 1, 500);   // trivially within its own aura (distance 0)
+  state.units.set(attacker.id, attacker);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = aegisBastion.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  assert.equal(startHp - aegisBastion.hp, UNITS.skiff.attack,
+    "full damage landed — an Aegis Bastion standing inside its own aura radius doesn't reduce its own damage taken");
+});
+
+test("a still-constructing Aegis Bastion projects no aura yet — collectAnvils skips it until it's actually finished standing", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.skiff.range - 1, 500);
+  const aegisBastion = makeBuilding("aegisbastion", "ai", target.x + 100, target.y, { constructing: true });
+  state.units.set(attacker.id, attacker);
+  state.units.set(target.id, target);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = target.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  assert.equal(startHp - target.hp, UNITS.skiff.attack, "no aura discount — the projector isn't finished yet");
+});
+
+// ---- Plasma Torpedo Battery (ammo-fed static defense, entities.js BUILDINGS.torpedobattery):
+// updateBuildingCombat requires building.input[ammo.com] >= ammo.perShot before firing, and
+// decrements it on every shot — a dry battery holds fire rather than shooting for free.
+
+function batteryAt(state, x = 500, y = 500, ammo = 10) {
+  const b = makeBuilding("torpedobattery", "player", x, y);
+  b.input = { plasmatorp: ammo };
+  state.buildings.set(b.id, b);
+  return b;
+}
+
+test("a stocked Torpedo Battery fires on an enemy in range and decrements its ammo larder by exactly one shot's worth", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+  const startAmmo = battery.input.plasmatorp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(startHp - enemy.hp, BUILDINGS.torpedobattery.attack, "landed its full attack");
+  assert.equal(battery.input.plasmatorp, startAmmo - BUILDINGS.torpedobattery.ammo.perShot,
+    "decremented the ammo larder by exactly one shot's worth");
+});
+
+test("a dry Torpedo Battery holds fire — a target in range and cooldown ready, but no ammo banked", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, 0);   // empty larder
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(enemy.hp, startHp, "a dry battery deals no damage — it holds fire rather than shooting for free");
+  assert.equal(battery.targetId, enemy.id, "it still acquires/tracks the threat — only firing is gated, not targeting");
+});
+
+test("a Torpedo Battery with less than one shot's worth banked still holds fire", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, BUILDINGS.torpedobattery.ammo.perShot / 2);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(enemy.hp, startHp, "half a shot isn't enough to fire");
+});
+
+test("a Torpedo Battery with no input buffer at all (never yet serviced) holds fire without throwing", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = makeBuilding("torpedobattery", "player", 500, 500);   // no .input set at all
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  assert.doesNotThrow(() => updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown));
+  assert.equal(enemy.hp, startHp, "an unserviced battery has never fired a shot");
+});
+
+test("a Torpedo Battery resumes firing the instant its larder is topped back up past perShot, without waiting on a stale cooldown", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, 0);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);   // dry — holds fire
+  assert.equal(battery.attackTimer, 0, "an unfired shot never starts the cooldown — it stays ready to fire immediately");
+
+  battery.input.plasmatorp = BUILDINGS.torpedobattery.ammo.perShot;   // a worker delivers a torpedo
+  const startHp = enemy.hp;
+  updateBuildingCombat(state, battery, 0.1);
+
+  assert.ok(startHp - enemy.hp > 0, "fires the instant ammo is available");
+  assert.equal(battery.input.plasmatorp, 0, "and consumes exactly the one shot's worth it just fired");
+});
+
+test("Overcharged Weapons and a dry magazine compose correctly: still holds fire regardless of the damage multiplier", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, 0);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  state.players.player.upgrades.overchargedWeapons = true;
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(enemy.hp, startHp, "no damage multiplier matters when the battery never fires at all");
+});

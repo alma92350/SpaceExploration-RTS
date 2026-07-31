@@ -349,6 +349,37 @@ test("the Economist fortifies with turrets on the approach vector, up to its tur
   }
 });
 
+// docs/improvement-proposals.md's static-defense ladder: past the first fortification slot, the
+// AI upgrades to the heavier Bastille once a completed Foundry actually unlocks it — but the two
+// still fill the SAME turretCount budget (2 for the Economist), not an extra on top.
+test("with a Foundry already up, the Economist's second fortification slot upgrades to a Bastille — the first stays a plain turret", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  Object.assign(state.players.ai.resources, { ore: 100000, crystals: 10000, radioactives: 10000 });
+  stockedBarracks(state);
+  stockedFoundry(state);   // completed (not constructing) — prereqsMet(bastille) is true from the start
+
+  for (let i = 0; i < 20; i++) runAI(state, THINK_INTERVAL);
+
+  const turrets = aiBuildings(state, "turret");
+  const bastilles = aiBuildings(state, "bastille");
+  assert.equal(turrets.length, 1, "the first fortification slot stays a plain Sentinel Turret");
+  assert.equal(bastilles.length, 1, "the second slot upgrades to the heavier Bastille once the Foundry allows it");
+  assert.equal(turrets.length + bastilles.length, 2, "still exactly turretCount total, not an extra on top");
+});
+
+// Without a Foundry, fortifying must never stall waiting on a tech gate the archetype's own build
+// order hasn't reached — every slot falls back to the plain turret instead.
+test("without a Foundry, every fortification slot stays a plain turret — the Bastille never blocks fortifying on a tech gate", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  Object.assign(state.players.ai.resources, { ore: 100000, crystals: 10000, radioactives: 10000 });
+  stockedBarracks(state);
+
+  for (let i = 0; i < 20; i++) runAI(state, THINK_INTERVAL);
+
+  assert.equal(aiBuildings(state, "turret").length, 2, "both fortification slots fall back to the plain turret");
+  assert.equal(aiBuildings(state, "bastille").length, 0, "no Foundry means no Bastille, ever");
+});
+
 test("the AI recalls its army to defend when it SEES an attack on its base", () => {
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   const aiBase = state.map.bases.ai;

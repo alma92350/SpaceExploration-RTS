@@ -178,6 +178,17 @@ test("the Colossus's declared counteredBy (Skiff) actually wins at supply parity
   assert.ok(r.a > r.b, "mass Skiff overwhelms the fragile, slow-firing artillery piece at equal supply");
 });
 
+// Colossus splash (docs/improvement-proposals.md "Colossus splash: def-driven area damage as
+// the T3 anti-mass verb"): splash is meant to punish a packed formation caught near the impact
+// point, not to make the Colossus itself a stronger single-target duelist — so its already-
+// certified counteredBy:"skiff" above must hold at plain COST parity too, splash included. If
+// tuning splash's radius/frac ever flips this, that's the signal the numbers are miscalibrated,
+// not something to just accept (see the tuning comment on UNITS.colossus.splash in entities.js —
+// radius/frac were swept against this exact duel, the same way SALVAGE_FRAC once was).
+test("the Colossus's declared counteredBy (Skiff) still wins head-on at cost parity, splash included", () => {
+  assert.ok(beats("skiff", "colossus"), "a cost-parity Skiff swarm still beats a Colossus army head-on with splash added");
+});
+
 test("the Aegis's declared counteredBy (Lancer) actually wins at supply parity", () => {
   // Cost parity actually favours the Aegis — its huge hp pool buys more survivability
   // per ore than the Lancer's — but armies are supply-capped, not cost-capped, in the
@@ -191,4 +202,74 @@ test("the Aegis's declared counteredBy (Lancer) actually wins at supply parity",
 test("the Leviathan's curated soft answer (Skiff) also wins at supply parity, though it carries no counteredBy of its own yet", () => {
   const r = supplyDuel("skiff", "leviathan");
   assert.ok(r.a > r.b, "a swarm of cheap Skiffs still trades into the capital ship at equal supply, per its own doc comment");
+});
+
+// ---- The static-defense ladder (docs/improvement-proposals.md): the Bastille and the Aegis
+// Bastion must both join the roster WITHOUT breaking the "siege breaks turtles" identity
+// cracksBase already certifies above for the plain turret line.
+
+// Like cracksBase, but the defensive line is an explicit ARRAY of building types (one per slot,
+// same spacing cracksBase itself uses) instead of N copies of the same turret — so a test can mix
+// turret/bastille/aegisbastion in one line. Also snapshots the anvil list each tick (a no-op
+// unless an aura projector — the Aegis Bastion — is actually in the mix), since cracksBase itself
+// predates that mechanic.
+function cracksMixedBase(type, defenseTypes, budget = 800, maxTicks = 6000) {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear(); state.buildings.clear();
+  const cc = makeBuilding("command", "ai", 1000, 500);
+  state.buildings.set(cc.id, cc);
+  defenseTypes.forEach((defType, i) => {
+    const b = makeBuilding(defType, "ai", 900, 440 + i * 60);
+    state.buildings.set(b.id, b);
+  });
+  place(state, type, "player", Math.floor(budget / totalCost(type)), 560, 480, 1000, 500);
+  for (let t = 0; t < maxTicks; t++) {
+    state.unitGrid = buildUnitGrid(state);
+    collectAnvils(state);
+    for (const u of [...state.units.values()]) updateCombat(state, u, 0.1);
+    for (const b of [...state.buildings.values()]) updateBuildingCombat(state, b, 0.1);
+    applySeparation(state, 0.1);
+    if (!state.buildings.has(cc.id)) return true;                 // base fell
+    if (!aliveCount(state, "player")) return false;               // army wiped first
+  }
+  return !state.buildings.has(cc.id);
+}
+
+test("the Bastille joins the ladder without breaking the turtle-breaker identity: a Breacher army still cracks a mixed Sentinel+Bastille line, a same-cost Lancer army does not", () => {
+  const line = ["turret", "bastille", "turret", "bastille"];
+  assert.ok(cracksMixedBase("breacher", line), "a Breacher army still breaks a mixed Sentinel+Bastille base");
+  assert.ok(!cracksMixedBase("lancer", line), "a same-cost Lancer army is still stopped cold — the Bastille doesn't change who can siege");
+});
+
+// Like cracksMixedBase, but returns the TICK the base actually fell (null if it never fell within
+// maxTicks, e.g. the attacking army was wiped first) — so a test can compare HOW LONG a siege
+// takes with vs without an Aegis Bastion's aura in the line, not just whether it eventually falls.
+function ticksToCrack(type, defenseTypes, budget = 800, maxTicks = 8000) {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.units.clear(); state.buildings.clear();
+  const cc = makeBuilding("command", "ai", 1000, 500);
+  state.buildings.set(cc.id, cc);
+  defenseTypes.forEach((defType, i) => {
+    const b = makeBuilding(defType, "ai", 900, 440 + i * 60);
+    state.buildings.set(b.id, b);
+  });
+  place(state, type, "player", Math.floor(budget / totalCost(type)), 560, 480, 1000, 500);
+  for (let t = 0; t < maxTicks; t++) {
+    state.unitGrid = buildUnitGrid(state);
+    collectAnvils(state);
+    for (const u of [...state.units.values()]) updateCombat(state, u, 0.1);
+    for (const b of [...state.buildings.values()]) updateBuildingCombat(state, b, 0.1);
+    applySeparation(state, 0.1);
+    if (!state.buildings.has(cc.id)) return t;
+    if (!aliveCount(state, "player")) return null;
+  }
+  return null;
+}
+
+test("an Aegis Bastion slows a siege by attrition — a Breacher army still cracks an aura-shielded turret base, just more slowly than an unshielded one", () => {
+  const unshielded = ticksToCrack("breacher", ["turret", "turret"]);
+  const shielded = ticksToCrack("breacher", ["turret", "turret", "aegisbastion"]);
+  assert.ok(unshielded !== null, "sanity: the unshielded base does fall to a Breacher budget army");
+  assert.ok(shielded !== null, "the shielded base still falls — the aura buys time, it never hard-stops siege");
+  assert.ok(shielded > unshielded, "…but it takes strictly longer with the Aegis Bastion's aura up");
 });

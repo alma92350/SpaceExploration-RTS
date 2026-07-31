@@ -13,7 +13,7 @@
 import { queueProduction, researchUpgrade } from "./production.js";
 import { issueBuild, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
-import { BUILDINGS, UNITS, UPGRADES, canAfford } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet } from "./entities.js";
 import { recipeOf } from "./industry.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { isNodeDiscovered } from "./fog.js";
@@ -351,24 +351,37 @@ export function aiProduceAndFortify(state, ctx) {
     }
   }
 
-  // Sentinel Turrets straddling the approach lane between the CC and mid-map,
-  // alternating sides and stepping outward as they multiply. Crystals-funded,
-  // so it's outside the ore expansion reserve; inert on crystal-less worlds
-  // (canAfford simply never passes there — accepted flavor). turretCountMult
-  // (Economic — aiStrategy.js) trims even this passive defense to match "minimal";
-  // 1 (a no-op) for every other strategy.
+  // Sentinel Turrets (and, past the first slot, Bastilles — docs/improvement-proposals.md's
+  // static-defense ladder) straddling the approach lane between the CC and mid-map, alternating
+  // sides and stepping outward as they multiply. Crystals-funded, so it's outside the ore
+  // expansion reserve; inert on crystal-less worlds (canAfford simply never passes there —
+  // accepted flavor). turretCountMult (Economic — aiStrategy.js) trims even this passive defense
+  // to match "minimal"; 1 (a no-op) for every other strategy.
   if (cc && barracks && workers.length > 0) {
-    const turrets = buildings.filter(b => b.type === "turret");
+    // Both static-defense types fill the SAME fortification slot in the archetype's turretCount
+    // budget — a Bastille isn't an extra structure, it's a tougher pick for a slot past the
+    // first, once the Foundry has actually unlocked it (prereqsMet below). Every archetype today
+    // caps at 2 (aiArchetypes.js), so in practice this reaches at most one Bastille per game.
+    const defenses = buildings.filter(b => b.type === "turret" || b.type === "bastille");
     const turretCap = Math.round((archetype.turretCount || 0) * (strategy.turretCountMult || 1));
-    if (turrets.length < turretCap && canAfford(ai.resources, BUILDINGS.turret.cost)) {
-      const mx = state.map.width / 2, my = state.map.height / 2;
-      const len = Math.hypot(mx - cc.x, my - cc.y) || 1;
-      const dx = (mx - cc.x) / len, dy = (my - cc.y) / len;   // the approach vector
-      const i = turrets.length, side = i % 2 === 0 ? 1 : -1;
-      const spot = findPlacement(state, "turret",
-        cc.x + dx * (140 + 80 * i) - dy * 30 * side,
-        cc.y + dy * (140 + 80 * i) + dx * 30 * side);
-      if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "turret", spot.x, spot.y)) spend(state);
+    if (defenses.length < turretCap) {
+      const i = defenses.length;
+      // The first fortification slot stays a plain Sentinel Turret (cheap, always reachable —
+      // it has no `requires`); slots past that upgrade to the tankier Bastille once a completed
+      // Foundry actually unlocks it. Falls back to more turrets on a Foundry-less (or
+      // still-building) world, so fortifying never stalls waiting on a tech gate an archetype's
+      // own build order hasn't reached yet.
+      const type = (i >= 1 && prereqsMet(state, "ai", BUILDINGS.bastille)) ? "bastille" : "turret";
+      if (canAfford(ai.resources, BUILDINGS[type].cost)) {
+        const mx = state.map.width / 2, my = state.map.height / 2;
+        const len = Math.hypot(mx - cc.x, my - cc.y) || 1;
+        const dx = (mx - cc.x) / len, dy = (my - cc.y) / len;   // the approach vector
+        const side = i % 2 === 0 ? 1 : -1;
+        const spot = findPlacement(state, type,
+          cc.x + dx * (140 + 80 * i) - dy * 30 * side,
+          cc.y + dy * (140 + 80 * i) + dx * 30 * side);
+        if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, type, spot.x, spot.y)) spend(state);
+      }
     }
   }
 

@@ -1703,18 +1703,24 @@ function rebuildSelectionPanel(sel) {
     const GROUPS = [
       ["Economy", ["market", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "assembler", "chipfab",
                    "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
-      ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "stardock"]],
+      ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion", "torpedobattery", "habitat", "stardock"]],
       ["Endgame", ["antimatter_gate"]],
       ["Travel", ["spaceport"]],
     ];
-    const alwaysShow = new Set(["market", "barracks", "foundry", "arsenal", "refinery", "turret",
+    // bastille/aegisbastion join turret here (visible-but-locked, like the Foundry/Arsenal/
+    // Spaceport gates themselves) so the player sees the rest of the static-defense ladder as a
+    // goal before it's reachable — torpedobattery deliberately stays OUT of this set: it's a
+    // deep Strategic-tier leaf (Foundry/Arsenal-gated stuff previews early, but a Torpedo Works
+    // hasn't even been teched toward yet at that point), so it reveals only once actually reached,
+    // same as chipfab/machineworks/torpedoworks/stardock/antimatter_gate already do.
+    const alwaysShow = new Set(["market", "barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion",
                                 "habitat", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "spaceport"]);
     // What's actually SHOWN (not just category-eligible) in each mode — the header's count
     // mirrors this exactly, so "▸ Build (N)" never promises more than expanding reveals.
     const shownGroups = state.endless
       ? GROUPS.map(([title, types]) => [title, types.filter(t => canBuild(t) && (alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t])))])
           .filter(([, shown]) => shown.length)
-      : [[null, ["barracks", "foundry", "arsenal", "refinery", "turret", "habitat", "command"].filter(canBuild)]];
+      : [[null, ["barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion", "habitat", "command"].filter(canBuild)]];
     // Collapsible PER GROUP: a generalist Worker (every category) or a mixed selection can offer
     // a long wall of options, and different players care about different groups — Economy vs
     // Military fold independently (game.collapsedSections, session.js), remembered across

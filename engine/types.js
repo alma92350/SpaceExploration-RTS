@@ -167,7 +167,7 @@
  * @property {string} [lastTier]      Plasma Rig last strike tier (HUD)
  * @property {number} [lastYield]     Plasma Rig last strike amount (HUD)
  * @property {Object.<string, number>} [store]  a producer's finite output buffer, commodity → qty (engine/haul.js)
- * @property {Object.<string, number>} [input]  a factory's finite input larder, commodity → qty (engine/haul.js)
+ * @property {Object.<string, number>} [input]  a factory's (or a fuel-burning power station's, or an ammo-fed static defense's) finite input larder, commodity → qty (engine/haul.js)
  * @property {number} [haulers]       transient per-tick count of workers hauling from this producer (engine/haul.js)
  * @property {number} [servers]       transient per-tick count of workers servicing this factory (engine/haul.js)
  * @property {"high"|"normal"|"low"} [logiPriority]  per-building auto-haulage priority (engine/commands.js issueSetLogiPriority, engine/haul.js LOGI_PRIORITIES/priorityWeight) — missing reads as "normal"
