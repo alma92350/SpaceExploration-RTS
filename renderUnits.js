@@ -33,6 +33,7 @@ export function drawUnitShape(ctx, u, def, color) {
   else if (u.type === "wraith") drawWraith(ctx, u, def, color);
   else if (u.type === "aegis") drawAegis(ctx, u, def, color);
   else if (u.type === "colossus") drawColossus(ctx, u, def, color);
+  else if (u.type === "leviathan") drawLeviathan(ctx, u, def, color);
   else if (u.type === "freighter" || u.type === "hauler" || u.type === "heavyhauler" || u.type === "bulkfreighter") drawFreighter(ctx, u, def, color);
   else if (u.type === "colonyship") drawColonyShip(ctx, u, def, color);
   else if (u.type === "heliumbomb") drawHeliumBomb(ctx, u, def, color);
@@ -200,9 +201,12 @@ function drawMender(ctx, u, def, color) {
 }
 
 // A last-resort silhouette for any unit type without a bespoke draw — a small
-// diamond with a lit core. Nothing on the roster falls through to it today, but
-// it keeps the "every entity has a graphical representation" invariant true for
-// anything added later, so a new unit can never ship invisible.
+// diamond with a lit core. Every current roster type has its own drawUnitShape
+// case below (test/render-roster.test.js's smoke test enforces this — it fails
+// loudly the moment a type's trace matches this fallback's), so this exists
+// purely to guarantee the "every entity has a graphical representation"
+// invariant for anything added LATER: a new unit can never ship invisible, even
+// in the gap before its own bespoke hull lands.
 function drawGenericUnit(ctx, u, def, color) {
   const r = def.radius, cx = u.x, cy = u.y;
   pathPoints(ctx, [[cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy]]);
@@ -510,6 +514,75 @@ function drawColossus(ctx, u, def, color) {
   ctx.beginPath(); ctx.arc(tx, ty, r * 0.2, 0, Math.PI * 2); ctx.fill();
   const [cxx, cyy] = toWorld(cx, cy, angle, -L * 0.15, 0);
   ctx.beginPath(); ctx.arc(cxx, cyy, r * 0.3, 0, Math.PI * 2); ctx.fill();
+}
+
+// Leviathan — the Strategic-tier endgame flagship: a long twin-spine super-capital hull, broader
+// and longer than the Dreadnought (whose 4-battery/single-spine design it deliberately outdoes in
+// every cue), so the last ship you ever build is unmistakably the biggest thing on the field. The
+// stern tapers into two trailing spine prongs around a V-notch — the "twin-spine" silhouette —
+// with a stern engine array glowing in the notch between them (a cue nothing else on the roster
+// has), twin spinal cannon lines running the hull's length either side of the centerline (doubling
+// the Dreadnought's single spinal cannon), six battery pods (half again the Dreadnought's four),
+// and a bigger, outlined command bridge.
+function drawLeviathan(ctx, u, def, color) {
+  const angle = updateFacing(u);
+  const r = def.radius, L = r * 2.0, W = r * 1.3;
+  const cx = u.x, cy = u.y;
+
+  // Broad hull, tapering aft into twin trailing spines around a stern notch.
+  pathOriented(ctx, cx, cy, angle, [
+    [L, 0],
+    [L * 0.55, W * 0.85],
+    [-L * 0.5, W * 0.85],
+    [-L * 0.85, W * 0.55],     // upper spine root
+    [-L * 1.15, W * 0.5],      // upper spine tip
+    [-L * 0.75, W * 0.08],     // notch inner, upper
+    [-L * 0.75, -W * 0.08],    // notch inner, lower
+    [-L * 1.15, -W * 0.5],     // lower spine tip
+    [-L * 0.85, -W * 0.55],    // lower spine root
+    [-L * 0.5, -W * 0.85],
+    [L * 0.55, -W * 0.85],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+
+  // Twin spinal cannons — a pair of lines flanking the centreline the full hull length, doubling
+  // the Dreadnought's single spinal cannon.
+  ctx.strokeStyle = shade(color, -30);
+  ctx.lineWidth = r * 0.2;
+  for (const off of [1, -1]) {
+    const [x1, y1] = toWorld(cx, cy, angle, -L * 0.7, off * W * 0.16);
+    const [x2, y2] = toWorld(cx, cy, angle, L * 1.4, off * W * 0.16);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+
+  // Six battery pods (three a side) — half again the Dreadnought's four, outlined as well as
+  // filled so they read as mounted turrets rather than flat dots.
+  ctx.fillStyle = shade(color, -25);
+  ctx.strokeStyle = shade(color, -40);
+  ctx.lineWidth = 1;
+  for (const side of [1, -1]) {
+    for (const fx of [0.35, -0.05, -0.45]) {
+      const [px, py] = toWorld(cx, cy, angle, L * fx, side * W * 0.78);
+      ctx.beginPath(); ctx.arc(px, py, r * 0.22, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+  }
+
+  // Lit command bridge — bigger than the Dreadnought's, and outlined for extra presence.
+  ctx.fillStyle = DETAIL;
+  const [bx, by] = toWorld(cx, cy, angle, -L * 0.12, 0);
+  ctx.beginPath(); ctx.arc(bx, by, r * 0.34, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = shade(color, -30);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Stern engine array — three glow points nested in the notch between the twin spines, a cue
+  // unique to the Leviathan on the current roster.
+  ctx.fillStyle = DETAIL;
+  for (const off of [0, 0.42, -0.42]) {
+    const [ex, ey] = toWorld(cx, cy, angle, -L * 0.95, off * W);
+    ctx.beginPath(); ctx.arc(ex, ey, r * 0.13, 0, Math.PI * 2); ctx.fill();
+  }
 }
 
 // Freighter — a slow, blocky cargo hauler for the convoy scenarios: a wide hull
