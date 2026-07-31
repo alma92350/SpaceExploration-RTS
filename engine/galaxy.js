@@ -600,6 +600,13 @@ export function updateFactionWarmth(galaxy) {
 // matter how the scarcity/development pull on it evolves. Reapplied every scan (below), not a
 // one-time snap — updateDiplomacy's own drift would otherwise claw it back up, and the AI twin's
 // own "Where" note explicitly keeps this out of engine/diplomacy.js ("needs no change").
+//
+// EXCEPT once the player has personally pacified that same world (Domination with teeth,
+// checkDomination/dip.pacified below): conquest is the more direct, more recent player action, so
+// it wins over a stale ascension from before the capital fell. Without this guard the ceiling and
+// the pacified floor fight forever — the ceiling reasserts every scan and always wins the raw
+// stance value between updateDiplomacy's slower drift ticks, so razing an ascended neighbour's
+// Command Center would have no visible effect on its stance, which reads as broken in play.
 const RIVAL_ASCENSION_STANCE_CEILING = PEACE_THRESHOLD;
 
 // The currently-charging AI-owned wonder building on `state`, or null — the same predicate
@@ -620,7 +627,8 @@ function aiWonderOn(state) {
 function applyRivalAscension(galaxy, worldId, state) {
   if (state.players.ai) state.players.ai.upgrades.hardEdge = true;
   (galaxy.rivalAscended || (galaxy.rivalAscended = new Set())).add(worldId);
-  if (state.diplomacy) state.diplomacy.stance = Math.min(state.diplomacy.stance, RIVAL_ASCENSION_STANCE_CEILING);
+  if (state.diplomacy && !state.diplomacy.pacified)
+    state.diplomacy.stance = Math.min(state.diplomacy.stance, RIVAL_ASCENSION_STANCE_CEILING);
 
   const claims = galaxy.claims || (galaxy.claims = new Map());
   const notes = galaxy.expansionNotes || (galaxy.expansionNotes = []);
@@ -665,10 +673,13 @@ export function checkRivalGate(galaxy) {
   }
 
   // 2) REAPPLY the permanent stance ceiling on every ascended world — see the header comment on
-  // why this lives here rather than in engine/diplomacy.js's own drift.
+  // why this lives here rather than in engine/diplomacy.js's own drift. Skips a world the player
+  // has since personally pacified (see the header comment on RIVAL_ASCENSION_STANCE_CEILING) —
+  // conquest overrides a stale ascension, not the other way around.
   for (const worldId of ascended) {
     const state = galaxy.planets.get(worldId);
-    if (state && state.diplomacy) state.diplomacy.stance = Math.min(state.diplomacy.stance, RIVAL_ASCENSION_STANCE_CEILING);
+    if (state && state.diplomacy && !state.diplomacy.pacified)
+      state.diplomacy.stance = Math.min(state.diplomacy.stance, RIVAL_ASCENSION_STANCE_CEILING);
   }
 
   // 3) SELECTION — only when nothing is currently tracked. Clear a stale tracked reference first

@@ -24,7 +24,15 @@ import { rivalGateEligible, RIVAL_GATE_BUFFER } from "../engine/aiIndustry.js";
 import { checkEndlessWin } from "../engine/victory.js";
 import { chargingWonderOf } from "../engine/wonder.js";
 import { BUILDINGS } from "../engine/entities.js";
-import { PEACE_THRESHOLD, createDiplomacy } from "../engine/diplomacy.js";
+import { PEACE_THRESHOLD, createDiplomacy, updateDiplomacy } from "../engine/diplomacy.js";
+import { checkDomination } from "../engine/galaxy.js";
+
+// Eliminate the AI's foothold on `state` — its Command Center and its (undeployed) colony ship —
+// the same razeAiCommand idiom test/domination.test.js uses, so checkDomination will pacify it.
+function razeAiCommand(state) {
+  for (const [id, b] of [...state.buildings]) if (b.owner === "ai" && b.type === "command") state.buildings.delete(id);
+  for (const [id, u] of [...state.units]) if (u.owner === "ai" && u.type === "colonyship") state.units.delete(id);
+}
 
 const GATE = BUILDINGS.antimatter_gate;
 
@@ -321,6 +329,37 @@ test("the milestone fires only once, however many times checkRivalGate re-scans 
   checkRivalGate(g);
   checkRivalGate(g);
   assert.equal(g.milestones.length, milestonesAfterFirst, "idempotent — no repeat fireworks");
+});
+
+// CROSS-FEATURE: Domination with teeth (checkDomination/updateDiplomacy) floors a PACIFIED
+// world's stance target permanently at Neutral. Rival Gate ascension ceils an ASCENDED world's
+// raw stance permanently at PEACE_THRESHOLD, reapplied every scan (see the header comment on
+// RIVAL_ASCENSION_STANCE_CEILING). A world that ascends and is LATER personally pacified by the
+// player must resolve toward the floor, not stay pinned at the ceiling forever — otherwise
+// conquering an ascended neighbour's capital would have no visible effect on its stance, which
+// reads as broken to a player who just won that fight. Conquest is the more direct, more recent
+// player action, so it wins.
+test("pacifying an ALREADY-ASCENDED world lets the pacified floor win — conquest overrides ascension", () => {
+  const g = createGalaxy({ seed: 40 });
+  const w = g.worlds.find(x => x !== g.activeId);
+  const { state } = seedRivalGate(g, w, { charge: 1 });
+  state.diplomacy = createDiplomacy();
+  checkRivalGate(g);
+  assert.ok(state.diplomacy.stance <= PEACE_THRESHOLD, "sanity: ascended and ceiled, as the earlier test already proves");
+
+  razeAiCommand(state);
+  checkDomination(g);
+  assert.ok(state.diplomacy.pacified, "sanity: the world is now also pacified");
+
+  // Drift several times, the same way the real background loop would call updateDiplomacy
+  // repeatedly — interleaved with re-scans of the (still-ascended) rival-gate ledger, exactly as
+  // stepGalaxy's own throttled cadence does both in the same pass.
+  for (let i = 0; i < 200; i++) {
+    updateDiplomacy(state, 1);
+    checkRivalGate(g);
+  }
+  assert.ok(state.diplomacy.stance > PEACE_THRESHOLD,
+    "the pacified floor eventually wins — the stale ascension ceiling must stop being reasserted once conquered");
 });
 
 /* ---------- wired into stepGalaxy's throttled scan, end to end ---------- */
