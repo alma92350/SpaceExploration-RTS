@@ -18,9 +18,17 @@
 "use strict";
 
 import { UNITS, BUILDINGS } from "./entities.js";
-import { sampleTerrain, sideMod } from "./map.js";
+import { sampleTerrain, sideMod, TERRAIN } from "./map.js";
 
 export const FOG_CELL_SIZE = 40;
+
+// Uphill concealment (docs/improvement-proposals.md "A real LOS pass: low ground can't see onto
+// high ground"): a source whose own tile is NOT high ground only reveals a high-ground CELL out
+// to this fraction of its normal sight radius — a mesa is a stat pad (extra sight/damage for its
+// holder) AND a genuine intelligence blind spot for anyone still down in the lowland, not a free
+// look from a comfortable distance. combat.js's acquisition (nearestEnemy/spreadEnemy) imports
+// this same constant so "what a lowland unit can see" and "what it can shoot at" agree.
+export const UPHILL_FRAC = 0.55;
 
 /** @param {GameMap} map @returns {Fog} */
 export function createFog(map) {
@@ -80,18 +88,29 @@ export function nearestUnexploredPoint(fog, fromX, fromY) {
   return best;
 }
 
-function reveal(fog, x, y, sight) {
+// `terrain` is the map's terrain grid (engine/map.js generateTerrain — cols/rows/cell all shared
+// 1:1 with this fog grid, both 40px cells, per TERRAIN_CELL_SIZE's own comment) or undefined for a
+// map-less state; `srcHigh` is whether the SOURCE's own tile is high ground (type 2), computed
+// once by the caller (updateFog) rather than re-sampled per candidate cell here. A source not on
+// high ground reveals a high-ground cell only out to UPHILL_FRAC of `sight` — everything else
+// (open/rough ground, or a source that's itself on the high ground) reveals at the full radius.
+function reveal(fog, x, y, sight, terrain, srcHigh) {
   const { cx, cy } = cellOf(fog, x, y);
   const reach = Math.ceil(sight / FOG_CELL_SIZE);
   const sightSq = sight * sight;   // compare squared distances — no per-cell sqrt (Math.hypot)
+  const uphillCap = sight * UPHILL_FRAC;
+  const uphillSq = uphillCap * uphillCap;
   const gyMax = Math.min(fog.rows - 1, cy + reach), gxMax = Math.min(fog.cols - 1, cx + reach);
   for (let gy = Math.max(0, cy - reach); gy <= gyMax; gy++) {
     const row = gy * fog.cols;                                // hoisted out of the inner loop
     const dy = gy * FOG_CELL_SIZE + FOG_CELL_SIZE / 2 - y;
     for (let gx = Math.max(0, cx - reach); gx <= gxMax; gx++) {
       const dx = gx * FOG_CELL_SIZE + FOG_CELL_SIZE / 2 - x;
-      if (dx * dx + dy * dy > sightSq) continue;
       const idx = row + gx;
+      // Uphill concealment: a high-ground cell (terrain type 2) seen from a NON-high-ground
+      // source is compared against the shorter uphill radius instead of the full one.
+      const limitSq = (!srcHigh && terrain && terrain.type[idx] === 2) ? uphillSq : sightSq;
+      if (dx * dx + dy * dy > limitSq) continue;
       fog.visible[idx] = 1;
       fog.explored[idx] = 1;
     }
@@ -106,14 +125,19 @@ export function updateFog(state, fog, owner) {
   // A world's sight modifier scales every reveal radius (see PLANET_MODIFIERS).
   // Optional-chained so the fog tests' map-less stubs read the default 1.
   const sightMult = sideMod(state, owner, "sightMult");   // per-side on an asymmetric world (updateFog is already called per owner)
-  // A source standing on high ground sees farther (terrain sightMult); OPEN and
-  // the map-less test stubs read 1. One sample per source per tick.
+  // A source standing on high ground sees farther (terrain sightMult) AND is exempt from the
+  // uphill-concealment cap below (srcHigh) — ONE sampleTerrain call per source serves both. OPEN
+  // ground and the map-less test stubs read TERRAIN[0] (sightMult 1, never high).
   const terr = state.map?.terrain;
-  const srcMult = (x, y) => (terr ? sampleTerrain(terr, x, y).sightMult : 1);
+  const srcTerrain = (x, y) => (terr ? sampleTerrain(terr, x, y) : TERRAIN[0]);
   for (const u of state.units.values()) {
-    if (u.owner === owner) reveal(fog, u.x, u.y, UNITS[u.type].sight * sightMult * srcMult(u.x, u.y));
+    if (u.owner !== owner) continue;
+    const t = srcTerrain(u.x, u.y);
+    reveal(fog, u.x, u.y, UNITS[u.type].sight * sightMult * t.sightMult, terr, t === TERRAIN[2]);
   }
   for (const b of state.buildings.values()) {
-    if (b.owner === owner) reveal(fog, b.x, b.y, BUILDINGS[b.type].sight * sightMult * srcMult(b.x, b.y));
+    if (b.owner !== owner) continue;
+    const t = srcTerrain(b.x, b.y);
+    reveal(fog, b.x, b.y, BUILDINGS[b.type].sight * sightMult * t.sightMult, terr, t === TERRAIN[2]);
   }
 }

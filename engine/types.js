@@ -136,6 +136,7 @@
  * @property {Unit} [squadLeader]     transient, NEVER persisted: the leader this unit is following, if any (engine/commands.js setSquadLeader) — a live object reference
  * @property {Unit[]} [squadFollowers]  transient, NEVER persisted: the units following THIS unit as their leader (engine/commands.js dispatchFormation)
  * @property {number} [facing]  a player-set facing angle (radians), from a click-and-drag move/attack-move (engine/commands.js applyFacing) — overrides the movement-inferred angle a STATIONARY unit would otherwise freeze at (renderShared.js updateFacing); a plain (non-drag) move/attack-move clears it, so it never lingers stale after a later un-aimed order
+ * @property {number} [kills]  confirmed kills this unit has landed (engine/combat.js performAttack's target-died branch, unit-kind attackers only) — feeds entities.js rankMults for the veterancy damage-dealt/damage-taken multipliers and renderUnits.js's chevron overlay; absent reads as 0 (fresh off the line)
  */
 
 /**

@@ -794,6 +794,34 @@ export function structureMult(state, owner, field) {
   return m;
 }
 
+// Veterancy ranks (docs/improvement-proposals.md "Veterancy ranks: kills forge small combat
+// multipliers and visible chevrons"): each rank layers on the same ~+6% damage-dealt / -6%
+// damage-taken edge, so a whole campaign's survivors compound rather than jumping to full
+// strength off one lucky trade. Thresholds (3/8/18 kills) are spaced so a single engagement
+// rarely mints even rank 1 — combat.js's performAttack only increments `kills` on a CONFIRMED
+// kill by a unit-kind attacker, so racking up 3 in one fight means winning three separate
+// exchanges, not one. Verified against test/balance.test.js's whole auto-battle regression
+// harness (the duel/cracksBase-style invariants), which stays green with veterancy folded in.
+export const VETERANCY_RANKS = [
+  { kills: 3, dealtMult: 1.06, takenMult: 0.94 },
+  { kills: 8, dealtMult: 1.06 ** 2, takenMult: 0.94 ** 2 },
+  { kills: 18, dealtMult: 1.06 ** 3, takenMult: 0.94 ** 3 },
+];
+
+// A unit's veterancy rank (0..VETERANCY_RANKS.length) and the two multipliers that go with it —
+// 1/1 (no-op) below the first threshold, or for anything with no `kills` field at all (a fresh
+// unit off the line, or a building/turret, which never accrues kills). Pure and side-effect-free
+// so attackDamage (combat.js) and the chevron renderer (renderUnits.js) can both call it straight
+// off the entity with no shared bookkeeping.
+/** @param {Unit} unit @returns {{ rank: number, dealtMult: number, takenMult: number }} */
+export function rankMults(unit) {
+  const kills = unit?.kills || 0;
+  let rank = 0;
+  for (const r of VETERANCY_RANKS) { if (kills < r.kills) break; rank++; }
+  const tier = VETERANCY_RANKS[rank - 1];
+  return { rank, dealtMult: tier ? tier.dealtMult : 1, takenMult: tier ? tier.takenMult : 1 };
+}
+
 // Skiff, Bastion and Lancer form a deliberate rock-paper-scissors: each
 // one's bonusVs targets exactly the unit that would otherwise be its
 // hardest matchup, and nothing beats all three at once.

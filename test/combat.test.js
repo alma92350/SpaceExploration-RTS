@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
 import { buildUnitGrid } from "../engine/grid.js";
 import { updateCombat, updateBuildingCombat, updateWorkerCombat } from "../engine/combat.js";
-import { UNITS, BUILDINGS, UPGRADES } from "../engine/entities.js";
+import { UNITS, BUILDINGS, UPGRADES, rankMults } from "../engine/entities.js";
 import { sampleTerrain } from "../engine/map.js";
 import { collectAnvils } from "../engine/sim.js";
 
@@ -1026,6 +1026,58 @@ test("stillEngageable also folds in terrain: a high-ground unit keeps its alread
     "stillEngageable's own terrain-extended aggro holds the original lock, rather than falling through to acquireTarget and picking the closer enemy");
 });
 
+// ---- Uphill concealment, acquisition half (docs/improvement-proposals.md "A real LOS pass"):
+// fog.js's reveal() already caps how far a NON-high-ground source sees onto high ground at
+// UPHILL_FRAC of its sight; the identical rule applies here to weapon acquisition, so a unit
+// can't shell a held ridge blind just because its raw aggro range happens to reach that far.
+// Skiff aggroRange 120 * UPHILL_FRAC 0.55 = 66 — D=90 sits strictly beyond that cap but strictly
+// inside the flat 120 aggro, isolating the effect exactly like the fog tests do.
+
+test("a lowland attacker can't acquire a high-ground enemy beyond aggro*UPHILL_FRAC", () => {
+  const D = 90;
+  const state = createGameState({ planetId: "helix" });
+  const map = state.map;
+  const attacker = makeUnit("skiff", "player", map.width * 0.5 - 170, map.height * 0.5);
+  assert.equal(sampleTerrain(map.terrain, attacker.x, attacker.y).name, "open", "fixture sanity: attacker starts off the ridge");
+  const highTarget = makeUnit("skiff", "ai", attacker.x + D, attacker.y);
+  assert.equal(sampleTerrain(map.terrain, highTarget.x, highTarget.y).name, "high", "fixture sanity: target sits on the ridge, D away");
+  state.units.set(attacker.id, attacker);
+  state.units.set(highTarget.id, highTarget);
+
+  updateCombat(state, attacker, 0.1);
+
+  assert.equal(attacker.autoTarget, null, "beyond the uphill-capped range — the attacker never acquires it, though it's well within the flat 120 aggro");
+});
+
+test("the identical distance is acquired normally when the target is NOT on high ground — the cap targets high ground specifically", () => {
+  const D = 90;
+  const state = createGameState({ planetId: "ferros" });   // all-open, no terrain at all
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + D, 500);
+  state.units.set(attacker.id, attacker);
+  state.units.set(target.id, target);
+
+  updateCombat(state, attacker, 0.1);
+
+  assert.equal(attacker.autoTarget, target.id, "same distance, open ground: acquired fine, same as before this feature");
+});
+
+test("the uphill acquisition cap is symmetric: an AI-owned attacker is capped identically against a player-owned high-ground target", () => {
+  const D = 90;
+  const state = createGameState({ planetId: "helix" });
+  const map = state.map;
+  const attacker = makeUnit("skiff", "ai", map.width * 0.5 - 170, map.height * 0.5);
+  const highTarget = makeUnit("skiff", "player", attacker.x + D, attacker.y);
+  assert.equal(sampleTerrain(map.terrain, highTarget.x, highTarget.y).name, "high", "fixture sanity");
+  state.units.set(attacker.id, attacker);
+  state.units.set(highTarget.id, highTarget);
+
+  updateCombat(state, attacker, 0.1);
+
+  assert.equal(attacker.autoTarget, null,
+    "the AI reads acquireTarget through the exact same code path as the player — no separate AI-side change needed, and none was made");
+});
+
 // ---- anvilAura (the Aegis's guardAura): reduces damage taken by allies inside
 // its bubble. Nothing before this landed a real hit through it.
 
@@ -1440,4 +1492,193 @@ test("Overcharged Weapons and a dry magazine compose correctly: still holds fire
   updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
 
   assert.equal(enemy.hp, startHp, "no damage multiplier matters when the battery never fires at all");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Veterancy ranks (docs/improvement-proposals.md "Veterancy ranks: kills forge small combat
+   multipliers and visible chevrons"): each confirmed kill increments a UNIT-kind attacker's
+   `kills` (buildings/turrets never accrue it); rankMults(unit) maps the running total to a
+   damage-dealt/damage-taken multiplier pair via the 3/8/18 thresholds, applied in attackDamage
+   beside the existing upgradeMult product — symmetrically for both sides, with zero AI-side code.
+   --------------------------------------------------------------------------------------------- */
+
+test("a unit-kind attacker's kills increments by exactly one when its hit kills the target", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  b.hp = 1;   // dies to this hit
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.equal(a.kills, 1);
+});
+
+test("kills does not increment when the target survives the hit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);   // full hp — this single hit won't kill it
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  assert.ok(b.hp > 0, "fixture sanity: the target survived");
+  assert.equal(a.kills, undefined, "no kill yet — the field is never even initialized");
+});
+
+test("a turret's (building-kind) attacker never accrues kills — veterancy is a unit-only trait", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const enemy = makeUnit("skiff", "ai", 510, 500);
+  enemy.hp = 1;
+  state.units.set(enemy.id, enemy);
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  assert.equal(state.units.has(enemy.id), false, "fixture sanity: the turret's hit did kill it");
+  assert.equal(turret.kills, undefined, "buildings/turrets are never attacker.kind === 'unit'");
+});
+
+test("kills accumulates across repeated kills, one per confirmed kill", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  state.units.set(attacker.id, attacker);
+  for (let i = 0; i < 3; i++) {
+    const victim = makeUnit("skiff", "ai", 505, 500);
+    victim.hp = 1;
+    state.units.set(victim.id, victim);
+    updateCombat(state, attacker, UNITS.skiff.cooldown);
+  }
+
+  assert.equal(attacker.kills, 3);
+});
+
+test("rankMults returns no bonus below the first veterancy threshold (0 kills, or a bare unit with no field at all)", () => {
+  assert.deepEqual(rankMults({ kills: 0 }), { rank: 0, dealtMult: 1, takenMult: 1 });
+  assert.deepEqual(rankMults({ kills: 2 }), { rank: 0, dealtMult: 1, takenMult: 1 });
+  assert.deepEqual(rankMults({}), { rank: 0, dealtMult: 1, takenMult: 1 }, "a fresh unit off the line has no kills field yet");
+});
+
+test("rankMults confers rank 1 at 3 kills: +6% damage dealt, -6% damage taken", () => {
+  const m = rankMults({ kills: 3 });
+  assert.equal(m.rank, 1);
+  assert.ok(Math.abs(m.dealtMult - 1.06) < 1e-9, `dealtMult ${m.dealtMult}`);
+  assert.ok(Math.abs(m.takenMult - 0.94) < 1e-9, `takenMult ${m.takenMult}`);
+});
+
+test("rankMults confers rank 2 at 8 kills, stacking a second +6%/-6% layer", () => {
+  const m = rankMults({ kills: 8 });
+  assert.equal(m.rank, 2);
+  assert.ok(Math.abs(m.dealtMult - 1.06 ** 2) < 1e-9);
+  assert.ok(Math.abs(m.takenMult - 0.94 ** 2) < 1e-9);
+});
+
+test("rankMults confers rank 3 at 18 kills, the top of the ladder", () => {
+  const m = rankMults({ kills: 18 });
+  assert.equal(m.rank, 3);
+  assert.ok(Math.abs(m.dealtMult - 1.06 ** 3) < 1e-9);
+  assert.ok(Math.abs(m.takenMult - 0.94 ** 3) < 1e-9);
+});
+
+test("rankMults never exceeds rank 3 no matter how many kills pile up", () => {
+  assert.equal(rankMults({ kills: 500 }).rank, 3);
+});
+
+test("rankMults thresholds are exclusive on the low side: one kill short of a threshold stays at the previous rank", () => {
+  assert.equal(rankMults({ kills: 2 }).rank, 0);
+  assert.equal(rankMults({ kills: 7 }).rank, 1);
+  assert.equal(rankMults({ kills: 17 }).rank, 2);
+});
+
+test("a veteran attacker's rank multiplier applies in attackDamage, on top of the existing upgrade multipliers", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  a.kills = 3;   // rank 1
+  const startHp = b.hp;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const dealt = startHp - b.hp;
+  const expected = UNITS.skiff.attack * rankMults(a).dealtMult;
+  assert.ok(Math.abs(dealt - expected) < 1e-9, `expected ${expected}, dealt ${dealt}`);
+});
+
+test("a veteran defender's rank multiplier reduces the damage it takes", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  b.kills = 8;   // rank 2
+
+  const startHp = b.hp;
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const dealt = startHp - b.hp;
+  const expected = UNITS.skiff.attack * rankMults(b).takenMult;
+  assert.ok(Math.abs(dealt - expected) < 1e-9, `expected ${expected}, dealt ${dealt}`);
+});
+
+test("veterancy applies symmetrically to an AI-owned attacker — no AI-side code needed", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "ai", 500, 500);
+  const target = makeUnit("skiff", "player", 510, 500);
+  attacker.kills = 3;
+  state.units.set(attacker.id, attacker);
+  state.units.set(target.id, target);
+  const startHp = target.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  const dealt = startHp - target.hp;
+  const expected = UNITS.skiff.attack * rankMults(attacker).dealtMult;
+  assert.ok(Math.abs(dealt - expected) < 1e-9, "the AI's own veteran unit gets the identical bonus a player veteran would");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   Tiered destruction (docs/improvement-proposals.md "Tiered destruction: deaths scale with what
+   died"): the entityKilled event carries unitType/kind on top of the pre-existing x/y/owner, so
+   boot.js/effects.js/renderEffects.js/sound.js can scale the death's visuals and audio by what
+   actually died. Purely additive fields — the state-mutation side (removeEntity, wreckage) is
+   untouched, so byte-identical determinism holds.
+   --------------------------------------------------------------------------------------------- */
+
+test("performAttack's entityKilled event carries the dead entity's unitType and kind", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const [a, b] = faceOff(state);
+  b.hp = 1;
+
+  updateCombat(state, a, UNITS.skiff.cooldown);
+
+  const ev = state.events.find(e => e.type === "entityKilled");
+  assert.ok(ev, "fixture sanity: the hit killed the target");
+  assert.equal(ev.unitType, "skiff");
+  assert.equal(ev.kind, "unit");
+});
+
+test("a turret kill's entityKilled event carries the KILLED entity's unitType/kind, not the turret's", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const turret = turretAt(state);
+  const enemy = makeUnit("skiff", "ai", 510, 500);
+  enemy.hp = 1;
+  state.units.set(enemy.id, enemy);
+
+  updateBuildingCombat(state, turret, BUILDINGS.turret.cooldown);
+
+  const ev = state.events.find(e => e.type === "entityKilled");
+  assert.ok(ev);
+  assert.equal(ev.unitType, "skiff");
+  assert.equal(ev.kind, "unit");
+});
+
+test("a splash kill's entityKilled event also carries unitType/kind", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const colossus = makeUnit("colossus", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.colossus.range - 1, 500);
+  const nearby = makeUnit("skiff", "ai", target.x + 10, target.y);
+  nearby.hp = 1;   // dies to splash falloff
+  state.units.set(colossus.id, colossus);
+  state.units.set(target.id, target);
+  state.units.set(nearby.id, nearby);
+  colossus.order = { type: "attack", targetId: target.id };
+
+  updateCombat(state, colossus, UNITS.colossus.cooldown);
+
+  const splashKill = state.events.find(e => e.type === "entityKilled" && e.x === nearby.x && e.y === nearby.y);
+  assert.ok(splashKill, "the splash-killed unit pushed its own entityKilled event");
+  assert.equal(splashKill.unitType, "skiff");
+  assert.equal(splashKill.kind, "unit");
 });

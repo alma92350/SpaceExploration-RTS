@@ -213,6 +213,14 @@ function cleanEntity(e, def, map) {
   // above, not a value worth preserving). A real saved value is already a finite number, so this
   // is the identity for valid data.
   if (e.lastHitAt !== undefined) { const t = num(e.lastHitAt, NaN); if (Number.isFinite(t)) e.lastHitAt = t; else delete e.lastHitAt; }
+  // A unit's `kills` (engine/combat.js performAttack's target-died branch, entities.js
+  // rankMults) is untrusted too: a tampered save could set it negative/fractional/non-numeric,
+  // which would still compare fine against rankMults' `kills >= threshold` checks (worst case a
+  // free/missing rank) but isn't a value a real game ever produces. Clamp to a non-negative
+  // integer rather than drop it entirely — 0 is itself a valid, common value (a fresh unit), so
+  // "missing" and "explicitly zero" should read the same way, unlike lastHitAt's drop-if-bad
+  // treatment above (where "never hit" and "hit at time 0" are genuinely different states).
+  if (e.kills !== undefined) e.kills = Math.max(0, Math.floor(num(e.kills, 0)));
   // A producer's output buffer (building.store) and a factory's input buffer (building.input) are
   // untrusted save data — a hand-edited file could smuggle in a bogus commodity, a negative/NaN qty,
   // or an over-capacity buffer. Keep only real commodities with a positive qty, clamped to capacity —
