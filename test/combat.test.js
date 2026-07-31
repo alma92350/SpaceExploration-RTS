@@ -433,6 +433,44 @@ test("Reinforced Plating multiplies the defender's damage taken", () => {
   assert.ok(Math.abs((startHp - b.hp) - UNITS.skiff.attack * damageTakenMult) < 1e-9);
 });
 
+// Bulwark's structure shielding, made official (docs/improvement-proposals.md): attackDamage
+// (engine/combat.js) applies damageTakenMult to EVERY target it computes damage for — units AND
+// buildings alike, with no kind/role filter — so a Bulwark player's turrets, Command Center, and
+// Habitats already take reduced damage too, not just their combat units. These two pin that
+// already-live behavior against the two structures the proposal calls out by name: a turret (the
+// static defense a raid has to punch through) and a Habitat (hp 250, the softest raid target).
+test("Reinforced Plating reduces damage taken by a defended turret, not just combat units", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const turret = makeBuilding("turret", "ai", 510, 500);   // same stand-off faceOff uses for its unit-target sibling above
+  state.units.set(attacker.id, attacker);
+  state.buildings.set(turret.id, turret);
+  state.players.ai.upgrades.reinforcedPlating = true;   // the turret owner's research, not the attacker's
+  const startHp = turret.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  const { damageTakenMult } = UPGRADES.reinforcedPlating;
+  assert.ok(Math.abs((startHp - turret.hp) - UNITS.skiff.attack * damageTakenMult) < 1e-9,
+    "a Bulwark-researched turret takes reduced damage exactly like a combat unit would");
+});
+
+test("Reinforced Plating reduces damage taken by a defended Habitat, the softest raid target", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const habitat = makeBuilding("habitat", "ai", 510, 500);
+  state.units.set(attacker.id, attacker);
+  state.buildings.set(habitat.id, habitat);
+  state.players.ai.upgrades.reinforcedPlating = true;
+  const startHp = habitat.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  const { damageTakenMult } = UPGRADES.reinforcedPlating;
+  assert.ok(Math.abs((startHp - habitat.hp) - UNITS.skiff.attack * damageTakenMult) < 1e-9,
+    "a Habitat (hp 250) — the raid target supply chokes on — is shielded by Bulwark too");
+});
+
 test("both upgrades stack: attacker's damage bonus and defender's damage reduction apply together", () => {
   const state = createGameState({ planetId: "ferros" });
   const [a, b] = faceOff(state);

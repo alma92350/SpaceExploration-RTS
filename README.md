@@ -58,14 +58,16 @@ massed Skiffs for a fraction of its cost — a turtle-breaker that's helpless wi
 Scouting what the enemy is building, and countering it, matters.
 
 **Tech: doctrines and structures.** A Refinery (built by a Worker, like the Barracks) researches
-army-wide upgrades — applied live to your whole army, not just future production — but they're two
-**mutually-exclusive doctrines**, so this is a real commitment, not a buy-both. **Assault**
-(Overcharged Weapons → Overcharged Core) stacks more damage dealt; **Bulwark** (Reinforced Plating
-→ Reinforced Bulwark) stacks less damage taken. Researching either one locks the other out, and
-each has a Tier-2 that deepens your chosen path. Assault costs radioactives and Bulwark crystals,
-so a world's deposit specialty (Korrath has no crystals, Vesper no radioactives) tilts which
-doctrine comes easier. Beyond the Refinery, a Foundry and a Datacenter open further research —
-crystals and radioactives fund all of it, so those deposits never dead-end.
+army-wide upgrades — applied live the instant each finishes developing, not just to future
+production — but they're two **mutually-exclusive doctrines**, so this is a real commitment, not a
+buy-both. **Assault** (Overcharged Weapons → Overcharged Core) stacks more damage dealt; **Bulwark**
+(Reinforced Plating → Reinforced Bulwark) stacks less damage taken — by every unit AND every
+structure, turrets and the Command Center and Habitats included, so it's the turtle doctrine for
+your base as much as your army. Researching either one locks the other out, and each has a Tier-2
+that deepens your chosen path. Assault costs radioactives and Bulwark crystals, so a world's deposit
+specialty (Korrath has no crystals, Vesper no radioactives) tilts which doctrine comes easier.
+Beyond the Refinery, a Foundry and a Datacenter open further research — crystals and radioactives
+fund all of it, so those deposits never dead-end.
 
 **Expanding and fortifying.** The Command Center is buildable (steep — 400 ore, slow to raise), so
 taking a second base is a real mid-game decision: nodes deplete, and a fresh field plus a fresh
