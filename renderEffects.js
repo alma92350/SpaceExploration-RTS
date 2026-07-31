@@ -116,6 +116,8 @@ export const TRACER_STYLE = {
   colossus:    { shape: "arc",  color: "#fb7185", width: 4 },
   leviathan:   { shape: "arc",  color: "#facc15", width: 5 },
   turret:      { shape: "beam", color: "#a78bfa", width: 2 },   // static defense — its own hue, distinct from every mobile hull
+  bastille:       { shape: "bolt", color: "#c026d3", width: 3.5 },   // the turret's tankier, heavier-hitting sibling
+  torpedobattery: { shape: "arc",  color: "#34d399", width: 4 },     // ammo-fed endgame siege — a heavy lobbed plasma hit
   worker:      { shape: "default", color: "#e2e8f0", width: 1.5 },
   ranger:      { shape: "default", color: "#e2e8f0", width: 1.5 },
   default:     { shape: "default", color: "#e2e8f0", width: 2 },

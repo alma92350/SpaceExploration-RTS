@@ -23,7 +23,7 @@ import { updateResearch } from "./techtree.js";
 import { updateWonder } from "./wonder.js";
 import { applySeparation } from "./separation.js";
 import { updateFog } from "./fog.js";
-import { UNITS, canLogisticsType } from "./entities.js";
+import { UNITS, BUILDINGS, canLogisticsType } from "./entities.js";
 import { getEntity } from "./state.js";
 import { checkWinCondition, checkEndlessLoss, checkEndlessWin } from "./victory.js";
 import { runAI } from "./ai.js";
@@ -103,17 +103,25 @@ export function tick(state, dt) {
   updateWreckage(state);
 }
 
-// Collect this tick's aura projectors (units with a guardAura, i.e. the Aegis) into a
-// flat list on the state, so combat.js can look up "is this target inside a friendly
-// aura" against a handful of entries instead of scanning every unit per hit. Transient
-// (never serialized), rebuilt each tick from live positions — deterministic. Exported so
-// combat-only test harnesses (which drive updateCombat directly, bypassing tick) can build
-// the same list before a fight.
+// Collect this tick's aura projectors — units with a guardAura (the Aegis) AND buildings with one
+// (the Aegis Bastion, entities.js) — into a flat list on the state, so combat.js can look up "is
+// this target inside a friendly aura" against a handful of entries instead of scanning every unit
+// per hit. Transient (never serialized), rebuilt each tick from live positions — deterministic.
+// Exported so combat-only test harnesses (which drive updateCombat directly, bypassing tick) can
+// build the same list before a fight.
 export function collectAnvils(state) {
   const out = [];
   for (const u of state.units.values()) {
     const g = UNITS[u.type]?.guardAura;
     if (g && u.hp > 0) out.push({ id: u.id, owner: u.owner, x: u.x, y: u.y, range: g.range, mult: g.damageTakenMult });
+  }
+  // The static guard-aura projector: same {id,owner,x,y,range,mult} shape as the units pass
+  // above, so combat.js's anvilAura (already target-kind-agnostic — it reads target.owner/id,
+  // never target.kind) needs zero changes to pick these up too. Skips a still-constructing one
+  // (no aura until it's actually finished standing).
+  for (const b of state.buildings.values()) {
+    const g = BUILDINGS[b.type]?.guardAura;
+    if (g && b.hp > 0 && !b.constructing) out.push({ id: b.id, owner: b.owner, x: b.x, y: b.y, range: g.range, mult: g.damageTakenMult });
   }
   state.anvils = out;
 }

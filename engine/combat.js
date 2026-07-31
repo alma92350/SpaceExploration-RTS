@@ -406,6 +406,14 @@ export function updateBuildingCombat(state, building, dt) {
   // exists and is alive — otherwise performAttack would deref undefined / NaN-poison
   // hp. Identity for valid data: a freshly acquired target is always live.
   if (!target || target.hp <= 0) return;
+  // Ammo-fed static defense (the Torpedo Battery, entities.js def.ammo): real logistics paid
+  // in a manufactured commodity a worker hauls in (engine/haul.js), not a free-fire structure —
+  // a dry magazine holds fire rather than shooting for nothing. Still acquires/tracks a target
+  // above (so it visibly trains on the threat), it just won't spend a cooldown on an empty gun;
+  // the very next tick re-checks, so it fires the instant a hauler tops the larder back up.
+  // A no-op for every ammo-less def (turret/bastille/…), so their firing is untouched.
+  if (def.ammo && (building.input?.[def.ammo.com] || 0) < def.ammo.perShot) return;
   performAttack(state, building, def, target);
   building.attackTimer = def.cooldown;
+  if (def.ammo) building.input[def.ammo.com] -= def.ammo.perShot;
 }

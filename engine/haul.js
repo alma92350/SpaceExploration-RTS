@@ -221,15 +221,21 @@ function loadFrom(store, unit, cargoCap) {
 }
 
 // What a building needs hauled IN, as a commodity→"units per batch" map — a real recipe's `in`
-// (every key but "energy", a live Power draw never hauled/stored) for a factory, or a synthesized
-// one (each accepted fuel weighted 1) for a fuel-burning power station (def.combust.fuels). Null
-// for anything that needs neither. The single place that unifies the two so neededInput/
-// assignService/updateService don't need their own factory-vs-power-station branch.
+// (every key but "energy", a live Power draw never hauled/stored) for a factory, a synthesized
+// one (each accepted fuel weighted 1) for a fuel-burning power station (def.combust.fuels), or a
+// synthesized one (its single feed commodity weighted by its own perShot cost) for an ammo-fed
+// static defense (def.ammo — the Torpedo Battery): "a batch" there means "one shot's worth", so
+// neededInput's SUPPLY_BATCHES top-up target reads as "keep ~SUPPLY_BATCHES shots banked", the
+// same shape a factory's own per-batch ingredient count already gives it. Null for anything that
+// needs none of the three. The single place that unifies them so neededInput/assignService/
+// updateService don't need their own factory-vs-power-station-vs-battery branch.
 function inputNeedsOf(building) {
   const recipe = recipeOf(building);
   if (recipe) return recipe.in;
   const def = BUILDINGS[building.type];
-  return def?.combust ? Object.fromEntries(def.combust.fuels.map(f => [f, 1])) : null;
+  if (def?.combust) return Object.fromEntries(def.combust.fuels.map(f => [f, 1]));
+  if (def?.ammo) return { [def.ammo.com]: def.ammo.perShot };
+  return null;
 }
 
 // The input commodity a building most needs and the treasury can supply: the one with the fewest

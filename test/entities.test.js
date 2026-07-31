@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { canAfford, payCost, prereqsMet, committedDoctrine, isDropOff, UNITS, BUILDINGS, UPGRADES,
-  canBuildCategory, canBuildType, canGatherType, canLogisticsType, structureMult } from "../engine/entities.js";
+  canBuildCategory, canBuildType, canGatherType, canLogisticsType, structureMult, isElectrifiable } from "../engine/entities.js";
 
 // Minimal state stub for prereqsMet: it only reads state.buildings and
 // state.players[owner].upgrades.
@@ -341,6 +341,80 @@ test("the Breacher sits outside the triangle and outranges the turret", () => {
   const combatUnits = Object.values(UNITS).filter(u => u.role === "combat");
   const worst = Math.min(...combatUnits.map(dps));
   assert.equal(dps(UNITS.breacher), worst, "the Breacher should deal the worst raw DPS of any combat unit");
+});
+
+// ---- The static-defense ladder (docs/improvement-proposals.md): the Bastille (a second,
+// Foundry-gated tier), the Aegis Bastion (an Arsenal-gated guard-aura projector), and the Plasma
+// Torpedo Battery (ammo-fed, Strategic-tier). All three are rationalized against ONE invariant —
+// every siege unit (Breacher 150, Colossus 185, Leviathan 200) must still strictly outrange every
+// static-defense structure — except the Torpedo Battery's own deliberate, narrower carve-out
+// (see its own test below).
+
+test("the Bastille is a second Foundry-gated static-defense tier: tankier AND shorter-ranged than the plain turret, on purpose", () => {
+  const b = BUILDINGS.bastille;
+  assert.equal(b.hp, 600);
+  assert.equal(b.attack, 32);
+  assert.equal(b.cooldown, 1.4);
+  assert.equal(b.range, 115);
+  assert.deepEqual(b.cost, { ore: 200, crystals: 150, radioactives: 60 });
+  assert.deepEqual(b.requires, ["foundry"], "a second Foundry-gated tier, not available from turn one");
+  assert.equal(b.category, "military");
+  // Same combat stat field NAMES the turret uses, so combat.js's updateBuildingCombat (which
+  // only ever reads .attack/.range/.cooldown/.aggroRange) works on it verbatim.
+  assert.equal(b.range, b.aggroRange, "static defense can't chase, so acquiring beyond its own range is useless");
+  assert.ok(b.hp > BUILDINGS.turret.hp, "tankier than the plain turret");
+  assert.ok(b.attack > BUILDINGS.turret.attack, "hits harder than the plain turret");
+  // Deliberately UNDER the turret's own 130, not just the Breacher's 150 — a brawler, not a
+  // longer-ranged sniper. Do not "fix" this upward: the shortness is the point.
+  assert.ok(b.range < BUILDINGS.turret.range, "shorter-ranged than even the plain turret");
+  assert.ok(b.range < UNITS.breacher.range && b.range < UNITS.colossus.range && b.range < UNITS.leviathan.range,
+    "every siege unit still strictly outranges it, same as the plain turret");
+});
+
+test("the Aegis Bastion is an Arsenal-gated guard-aura projector with no attack of its own", () => {
+  const a = BUILDINGS.aegisbastion;
+  assert.ok(!a.attack, "it defends by attrition math (the aura), never by out-ranging siege — combat.js skips any building with no attack stat");
+  assert.equal(a.hp, 500);
+  assert.deepEqual(a.cost, { ore: 250, crystals: 180 });
+  assert.deepEqual(a.requires, ["arsenal"]);
+  assert.equal(a.category, "military");
+  assert.ok(a.guardAura, "carries the same guardAura shape the Aegis UNIT's own aura does (UNITS.aegis)");
+  assert.equal(a.guardAura.range, 130);
+  assert.ok(Math.abs(a.guardAura.damageTakenMult - 0.8) < 1e-9);
+  assert.ok(!a.produces && !a.supplyGrants, "no produces/supplyGrants of its own");
+  assert.equal(isElectrifiable("aegisbastion"), false, "isElectrifiable already excludes it via the no-produces/no-supplyGrants rule");
+});
+
+test("the Plasma Torpedo Battery is ammo-fed endgame static defense: Odyssey-only, and out-ranged only by the top siege tier", () => {
+  const t = BUILDINGS.torpedobattery;
+  assert.equal(t.odysseyOnly, true, "Strategic-tier defense — never appears in a skirmish build menu");
+  assert.deepEqual(t.requires, ["torpedoworks"]);
+  assert.equal(t.category, "military");
+  assert.equal(t.attack, 55);
+  assert.equal(t.range, 180);
+  assert.equal(t.cooldown, 2.5);
+  assert.equal(t.range, t.aggroRange, "static defense can't chase");
+  assert.deepEqual(t.cost, { ore: 250, alloys: 10 });
+  assert.deepEqual(t.ammo, { com: "plasmatorp", perShot: 0.25 });
+  // The narrowed invariant for the endgame tier (deliberate, per the proposal): the Breacher
+  // (150) no longer outranges it — the early siege tool stops being enough on its own — but the
+  // Colossus (185) and Leviathan (200) still do, so sieging a battery line stays the intended
+  // top-tier answer.
+  assert.ok(t.range < UNITS.colossus.range, "the Colossus still outranges it");
+  assert.ok(t.range < UNITS.leviathan.range, "the Leviathan still outranges it");
+  assert.ok(t.range > UNITS.breacher.range, "…but the Breacher no longer does");
+});
+
+test("the three new static-defense structures all carry a sight radius, a build time, and a real cost, like every other building", () => {
+  for (const type of ["bastille", "aegisbastion", "torpedobattery"]) {
+    const def = BUILDINGS[type];
+    assert.ok(def, `${type} exists in BUILDINGS`);
+    assert.ok(def.sight > 0, `${type} needs a sight radius`);
+    assert.ok(def.sight >= (def.range || 0), `${type}'s sight must cover its own range or it fires blind`);
+    assert.ok(def.buildTime > 0, `${type} needs a build time`);
+    assert.ok(Object.keys(def.cost).length > 0, `${type} costs something`);
+    assert.equal(def.radius > 0, true, `${type} needs a footprint radius`);
+  }
 });
 
 test("a Worker can defend itself, but only weakly and without leaving its job behind", () => {

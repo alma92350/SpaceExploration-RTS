@@ -1150,3 +1150,170 @@ test("performAttack stamps splashRadius on the attackHit event for a splash atta
   assert.ok(!plainHit.splashRadius, "a non-splash attacker's attackHit event carries no splashRadius");
 });
 
+// ---- The static-defense ladder (docs/improvement-proposals.md) ---------------------------------
+
+// ---- Aegis Bastion (a static guard-aura projector, entities.js BUILDINGS.aegisbastion): the
+// same anvilAura mechanic the Aegis UNIT's own guardAura already proves above (line ~908), now
+// sourced from a BUILDING via sim.js collectAnvils' buildings pass. Positions mirror that existing
+// unit-sourced test's own offsets/reasoning: the shield sits within its OWN 130-range aura of the
+// target (100 away) but past the ATTACKER's aggro range (139 away, over the Skiff's 120), so the
+// attacker can never acquire the shield itself instead of the intended target.
+
+test("an Aegis Bastion's aura reduces damage taken by a friendly BUILDING inside its bubble, the same way the Aegis unit's aura shields a unit", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const target = makeBuilding("barracks", "ai", 500 + UNITS.skiff.range - 1, 500);   // within melee range, no attack of its own
+  const aegisBastion = makeBuilding("aegisbastion", "ai", target.x + 100, target.y);   // within the projector's own 130-range aura
+  state.units.set(attacker.id, attacker);
+  state.buildings.set(target.id, target);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = target.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  const dmg = startHp - target.hp;
+  const expected = UNITS.skiff.attack * BUILDINGS.aegisbastion.guardAura.damageTakenMult;
+  assert.ok(Math.abs(dmg - expected) < 1e-9, `expected exactly ${expected} with the aura's damage-taken multiplier applied, got ${dmg}`);
+});
+
+test("an Aegis Bastion's aura reduces damage taken by a friendly UNIT inside its bubble too — anvilAura is target-kind-agnostic", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.skiff.range - 1, 500);
+  const aegisBastion = makeBuilding("aegisbastion", "ai", target.x + 100, target.y);
+  state.units.set(attacker.id, attacker);
+  state.units.set(target.id, target);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = target.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  const dmg = startHp - target.hp;
+  const expected = UNITS.skiff.attack * BUILDINGS.aegisbastion.guardAura.damageTakenMult;
+  assert.ok(Math.abs(dmg - expected) < 1e-9, `expected exactly ${expected}, got ${dmg}`);
+});
+
+test("an Aegis Bastion's aura doesn't shield itself — anvilAura's existing id-exclusion check already covers a building source, not just a unit one", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const aegisBastion = makeBuilding("aegisbastion", "ai", 500 + UNITS.skiff.range - 1, 500);   // trivially within its own aura (distance 0)
+  state.units.set(attacker.id, attacker);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = aegisBastion.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  assert.equal(startHp - aegisBastion.hp, UNITS.skiff.attack,
+    "full damage landed — an Aegis Bastion standing inside its own aura radius doesn't reduce its own damage taken");
+});
+
+test("a still-constructing Aegis Bastion projects no aura yet — collectAnvils skips it until it's actually finished standing", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const attacker = makeUnit("skiff", "player", 500, 500);
+  const target = makeUnit("skiff", "ai", 500 + UNITS.skiff.range - 1, 500);
+  const aegisBastion = makeBuilding("aegisbastion", "ai", target.x + 100, target.y, { constructing: true });
+  state.units.set(attacker.id, attacker);
+  state.units.set(target.id, target);
+  state.buildings.set(aegisBastion.id, aegisBastion);
+  collectAnvils(state);
+  const startHp = target.hp;
+
+  updateCombat(state, attacker, UNITS.skiff.cooldown);
+
+  assert.equal(startHp - target.hp, UNITS.skiff.attack, "no aura discount — the projector isn't finished yet");
+});
+
+// ---- Plasma Torpedo Battery (ammo-fed static defense, entities.js BUILDINGS.torpedobattery):
+// updateBuildingCombat requires building.input[ammo.com] >= ammo.perShot before firing, and
+// decrements it on every shot — a dry battery holds fire rather than shooting for free.
+
+function batteryAt(state, x = 500, y = 500, ammo = 10) {
+  const b = makeBuilding("torpedobattery", "player", x, y);
+  b.input = { plasmatorp: ammo };
+  state.buildings.set(b.id, b);
+  return b;
+}
+
+test("a stocked Torpedo Battery fires on an enemy in range and decrements its ammo larder by exactly one shot's worth", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+  const startAmmo = battery.input.plasmatorp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(startHp - enemy.hp, BUILDINGS.torpedobattery.attack, "landed its full attack");
+  assert.equal(battery.input.plasmatorp, startAmmo - BUILDINGS.torpedobattery.ammo.perShot,
+    "decremented the ammo larder by exactly one shot's worth");
+});
+
+test("a dry Torpedo Battery holds fire — a target in range and cooldown ready, but no ammo banked", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, 0);   // empty larder
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(enemy.hp, startHp, "a dry battery deals no damage — it holds fire rather than shooting for free");
+  assert.equal(battery.targetId, enemy.id, "it still acquires/tracks the threat — only firing is gated, not targeting");
+});
+
+test("a Torpedo Battery with less than one shot's worth banked still holds fire", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, BUILDINGS.torpedobattery.ammo.perShot / 2);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(enemy.hp, startHp, "half a shot isn't enough to fire");
+});
+
+test("a Torpedo Battery with no input buffer at all (never yet serviced) holds fire without throwing", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = makeBuilding("torpedobattery", "player", 500, 500);   // no .input set at all
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  const startHp = enemy.hp;
+
+  assert.doesNotThrow(() => updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown));
+  assert.equal(enemy.hp, startHp, "an unserviced battery has never fired a shot");
+});
+
+test("a Torpedo Battery resumes firing the instant its larder is topped back up past perShot, without waiting on a stale cooldown", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, 0);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);   // dry — holds fire
+  assert.equal(battery.attackTimer, 0, "an unfired shot never starts the cooldown — it stays ready to fire immediately");
+
+  battery.input.plasmatorp = BUILDINGS.torpedobattery.ammo.perShot;   // a worker delivers a torpedo
+  const startHp = enemy.hp;
+  updateBuildingCombat(state, battery, 0.1);
+
+  assert.ok(startHp - enemy.hp > 0, "fires the instant ammo is available");
+  assert.equal(battery.input.plasmatorp, 0, "and consumes exactly the one shot's worth it just fired");
+});
+
+test("Overcharged Weapons and a dry magazine compose correctly: still holds fire regardless of the damage multiplier", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const battery = batteryAt(state, 500, 500, 0);
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  state.units.set(enemy.id, enemy);
+  state.players.player.upgrades.overchargedWeapons = true;
+  const startHp = enemy.hp;
+
+  updateBuildingCombat(state, battery, BUILDINGS.torpedobattery.cooldown);
+
+  assert.equal(enemy.hp, startHp, "no damage multiplier matters when the battery never fires at all");
+});

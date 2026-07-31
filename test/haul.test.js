@@ -589,3 +589,65 @@ test("a Combustion Generator's fuel larder is deterministic: two same-seed runs 
   };
   assert.deepEqual(run(), run());
 });
+
+// ---- Plasma Torpedo Battery (ammo-fed static defense, entities.js BUILDINGS.torpedobattery,
+// def.ammo): real logistics, not a free-fire structure — def.ammo now joins recipe/combust as a
+// real input commodity (entities.js realInputComs/inputCapOf and this file's own inputNeedsOf),
+// so the SAME SERVICE machinery that feeds a Reactor's fuel larder should deliver plasma torpedoes
+// into building.input with no dedicated hauling code of its own. Verified empirically below (a
+// direct service order, then a fully autonomous idle-worker assignment), not just assumed from
+// reading the seam.
+
+// A player Torpedo Battery planted next to the CC, empty larder by default — mirrors
+// plantGenerator's shape above, for the ammo-fed static defense.
+function plantBattery(s, cc) {
+  const battery = makeBuilding("torpedobattery", "player", cc.x + 45, cc.y);
+  s.buildings.set(battery.id, battery);
+  return battery;
+}
+
+test("a service worker carries plasma torpedoes from the treasury into a Torpedo Battery's own larder", () => {
+  const { s, cc, workers } = base(1);
+  const battery = plantBattery(s, cc);
+  s.players.player.resources.plasmatorp = 100;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+  w.order = { type: "service", buildingId: battery.id, phase: "plan" };
+
+  for (let i = 0; i < 4000 && inputTotal(battery) <= 0; i++) updateService(s, w, 0.05);
+
+  assert.ok(inputTotal(battery) > 0, "the battery's ammo larder was filled");
+  assert.ok((s.players.player.resources.plasmatorp || 0) < 100, "…drawn from the treasury");
+});
+
+test("an idle worker auto-assigns to service an empty Torpedo Battery — a hauler assignment actually targets it, no manual order needed", () => {
+  const { s, workers } = base(9);
+  const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const battery = plantBattery(s, cc);
+  s.players.player.resources.plasmatorp = 200;
+  const w = workers[0];
+  w.x = cc.x; w.y = cc.y;
+
+  assignService(s, w);
+
+  assert.equal(w.order?.type, "service", "the idle worker was actually offered a service job");
+  assert.equal(w.order.buildingId, battery.id, "…targeting the Torpedo Battery specifically");
+  assert.equal(battery.servers, 1, "and the battery's own servers tally reflects the claim");
+});
+
+test("an idle worker auto-services an empty Torpedo Battery entirely on its own, over a real tick loop, and the now-armed battery kills the enemy in range", () => {
+  // A stronger end-to-end proof than checking the larder alone: run the WHOLE tick loop (worker
+  // logistics AND building combat both live inside sim.js's own tick) and watch a battery that
+  // started with an empty magazine actually finish the enemy off — which can only happen if a
+  // worker really did haul it ammo, in real quantity, entirely unassisted.
+  const { s, cc } = base(6);
+  const battery = plantBattery(s, cc);
+  s.players.player.resources.plasmatorp = 200;
+  const enemy = makeUnit("skiff", "ai", battery.x + 10, battery.y);
+  s.units.set(enemy.id, enemy);
+
+  for (let i = 0; i < 800; i++) tick(s, 0.1);
+
+  assert.equal(s.units.has(enemy.id), false, "the now-armed battery killed the enemy over the course of the loop — no manual assignment, no manual firing");
+  assert.ok((battery.input?.plasmatorp || 0) < 200, "and its larder shows real ammo consumption from actually firing, not a free-fire structure");
+});

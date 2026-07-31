@@ -640,11 +640,18 @@ const RECIPE_OUT = Object.fromEntries(RECIPES.map(r => [r.id, r.out]));
 // recipe-running factory shows the commodity it OUTPUTS; a handful of non-recipe industrial
 // buildings get an explicit emoji for what they DO — the Datacenter runs research (🔬), the
 // Stardock is a capital-ship yard (🛰️), the Antimatter Gate is the wonder (🌀), the Plasma Rig digs
-// (⛏️), the Substation relays the grid (🔌, engine/entities.js `powerRelay`). The Reactor /
-// Combustion Generator / Biomass Reactor are the grid itself, not a recipe factory sharing this
-// hex — they get their own bespoke hulls (drawReactor/drawCombustor/drawBiomassReactor above),
-// dispatched in drawBuildingShape before this glyph fallback ever sees them.
-const BUILDING_GLYPH = { datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️", substation: "🔌" };
+// (⛏️), the Substation relays the grid (🔌, engine/entities.js `powerRelay`). The static-defense
+// ladder's two non-turret rungs get one too — the Bastille a heavy emplacement (🏰), the Aegis
+// Bastion its guard-aura emblem (🔰) — and the Torpedo Battery shows the same icon as the
+// commodity it fires (💥 plasmatorp, data.js COM), matching "a factory shows what it makes"'s
+// spirit even though it consumes rather than produces that good. The Reactor / Combustion
+// Generator / Biomass Reactor are the grid itself, not a recipe factory sharing this hex — they
+// get their own bespoke hulls (drawReactor/drawCombustor/drawBiomassReactor above), dispatched in
+// drawBuildingShape before this glyph fallback ever sees them.
+const BUILDING_GLYPH = {
+  datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️", substation: "🔌",
+  bastille: "🏰", aegisbastion: "🔰", torpedobattery: "💥",
+};
 function factoryGlyph(type) {
   const def = BUILDINGS[type];
   if (def && def.recipe && RECIPE_OUT[def.recipe]) return COM[RECIPE_OUT[def.recipe]]?.ico || null;
