@@ -5,6 +5,7 @@ import { tick } from "../engine/sim.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "../engine/haul.js";
 import { issueSetLogiPriority } from "../engine/commands.js";
 import { storeTotal, inputTotal, inputRoom, inputCapOf } from "../engine/entities.js";
+import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { mulberry32 } from "./_helpers.js";
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
@@ -650,4 +651,28 @@ test("an idle worker auto-services an empty Torpedo Battery entirely on its own,
 
   assert.equal(s.units.has(enemy.id), false, "the now-armed battery killed the enemy over the course of the loop — no manual assignment, no manual firing");
   assert.ok((battery.input?.plasmatorp || 0) < 200, "and its larder shows real ammo consumption from actually firing, not a free-fire structure");
+});
+
+// engine/persist.js's cleanEntity path (storeCapOf/inputCapOf-driven, no per-building-type
+// special-casing) should already cover a Torpedo Battery's ammo larder the same way it covers
+// any other factory's/power-station's input buffer, purely because inputCapOf(type) now reads
+// > 0 for it — verified here empirically, not just inferred from reading the seam.
+test("a Torpedo Battery's ammo larder survives a save/load round trip, and an over-cap/bogus value is sanitized like any other input buffer", () => {
+  const { s, cc } = base(1);
+  const battery = plantBattery(s, cc);
+  battery.input = { plasmatorp: 12.5 };
+
+  const reloaded = deserializeGame(serializeGame(s)).buildings.get(battery.id);
+  assert.equal(reloaded.type, "torpedobattery");
+  assert.equal(reloaded.input.plasmatorp, 12.5, "a legitimate ammo quantity round-trips exactly");
+
+  // A hand-edited/tampered save (untrusted input per CONTRIBUTING.md) shouldn't be able to smuggle
+  // an over-capacity magazine or a bogus commodity key into the larder.
+  const { s: s2, cc: cc2 } = base(1);
+  const battery2 = plantBattery(s2, cc2);
+  battery2.input = { plasmatorp: 99999, bogus_commodity: 50 };
+  const reloaded2 = deserializeGame(serializeGame(s2)).buildings.get(battery2.id);
+  assert.ok(reloaded2.input.plasmatorp <= inputCapOf("torpedobattery") + 1e-9,
+    "an over-cap ammo value is clamped to the battery's own per-commodity slice, same as any other input buffer");
+  assert.equal(reloaded2.input.bogus_commodity, undefined, "an unrecognised commodity key is dropped, same as any other input buffer");
 });
