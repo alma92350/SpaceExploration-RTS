@@ -407,6 +407,12 @@ export function aiResearch(state, ctx) {
   // and deepens it (T1 then T2) instead of dabbling in both. The doctrine lock
   // in researchUpgrade backs this up. One purchase per think cycle is plenty.
   if (refinery && !refinery.constructing && canAct(state)) {
+    // Doctrine research now DEVELOPS OVER TIME (engine/techtree.js updateResearch) instead of
+    // landing instantly, so a job can sit queued for many think cycles before it completes.
+    // Re-entry guard: bail out early while the Refinery already has something in flight, rather
+    // than re-scanning the whole doctrine path and re-failing the same dupe/prereq checks every
+    // single think cycle for no purchase.
+    if (refinery.researchQueue && refinery.researchQueue.length) return;
     const doctrine = aiDoctrine(state, archetype);
     const path = Object.values(UPGRADES).filter(u => u.doctrine === doctrine).sort((a, b) => a.tier - b.tier);
     for (const u of path) {

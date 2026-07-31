@@ -220,16 +220,20 @@ function cleanEntity(e, def, map) {
           ...(j.alt ? { alt: true } : {}),
         }))
       : [];
-    // A Datacenter's research queue is untrusted exactly like the production queue above: a non-array
-    // `researchQueue` (e.g. the number 5) throws .length/.shift and bricks the game on the first
-    // research tick (engine/techtree.js updateResearch), and a bogus techId derefs an undefined TECHS
-    // def. When the field is present, rebuild it from known-good jobs — real TECHS ids, progress
-    // clamped to [0,1] — or [] for a non-array. A building WITHOUT the field (every non-Datacenter,
-    // and a Datacenter that never queued research) is left untouched, so it's the identity for a valid
-    // save.
+    // A Datacenter's OR Refinery's research queue is untrusted exactly like the production queue
+    // above: a non-array `researchQueue` (e.g. the number 5) throws .length/.shift and bricks the
+    // game on the first research tick (engine/techtree.js updateResearch, which now resolves EITHER
+    // TECHS or UPGRADES by building.type — doctrine research develops over time too, not just the
+    // Datacenter's tech tree), and a bogus techId derefs an undefined def either way. When the field
+    // is present, rebuild it from known-good jobs — a real TECHS OR UPGRADES id (whichever table
+    // this building's own type actually resolves — the two id spaces only ever overlap on the
+    // deliberately-shared "recycling" id, entities.js, which is harmless here since updateResearch
+    // itself always resolves that id against the one table this building's type maps to), progress
+    // clamped to [0,1] — or [] for a non-array. A building WITHOUT the field (any building that
+    // never queued research) is left untouched, so it's the identity for a valid save.
     if (e.researchQueue !== undefined) {
       e.researchQueue = Array.isArray(e.researchQueue)
-        ? e.researchQueue.filter(j => j && TECHS[j.techId]).map(j => ({
+        ? e.researchQueue.filter(j => j && (TECHS[j.techId] || UPGRADES[j.techId])).map(j => ({
             techId: j.techId,
             progress: Math.max(0, Math.min(num(j.progress, 0), 1)),
           }))

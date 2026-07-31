@@ -29,10 +29,12 @@
        gather.js/production.js already pick up via the existing generic upgradeMult
        — no plumbing changes needed there at all.
 
-   Tier 2 adds researchPaceMult — techtree.js's updateResearch (the Odyssey Datacenter
-   tech tree) applies it to the AI's OWN research only, never the player's, even on
-   the same tech-rated world; doctrine upgrades (production.js's instant-on-afford
-   researchUpgrade) aren't timed at all, so this dial doesn't touch them.
+   Tier 2 adds researchPaceMult — techtree.js's updateResearch applies it to the AI's OWN
+   research only, never the player's, even on the same tech-rated world. That now reaches
+   BOTH node tables it resolves: the Odyssey Datacenter tech tree AND the Refinery's
+   doctrine upgrades (production.js's researchUpgrade queues and times them the same way,
+   engine/entities.js UPGRADES) — so Hard's AI also develops its doctrine pick faster, and
+   Easy's slower, than Medium's.
 
    Tier 3 adds marketAccess — unlocks market.js's aiBarter (called from
    aiEconomy.js's aiMarketBarter, gated through the AI's own APM budget like every

@@ -104,8 +104,9 @@ function queueSignature(sel) {
   const b = sel.length === 1 && sel[0].kind === "building" ? sel[0] : null;
   if (!b) return "";
   const prod = b.queue ? b.queue.map(j => j.unitType).join(",") : "";
-  // The Datacenter's tech research is its own queue — include it so queuing/finishing a
-  // research rebuilds the panel (the progress % itself is then live-patched each tick).
+  // The Datacenter's tech research OR the Refinery's doctrine research is its own queue — include
+  // it so queuing/finishing a research rebuilds the panel (the progress % itself is then
+  // live-patched each tick, same as the production queue's job labels above).
   const research = b.researchQueue ? b.researchQueue.map(j => j.techId).join(",") : "";
   return prod + "#" + research;
 }
@@ -366,11 +367,13 @@ export function renderSelectionPanel() {
     });
   }
 
-  // Same live patch for the Datacenter's tech research (its own researchQueue) — otherwise the
-  // "Researching … — N%" row would sit frozen at whatever % it had on the last rebuild.
+  // Same live patch for a Refinery's doctrine research OR a Datacenter's tech research (each
+  // building's own researchQueue, resolved against the right node table by building.type — same
+  // split engine/techtree.js's updateResearch itself makes) — otherwise the "Researching … — N%"
+  // row would sit frozen at whatever % it had on the last rebuild.
   if (building && building.researchQueue && building.researchQueue.length) {
     const row = panelEl.querySelector(".research-progress");
-    if (row) row.textContent = researchRowText(building.researchQueue);
+    if (row) row.textContent = researchRowText(building.researchQueue, building.type === "refinery" ? UPGRADES : TECHS);
   }
 
   // Same live patch for an in-progress Recycle — one row per currently-recycling selected
@@ -393,10 +396,13 @@ function recycleRowText(entity) {
   return `♻ Recycling ${def.name} — ${Math.round(entity.recycling.progress * 100)}%`;
 }
 
-// The Datacenter research header text — shared by the rebuild and the live patch so the two
-// never drift.
-function researchRowText(queue) {
-  const head = TECHS[queue[0].techId];
+// The research-queue header text ("🖥️ Researching Metallurgy — 40% (+1 queued)") — shared by the
+// Datacenter's and the Refinery's rebuild AND live-patch call sites so none of the four can drift
+// apart. `table` is whichever node table backs this building — TECHS for a Datacenter, UPGRADES
+// for a Refinery — the same split engine/techtree.js's updateResearch itself resolves by
+// building.type.
+function researchRowText(queue, table) {
+  const head = table[queue[0].techId];
   return `${head.ico ? head.ico + " " : ""}Researching ${head.name} — ${Math.round(queue[0].progress * 100)}%`
     + (queue.length > 1 ? ` (+${queue.length - 1} queued)` : "");
 }
@@ -982,13 +988,27 @@ function rebuildSelectionPanel(sel) {
     if (barracks.queue.length) renderQueueRows(barracks);
   }
 
+  // Refinery: the doctrine upgrades. Same queued/timed idiom as the Datacenter's tech tree below
+  // (production.js researchUpgrade pays up front and queues; engine/techtree.js updateResearch
+  // develops it) — a live progress row for whatever's currently developing, and the plain
+  // button-per-upgrade list below it drops anything already queued (the progress row already
+  // says it's underway), same split the Datacenter panel makes.
   const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);
   if (refinery) {
     const upgrades = state.players.player.upgrades;
-    const chosen = committedDoctrine(state, "player");   // null until the first research commits a doctrine
+    const chosen = committedDoctrine(state, "player");   // null until the first research commits (or queues) a doctrine
     const label = { assault: "Assault", bulwark: "Bulwark", logistics: "Logistics" };
-    if (sectionToggle("refinery:research", "Research", RESEARCHABLE_UPGRADES.length)) {
-      RESEARCHABLE_UPGRADES.forEach(u => {
+    const queue = refinery.researchQueue || [];
+    const queued = new Set(queue.map(j => j.techId));
+    if (queue.length) {
+      const row = document.createElement("div");
+      row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
+      row.textContent = researchRowText(queue, UPGRADES);
+      panelEl.appendChild(row);
+    }
+    const visibleUpgrades = RESEARCHABLE_UPGRADES.filter(u => !queued.has(u.id));
+    if (sectionToggle("refinery:research", "Research", visibleUpgrades.length)) {
+      visibleUpgrades.forEach(u => {
         if (upgrades[u.id]) {
           const row = document.createElement("div");
           row.className = "sel-row";
@@ -1019,7 +1039,7 @@ function rebuildSelectionPanel(sel) {
     if (queue.length) {
       const row = document.createElement("div");
       row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
-      row.textContent = researchRowText(queue);
+      row.textContent = researchRowText(queue, TECHS);
       panelEl.appendChild(row);
     }
     // Already-queued nodes are dropped here (reflected in the progress row's "+N queued" above,

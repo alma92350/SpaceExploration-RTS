@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit, makeBuilding, peekEntityId } from "../engine/state.js";
-import { UNITS } from "../engine/entities.js";
+import { UNITS, UPGRADES } from "../engine/entities.js";
 import { TECHS } from "../engine/techtree.js";
 import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
@@ -273,6 +273,24 @@ test("a non-array researchQueue coerces to [] and a bogus techId job is dropped 
   assert.ok(rdc2.researchQueue.every(j => TECHS[j.techId]), "no bogus techId survived the load");
   assert.ok(rdc2.researchQueue.some(j => j.techId === "metallurgy"), "the real research job was kept");
   assert.ok(rdc2.researchQueue.every(j => j.progress >= 0 && j.progress <= 1), "progress clamped to [0,1]");
+});
+
+test("a Refinery's researchQueue accepts UPGRADES ids too, not just TECHS — doctrine research is now queued/timed the same way (#4b)", () => {
+  // Doctrine research develops over time now (engine/techtree.js updateResearch resolves a
+  // Refinery's queue against UPGRADES) — its researchQueue entries carry an UPGRADES id, not a
+  // TECHS one, so cleanEntity's sanitizer has to recognize both tables, not just TECHS.
+  const state = createGameState({ planetId: "ferros", seed: 44, rng: mulberry32(44) });
+  const refinery = makeBuilding("refinery", "player", 600, 500);
+  refinery.researchQueue = [{ techId: "reinforcedPlating", progress: 0.5 }, { techId: "not-a-real-upgrade", progress: 999 }];
+  state.buildings.set(refinery.id, refinery);
+
+  const restored = deserializeGame(JSON.parse(JSON.stringify(serializeGame(state))));
+  const rref = [...restored.buildings.values()].find(b => b.id === refinery.id);
+  assert.ok(rref.researchQueue.every(j => UPGRADES[j.techId]), "no bogus upgrade id survived the load");
+  assert.ok(rref.researchQueue.some(j => j.techId === "reinforcedPlating"), "the real doctrine research job was kept — UPGRADES ids are accepted, not just TECHS");
+  assert.ok(rref.researchQueue.every(j => j.progress >= 0 && j.progress <= 1), "progress clamped to [0,1]");
+  assert.doesNotThrow(() => { for (let i = 0; i < 20; i++) tick(restored, 0.1); },
+    "the loaded game ticks cleanly — updateResearch resolves the Refinery's queue against UPGRADES without throwing");
 });
 
 test("a serialized building strips the rig's transient lastYield/lastTier but keeps real dig state (#5)", () => {

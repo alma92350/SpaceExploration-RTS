@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
-import { UNITS } from "../engine/entities.js";
+import { UNITS, UPGRADES } from "../engine/entities.js";
+import { updateResearch, researchTimeScale } from "../engine/techtree.js";
 import { isNodeDiscovered, isExploredAt, updateFog } from "../engine/fog.js";
 import { aiDoctrine } from "../engine/aiWorkers.js";
 import { pickBuilder, accrueActionBudget } from "../engine/aiCommon.js";
@@ -697,8 +698,10 @@ test("aiDoctrine overrides the archetype's stated preference when the world's ec
 test("a macro AI whose archetype prefers Assault researches Bulwark instead, once the world's economy overrides it", () => {
   // Same cross-over as above, but proven end-to-end through the real AI: force a genuine
   // disagreement (an Assault-preferring archetype on a crystal-rich, radioactive-starved world)
-  // and confirm aiResearch actually banks the WORLD-favored doctrine's upgrade, not the
-  // archetype's own stated one.
+  // and confirm aiResearch actually queues, then (once it develops) banks, the WORLD-favored
+  // doctrine's upgrade, not the archetype's own stated one. Doctrine research now develops over
+  // time (engine/techtree.js updateResearch) instead of landing instantly the moment aiResearch
+  // enqueues it.
   const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
   state.ai.archetype = { ...state.ai.archetype, doctrine: "assault" };   // stated preference: Assault
   for (const n of state.map.nodes) if (n.com === "crystals" || n.com === "radioactives") { n.max = 0; n.amount = 0; }
@@ -711,8 +714,21 @@ test("a macro AI whose archetype prefers Assault researches Bulwark instead, onc
 
   for (let i = 0; i < 5; i++) runAI(state, THINK_INTERVAL);
 
+  assert.equal(refinery.researchQueue?.[0]?.techId, "reinforcedPlating",
+    "the AI queued Bulwark's Tier-1 upgrade — the world-favored doctrine, not the archetype's own stated Assault preference");
+  assert.ok(!state.players.ai.upgrades.reinforcedPlating, "…not researched yet — it still has to develop");
+
+  // Further think cycles while it's still developing must not re-queue a duplicate or waver
+  // between doctrines (engine/aiEconomy.js aiResearch's re-entry guard) — still exactly one job.
+  for (let i = 0; i < 20; i++) runAI(state, THINK_INTERVAL);
+  assert.equal(refinery.researchQueue.length, 1, "still just the one queued job — no duplicate re-enqueue while it's already in flight");
+
+  // Let it actually finish developing (the same tick-driven loop engine/sim.js runs for real).
+  const need = UPGRADES.reinforcedPlating.time * researchTimeScale(state);
+  for (let t = 0; t < need + 1; t += 0.5) updateResearch(state, refinery, 0.5);
+
   assert.equal(state.players.ai.upgrades.reinforcedPlating, true,
-    "the AI researched Bulwark's Tier-1 upgrade — the world-favored doctrine");
+    "the AI researched Bulwark's Tier-1 upgrade once it finished developing — the world-favored doctrine");
   assert.ok(!state.players.ai.upgrades.overchargedWeapons,
     "…not Assault's, despite that being the archetype's own stated preference");
 });

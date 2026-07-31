@@ -463,35 +463,45 @@ export function freightRoom(unit) {
   return Math.max(0, cap - freightUsed(unit));
 }
 
-// One-time, player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE
-// doctrines of two tiers each. You commit to Assault (offense) OR Bulwark
-// (defense) — researching any upgrade of one doctrine locks the other — and can
-// then deepen your chosen path with its Tier-2 upgrade (which requires the
-// Tier-1, via the same prereqsMet machinery the tech tree uses). So "which
-// upgrade" is a real strategic fork with an opportunity cost, not a buy-both
-// no-brainer. Multipliers stack multiplicatively in combat.js and apply live to
-// the whole army. Assault costs radioactives, Bulwark crystals — so a world's
-// deposit specialty tilts which doctrine comes easier.
+// Player-wide Refinery upgrades, arranged as two MUTUALLY EXCLUSIVE doctrines of
+// two tiers each. You commit to Assault (offense) OR Bulwark (defense) —
+// researching any upgrade of one doctrine locks the other — and can then deepen
+// your chosen path with its Tier-2 upgrade (which requires the Tier-1, via the
+// same prereqsMet machinery the tech tree uses). So "which upgrade" is a real
+// strategic fork with an opportunity cost, not a buy-both no-brainer. Like the
+// Odyssey tech tree's TECHS (engine/techtree.js), each entry is PAID ON ENQUEUE
+// and DEVELOPED OVER TIME — `time` is seconds to develop at a tech-5 world,
+// scaled by researchTimeScale — queued at a Refinery via production.js's
+// researchUpgrade and ticked by the SAME updateResearch loop the Datacenter
+// uses (it resolves TECHS or UPGRADES by building.type). Effects apply live,
+// army-wide (and base-wide — see reinforcedPlating/reinforcedBulwark below), the
+// instant a queued upgrade completes; multipliers stack multiplicatively in
+// combat.js. Assault costs radioactives, Bulwark crystals — so a world's deposit
+// specialty tilts which doctrine comes easier.
 // `ico` is the doctrine's emblem (assault ⚔️, bulwark 🛡️, logistics 📦), reused on the Refinery
 // research buttons so the doctrine reads at a glance — same iconography as the rest of the HUD.
 export const UPGRADES = {
   overchargedWeapons: {
     id: "overchargedWeapons", name: "Overcharged Weapons", doctrine: "assault", tier: 1, ico: "⚔️",
-    cost: { radioactives: 150 }, desc: "+15% damage dealt by all combat units", damageDealtMult: 1.15,
+    cost: { radioactives: 150 }, time: 25, desc: "+15% damage dealt by all combat units", damageDealtMult: 1.15,
   },
   overchargedCore: {
     id: "overchargedCore", name: "Overcharged Core", doctrine: "assault", tier: 2, ico: "⚔️",
-    cost: { radioactives: 200, ore: 120 }, requires: ["overchargedWeapons"],
+    cost: { radioactives: 200, ore: 120 }, time: 32, requires: ["overchargedWeapons"],
     desc: "+15% more damage dealt (stacks with Overcharged Weapons)", damageDealtMult: 1.15,
   },
+  // "all units and structures", not just combat units: attackDamage (engine/combat.js) applies
+  // damageTakenMult to EVERY target it computes damage for — units AND buildings alike, with no
+  // kind/role filter — so Bulwark already shields turrets, the Command Center, and Habitats too.
+  // Bulwark is the defense doctrine for the army AND the base.
   reinforcedPlating: {
     id: "reinforcedPlating", name: "Reinforced Plating", doctrine: "bulwark", tier: 1, ico: "🛡️",
-    cost: { crystals: 150 }, desc: "-12% damage taken by all combat units", damageTakenMult: 0.88,
+    cost: { crystals: 150 }, time: 25, desc: "-12% damage taken by all units and structures", damageTakenMult: 0.88,
   },
   reinforcedBulwark: {
     id: "reinforcedBulwark", name: "Reinforced Bulwark", doctrine: "bulwark", tier: 2, ico: "🛡️",
-    cost: { crystals: 200, ore: 120 }, requires: ["reinforcedPlating"],
-    desc: "-12% more damage taken (stacks with Reinforced Plating)", damageTakenMult: 0.88,
+    cost: { crystals: 200, ore: 120 }, time: 32, requires: ["reinforcedPlating"],
+    desc: "-12% more damage taken by all units and structures (stacks with Reinforced Plating)", damageTakenMult: 0.88,
   },
   // A third doctrine that isn't about the fight at all: Logistics trades combat
   // upgrades for economy and tempo. Committing to it locks Assault AND Bulwark
@@ -501,11 +511,11 @@ export const UPGRADES = {
   // production.js the same data-driven way the damage mults are read by combat.js.
   logisticsNetwork: {
     id: "logisticsNetwork", name: "Logistics Network", doctrine: "logistics", tier: 1, ico: "📦",
-    cost: { crystals: 140 }, desc: "+25% resource yield from every haul", gatherYieldMult: 1.25,
+    cost: { crystals: 140 }, time: 25, desc: "+25% resource yield from every haul", gatherYieldMult: 1.25,
   },
   rapidFabrication: {
     id: "rapidFabrication", name: "Rapid Fabrication", doctrine: "logistics", tier: 2, ico: "📦",
-    cost: { crystals: 160, ore: 120 }, requires: ["logisticsNetwork"],
+    cost: { crystals: 160, ore: 120 }, time: 32, requires: ["logisticsNetwork"],
     desc: "-20% unit & building production time", produceTimeMult: 0.8,
   },
   // No multiplier field: unlike its two Logistics siblings above, this GATES a capability
@@ -516,13 +526,13 @@ export const UPGRADES = {
   // engine/recycle.js check a single flag regardless of mode.
   recycling: {
     id: "recycling", name: "Field Recycling", doctrine: "logistics", tier: 3, ico: "♻️",
-    cost: { crystals: 180, ore: 140 }, requires: ["rapidFabrication"],
+    cost: { crystals: 180, ore: 140 }, time: 38, requires: ["rapidFabrication"],
     desc: "+30% of a recycled unit/building's cost reclaimed (up to an 80% cap)",
   },
   // Hard difficulty's economic edge (engine/aiDifficulty.js) — seeded straight onto
   // state.players.ai.upgrades at creation (engine/state.js), never researched, so it needs
-  // none of a real entry's machinery: no cost, no doctrine, no tier/requires. It rides the
-  // exact same gatherYieldMult/produceTimeMult fields logisticsNetwork/rapidFabrication use —
+  // none of a real entry's machinery: no cost, no time, no doctrine, no tier/requires. It rides
+  // the exact same gatherYieldMult/produceTimeMult fields logisticsNetwork/rapidFabrication use —
   // gather.js/production.js need no changes at all to pick it up. `aiOnly` keeps it out of the
   // player-facing Refinery research panel and its cost fingerprint (hudSelection.js); having no
   // `doctrine` keeps it invisible to committedDoctrine (which now guards on `.doctrine`
@@ -548,8 +558,21 @@ export function upgradeMult(upgrades, field) {
 }
 
 // The doctrine a player has committed to — the doctrine of any upgrade they've
-// researched — or null if they haven't picked one yet. Researching an upgrade of
-// the other doctrine is then locked out (see production.js's researchUpgrade).
+// researched, OR is still developing (queued at a Refinery, not yet complete) — or
+// null if neither. Researching (or queuing) an upgrade of the other doctrine is
+// then locked out (see production.js's researchUpgrade). The queued half matters
+// because doctrine research now DEVELOPS OVER TIME instead of landing instantly
+// (engine/techtree.js updateResearch): the cost is paid up front on enqueue, so the
+// commitment has to bite the instant it's queued, not only once the timer finishes
+// — otherwise both doctrines could sit queued side-by-side during the development
+// window, defeating the whole "real commitment" point above. Scoped to `type ===
+// "refinery"` specifically (not just "any researchQueue"): a Datacenter's OWN queue
+// uses the SAME field name but resolves against TECHS, which shares no doctrine
+// tokens with UPGRADES except the deliberately-overlapping "recycling" id — cross-
+// checking a Datacenter job against UPGRADES here would misread that shared id as a
+// Logistics commitment. `state.buildings` is optional-chained so a bare test state
+// (no buildings map at all) reads as "nothing queued", identical to before this queued
+// half existed.
 // Guards on `.doctrine` itself, not just UPGRADES membership: a non-doctrine entry
 // (hardEdge, Hard difficulty's seeded economic edge) must stay invisible here, the same
 // way researchUpgrade's own doctrine-lock check already reads `def.doctrine` rather than
@@ -558,6 +581,10 @@ export function upgradeMult(upgrades, field) {
 export function committedDoctrine(state, owner) {
   const ups = state.players[owner].upgrades;
   for (const id of Object.keys(ups)) if (ups[id] && UPGRADES[id]?.doctrine) return UPGRADES[id].doctrine;
+  for (const b of state.buildings?.values() || []) {
+    if (b.owner !== owner || b.type !== "refinery" || !b.researchQueue) continue;
+    for (const job of b.researchQueue) { const def = UPGRADES[job.techId]; if (def?.doctrine) return def.doctrine; }
+  }
   return null;
 }
 

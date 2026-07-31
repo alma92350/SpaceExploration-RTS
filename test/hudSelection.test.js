@@ -515,6 +515,29 @@ test("Refinery research: with the SAME doctrine committed, an unmet Tier-1 alone
 });
 
 /* ---------------------------------------------------------------------------------------------
+   Doctrine research develops over time (Tier 1 proposal): the Refinery now gets its own live
+   progress row, reusing the Datacenter research-row idiom — a queued-but-developing upgrade
+   drops out of the plain button list (same as a Datacenter node already does) in favour of the
+   progress row saying it's underway.
+   --------------------------------------------------------------------------------------------- */
+
+test("Refinery research: a queued upgrade shows a live progress row and drops out of the button list", () => {
+  const { state } = setup(214);
+  const refinery = selectRefinery(state);
+  Object.assign(state.players.player.resources, { crystals: 2000 });
+
+  assert.equal(researchUpgrade(state, refinery.id, "reinforcedPlating"), true, "sanity: queues Reinforced Plating");
+  renderSelectionPanel();
+
+  const row = panelEl.querySelector(".research-progress");
+  assert.ok(row, "expected a live progress row for the Refinery's own research queue, same idiom as the Datacenter");
+  assert.ok(row.textContent.includes("Reinforced Plating"), "names the upgrade actually developing");
+  assert.ok(row.textContent.includes("0%"), "starts at 0%, not landed instantly");
+  assert.ok(!findButton(upgradeButtonLabel(UPGRADES.reinforcedPlating)),
+    "the now-queued upgrade drops out of the plain button list — the progress row above already says it's underway");
+});
+
+/* ---------------------------------------------------------------------------------------------
    TARGET 5 — the reported bug: the Market panel's price/afford-state live patch
    (hudSelection.js's marketRowFields/refreshMarketRows). A Buy or Sell trade mutates
    engine/market.js's trade pressure, but touches nothing renderSelectionPanel's rebuild

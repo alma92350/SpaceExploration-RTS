@@ -85,6 +85,43 @@ test("committedDoctrine ignores a non-doctrine UPGRADES entry (hardEdge, Hard di
   assert.equal(committedDoctrine(s, "player"), "logistics", "the real doctrine pick still resolves with hardEdge present");
 });
 
+// Doctrine research now DEVELOPS OVER TIME (queued at a Refinery, engine/techtree.js
+// updateResearch) instead of landing instantly — see docs/improvement-proposals.md's
+// "Doctrine research develops over time" proposal.
+test("committedDoctrine also commits from a doctrine upgrade that's queued but not finished developing yet", () => {
+  const s = { players: { player: { upgrades: {} }, ai: { upgrades: {} } }, buildings: new Map() };
+  assert.equal(committedDoctrine(s, "player"), null, "nothing queued or researched yet");
+
+  // Paid for on enqueue (production.js researchUpgrade) but still developing: the resources are
+  // already spent and irreversible, so the doctrine lock has to bite the instant it's queued, not
+  // only once the timer finishes — otherwise both doctrines could be queued side-by-side during
+  // the development window, defeating the whole "real commitment" point (entities.js's own header
+  // comment on UPGRADES).
+  s.buildings.set("b1", { owner: "player", type: "refinery", researchQueue: [{ techId: "overchargedWeapons", progress: 0.1 }] });
+  assert.equal(committedDoctrine(s, "player"), "assault",
+    "a queued-but-developing upgrade commits its doctrine exactly like a completed one");
+  assert.equal(committedDoctrine(s, "ai"), null, "a different owner's Refinery queue never leaks across sides");
+});
+
+test("committedDoctrine's queue scan never crosses a Datacenter's TECHS queue into the doctrine system", () => {
+  // "recycling" is a DELIBERATELY shared id between TECHS (engine/techtree.js) and UPGRADES
+  // (entities.js) — only one of the two trees is ever active in a given match, so sharing the id
+  // is safe everywhere EXCEPT here: a Datacenter's own queued TECHS.recycling job must never read
+  // as a Logistics doctrine commitment just because UPGRADES.recycling happens to share its id.
+  const s = { players: { player: { upgrades: {} } }, buildings: new Map() };
+  s.buildings.set("b2", { owner: "player", type: "datacenter", researchQueue: [{ techId: "recycling", progress: 0.1 }] });
+  assert.equal(committedDoctrine(s, "player"), null,
+    "a Datacenter's queue never counts toward a doctrine commitment, even for a shared id like recycling");
+});
+
+test("every real (non-aiOnly) UPGRADES entry takes time to develop, in the proposal's ~25-40s band", () => {
+  for (const u of Object.values(UPGRADES)) {
+    if (u.aiOnly) continue;   // hardEdge is seeded directly onto the AI's upgrades, never queued/developed — no time needed
+    assert.ok(u.time > 0, `${u.id} takes time to develop`);
+    assert.ok(u.time >= 25 && u.time <= 40, `${u.id}'s development time (${u.time}s) should land in the proposal's ~25-40s band`);
+  }
+});
+
 test("the tech tree extends past the Foundry: Arsenal (needs Foundry) -> Dreadnought", () => {
   assert.deepEqual(BUILDINGS.arsenal.requires, ["foundry"], "Arsenal is gated behind the Foundry");
   assert.deepEqual(UNITS.dreadnought.requires, ["arsenal"], "the Dreadnought is gated behind the Arsenal");
