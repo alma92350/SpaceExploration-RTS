@@ -32,6 +32,27 @@ function composition(counts, table) {
     .join(", ") || "none";
 }
 
+// Minimize state lives as a class on observerPanelEl itself (the one stable element across
+// renders — only its innerHTML gets wiped) rather than a JS variable, so it survives the
+// innerHTML="" + full rebuild every renderPanelBody call below with no extra bookkeeping.
+function minimizeToggleBtn() {
+  const minimized = observerPanelEl.classList.contains("minimized");
+  const btn = mk("button", "observer-min-btn", minimized ? "▸" : "▾");
+  btn.type = "button";
+  const label = minimized ? "Expand the observation panel" : "Minimize the observation panel — the stats block can cover the world you're watching";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.addEventListener("click", e => {
+    e.stopPropagation();   // this button lives inside the panel; nothing above it should react to the click
+    const min = observerPanelEl.classList.toggle("minimized");
+    btn.textContent = min ? "▸" : "▾";
+    const newLabel = min ? "Expand the observation panel" : "Minimize the observation panel — the stats block can cover the world you're watching";
+    btn.title = newLabel;
+    btn.setAttribute("aria-label", newLabel);
+  });
+  return btn;
+}
+
 function renderPanelBody(state) {
   const s = observerStats(state);
   observerPanelEl.innerHTML = "";
@@ -41,6 +62,7 @@ function renderPanelBody(state) {
     mk("span", "observer-ico", LORE_FACTIONS[s.faction]?.ico || "🪐"),
     mk("h3", null, worldName(s.planetId)),
     mk("span", "observer-archetype", s.archetypeName),
+    minimizeToggleBtn(),
   );
   observerPanelEl.appendChild(head);
 

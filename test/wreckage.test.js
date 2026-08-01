@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
 import { updateCombat } from "../engine/combat.js";
 import { tick } from "../engine/sim.js";
+import { updateGather } from "../engine/gather.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { detonateBomb } from "../engine/bomb.js";
 import {
@@ -312,6 +313,32 @@ test("a worker can actually mine a matured wreck node", () => {
   for (let i = 0; i < 50; i++) tick(state, 0.05);
 
   assert.ok(node.amount < startAmount || miner.cargo.qty > 0, "the worker actually extracted from the wreck deposit");
+});
+
+test("recovering wreckage banks into a nearby collection-point Hauler too — it's the same gather order/drop-off code as an ordinary node", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const victim = makeUnit("worker", "player", 5000, 5000);
+  state.units.set(victim.id, victim);
+  depositWreckage(state, victim);
+  state.units.delete(victim.id);
+  state.time += WRECK_SPAWN_DELAY;
+  updateWreckage(state);
+  const node = [...state.map.nodesById.values()].find(n => n.wreck);
+
+  const collector = makeUnit("hauler", "player", node.x + 10, node.y);
+  collector.collectPoint = true;
+  state.units.set(collector.id, collector);
+
+  const salvager = makeUnit("worker", "player", collector.x, collector.y);
+  state.units.set(salvager.id, salvager);
+  salvager.cargo = { com: node.com, qty: 10 };
+  salvager.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+  const before = state.players.player.resources[node.com] || 0;
+
+  updateGather(state, salvager, 0.05);
+
+  assert.equal(state.players.player.resources[node.com] || 0, before, "nothing reached the treasury directly");
+  assert.equal(collector.freight[node.com], 10, "the salvaged wreckage material landed in the Hauler's hold instead");
 });
 
 /* ---------- battle-intensity bonus materials ---------- */

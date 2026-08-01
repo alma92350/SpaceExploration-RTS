@@ -4,7 +4,7 @@ import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "../engine/haul.js";
 import { issueSetLogiPriority } from "../engine/commands.js";
-import { storeTotal, inputTotal, inputRoom, inputCapOf } from "../engine/entities.js";
+import { storeTotal, inputTotal, inputRoom, inputCapOf, UNITS } from "../engine/entities.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { mulberry32 } from "./_helpers.js";
 
@@ -61,6 +61,56 @@ test("a hauler ignores a nearby Refinery/Foundry/Arsenal — the load always goe
   assert.equal(storeTotal(rig), 0, "the rig's whole buffer was hauled away");
   assert.equal(storeTotal(refinery), 0, "the Refinery has no intake buffer — nothing landed there");
   assert.ok(near((s.players.player.resources.ore || 0) - before, 55, 1e-3), "the full load reached the Command Center instead");
+});
+
+test("a hauler carrying a rig's buffered output deposits into a nearby collection-point Hauler instead of trekking to the distant Command Center", () => {
+  const { s, cc, workers } = base(1);
+  const rig = makeBuilding("plasmarig", "player", cc.x + 900, cc.y);   // far from the CC
+  rig.store = { ore: 55 };
+  rig.paused = true;
+  s.buildings.set(rig.id, rig);
+  const collector = makeUnit("hauler", "player", rig.x + 20, rig.y);   // parked right next to the rig
+  collector.collectPoint = true;
+  s.units.set(collector.id, collector);
+  const w = workers[0];
+  w.x = rig.x; w.y = rig.y;
+  w.order = { type: "haul", buildingId: rig.id };
+  const before = s.players.player.resources.ore || 0;
+
+  for (let i = 0; i < 6000 && (storeTotal(rig) > 0 || (w.cargo && w.cargo.qty > 0)); i++) updateHaul(s, w, 0.05);
+
+  assert.equal(storeTotal(rig), 0, "the rig's whole buffer was hauled away");
+  assert.ok(near(collector.freight.ore, 55, 1e-3), "the full load landed in the collection-point Hauler's hold");
+  assert.equal(s.players.player.resources.ore || 0, before, "nothing reached the treasury directly — it's sitting in the Hauler, not yet shuttled");
+});
+
+test("a rig-hauler's partial deposit into an almost-full collection-point Hauler leaves the rest aboard, which then heads for the next-nearest drop", () => {
+  const { s, cc, workers } = base(1);
+  const rig = makeBuilding("plasmarig", "player", cc.x + 900, cc.y);
+  rig.store = { ore: 55 };
+  rig.paused = true;
+  s.buildings.set(rig.id, rig);
+  const collector = makeUnit("hauler", "player", rig.x + 20, rig.y);
+  collector.collectPoint = true;
+  collector.freight.ore = UNITS.hauler.cargoHold - 10;   // only 10 units of room left
+  s.units.set(collector.id, collector);
+  const w = workers[0];
+  w.x = rig.x; w.y = rig.y;
+  w.order = { type: "haul", buildingId: rig.id };
+
+  // Load up (tripCapacity may be less than the whole 55) and reach the Hauler.
+  for (let i = 0; i < 400 && w.order.phase !== "toDrop"; i++) updateHaul(s, w, 0.05);
+  assert.equal(w.order.phase, "toDrop");
+  for (let i = 0; i < 400 && Math.hypot(w.x - collector.x, w.y - collector.y) > 5; i++) updateHaul(s, w, 0.05);
+
+  const carried = w.cargo.qty;
+  updateHaul(s, w, 0.05);   // one more tick: reached and deposits whatever fits
+
+  assert.equal(collector.freight.ore, UNITS.hauler.cargoHold, "the Hauler filled up completely, taking only what fit");
+  if (carried > 10) {
+    assert.ok(w.cargo.qty > 0, "the leftover stayed aboard rather than being lost");
+    assert.equal(w.order.phase, "toDrop", "still in toDrop, not funneled back to toSource with cargo unresolved");
+  }
 });
 
 test("mid-trip: a hauler already walking toward the Command Center is unaffected by a Refinery completing nearby", () => {

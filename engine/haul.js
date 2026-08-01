@@ -404,11 +404,19 @@ export function updateHaul(state, unit, dt) {
   if (order.phase === "toDrop") {
     // excludeId guards against a worker finding its own HAUL source as its drop target and
     // looping (see nearestGatherDrop) — a harmless no-op today, since a Command Center (the only
-    // drop target) can never itself be a HAUL source.
+    // building drop target) can never itself be a HAUL source; never applies to a Hauler/Freighter
+    // (nearestGatherDrop's other kind of drop), which could never be a HAUL source either.
     const drop = nearestGatherDrop(state, unit.owner, unit.x, unit.y, order.buildingId);
     if (!drop) { unit.order = null; return; }   // no Command Center → hold the load, idle
     if (reached(unit, drop)) {
-      bankCargo(state, unit);
+      // A collection-point Hauler/Freighter (drop.kind === "unit") has finite room, unlike the
+      // Command Center's bottomless treasury — depositToFreighter only takes what fits, same as a
+      // ferry worker's own load. If that leaves cargo aboard, stay in "toDrop" rather than heading
+      // back to the source: nearestGatherDrop re-picks fresh next tick (this Hauler once it's freed
+      // room, another one, or the Command Center) instead of abandoning the leftover mid-order.
+      if (drop.kind === "unit") depositToFreighter(drop, unit);
+      else bankCargo(state, unit);
+      if (unit.cargo && unit.cargo.qty > 0) return;
       order.phase = (src && !src.constructing && storeTotal(src) > 0) ? "toSource" : null;
       if (!order.phase) unit.order = null;
     } else stepToward(state, unit, drop.x, drop.y, def.speed, dt);

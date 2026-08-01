@@ -2,15 +2,16 @@
 /* ============================================================
    Worker gather/deposit loop: walk to node -> mine into cargo -> walk to
    the nearest completed drop-off -> deposit -> repeat until the node runs
-   dry. A drop-off is the Command Center (see entities.js isGatherDropOff) —
-   there is no forward/decentralized collection point, so every haul goes
-   all the way back to a CC.
+   dry. A drop-off is the Command Center (see entities.js isGatherDropOff),
+   or a landed, player-toggled COLLECTION-POINT Hauler/Freighter closer than
+   any CC (unit.collectPoint — see nearestGatherDrop below) — no OTHER
+   building ever collects a raw haul, forward or otherwise.
    ============================================================ */
 
 "use strict";
 
 import { stepToward } from "./movement.js";
-import { UNITS, BUILDINGS, isGatherDropOff, upgradeMult } from "./entities.js";
+import { UNITS, BUILDINGS, isGatherDropOff, upgradeMult, freightRoom } from "./entities.js";
 import { sideMod } from "./map.js";
 import { hashStr } from "./rng.js";
 import { isNodeDiscovered } from "./fog.js";
@@ -120,12 +121,31 @@ export function updateGather(state, unit, dt) {
       const player = state.players[unit.owner];
       // Per-side economy modifier for an asymmetric world (default 1 elsewhere):
       // a richer claim banks more per haul. The Logistics doctrine's yield upgrade
-      // stacks on top (upgradeMult reads the researched upgrades).
-      const banked = unit.cargo.qty
-        * sideMod(state, unit.owner, "gatherMult", 1)
-        * upgradeMult(player.upgrades, "gatherYieldMult");
-      player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + banked;
-      unit.cargo.qty = 0;
+      // stacks on top (upgradeMult reads the researched upgrades). Applies identically
+      // whichever kind of drop this is — the bonus is earned at the point of harvest,
+      // not by however it later gets to the treasury.
+      const mult = sideMod(state, unit.owner, "gatherMult", 1) * upgradeMult(player.upgrades, "gatherYieldMult");
+      if (drop.kind === "unit") {
+        // A collection-point Hauler/Freighter (unit.collectPoint — see nearestGatherDrop below):
+        // bank into its freight hold instead of the treasury, clamped to its remaining room —
+        // same partial-deposit shape engine/haul.js's own depositToFreighter uses for factory
+        // backlog. Clamp on the RAW quantity moved (a physical hold-space constraint, exactly
+        // like factory backlog fills it), THEN apply the yield bonus to what actually gets
+        // credited — so a full hold caps how much cargo leaves the worker, not how much value it's
+        // worth. Whatever doesn't fit stays aboard the worker; the next "toDrop" tick re-picks the
+        // nearest drop and tries again (this same Hauler if it's freed up room, another one, or the
+        // Command Center) — no special-casing needed, nearestGatherDrop already re-runs every tick.
+        const rawMove = Math.min(unit.cargo.qty, freightRoom(drop));
+        if (rawMove > 0) {
+          drop.freight[unit.cargo.com] = (drop.freight[unit.cargo.com] || 0) + rawMove * mult;
+          unit.cargo.qty -= rawMove;
+          if (unit.cargo.qty <= 1e-9) { unit.cargo.qty = 0; unit.cargo.com = null; }
+        }
+      } else {
+        const banked = unit.cargo.qty * mult;
+        player.resources[unit.cargo.com] = (player.resources[unit.cargo.com] || 0) + banked;
+        unit.cargo.qty = 0;
+      }
       if (node.amount > 0) order.phase = "toNode";
       else nextNodeAfterDepletion(state, unit, node);   // this deposit drained the last of it — roll to the next seam or idle
     } else {
@@ -134,13 +154,21 @@ export function updateGather(state, unit, dt) {
   }
 }
 
-// The nearest COMPLETED collection point a gatherer may bank a raw haul at (engine/entities.js
-// isGatherDropOff — today, always the Command Center; there is no forward/decentralized
-// collection point). Closest wins, deterministic Map order breaks ties. `excludeId`, when given,
-// skips that one building — a defensive guard against a worker finding its own HAUL source as its
-// drop target and looping (engine/haul.js updateHaul passes its own source id here); harmless
-// no-op while a Command Center can never itself be a HAUL source.
-/** @param {State} state @param {string} owner @param {number} x @param {number} y @param {string} [excludeId] @returns {Building|null} */
+// The nearest COMPLETED collection point a gatherer may bank a raw haul at: a Command Center (or
+// dropOff building, engine/entities.js isGatherDropOff — today that's the Command Center alone),
+// OR a landed, player-toggled COLLECTION-POINT freighter (unit.collectPoint — engine/haul.js's
+// assignFerry/assignShuttle idiom, HUD-toggled, no research needed) with room to spare. The
+// freighter option mirrors assignFerry's own eligibility check exactly (owned, collectPoint,
+// cargo-capable, actual room) — it already knows how to shuttle its own hold home
+// (updateFreighterShuttle), so a gatherer or wreck-salvager banking into one instead of trekking
+// all the way back to a Command Center is just another leg of the same logistics chain, not a new
+// one. Closest wins, whichever kind it is — deterministic Map order breaks ties within each kind,
+// and buildings are scanned before units so a building exactly as close (bestD strictly less-than)
+// always wins that tie. `excludeId`, when given, skips that one BUILDING — a defensive guard
+// against a worker finding its own HAUL source as its drop target and looping (engine/haul.js
+// updateHaul passes its own source id here); harmless no-op while a Command Center can never
+// itself be a HAUL source, and never applies to the unit scan (a Hauler is never a HAUL source).
+/** @param {State} state @param {string} owner @param {number} x @param {number} y @param {string} [excludeId] @returns {Building|Unit|null} */
 export function nearestGatherDrop(state, owner, x, y, excludeId) {
   let best = null, bestD = Infinity;
   for (const b of state.buildings.values()) {
@@ -148,6 +176,12 @@ export function nearestGatherDrop(state, owner, x, y, excludeId) {
     if (excludeId && b.id === excludeId) continue;
     const d = Math.hypot(b.x - x, b.y - y);
     if (d < bestD) { bestD = d; best = b; }
+  }
+  for (const u of state.units.values()) {
+    if (u.owner !== owner || !u.collectPoint || !UNITS[u.type]?.cargoHold) continue;
+    if (freightRoom(u) <= 0) continue;
+    const d = Math.hypot(u.x - x, u.y - y);
+    if (d < bestD) { bestD = d; best = u; }
   }
   return best;
 }
