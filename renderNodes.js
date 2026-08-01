@@ -17,11 +17,13 @@ import { hashStr, seededRng, pathPoints, inView } from "./renderShared.js";
 // badge uses (CONCERN_STYLE.warn) — a saturated node isn't dead, just diminishing.
 const SATURATION_COLOR = "#fbbf24";
 
-export function drawNodes(ctx, state, view) {
+// observerMode (default false, every existing caller unaffected): a hidden cache is charted
+// knowledge to a spectator too — see render.js's drawFrame header comment.
+export function drawNodes(ctx, state, view, observerMode = false) {
   for (const n of state.map.nodes) {
     if (n.amount <= 0) continue;
     if (view && !inView(view, n.x, n.y, 20)) continue;   // off-screen deposit
-    if (!isNodeDiscovered(state.fog, n)) continue;   // a hidden cache stays dark until scouted
+    if (!observerMode && !isNodeDiscovered(state.fog, n)) continue;   // a hidden cache stays dark until scouted
     const r = 7 + 9 * (n.amount / n.max);
     if (n.wreck) {
       drawWreckNode(ctx, n, r);

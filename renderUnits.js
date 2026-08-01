@@ -43,7 +43,10 @@ export function drawUnitShape(ctx, u, def, color) {
 const _disp = {};   // reused scratch: a shallow view of a unit at its interpolated draw position
 // `selSet` is the current-selection Set, computed ONCE per frame by the caller (render.js
 // drawFrame) and passed down here rather than allocated fresh on every call.
-export function drawUnits(ctx, state, view, alpha = 1, selSet) {
+// observerMode (default false, so every existing caller/test is unaffected): bypasses the fog
+// gate below entirely — Observer Mode's whole point is seeing units regardless of ownership or
+// vision, never a mutation of state.fog itself (see observer.js's header comment).
+export function drawUnits(ctx, state, view, alpha = 1, selSet, observerMode = false) {
   // Two passes over the same culled set: ALL hulls first, then ALL overlays (health bars,
   // enemy pips, cargo dots). Otherwise, in a dense melee, a unit drawn later paints its hull
   // over an earlier unit's health bar — exactly when the bar matters most. lerp+cull recompute
@@ -51,7 +54,7 @@ export function drawUnits(ctx, state, view, alpha = 1, selSet) {
   for (const u of state.units.values()) {
     const d = lerpXY(u, alpha);   // interpolated {x,y} (or the live unit when there's no baseline / a teleport)
     if (view && !inView(view, d.x, d.y, 16)) continue;   // off-screen unit
-    if (u.owner !== "player" && !isVisibleAt(state.fog, d.x, d.y)) continue;
+    if (u.owner !== "player" && !observerMode && !isVisibleAt(state.fog, d.x, d.y)) continue;
     const def = UNITS[u.type];
     const color = state.players[u.owner].color;
     ctx.fillStyle = color;
@@ -69,7 +72,7 @@ export function drawUnits(ctx, state, view, alpha = 1, selSet) {
   for (const u of state.units.values()) {
     const d = lerpXY(u, alpha);
     if (view && !inView(view, d.x, d.y, 16)) continue;
-    if (u.owner !== "player" && !isVisibleAt(state.fog, d.x, d.y)) continue;
+    if (u.owner !== "player" && !observerMode && !isVisibleAt(state.fog, d.x, d.y)) continue;
     const def = UNITS[u.type];
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();

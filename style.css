@@ -438,6 +438,59 @@ body.scenario .under-attack { top: 64px; z-index: 6; }
 .gate-chip.hidden { display: none; }
 .gate-chip.warm { border-color: var(--warn); color: var(--warn); background: rgba(251, 191, 36, 0.12); }
 .gate-chip.hot { border-color: var(--bad); color: var(--bad); background: rgba(248, 113, 113, 0.12); }
+/* Observer Mode (observer.js/observerPanel.js): a free-look, read-only spectator over the
+   Odyssey galaxy. The banner is a full-width strip at the very top edge — deliberately louder
+   than the under-attack pill / gate-chip below it, since "you can't issue orders right now" is
+   the one state a player must never be confused about. The panel sits opposite the minimap
+   (bottom-left) so the two never collide. */
+.observer-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 6px 16px;
+  background: rgba(79, 209, 255, 0.16);
+  border-bottom: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-align: center;
+  z-index: 7;
+  pointer-events: none;   /* navigation happens via the galaxy map / keys, never by clicking the banner itself */
+}
+.observer-banner.hidden { display: none; }
+
+.observer-panel {
+  position: absolute;
+  right: 16px;
+  bottom: 24px;
+  width: 320px;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  z-index: 6;
+}
+.observer-panel.hidden { display: none; }
+.observer-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.observer-head h3 { margin: 0; font-size: 14px; flex: 1; }
+.observer-ico { font-size: 16px; }
+.observer-archetype {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+.observer-rows { display: flex; flex-direction: column; gap: 4px; }
+.observer-row { display: flex; flex-direction: column; }
+.observer-label { color: var(--accent); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+
 .gate-chip.stalled {
   border-color: var(--bad);
   color: var(--bad);

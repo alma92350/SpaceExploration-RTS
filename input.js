@@ -15,6 +15,8 @@ import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, dragCamera, pinchZoomPan } from "./camera.js";
 import * as sound from "./sound.js";
+import { toggleObserverMode, exitObserverMode, cycleObserverBase,
+         observerWheelZoom, observerDragStart, observerDragMove, observerDragEnd, tickObserverCamera } from "./observer.js";
 
 const CLICK_THRESHOLD = 4;
 // A second press within this window recenters/cycles instead of repeating — shared by control
@@ -328,6 +330,11 @@ export function attachInput(canvas, state, onChange) {
   }
 
   canvas.addEventListener("mousedown", e => {
+    // Observer Mode: the canvas shows a possibly-different world than `state` (see
+    // observer.js's observedState) — every one of this handler's hit-tests below reads
+    // `state`/the real `camera`, so they'd resolve against the wrong world's coordinates.
+    // Left-drag just pans the observer camera instead; every other button is a no-op.
+    if (game.observerMode) { if (e.button === 0) observerDragStart(e.clientX, e.clientY); return; }
     if (e.button === 2) {
       // The actual command (or a build/attack-move cancel) fires on mouseup below, once we
       // know whether this stayed a click or became a drag — just mark where it started.
@@ -349,6 +356,7 @@ export function attachInput(canvas, state, onChange) {
   }, { signal });
 
   canvas.addEventListener("mousemove", e => {
+    if (game.observerMode) { observerDragMove(e.clientX, e.clientY); return; }
     lastWorldPos = toWorld(e.clientX, e.clientY);   // tracked continuously for the build-placement ghost
     // Edge scroll: cursor within a margin of a canvas edge nudges the camera
     // that way, so you can drag the view without touching the keyboard.
@@ -365,6 +373,7 @@ export function attachInput(canvas, state, onChange) {
   canvas.addEventListener("mouseleave", () => { edgePan = [0, 0]; }, { signal });
 
   window.addEventListener("mouseup", e => {
+    if (game.observerMode) { observerDragEnd(); return; }
     if (e.button === 2) {
       const start = rightDragStart;
       rightDragStart = null;
@@ -395,6 +404,7 @@ export function attachInput(canvas, state, onChange) {
   // Double-click a unit to grab every same-type unit of yours currently on screen — the standard
   // "select all of this type" gesture. Ctrl+double-click extends that to the whole map.
   canvas.addEventListener("dblclick", e => {
+    if (game.observerMode) return;
     // Mid-build-placement or with attack-move armed, each of the two clicks that make up this
     // dblclick already went through mousedown's own buildMode/attackMoveArmed handling (placed
     // the building / committed the attack-move); the reselect-fleet-of-this-type gesture below
@@ -414,8 +424,10 @@ export function attachInput(canvas, state, onChange) {
   canvas.addEventListener("wheel", e => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
+    const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+    if (game.observerMode) { observerWheelZoom(e.clientX, e.clientY, rect, factor); return; }
     const { vw, vh } = viewport();
-    zoomAt(camera, state.map, vw, vh, e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+    zoomAt(camera, state.map, vw, vh, e.clientX - rect.left, e.clientY - rect.top, factor);
   }, { signal, passive: false });
 
   /* ---------- touch (phones / tablets) ----------
@@ -673,6 +685,18 @@ export function attachInput(canvas, state, onChange) {
     const t = e.target;
     if (t && t !== document.body && t !== canvas && typeof t.closest === "function"
         && t.closest("button, input, textarea, select, [tabindex]")) return;
+    // O toggles Observer Mode from either side (a no-op outside Odyssey — see
+    // observer.js's enterObserverMode), so it must be checked before the "swallow everything
+    // else while observing" branch right below, or there'd be no way back out via the keyboard.
+    if (k === "o") { toggleObserverMode(); onChange(); return; }
+    if (game.observerMode) {
+      // Space repurposes to cycling every base on the spectated world (any owner) instead of
+      // just the player's own; every other order/build/group hotkey below assumes `state` is
+      // what's on screen, which isn't true while spectating a different world — swallow them.
+      if (k === " ") { e.preventDefault(); cycleObserverBase(); onChange(); return; }
+      if (k === "escape") { exitObserverMode(); onChange(); return; }
+      return;
+    }
     // Match on e.code, not e.key: with Shift held the number row's e.key becomes
     // "!@#…", so only the physical Digit1–9 code is reliable for the bind case.
     const digit = /^Digit([1-9])$/.exec(e.code);
@@ -764,6 +788,10 @@ export function attachInput(canvas, state, onChange) {
     toggleAttackMove: () => { setArmed(!attackMoveArmed); onChange(); },
     get attackArmed() { return attackMoveArmed; },
     tickCamera(dt) {
+      // Observer Mode pans its OWN camera off the same held-key set (see observer.js's
+      // tickObserverCamera) — the real camera/edge-pan below must stay frozen meanwhile, or
+      // resuming normal play would find the view had silently drifted while you were spectating.
+      if (game.observerMode) { tickObserverCamera(dt, heldKeys); return; }
       let dx = edgePan[0], dy = edgePan[1];
       for (const key of heldKeys) {
         const dir = PAN_KEYS[key];

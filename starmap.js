@@ -16,6 +16,7 @@ import { game } from "./session.js";
 import { galaxyStatus, canJump, canJumpTo, activeState, jumpCost, playerSpaceports, spaceportTier,
          FUEL_DISCOUNT_BY_TIER } from "./engine/galaxy.js";
 import { initiateJump, surrenderOdyssey, pauseLoop, resumeLoop } from "./boot.js";
+import { spectateWorld } from "./observer.js";
 import { showGalaxyToast } from "./overlays.js";
 import { planetName as worldName, LORE_FACTIONS, PLANETS, COM } from "./data.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
@@ -262,7 +263,13 @@ function renderLaneOverlay(g) {
 
 function onWorldClick(w) {
   const g = game.galaxy;
-  if (!g || w.id === g.activeId) return;
+  if (!g) return;
+  // Observer Mode: free camera jump to ANY world, discovered or not — no fuel, no Spaceport
+  // gate, no real activeId change (see observer.js's header comment). Takes over the whole
+  // click, including a world you're already spectating (re-clicking your own real seat while
+  // observing is a legitimate way to look back at it).
+  if (game.observerMode) { spectateWorld(w.id); closeStarmap(); return; }
+  if (w.id === g.activeId) return;
   // With no Spaceport here you can still fall back to a world you hold — only a NEW world needs one.
   if (!canJumpTo(g, w.id)) {
     showGalaxyToast(`No Spaceport here — you can only fall back to a colony you already hold. Build a Spaceport to reach ${worldName(w.id)}.`, "warn");

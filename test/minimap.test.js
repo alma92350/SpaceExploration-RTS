@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState } from "../engine/state.js";
+import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 
 /* ============================================================
@@ -87,4 +87,36 @@ test("a fully-aged (age=1) ping still draws without throwing — the fade-out bo
   const state = freshState(4);
   const camera = { x: state.map.width / 2, y: state.map.height / 2, zoom: 1 };
   assert.doesNotThrow(() => drawMinimap(recordingCtx().ctx, state, camera, VW, VH, MM_W, MM_H, [{ x: 10, y: 10, age: 1 }]));
+});
+
+// Observer Mode (observer.js): a free-look spectator that reveals fog on whichever world it's
+// pointed at. drawMinimap's trailing observerMode param (default false, so every test above is
+// unaffected) bypasses every owner/fog gate below, same reasoning as render.js's drawFrame.
+function fillRectRecorder() {
+  const rects = [];
+  const ctx = new Proxy({}, {
+    get: (t, p) => (p === "fillRect" ? (...args) => rects.push(args) : (p in t ? t[p] : () => {})),
+    set: (t, p, v) => { t[p] = v; return true; },
+  });
+  return { ctx, rects };
+}
+
+test("observerMode bypasses the fog gate for both units and buildings on the minimap", () => {
+  const state = freshState(5);
+  state.fog.visible.fill(0);   // guarantee nothing is currently visible, regardless of any start-base reveal
+
+  const enemyUnit = makeUnit("skiff", "ai", state.map.width - 50, state.map.height - 50);
+  const enemyBuilding = makeBuilding("command", "ai", state.map.width - 100, state.map.height - 100);
+  state.units.set(enemyUnit.id, enemyUnit);
+  state.buildings.set(enemyBuilding.id, enemyBuilding);
+  const camera = { x: state.map.width / 2, y: state.map.height / 2, zoom: 1 };
+
+  const hidden = fillRectRecorder();
+  drawMinimap(hidden.ctx, state, camera, VW, VH, MM_W, MM_H);
+
+  const revealed = fillRectRecorder();
+  drawMinimap(revealed.ctx, state, camera, VW, VH, MM_W, MM_H, [], true);
+
+  assert.ok(revealed.rects.length > hidden.rects.length,
+    "observerMode draws at least the enemy unit + building the fogged pass skipped");
 });

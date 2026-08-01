@@ -67,6 +67,23 @@ test("drawNodes does not ring a node exactly at the soft cap — no penalty yet,
   assert.ok(!ringDrawn(ctx), "at the cap, miningEfficiency still pays full rate — the ring must not fire yet");
 });
 
+// Observer Mode (observer.js): a free-look spectator that reveals fog on whichever world it's
+// pointed at. drawNodes' trailing observerMode param (default false, so every test above is
+// unaffected) bypasses isNodeDiscovered entirely — a pure render-time flag, never a mutation of
+// state.fog itself. A hidden cache is charted knowledge to a spectator too.
+test("observerMode bypasses the discovery gate — a hidden node draws only when spectating", () => {
+  const node = makeNode({ hidden: true });
+  const state = stateWith(node);
+
+  const hidden = recordingCtx();
+  drawNodes(hidden, state, null);
+  assert.equal(hidden.calls.length, 0, "an undiscovered node draws nothing by default");
+
+  const revealed = recordingCtx();
+  drawNodes(revealed, state, null, true);
+  assert.ok(revealed.calls.length > 0, "the same node draws once observerMode bypasses the discovery gate");
+});
+
 test("drawNodes does not ring an under-cap or freshly-untallied node", () => {
   for (const miners of [0, 1, undefined]) {
     const node = makeNode({ miners });

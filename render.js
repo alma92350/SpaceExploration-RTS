@@ -104,7 +104,11 @@ function viewBounds(camera, vw, vh, pad = 0) {
   };
 }
 
-export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost, alpha = 1) {
+// observerMode (default false — every existing caller/test stays byte-identical): Observer
+// Mode's whole point is seeing everything on the spectated world, so the fog wash is skipped
+// outright and every per-entity fog gate below (drawBuildings/drawUnits/drawBuildingBars) is
+// bypassed too — a pure render-time flag, never a mutation of state.fog itself.
+export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost, alpha = 1, observerMode = false) {
   pruneFacing(state);
   ctx.save();
   ctx.fillStyle = "#05070f";
@@ -119,16 +123,16 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   // membership, instead of each of drawBuildingBars/drawJumpStaging/drawPowerGrid/drawUnits
   // independently allocating its own `new Set(state.selection)` sixty times a second.
   const selSet = new Set(state.selection);
-  drawFogBase(ctx, state, view);
+  if (!observerMode) drawFogBase(ctx, state, view);
   drawTerrain(ctx, state, view);   // charted geography — under nodes/units, always visible
   // Resource deposits are charted map knowledge (see data.js), not
   // battlefield intel — they render at full visibility regardless of
   // fog, on top of the dimmed backdrop.
-  drawNodes(ctx, state, view);
+  drawNodes(ctx, state, view, observerMode);
   if (state.scenario) drawScenario(ctx, state);   // the convoy route + stations, under the units
-  drawBuildings(ctx, state, view);     // building hulls + foe pips (bars deferred below)
-  drawUnits(ctx, state, view, alpha, selSet);  // unit hulls, then unit overlays (two passes)
-  drawBuildingBars(ctx, state, view, selSet);  // building health bars last, so a passing ship can't paint them out
+  drawBuildings(ctx, state, view, observerMode);     // building hulls + foe pips (bars deferred below)
+  drawUnits(ctx, state, view, alpha, selSet, observerMode);  // unit hulls, then unit overlays (two passes)
+  drawBuildingBars(ctx, state, view, selSet, observerMode);  // building health bars last, so a passing ship can't paint them out
   drawJumpStaging(ctx, state, view, selSet);   // staging ring around a selected Spaceport (Odyssey)
   drawPowerGrid(ctx, state, view, selSet);     // efficiency zones around a selected Reactor (Odyssey)
   drawEffects(ctx);

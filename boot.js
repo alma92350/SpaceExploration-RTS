@@ -24,6 +24,8 @@ import { attachInput } from "./input.js";
 import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, addFuseWarning, activePings, resetEffects, DEATH_BASE_RADIUS } from "./effects.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
+import { observedState, exitObserverMode } from "./observer.js";
+import { renderObserverPanel } from "./observerPanel.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
@@ -195,6 +197,12 @@ export function performJump(destId, landingPoint) {
 // (the jump completes later, from the picker's own Confirm button, once the player commits to a
 // spot).
 export function initiateJump(destId) {
+  // A real jump changes galaxy.activeId — Observer Mode's whole guarantee is that spectating
+  // never touches that (see observer.js's header comment), so it's refused here at the single
+  // choke point every real-jump trigger funnels through (the starmap, a Spaceport's Jump
+  // button, a colony-alert toast's "jump to defend"), not just the starmap click this file
+  // also special-cases into a free spectateWorld instead.
+  if (game.observerMode) return null;
   const g = game.galaxy;
   if (!g || !canJumpTo(g, destId)) return null;
   if (g.credits < jumpCost(g, destId)) return null;
@@ -278,6 +286,7 @@ function focusActivePlanet() {
 export function restartToMapSelect() {
   if (loop) loop.stop();
   if (game.input) { game.input.destroy(); game.input = null; }
+  exitObserverMode();   // a dangling spectateId into a galaxy that's about to be nulled would wedge the next game's input guards
   game.state = null;
   game.galaxy = null;
   clearPause();   // leaving a game clears any pause + the PAUSED banner
@@ -292,6 +301,7 @@ export function restartToMapSelect() {
 export function bootState(newState, { intro }) {
   if (loop) loop.stop();
   if (game.input) game.input.destroy();
+  exitObserverMode();   // fresh/loaded game → fresh session, same reasoning as game.groups/colonyAlerts below
   mapSelectEl.classList.add("hidden");
   gameOverEl.classList.add("hidden");
   underAttackEl.classList.add("hidden");
@@ -368,10 +378,16 @@ export function bootState(newState, { intro }) {
       // While paused no tick runs, so the leftover fraction wobbles with the accumulator —
       // pin alpha to 1 (settled/live positions) so paused units sit still instead of jittering.
       const a = pauseReasons.size ? 1 : alpha;
-      drawFrame(ctx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, game.input.getDragBox(), game.input.getBuildGhost(), a);
-      drawMinimap(minimapCtx, game.state, game.input.getCamera(), canvas.clientWidth, canvas.clientHeight, MINIMAP_W, MINIMAP_H, activePings());
+      // Observer Mode draws observedState() (possibly a different, backgrounded world) through
+      // its own camera instead of the real game.state/game.input camera — see observer.js's
+      // header comment. Neither is touched by the other: normal play resumes exactly where it
+      // was left the moment observerMode goes back off.
+      const viewState = game.observerMode ? observedState() : game.state;
+      const viewCamera = game.observerMode ? game.observerCamera : game.input.getCamera();
+      drawFrame(ctx, viewState, viewCamera, canvas.clientWidth, canvas.clientHeight, game.input.getDragBox(), game.input.getBuildGhost(), a, game.observerMode);
+      drawMinimap(minimapCtx, viewState, viewCamera, canvas.clientWidth, canvas.clientHeight, MINIMAP_W, MINIMAP_H, activePings(), game.observerMode);
       processFrameEvents();
-      if (now - lastHud > 150) { lastHud = now; renderHUD(); }
+      if (now - lastHud > 150) { lastHud = now; renderHUD(); renderObserverPanel(); }
       if (game.state.over && !announced) {
         announced = true;
         loop.stop();

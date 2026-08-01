@@ -49,6 +49,10 @@ class FakeElement extends EventTarget {
   set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
   appendChild(c) { this.children.push(c); return c; }
   append(...cs) { this.children.push(...cs); }
+  // overlays.js's showGalaxyToast schedules a real setTimeout that calls el.remove() on itself —
+  // harmless to no-op (no test asserts on toast cleanup), but without it that timer firing later
+  // throws an uncaught TypeError and fails whichever test happens to still be running.
+  remove() {}
   set innerHTML(v) { if (v === "") this.children = []; }   // the only value renderStarmap ever assigns it
   get innerHTML() { return ""; }
   _queryAll(selector) {
@@ -449,6 +453,49 @@ test("no garrison line for a still-unexplored world", () => {
   const node = worldNode(g, unexplored);
   assert.ok(node.className.includes("unexplored"), "sanity: this world really is unexplored");
   assert.equal(node.querySelector(".sm-garrison"), null, "no garrison line for a world with no foothold");
+
+  game.galaxy = null;
+});
+
+// Observer Mode (observer.js): while spectating, a starmap click is a free camera jump — no
+// Spaceport, no fuel, no real activeId change — to ANY world, discovered or not.
+test("Observer Mode: clicking an unexplored world (no Spaceport, no fuel) spectates it for free and closes the map", () => {
+  const g = createGalaxy({ seed: 32 });
+  const realActiveId = g.activeId;
+  game.galaxy = g;
+  game.colonyAlerts = {};
+  game.observerMode = true;
+  game.spectateId = realActiveId;
+  game.observerCamera = { x: 0, y: 0, zoom: 1 };
+
+  renderStarmap();
+  starmapEl.classList.remove("hidden");
+  const unexplored = g.worlds.find(w => w !== realActiveId);
+  worldNode(g, unexplored).click();
+
+  assert.equal(game.spectateId, unexplored, "the click jumped the spectated world with no Spaceport/fuel gate");
+  assert.equal(g.activeId, realActiveId, "the real seat never moved — only the spectated view did");
+  assert.ok(starmapEl.classList.contains("hidden"), "the starmap closes after an observer jump, same as a real one");
+
+  game.galaxy = null;
+  game.observerMode = false;
+  game.spectateId = null;
+  game.observerCamera = null;
+});
+
+// Not the no-Spaceport/no-fuel gate (that path's showGalaxyToast schedules a real 5s cleanup
+// timer the test runner would have to wait out) — clicking your OWN world exercises the same
+// "observerMode off -> fall through unchanged" ordering via a different, toast-free early exit.
+test("Observer Mode off: clicking a world leaves spectateId untouched — normal play's own gating still runs", () => {
+  const g = createGalaxy({ seed: 32 });
+  game.galaxy = g;
+  game.colonyAlerts = {};
+  assert.equal(game.observerMode, false, "sanity: not observing");
+
+  renderStarmap();
+  worldNode(g, g.activeId).click();   // the real "already here" no-op branch
+
+  assert.equal(game.spectateId, null, "no observer jump happened — the click fell through to normal play's own logic");
 
   game.galaxy = null;
 });

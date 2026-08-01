@@ -31,12 +31,34 @@ sound.setMuted(true);
 // The touch handlers separately call onTouchActive(), which flips document.body into "touch
 // mode" (bigger tap targets, the touch HUD legend) via .classList.contains()/.add() on first
 // real touch — so the stub grows a `classList` mirroring FakeCanvas's own below, still every
-// method a harmless no-op/false. Nothing here reads anything of `document` beyond these.
-globalThis.document = { body: { classList: { contains() { return false; }, add() {}, remove() {}, toggle() {} } } };
+// method a harmless no-op/false.
+//
+const VW = 800, VH = 600;
+
+// getElementById: input.js now imports observer.js (Observer Mode delegation), which imports
+// dom.js for `canvas` — dom.js resolves EVERY one of its exports via getElementById at ITS
+// OWN module-load time (same constraint test/starmap.test.js's header comment documents),
+// so it must exist and return something non-null for every id before that import chain runs,
+// even though most of this file's own tests never touch it. A couple of Observer Mode tests
+// below DO exercise observer.js's camera clamping through this very stub, so it needs a real
+// clientWidth/clientHeight (matching FakeCanvas's own below) — without them clampCamera divides
+// by undefined and silently NaNs the camera position instead of throwing.
+class FakeDomEl extends EventTarget {
+  constructor() {
+    super();
+    this.classList = { toggle() {}, add() {}, remove() {}, contains() { return false; } };
+    this.style = {};
+    this.clientWidth = VW;
+    this.clientHeight = VH;
+  }
+  getContext() { return {}; }   // dom.js's context2d() calls this on the canvas/minimap elements
+}
+globalThis.document = {
+  body: { classList: { contains() { return false; }, add() {}, remove() {}, toggle() {} } },
+  getElementById() { return new FakeDomEl(); },
+};
 
 const { attachInput } = await import("../input.js");
-
-const VW = 800, VH = 600;
 
 // Stands in for the real HTMLCanvasElement: a real EventTarget (so addEventListener /
 // dispatchEvent / the `{ signal }` teardown all behave exactly like the browser) plus the
@@ -888,4 +910,101 @@ test("a plain double-click (no Ctrl) stays viewport-limited, as before", () => {
   canvas.dispatchEvent(ev("dblclick", { clientX, clientY }));   // no ctrlKey
 
   assert.deepEqual(state.selection, [onscreen.id], "the off-screen unit of the same type is not swept in without Ctrl");
+});
+
+/* ============================================================
+   Observer Mode (observer.js): O toggles it, and while it's on every order/build/group hotkey
+   is swallowed (this isn't your world to command) and Space cycles bases on the SPECTATED
+   world — any owner — instead of input.js's own player-only centerOnBase. enterObserverMode
+   needs a minimal `game.galaxy` shape ({ activeId, planets }, the only two fields it and
+   observedState() actually read) — a full engine/galaxy.js createGalaxy() is more than this
+   file's deliberately bare fixtures need.
+   ============================================================ */
+
+function enterObserving(state) {
+  game.input = null;   // forces enterObserverMode's own createCamera(...) fallback, not a real camera copy
+  game.galaxy = { activeId: state.planetId, planets: new Map([[state.planetId, state]]) };
+  game.state = state;
+  window.dispatchEvent(ev("keydown", { key: "o", code: "KeyO" }));
+}
+
+function exitObserving() {
+  if (game.observerMode) window.dispatchEvent(ev("keydown", { key: "o", code: "KeyO" }));
+  game.galaxy = null; game.state = null; game.spectateId = null; game.observerCamera = null;
+}
+
+test("O enters and exits Observer Mode; while on, an order hotkey (Q) is swallowed instead of selecting the army", () => {
+  const { window, state } = setup();
+  const skiff = makeUnit("skiff", "player", 500, 500);
+  state.units.set(skiff.id, skiff);
+  state.selection = [];
+
+  enterObserving(state);
+  assert.equal(game.observerMode, true, "O enters Observer Mode");
+
+  window.dispatchEvent(ev("keydown", { key: "q", code: "KeyQ" }));
+  assert.deepEqual(state.selection, [], "Q (selectAllArmy) never fired — order hotkeys are swallowed while observing");
+
+  exitObserving();
+  assert.equal(game.observerMode, false, "a second O press exits");
+});
+
+test("Space, while observing, cycles bases on the spectated world (any owner) — not the player-only centerOnBase", () => {
+  const { window, state } = setup();
+  state.buildings.clear();
+  const aiCC = makeBuilding("command", "ai", 900, 900);   // AI-only: the ordinary Space handler would find nothing here at all
+  state.buildings.set(aiCC.id, aiCC);
+
+  enterObserving(state);
+  window.dispatchEvent(ev("keydown", { key: " ", code: "Space" }));
+
+  assert.ok(game.observerCamera, "the observer camera exists");
+  assert.equal(game.observerCamera.x, aiCC.x, "Space landed on the AI's base");
+  assert.equal(game.observerCamera.y, aiCC.y);
+
+  exitObserving();
+});
+
+test("Escape, while observing, exits Observer Mode instead of the normal build/attack-move cancel", () => {
+  const { window, state, controller } = setup();
+  enterObserving(state);
+
+  window.dispatchEvent(ev("keydown", { key: "Escape", code: "Escape" }));
+
+  assert.equal(game.observerMode, false, "Escape backs out of Observer Mode, same as every other overlay in this codebase");
+  game.galaxy = null; game.state = null; game.spectateId = null; game.observerCamera = null;
+});
+
+test("a left-drag, while observing, pans the OBSERVER camera instead of box-selecting the real state", () => {
+  const { canvas, window, state } = setup();
+  // The fresh camera starts centered on the 4000x4000 map's middle (2000,2000) — screen center
+  // — so this decoy sits exactly where a drag spanning most of the viewport would catch it
+  // under NORMAL (non-observing) box-select.
+  const decoy = makeUnit("skiff", "player", 2000, 2000);
+  state.units.set(decoy.id, decoy);
+  state.selection = [];
+  enterObserving(state);
+  const startCam = { x: game.observerCamera.x, y: game.observerCamera.y };
+
+  leftDrag(canvas, window, { clientX: 50, clientY: 50 }, { clientX: VW - 50, clientY: VH - 50 });
+
+  assert.notDeepEqual({ x: game.observerCamera.x, y: game.observerCamera.y }, startCam,
+    "the drag panned the observer camera");
+  assert.deepEqual(state.selection, [], "no box-selection ran on the real state — the decoy was never touched");
+
+  exitObserving();
+});
+
+test("the wheel, while observing, zooms the OBSERVER camera instead of the real one", () => {
+  const { canvas, window, controller, state } = setup();
+  enterObserving(state);
+  const startZoom = game.observerCamera.zoom;
+  const realZoomBefore = controller.getCamera().zoom;
+
+  canvas.dispatchEvent(ev("wheel", { clientX: VW / 2, clientY: VH / 2, deltaY: -100 }));
+
+  assert.notEqual(game.observerCamera.zoom, startZoom, "the observer camera zoomed");
+  assert.equal(controller.getCamera().zoom, realZoomBefore, "the real camera never moved while observing");
+
+  exitObserving();
 });
