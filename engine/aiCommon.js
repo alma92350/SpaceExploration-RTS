@@ -19,10 +19,20 @@ const APM_BURST_FRAC = 1 / 15;   // a busy AI can bank at most ~4 seconds' worth
 // always resolves. Credits accrue continuously and cap at a few seconds' worth,
 // so a busy AI can't hoard a giant burst. When aiApm is null (the default, and
 // every headless test) the AI is unthrottled — behaviour is exactly as before.
+//
+// A BACKGROUND colony (state.background, engine/galaxy.js — a world that isn't the player's
+// current seat) accrues at HALF its configured apm: nobody's actively watching it, so it manages
+// its economy at half pace rather than as briskly as the seat you're actually on. This halves only
+// the accrual rate (and, since the burst cap below is derived from the same value, its burst
+// reserve too) — never state.ai.apm itself, which stays exactly what difficulty picked for every
+// other reader (display, save/load, the neighbour-profile tests) — and never the attack/defense
+// commit exemption (canAct/spend below), so a background world under attack still always throws
+// whatever it has and the game still always resolves.
 export function accrueActionBudget(state, dt) {
   if (state.ai.apm == null) return;
-  const cap = Math.max(2, state.ai.apm * APM_BURST_FRAC);
-  state.ai.actionBudget = Math.min((state.ai.actionBudget || 0) + (state.ai.apm / 60) * dt, cap);
+  const apm = state.background ? state.ai.apm / 2 : state.ai.apm;
+  const cap = Math.max(2, apm * APM_BURST_FRAC);
+  state.ai.actionBudget = Math.min((state.ai.actionBudget || 0) + (apm / 60) * dt, cap);
 }
 
 export function canAct(state) {
