@@ -1083,3 +1083,38 @@ test("the favor countdown live-patches across an unrelated renderSelectionPanel 
   const after = panelEl.querySelector(".favor-progress").textContent;
   assert.notEqual(after, before, "the countdown must not freeze at whatever it read on the panel's last rebuild");
 });
+
+/* ---------------------------------------------------------------------------------------------
+   TARGET 10 — the reported bug: refreshMarketRows (hudSelection.js) scoped its live-patch sweep
+   to `.market-row` alone, a layout class reused far beyond actual Market rows — a Bulk
+   Freighter's cargo panel (renderFreight) borrows it purely for the shared flexbox spacing, with
+   no `data-com` of its own (only a REAL market row sets that, in renderMarket). The very next
+   renderSelectionPanel() tick after selecting a freighter called marketRowFields(state,
+   undefined) against every one of its cargo rows and stamped "undefined ◈NaN" over the correct
+   "<Commodity> · <N> aboard" label — reported against a live save, reproduced by loading it into
+   a running build and screenshotting the panel. The fix: skip any `.market-row` without a real,
+   catalog-known `data-com`.
+   --------------------------------------------------------------------------------------------- */
+
+test("a freighter's cargo row survives an unrelated renderSelectionPanel tick without turning into 'undefined ◈NaN'", () => {
+  const { state } = setup(401);
+  const freighter = makeUnit("bulkfreighter", "player", 500, 500);
+  freighter.freight = { electronics: 1600 };
+  state.units.set(freighter.id, freighter);
+  state.selection = [freighter.id];
+  game.galaxy = { credits: 1e9 };
+  state.market = createMarket(state);
+
+  renderSelectionPanel();
+  const cargoRow = panelEl.querySelectorAll(".market-row")
+    .find(r => r.querySelector(".market-com")?.textContent.includes("Electronics"));
+  assert.ok(cargoRow, "expected a cargo row labelled with the aboard commodity");
+  const labelBefore = cargoRow.querySelector(".market-com").textContent;
+  assert.match(labelBefore, /Electronics.*1600.*aboard/i, "sanity: the row reads name + quantity, not a market price");
+
+  renderSelectionPanel();   // an ordinary tick — nothing about the selection changed
+  const labelAfter = cargoRow.querySelector(".market-com").textContent;
+  assert.equal(labelAfter, labelBefore,
+    "an unrelated tick must not touch a freighter cargo row at all — it has no data-com to live-patch, " +
+    "and the pre-fix bug was refreshMarketRows silently overwriting it with 'undefined ◈NaN' anyway");
+});
