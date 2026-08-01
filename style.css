@@ -495,6 +495,29 @@ body.scenario .under-attack { top: 64px; z-index: 6; }
   font-size: 11px;
   font-weight: 700;
 }
+/* Minimize toggle (observerPanel.js): the stats rows below are the tall part that can cover
+   whatever's actually happening on the observed world — collapsing them down to just the head
+   (world name + archetype) leaves the map visible while still marking which world is being
+   watched. State lives as .minimized on #observerPanel itself (see observerPanel.js), so it
+   survives that element's own innerHTML rebuild every render. */
+.observer-min-btn {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.observer-min-btn:hover { border-color: var(--accent); }
+.observer-panel.minimized .observer-rows { display: none; }
 .observer-rows { display: flex; flex-direction: column; gap: 4px; }
 .observer-row { display: flex; flex-direction: column; }
 .observer-label { color: var(--accent); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
