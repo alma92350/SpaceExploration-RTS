@@ -194,6 +194,43 @@ It is also the most widespread finding by far: `production-stall` fires on **43 
 across every world and every strategy. The single exception (glacius/aggressive) missed the
 detector's 0.25 threshold by scoring 0.11 — it stalled too, just less often.
 
+**Update, 2026-08-01 — the two sinks above are both finite, and a long-enough Odyssey session
+outlives them.** Raised by a player-uploaded Odyssey save (real play, not the bench): after
+~118 sim-minutes, four background neighbours (kybernet, helix, forge, glacius — all
+`economic`/`matching`) had fully researched every upgrade and built out to their Barracks-surplus
+cap and (where room allowed) multiple Command Centers, and were **still** sitting on
+8,000–34,000+ idle ore behind a garrison frozen at the strategy's bare floor — kybernet: 34,065
+ore, 9,285 crystals, 9,240 radioactives, 3 units, unmoved for the whole observed session. Both
+sinks are bounded on purpose (`SURPLUS_MAX_BARRACKS`, one cluster per colony ship) — that's not
+the bug — but nothing picks up once they're both exhausted, and a living-galaxy world's income
+never stops.
+
+**Status: fixed.** `standingArmyCap()` (`engine/aiEconomy.js`) now adds a third, unbounded
+surplus term — the same `SURPLUS_STEP` escalation shape as the Barracks sink — so sustained ore
+lifts the army cap itself once the strategy's own floor is what's holding it back. Verified
+directly (120-sim-minute probes, `--opponent none`, before vs. after): worlds that were frozen at
+the floor for the entire run now keep growing — `helix/matching` 3 → 11 units, `forge/economic`
+3 → 12 — while `default`/`aggressive` worlds (which never hit this cap; it returns `Infinity` for
+them) are byte-identical, confirming the change is scoped to exactly the two strategies it
+targets, and the skirmish path (`state.endless`-gated) is untouched.
+
+```
+node tools/ailab.js probe --world helix --strategy matching --opponent none --minutes 120 --sample 12
+```
+
+`sweep --minutes 40` (16-run: korrath/ferros/vesper/kybernet × 4 strategies) moved
+**0.632 → 0.637** with **zero regressions** — `compare` shows every delta ≥ 0. The two
+configurations that moved most were `korrath/matching` (+0.015) and `ferros/economic` (+0.065,
+peak bank 10,420 → 6,736). Read the rest honestly rather than call it clean: the full 44-run
+`check` at the default 60 minutes still fires `hoarding` on 2/44 (`korrath/matching`,
+`oort/matching`). Both are cases where ore crosses the `SURPLUS_STEP` threshold only once, early
+(3 → 4 units), then plateaus for the rest of the run because income hovers just under the next
+2,000-ore step — so `armyGrowthTail` (growth in the *last third* only) reads zero even though the
+world is no longer frozen at the floor. A steeper or continuously-scaled escalation would close
+that gap but risks outgrowing supply faster than `aiBaseAndTech` can raise Habitats for it — left
+as a follow-up, not bundled into this fix. `kybernet`/`glacius` (this section's own worst
+offenders) are fully clear: their surplus was ore, and ore is exactly what this fix drains.
+
 ### 2.4 The Rusher never develops, and its Hard-only rescue lands ~30 minutes late
 
 **Status: fixed.** `aiIndustryReserve` banks for the power grid and the first two chain buildings
@@ -516,3 +553,4 @@ re-run.
 | 2026-07-30 | the bench's own detectors are still valid after the fixes | — | **no** — three of five became false positives on the scaled-up AI. Rewritten and pinned with tests; the pre-fix baseline was re-measured under the new definitions rather than compared across them | corrected |
 | 2026-07-30 | temperament should govern the grievance/aggression COOLDOWN, not just the souring | `forgiveness` on archetype × strategy × difficulty, driving both the recovery drift and the provocation memory | a ~8× spread across reachable combinations (16.7 min of grudge down to 2.0). Bench: passive **0.619 → 0.619, byte-identical on all five detectors** (correct — a player who never draws blood never provokes anyone, so the dial is a no-op there); skirmisher **0.336 → 0.365**, `hostile-but-idle` 34/44 → 18/44. Read that second number carefully: most of it is the metric getting *fairer*, not the AI playing better — a neighbour that has cooled off, or died, no longer counts as "hostile and refusing to attack". Souring deliberately left on the stock rate, pinned by a test, since the obvious implementation would have slowed it too | **yes** |
 | 2026-07-30 | `production-stall` is one Habitat per 10 s throttling the army | parallel Habitats when supply, not ore, is the bottleneck | **no** — 18/44 before, 18/44 after. Probing the worlds it fires on shows the residue is the Rusher archetype's designed economy (six workers, one Barracks) on Medium, where `rusherGraduates` doesn't apply. Kept anyway: it is what moved supply-deadlock 4→1 | kept, but it did not fix what it was aimed at |
+| 2026-08-01 | the §2.3 Barracks/colony-ship surplus sinks are both finite, so a long-enough Odyssey session outlives them and hoarding returns once a neighbour is fully built out | let sustained ore lift the standing-army cap itself (`standingArmyCap` in `engine/aiEconomy.js`), same `SURPLUS_STEP` escalation shape, Odyssey-only | Raised by a player-uploaded Odyssey save: kybernet held 34,065 ore / 9,285 crystals / 9,240 radioactives behind a 3-unit garrison after ~118 sim-minutes with every upgrade researched and Barracks/CCs at cap. 120-min probes confirm the fix: `helix/matching` 3→11 units, `forge/economic` 3→12, both previously frozen at the floor all run. `sweep --minutes 40` (16 runs) 0.632→0.637, **zero regressions** (`compare`: every delta ≥ 0); `default`/`aggressive` configs byte-identical (never hit this cap). `check` (44 runs, 60 min) `hoarding` 2/44 residual (`korrath/matching`, `oort/matching`) — ore crosses the step threshold once early then plateaus just under the next one, so `armyGrowthTail`'s last-third window reads zero even though the world isn't frozen anymore; not the same failure as before | **yes** |

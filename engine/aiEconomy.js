@@ -307,6 +307,24 @@ export function aiBaseAndTech(state, ctx) {
   }
 }
 
+// SURPLUS SINK #3 (Odyssey only), on top of the Barracks/expansion sinks above: a strategy that
+// caps its standing army (Economic, Force Parity) still has nowhere to put ongoing income once
+// Barracks are at their surplus cap and there's nowhere left to expand — measured on a matured
+// background neighbour (kybernet/matching, an Odyssey save): a full tech tree, three Command
+// Centers, every Barracks slot filled, and 30,000+ ore still piling up behind a 3-unit garrison,
+// because more barracks/CCs don't help when the cap gating THIS cycle's production never moved
+// (docs/odyssey-ai-review.md §2.3's own ledger already found this — "extra Barracks alone will
+// drain the hoard — no effect... a standing-army cap means extra capacity sits idle"). Same
+// escalation shape as SURPLUS_STEP so it reads as one family of dial, not a new mechanism: every
+// SURPLUS_STEP of banked ore lifts the cap by one, letting a fully-developed neighbour keep
+// converting overflow into a bigger garrison instead of banking it forever. Self-bounding —
+// production spends the ore straight back down, and the garrison itself is still bounded by
+// supply (aiBaseAndTech only raises Habitats up to state.popCap) — so this cannot run away into
+// an unbounded army the way an uncapped income stream would otherwise threaten to.
+function armySurplusBonus(state, ai) {
+  return state.endless ? Math.floor(ai.resources.ore / SURPLUS_STEP) : 0;
+}
+
 // The standing-army production cap for this think cycle — Infinity (no cap, today's behavior)
 // unless the strategy defines one (engine/aiStrategy.js). Economic keeps a small fixed cap that
 // lifts sharply for a while after the AI is actually attacked (ctx.warFooting, engine/ai.js);
@@ -316,13 +334,14 @@ export function aiBaseAndTech(state, ctx) {
 // ctx.army.length, a fixed snapshot — an acceptable per-cycle approximation, same spirit as the
 // rest of this AI's think-cycle decisions.
 function standingArmyCap(state, ctx) {
-  const { strategy } = ctx;
+  const { strategy, ai } = ctx;
   if (strategy.matchEnemyForce) {
     const enemy = visibleEnemyForceCount(state);
-    return Math.max(strategy.matchFloor || 0, Math.round(enemy * (strategy.matchBuffer || 1)));
+    return Math.max(strategy.matchFloor || 0, Math.round(enemy * (strategy.matchBuffer || 1))) + armySurplusBonus(state, ai);
   }
   if (strategy.standingArmyCap != null) {
-    return ctx.warFooting ? strategy.standingArmyCap * (strategy.warFootingMult || 1) : strategy.standingArmyCap;
+    const base = ctx.warFooting ? strategy.standingArmyCap * (strategy.warFootingMult || 1) : strategy.standingArmyCap;
+    return base + armySurplusBonus(state, ai);
   }
   return Infinity;
 }
