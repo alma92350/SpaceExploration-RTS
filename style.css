@@ -184,8 +184,16 @@ html, body {
 /* Industry/Tech badge — the world's economic character at a glance. */
 .starmap-world .sm-stats { font-size: 0.68rem; color: var(--muted); opacity: 0.85; font-variant-numeric: tabular-nums; margin-top: 1px; }
 /* Deposit icons + yield, plus the world's rule-modifier label when it has one — the same
-   geography read the skirmish select cards already give freely (setup.js's mod-note). */
-.starmap-world .sm-deps { font-size: 0.66rem; color: var(--muted); opacity: 0.8; margin-top: 2px; max-width: 190px; text-align: center; }
+   geography read the skirmish select cards already give freely (setup.js's mod-note). A world's
+   full modifier label (e.g. Glacius's "Frozen ground: all units 10% slower; ice fields flank a
+   central lane") can run to 6+ wrapped lines at this width, which used to make that one card far
+   taller than its neighbours on the ring layout below — tall enough to overlap and obscure them.
+   Clamping to 2 lines bounds every card to roughly the same height regardless of label length; the
+   full, untruncated text is still one hover away via the element's title (starmap.js).  */
+.starmap-world .sm-deps {
+  font-size: 0.66rem; color: var(--muted); opacity: 0.8; margin-top: 2px; max-width: 160px; text-align: center;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .starmap-world.seat   { border-color: var(--accent); box-shadow: 0 0 14px rgba(79,209,255,0.5); }
 .starmap-world.seat .sm-sub   { color: var(--accent); }
 .starmap-world.colony { border-color: var(--good, #4ade80); }

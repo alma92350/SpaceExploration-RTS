@@ -262,6 +262,29 @@ test("commandAt notifies on the plain move fallback (nothing at the click point)
   assert.equal(calls(), 1, "the fallback move branch must notify too, not just the rally special case");
 });
 
+// Regression: a Reactor/Combustor/Biomass Reactor has neither a recipe nor a storeCap (it's a
+// pure fuel-burning power station, entities.js), so commandAt's service-target check — originally
+// `recipeOf(target) || storeCapOf(target.type) > 0` — never matched one. Directing a worker onto a
+// completed, undamaged Reactor fell all the way through to the plain-move fallback: the worker
+// just walked over and stood there, never fetching the radioactives it needed to run. Fixed by
+// also matching BUILDINGS[type].combust, the same "is this serviceable" test engine/haul.js's own
+// assignService/updateBuild already use internally.
+test("commandAt assigns a service order when a worker is directed onto a fuel-needing power station", () => {
+  const { state, canvas, controller, calls } = setup();
+  const worker = makeUnit("worker", "player", 500, 500);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+  const reactor = makeBuilding("reactor", "player", 2000, 2000);   // BUILDINGS.reactor.combust: { fuels: ["radioactives"], ... }
+  state.buildings.set(reactor.id, reactor);
+
+  const { clientX, clientY } = clientFor(controller, reactor.x, reactor.y);
+  rightClick(canvas, window, clientX, clientY);
+
+  assert.deepEqual(worker.order, { type: "service", buildingId: reactor.id, phase: "plan", manual: true },
+    "a healthy power station must dispatch the same manual service order a factory/Rig target gets — not a plain move");
+  assert.equal(calls(), 1);
+});
+
 // ============================================================================
 // Click-and-drag heading: a right-DRAG (mousedown then mouseup at a different point) sets the
 // destination at the DRAG'S START and stamps the drag direction as an explicit facing (a plain

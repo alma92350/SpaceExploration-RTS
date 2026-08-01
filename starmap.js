@@ -90,14 +90,28 @@ export function renderStarmap() {
 
   const field = document.createElement("div");
   field.className = "starmap-field";
-  const n = status.worlds.length;
+  // Angular slice per world is weighted by card footprint, not split evenly: a world with a
+  // PLANET_MODIFIERS rule label (engine/map.js) wraps a noticeably bigger dossier card (its
+  // sm-deps line, style.css) than a plain deposits-only one, so it earns a proportionally wider
+  // slice of the ring. An even 360/n split (the previous behaviour) packs every world the same
+  // regardless of its own card size — fine when the bigger cards land apart, but several landing
+  // consecutively (Nimbus/Pyralis/Helix Belt/Oort Reach, on the current 11-world roster) then pack
+  // uniformly close and visibly overlap, wherever in the ring that happens to fall.
+  const weights = status.worlds.map(w => (PLANET_MODIFIERS[w.id] ? 1.25 : 1));
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  let cumWeight = 0;
+  const angles = weights.map(wt => {
+    const ang = ((cumWeight + wt / 2) / totalWeight) * Math.PI * 2 - Math.PI / 2;
+    cumWeight += wt;
+    return ang;
+  });
   status.worlds.forEach((w, i) => {
-    const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const ang = angles[i];
     const node = document.createElement("button");
     const badge = alertBadge(w.id);   // 'attack' | 'fallen' | null — this world's live alert state
     node.className = "starmap-world " + w.status + (badge ? ` alert-${badge}` : "");
-    node.style.left = `${50 + Math.cos(ang) * 38}%`;
-    node.style.top = `${50 + Math.sin(ang) * 40}%`;
+    node.style.left = `${50 + Math.cos(ang) * 42}%`;
+    node.style.top = `${50 + Math.sin(ang) * 44}%`;
     const baseSub = w.status === "seat" ? (w.pacified ? "◉ you are here · pacified" : "◉ you are here")
       : w.status === "pacified" ? "⚔ conquered"
       : w.status === "colony" ? `your colony · +${w.income} ◈/min`
@@ -135,12 +149,17 @@ export function renderStarmap() {
       ? Object.entries(planet.deposits).map(([c, y]) => `${COM[c]?.ico || "◆"} ${y.toFixed(1)}`).join(" · ")
       : "";
     const dossier = mod ? `${depsText} · ${mod.label}` : depsText;
+    // The dossier line is CSS-clamped to 2 lines (style.css) so a long modifier label can't
+    // balloon this one card's height past its neighbours on the ring below — title gives back
+    // the untruncated text on hover, so clamping never actually loses the modifier's full wording.
+    const depsEl = mk("sm-deps", dossier);
+    if (dossier) depsEl.title = dossier;
     node.append(
       mk("sm-ico", ico),
       mk("sm-name", worldName(w.id)),
       mk("sm-sub", sub),
       mk("sm-stats", `⚙ ${w.industry} · 🔬 ${w.tech}`),
-      mk("sm-deps", dossier),
+      depsEl,
     );
     // Garrison line: your standing defence on a world you actually hold RIGHT NOW — the active
     // seat, or a background colony with a building still standing (galaxyStatus's own "colony"
