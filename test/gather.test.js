@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeBuilding } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { updateGather } from "../engine/gather.js";
 import { UNITS, storeTotal } from "../engine/entities.js";
 
@@ -318,6 +318,106 @@ test("a Refinery planted right on a node is NOT a drop-off — the gatherer walk
   for (let i = 0; i < 4000 && state.players.player.resources.ore === before; i++) updateGather(state, worker, 0.05);
   assert.ok(state.players.player.resources.ore > before, "it reached the Command Center and banked there");
   assert.equal(storeTotal(refinery), 0, "the Refinery still received nothing");
+});
+
+test("a landed collection-point Hauler closer than the Command Center receives the deposit into its freight hold, not the treasury", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  const cc = [...state.buildings.values()].find(b => b.type === "command" && b.owner === "player");
+  const hauler = makeUnit("hauler", "player", node.x + 10, node.y);
+  hauler.collectPoint = true;
+  state.units.set(hauler.id, hauler);
+
+  worker.x = hauler.x; worker.y = hauler.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+  const before = state.players.player.resources.ore;
+  assert.ok(Math.hypot(cc.x - worker.x, cc.y - worker.y) > 30, "the base CC is out of drop reach — the Hauler sits right next to the worker instead");
+
+  updateGather(state, worker, 0.05);
+
+  assert.equal(state.players.player.resources.ore, before, "nothing reaches the treasury directly — it went to the Hauler's hold instead");
+  assert.equal(worker.cargo.qty, 0, "the worker's whole load fit in the Hauler's hold and is gone");
+  assert.equal(hauler.freight.ore, 10, "the Hauler's freight hold now carries the deposited ore");
+});
+
+test("a Hauler NOT toggled as a collection point is invisible to nearestGatherDrop — the worker walks past it to the Command Center", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  const hauler = makeUnit("hauler", "player", node.x + 10, node.y);   // collectPoint left off
+  state.units.set(hauler.id, hauler);
+
+  worker.x = hauler.x; worker.y = hauler.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+  const before = state.players.player.resources.ore;
+
+  updateGather(state, worker, 0.05);
+
+  assert.equal(state.players.player.resources.ore, before, "still walking to the distant CC — an un-toggled Hauler is never a candidate");
+  assert.equal(worker.cargo.qty, 10, "cargo stays aboard");
+  assert.equal(hauler.freight.ore || 0, 0, "the Hauler received nothing");
+});
+
+test("a full collection-point Hauler is skipped — nothing to deposit until it (or another drop) has room", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  const hauler = makeUnit("hauler", "player", node.x + 10, node.y);
+  hauler.collectPoint = true;
+  hauler.freight.ore = UNITS.hauler.cargoHold;   // already full
+  state.units.set(hauler.id, hauler);
+
+  worker.x = hauler.x; worker.y = hauler.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+  const before = state.players.player.resources.ore;
+
+  updateGather(state, worker, 0.05);
+
+  assert.equal(hauler.freight.ore, UNITS.hauler.cargoHold, "the full Hauler's hold is untouched");
+  assert.equal(state.players.player.resources.ore, before, "still walking — the far-off CC is the only remaining candidate");
+  assert.equal(worker.cargo.qty, 10, "cargo stays aboard, waiting for a real drop");
+});
+
+test("a partial Hauler deposit leaves the remainder aboard the worker, which tops off at the node rather than abandoning the load", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  const hauler = makeUnit("hauler", "player", node.x + 10, node.y);
+  hauler.collectPoint = true;
+  hauler.freight.ore = UNITS.hauler.cargoHold - 4;   // only 4 units of room left
+  state.units.set(hauler.id, hauler);
+
+  worker.x = hauler.x; worker.y = hauler.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+
+  updateGather(state, worker, 0.05);
+
+  assert.equal(hauler.freight.ore, UNITS.hauler.cargoHold, "the Hauler took exactly what fit");
+  assert.equal(worker.cargo.qty, 6, "the leftover 6 stayed aboard instead of being lost or force-fit past capacity");
+  assert.equal(worker.order.phase, "toNode", "same commodity the node it's already tasked to — it tops back off there rather than being stranded");
+});
+
+test("Logistics Network (+25% yield) applies the same bonus depositing into a Hauler as it does at the Command Center", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  state.players.player.upgrades.logisticsNetwork = true;
+  const worker = [...state.units.values()].find(u => u.owner === "player" && u.type === "worker");
+  const node = firstNode(state, "ore");
+  const hauler = makeUnit("hauler", "player", node.x + 10, node.y);
+  hauler.collectPoint = true;
+  state.units.set(hauler.id, hauler);
+
+  worker.x = hauler.x; worker.y = hauler.y;
+  worker.cargo = { com: "ore", qty: 10 };
+  worker.order = { type: "gather", nodeId: node.id, phase: "toDrop" };
+
+  updateGather(state, worker, 0.05);
+
+  assert.ok(Math.abs(hauler.freight.ore - 12.5) < 1e-6, `+25% yield credited to the Hauler's hold too: got ${hauler.freight.ore}`);
 });
 
 test("Logistics Network (+25% yield) banks more per haul", () => {
