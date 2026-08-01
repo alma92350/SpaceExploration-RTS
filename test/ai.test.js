@@ -543,7 +543,11 @@ test("a size-triggered attack keeps a home guard back; a timeout commit throws e
   runAI(state, THINK_INTERVAL);
 
   const attacking = squad.filter(u => u.order?.type === "attack-move").length;
-  const home = squad.filter(u => !u.order).length;
+  // "Home" means not sent to attack — same test aiOffense's own homeArmy filter uses (!order or
+  // still a plain 'move'): a held-back unit now gets a move order to its dispersed garrison
+  // station (disperseGarrison) rather than sitting with order:null, so checking !u.order alone
+  // would undercount it.
+  const home = squad.filter(u => !u.order || u.order.type === "move").length;
   assert.equal(home, 3, "the Economist holds its garrison of three back");
   assert.equal(attacking, 9, "and sends the surplus");
 });
@@ -583,7 +587,9 @@ test("an Odyssey partial wave sends the forward-most Rusher units even with garr
   runAI(state, THINK_INTERVAL);
 
   const attacking = squad.filter(u => u.order?.type === "attack-move");
-  const home = squad.filter(u => !u.order);
+  // Same broadened "home" check as the garrison test above — a reinforcement unit now gets a
+  // move order to its dispersed station (disperseGarrison) instead of staying order:null.
+  const home = squad.filter(u => !u.order || u.order.type === "move");
   assert.equal(attacking.length, 5, "roughly half the squad probes out this cycle");
   assert.equal(home.length, 5, "...the rest stays as reinforcement");
   const expectedForward = new Set(byDist.slice(0, 5).map(u => u.id));   // the 5 units farthest from home

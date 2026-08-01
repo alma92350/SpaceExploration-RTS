@@ -225,6 +225,89 @@ function aiOffense(state, ctx, nonScout) {
       state.ai.attackForce = attackers.length + strike.length;
       state.ai.attackDesperate = desperate;
     }
+
+    // GARRISON DISPERSAL: whatever's left of the home army after the strike above (everyone, on
+    // a cycle with no commit) spreads across a handful of stations around the AI's own Command
+    // Centers instead of sitting clumped at the rally point — see disperseGarrison below for why.
+    // Excludes a unit already fighting via auto-acquire (autoTarget/focusId, engine/combat.js) even
+    // though it carries no formal order of its own (order:null still auto-engages — only a plain
+    // 'move' order suppresses that) — a home-guard unit defending itself in place must never be
+    // yanked off that fight mid-engagement to go stand at a station instead.
+    const strikeIds = new Set(strike.map(u => u.id));
+    const toDisperse = homeArmy.filter(u => !strikeIds.has(u.id) && u.autoTarget == null && u.focusId == null);
+    disperseGarrison(state, toDisperse, buildings);
+}
+
+const GARRISON_STATIONS = 3;        // how many distinct points the idle home army spreads across, per Command Center
+const GARRISON_RING_RADIUS = 220;   // how far out a station sits — inside DEFEND_RADIUS (340), so an attack on one still recalls the army
+const STATION_REACH = 30;           // close enough to its station that re-issuing the same move order would be a no-op
+// A unit farther than this from EVERY Command Center isn't "home" yet — a stray unit deep in
+// contested or enemy territory (a retreat straggler, a unit some other mechanism dropped there)
+// must never get yanked partway across the map onto a station; it should keep doing whatever
+// auto-acquire/self-defense it's already doing right where it stands. Comfortably past the AI's
+// own build cluster (every AI building sits within ~250 of its own CC, engine/aiEconomy.js's fixed
+// offsets) plus the garrison ring itself, with real slack — nowhere near far enough to reach
+// across a normal map to the player's side.
+const DISPERSAL_HOME_RADIUS = 600;
+
+// Evenly-spaced points ringing `cc`, deterministic (no RNG, so two same-seed matches place
+// identical stations). Angle 0 points away from the map's center, so a base sitting near the
+// map's edge doesn't waste a station off the playable area.
+function garrisonStations(cc, mapWidth, mapHeight) {
+  const away = Math.atan2(cc.y - mapHeight / 2, cc.x - mapWidth / 2);
+  const stations = [];
+  for (let i = 0; i < GARRISON_STATIONS; i++) {
+    const angle = away + (i / GARRISON_STATIONS) * Math.PI * 2;
+    stations.push({ x: cc.x + Math.cos(angle) * GARRISON_RING_RADIUS, y: cc.y + Math.sin(angle) * GARRISON_RING_RADIUS });
+  }
+  return stations;
+}
+
+// Spread the AI's idle home army across a few defensive stations around each of its own
+// Command Centers, instead of leaving it clumped at whichever building's rally point produced
+// it — a scattered garrison covers more ground and isn't a single engagement away from losing
+// the AI's whole standing defense. Each Command Center (home, plus any same-map expansion)
+// claims its own ring and whichever idle units are already nearest it AND actually within
+// DISPERSAL_HOME_RADIUS of it (mirrors zoneFirst's own "stay loyal to your own base" spirit,
+// engine/gather.js) — a unit too far from every Command Center is left alone, not redirected —
+// splitting evenly across that ring's stations. A plain move order walks each unit there; once
+// arrived it clears to idle and falls back to ordinary auto-defense (combat.js) like any other
+// idle unit — a station a player attacks still triggers the normal recall
+// (visibleThreatsNearHome/DEFEND_RADIUS), since GARRISON_RING_RADIUS stays inside it. Recomputed
+// fresh every cycle, same as everything else in this file — no persisted per-unit assignment —
+// so a unit already standing at its station just skips the redundant order (STATION_REACH)
+// instead of re-arriving every cycle. Costs one action, like sending the scout (updateScout) — a
+// management decision, not the exempt attack/defense commit — but only once something real is
+// actually dispatched, not merely offered the chance.
+function disperseGarrison(state, garrison, buildings) {
+  if (!garrison.length) return;
+  const ccs = buildings.filter(b => b.type === "command" && !b.constructing);
+  if (!ccs.length || !canAct(state)) return;
+
+  const byCC = new Map(ccs.map(cc => [cc, []]));
+  for (const u of garrison) {
+    let best = null, bestD = Infinity;
+    for (const cc of ccs) {
+      const d = Math.hypot(u.x - cc.x, u.y - cc.y);
+      if (d < bestD) { bestD = d; best = cc; }
+    }
+    if (bestD <= DISPERSAL_HOME_RADIUS) byCC.get(best).push(u);
+  }
+  const { width, height } = state.map;
+  let dispatched = false;
+  for (const cc of ccs) {
+    const units = byCC.get(cc);
+    if (!units.length) continue;
+    const stations = garrisonStations(cc, width, height);
+    units.forEach((u, i) => {
+      const station = stations[i % stations.length];
+      if (Math.hypot(u.x - station.x, u.y - station.y) > STATION_REACH) {
+        issueMove([u], station.x, station.y);
+        dispatched = true;
+      }
+    });
+  }
+  if (dispatched) spend(state);
 }
 
 const FOCUS_RANGE = 340;   // only army units this close to the chosen target concentrate on it
