@@ -18,6 +18,7 @@ import { canAct, spend } from "./aiCommon.js";
 import { effectiveMix } from "./aiWorkers.js";
 import { playerUnits, playerBuildings } from "./state.js";
 import { difficultyFor } from "./aiDifficulty.js";
+import { formationSlots } from "./formation.js";
 
 const COUNTER_EVERY = 3;   // default cadence: 1 in every 3 units built reacts to the player's army instead of following the mix — difficulty-shaped via aiDifficulty.js's counterEvery (Easy 0, Hard 2), see pickNextUnitType
 
@@ -227,58 +228,102 @@ function aiOffense(state, ctx, nonScout) {
     }
 
     // GARRISON DISPERSAL: whatever's left of the home army after the strike above (everyone, on
-    // a cycle with no commit) spreads across a handful of stations around the AI's own Command
-    // Centers instead of sitting clumped at the rally point — see disperseGarrison below for why.
-    // Excludes a unit already fighting via auto-acquire (autoTarget/focusId, engine/combat.js) even
-    // though it carries no formal order of its own (order:null still auto-engages — only a plain
-    // 'move' order suppresses that) — a home-guard unit defending itself in place must never be
-    // yanked off that fight mid-engagement to go stand at a station instead.
+    // a cycle with no commit) forms up in a grid just outside the AI's own base — see
+    // disperseGarrison below — instead of sitting clumped at whichever building's rally point
+    // produced it. Excludes a unit already fighting via auto-acquire (autoTarget/focusId,
+    // engine/combat.js) even though it carries no formal order of its own (order:null still
+    // auto-engages — only a plain 'move' order suppresses that) — a home-guard unit defending
+    // itself in place must never be yanked off that fight mid-engagement to go stand in the grid.
     const strikeIds = new Set(strike.map(u => u.id));
     const toDisperse = homeArmy.filter(u => !strikeIds.has(u.id) && u.autoTarget == null && u.focusId == null);
     disperseGarrison(state, toDisperse, buildings);
 }
 
-const GARRISON_STATIONS = 3;        // how many distinct points the idle home army spreads across, per Command Center
-const GARRISON_RING_RADIUS = 220;   // how far out a station sits — inside DEFEND_RADIUS (340), so an attack on one still recalls the army
-const STATION_REACH = 30;           // close enough to its station that re-issuing the same move order would be a no-op
+const GARRISON_SKIRT_CLEARANCE = 40;    // how far past its own outermost building the parked grid sits
+const GARRISON_MIN_RING_RADIUS = 160;   // floor for a base that's nothing but a bare Command Center yet
+const OWN_BASE_SCAN_RADIUS = 320;       // buildings farther than this from a CC belong to a different base, not this one's footprint
+const STATION_REACH = 30;               // close enough to its own slot that re-issuing the same move order would be a no-op
 // A unit farther than this from EVERY Command Center isn't "home" yet — a stray unit deep in
 // contested or enemy territory (a retreat straggler, a unit some other mechanism dropped there)
-// must never get yanked partway across the map onto a station; it should keep doing whatever
+// must never get yanked partway across the map onto the grid; it should keep doing whatever
 // auto-acquire/self-defense it's already doing right where it stands. Comfortably past the AI's
 // own build cluster (every AI building sits within ~250 of its own CC, engine/aiEconomy.js's fixed
-// offsets) plus the garrison ring itself, with real slack — nowhere near far enough to reach
+// offsets) plus the garrison grid itself, with real slack — nowhere near far enough to reach
 // across a normal map to the player's side.
 const DISPERSAL_HOME_RADIUS = 600;
 
-// Evenly-spaced points ringing `cc`, deterministic (no RNG, so two same-seed matches place
-// identical stations). Angle 0 points away from the map's center, so a base sitting near the
-// map's edge doesn't waste a station off the playable area.
-function garrisonStations(cc, mapWidth, mapHeight) {
-  const away = Math.atan2(cc.y - mapHeight / 2, cc.x - mapWidth / 2);
-  const stations = [];
-  for (let i = 0; i < GARRISON_STATIONS; i++) {
-    const angle = away + (i / GARRISON_STATIONS) * Math.PI * 2;
-    stations.push({ x: cc.x + Math.cos(angle) * GARRISON_RING_RADIUS, y: cc.y + Math.sin(angle) * GARRISON_RING_RADIUS });
+// How far this CC's own buildings actually reach — the true edge of its base, not a guess. Only
+// buildings within OWN_BASE_SCAN_RADIUS of THIS cc count (mirroring the same "belongs to the
+// nearest CC" rule the garrison units themselves get sorted by, below), so a second, distant
+// expansion's turrets can't inflate the first base's footprint. Floors at
+// GARRISON_MIN_RING_RADIUS for a base that's nothing but its Command Center so far, and stays
+// inside DEFEND_RADIUS (with STATION_REACH of slack) so an attack on the parked army still
+// triggers the normal recall (visibleThreatsNearHome, below) no matter how sprawling the base
+// has grown — the same invariant the old fixed 220-radius ring relied on, just no longer capable
+// of landing INSIDE a heavily fortified base's own turret line the way a fixed radius could once
+// a base outgrew it.
+function baseFootprintRadius(cc, buildings) {
+  let radius = GARRISON_MIN_RING_RADIUS;
+  for (const b of buildings) {
+    if (b === cc) continue;
+    const d = Math.hypot(b.x - cc.x, b.y - cc.y);
+    if (d > OWN_BASE_SCAN_RADIUS) continue;
+    radius = Math.max(radius, d + (BUILDINGS[b.type]?.radius || 0));
   }
-  return stations;
+  return Math.min(radius + GARRISON_SKIRT_CLEARANCE, DEFEND_RADIUS - STATION_REACH);
 }
 
-// Spread the AI's idle home army across a few defensive stations around each of its own
-// Command Centers, instead of leaving it clumped at whichever building's rally point produced
-// it — a scattered garrison covers more ground and isn't a single engagement away from losing
-// the AI's whole standing defense. Each Command Center (home, plus any same-map expansion)
-// claims its own ring and whichever idle units are already nearest it AND actually within
+// Every unit's own grid slot for this CC's parked garrison: anchored past its own built footprint
+// (baseFootprintRadius), on the side facing away from the map's center so a base sitting near the
+// map's edge doesn't waste the spot off the playable area — outside the base, at its skirt, not
+// dropped among the buildings or at a single rally point inside them. Deterministic (no RNG, so
+// two same-seed matches place an identical grid).
+//
+// baseFootprintRadius already keeps the ANCHOR itself inside DEFEND_RADIUS, but the grid drawn
+// around it has its own size — a large garrison's outer corners can still land past the limit
+// even though its center doesn't. formationSlots is asked once to find out how far that farthest
+// corner actually reaches, and if it overshoots, the anchor is pulled back in by exactly that much
+// and asked again — one corrective pass, not a search, since a grid's own footprint doesn't change
+// with where it's centered. Keeps the WHOLE parked group, not just its middle, inside the radius
+// an attack still recalls it from, however many units end up in it.
+function garrisonSlots(units, cc, buildings, mapWidth, mapHeight) {
+  const away = Math.atan2(cc.y - mapHeight / 2, cc.x - mapWidth / 2);
+  const radius = baseFootprintRadius(cc, buildings);
+  const anchorAt = r => ({ x: cc.x + Math.cos(away) * r, y: cc.y + Math.sin(away) * r });
+
+  const anchor = anchorAt(radius);
+  const slots = formationSlots(units, anchor.x, anchor.y, { shape: "grid" });
+  const limit = DEFEND_RADIUS - STATION_REACH;
+  const farthest = Math.max(...slots.map(s => Math.hypot(s.x - cc.x, s.y - cc.y)));
+  if (farthest <= limit) return slots;
+
+  const pulled = anchorAt(Math.max(GARRISON_MIN_RING_RADIUS, radius - (farthest - limit)));
+  return formationSlots(units, pulled.x, pulled.y, { shape: "grid" });
+}
+
+// Stand the AI's idle home army up in a grid at a single anchor point just outside each of its
+// own Command Centers, instead of leaving it clumped at whichever building's rally point produced
+// it — an orderly parked garrison covers more ground and isn't a single engagement away from
+// losing the AI's whole standing defense. Each Command Center (home, plus any same-map expansion)
+// claims its own anchor and whichever idle units are already nearest it AND actually within
 // DISPERSAL_HOME_RADIUS of it (mirrors zoneFirst's own "stay loyal to your own base" spirit,
-// engine/gather.js) — a unit too far from every Command Center is left alone, not redirected —
-// splitting evenly across that ring's stations. A plain move order walks each unit there; once
-// arrived it clears to idle and falls back to ordinary auto-defense (combat.js) like any other
-// idle unit — a station a player attacks still triggers the normal recall
-// (visibleThreatsNearHome/DEFEND_RADIUS), since GARRISON_RING_RADIUS stays inside it. Recomputed
-// fresh every cycle, same as everything else in this file — no persisted per-unit assignment —
-// so a unit already standing at its station just skips the redundant order (STATION_REACH)
-// instead of re-arriving every cycle. Costs one action, like sending the scout (updateScout) — a
-// management decision, not the exempt attack/defense commit — but only once something real is
-// actually dispatched, not merely offered the chance.
+// engine/gather.js) — a unit too far from every Command Center is left alone, not redirected.
+//
+// formationSlots (engine/formation.js — the same primitive a player's own move/hold-formation
+// orders use) gives every unit in the group its OWN slot in the grid: no two units are ever sent
+// to the identical point. That matters because a shared destination never lets separation.js and
+// movement.js's arrival test both settle at once — two units ordered to the same (x,y) each keep
+// walking toward it while separation keeps shoving them back apart, forever, which is exactly what
+// the old fixed 3-station round-robin did once a garrison grew past 3 (a visible, endless jitter —
+// the "Brownian motion" a parked army should never show). A plain move order walks each unit to
+// its own slot; once arrived it clears to idle and falls back to ordinary auto-defense (combat.js)
+// like any other idle unit — the grid still sits inside DEFEND_RADIUS, so an attack on it still
+// triggers the normal recall (visibleThreatsNearHome). Recomputed fresh every cycle, same as
+// everything else in this file — no persisted per-unit slot assignment — so a unit already
+// standing at its slot just skips the redundant order (STATION_REACH) instead of re-arriving
+// every cycle. Costs one action, like sending the scout (updateScout) — a management decision,
+// not the exempt attack/defense commit — but only once something real is actually dispatched,
+// not merely offered the chance.
 function disperseGarrison(state, garrison, buildings) {
   if (!garrison.length) return;
   const ccs = buildings.filter(b => b.type === "command" && !b.constructing);
@@ -298,11 +343,11 @@ function disperseGarrison(state, garrison, buildings) {
   for (const cc of ccs) {
     const units = byCC.get(cc);
     if (!units.length) continue;
-    const stations = garrisonStations(cc, width, height);
+    const slots = garrisonSlots(units, cc, buildings, width, height);
     units.forEach((u, i) => {
-      const station = stations[i % stations.length];
-      if (Math.hypot(u.x - station.x, u.y - station.y) > STATION_REACH) {
-        issueMove([u], station.x, station.y);
+      const slot = slots[i];
+      if (Math.hypot(u.x - slot.x, u.y - slot.y) > STATION_REACH) {
+        issueMove([u], slot.x, slot.y);
         dispatched = true;
       }
     });

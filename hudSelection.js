@@ -559,9 +559,26 @@ function marketRowFields(state, com) {
 // the rebuild-signature guard exists to avoid (see the comment above renderSelectionPanel's own
 // signature). Patching text/class/title in place instead keeps the price live with zero risk of
 // replacing a button out from under an in-flight click.
+//
+// `.market-row`/`.market-com` are reused far beyond actual Market rows — freighter cargo,
+// Freight Lane ship entries, and Colony Standing Orders rows all borrow the same layout classes
+// purely for their shared flexbox/spacing styling (see renderFreight's own "Reuses the market
+// row styling" comment). Only a REAL market row also carries `data-com` (set by renderMarket,
+// just below), so that's the signal this patch keys its scope on — anything else is a
+// differently-shaped row this function has no business rewriting. Skipping it here, rather than
+// making every other call site set a `data-com` it doesn't otherwise need, is what actually
+// fixes it: a row that opted OUT of `data-com` was never asking to be live-priced, and giving it
+// one would just make marketRowFields silently stamp a price/trend readout over content it
+// doesn't apply to instead of leaving the row alone. Without this guard, any of those OTHER rows
+// gets its label clobbered on the very next tick — `marketRowFields(state, undefined)` resolves
+// no commodity and no price, so the row reads "undefined ◈NaN" moments after rendering correctly
+// (reported against a live save: a Bulk Freighter's cargo panel showing exactly that for every
+// row, immediately after selecting it).
 function refreshMarketRows(state) {
   panelEl.querySelectorAll(".market-row").forEach(row => {
-    const fields = marketRowFields(state, row.dataset.com);
+    const com = row.dataset.com;
+    if (!com || !COM[com]) return;
+    const fields = marketRowFields(state, com);
     const label = row.querySelector(".market-com");
     if (label) label.textContent = fields.label;
     const trend = row.querySelector(".market-trend");
