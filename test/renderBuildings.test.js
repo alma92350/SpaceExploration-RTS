@@ -105,6 +105,29 @@ test("drawBuildings does not throw for electrified Command Center / Barracks / H
   }
 });
 
+// Observer Mode (observer.js): a free-look spectator that reveals fog on whichever world it's
+// pointed at. drawBuildings' trailing observerMode param (default false, so every test above is
+// unaffected) bypasses the owner/fog gate entirely — a pure render-time flag, never a mutation
+// of state.fog itself.
+test("observerMode bypasses the fog gate — an unrevealed enemy building draws only when spectating", () => {
+  const enemyBuilding = makeBuilding("command", "ai", 400, 300);
+  const state = {
+    buildings: new Map([[enemyBuilding.id, enemyBuilding]]),
+    units: new Map(),
+    selection: [],
+    fog: createFog({ width: 800, height: 600 }),   // fresh — nothing revealed anywhere
+    players: { player: { color: "#5ec8ff" }, ai: { color: "#ff5e5e" } },
+  };
+
+  const hidden = tracedCtx();
+  drawBuildings(hidden.ctx, state, null);
+  assert.equal(hidden.calls.length, 0, "a fogged enemy building draws nothing by default");
+
+  const revealed = tracedCtx();
+  drawBuildings(revealed.ctx, state, null, true);
+  assert.ok(revealed.calls.length > 0, "the same building draws once observerMode bypasses the fog gate");
+});
+
 // drawBuildingShape is ALSO called by render.js's spriteIcon (the HUD button art) with a stub
 // state that has no `players`/`time` at all — only safe because electrifiedLight bails out on
 // `!b.electrified` before ever touching either. Pin that: the exact stub shape spriteIcon builds,

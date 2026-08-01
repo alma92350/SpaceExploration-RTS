@@ -73,4 +73,16 @@ export const game = {
   // starts expanded like everything else. Keys are the stable strings passed to hudSelection.js's
   // sectionToggle(), e.g. "build:economy", "cc:produce", "market".
   collapsedSections: new Set(),
+  // Observer Mode (observer.js): a free-look, read-only spectator over the Odyssey galaxy —
+  // fog reveals, any world/base is a free camera jump, no orders can be issued. Never touches
+  // `state`/`galaxy.activeId` or the real input camera, so exiting always resumes normal play
+  // exactly where it was left; never part of the deterministic sim or the persisted save.
+  observerMode: false,
+  // Which world is currently being spectated while observerMode is on — a planetId, or null
+  // when observerMode is off. Defaults to the real active world on entry.
+  spectateId: null,
+  // The observer's own camera (camera.js createCamera shape), separate from the real
+  // game.input camera so panning/zooming while spectating never disturbs normal play's view —
+  // and so clamping uses whichever world's map is actually being looked at, not the active one's.
+  observerCamera: null,
 };

@@ -87,3 +87,21 @@ test("a full-health veteran still draws its chevrons even though drawHealthBar i
 
   assert.ok(rec.colors().includes("#a5f3fc"), "rank is a permanent trait, independent of the health bar's own visibility rule");
 });
+
+// Observer Mode (observer.js): a free-look spectator that reveals fog on whichever world it's
+// pointed at. drawUnits' trailing observerMode param (default false, so every test above is
+// unaffected) bypasses the owner/fog gate entirely — a pure render-time flag, never a mutation
+// of state.fog itself.
+test("observerMode bypasses the fog gate — an unrevealed enemy unit draws only when spectating", () => {
+  const enemy = makeUnit("skiff", "ai", 500, 500);
+  const state = stateWithOneUnit(enemy);
+  state.fog.visible.fill(0);   // guarantee nothing is visible, regardless of any start-base reveal
+
+  const hidden = recordingCtx();
+  drawUnits(hidden.ctx, state, null, 1, new Set());
+  assert.equal(hidden.colors().length, 0, "a fogged enemy draws nothing by default");
+
+  const revealed = recordingCtx();
+  drawUnits(revealed.ctx, state, null, 1, new Set(), true);
+  assert.ok(revealed.colors().length > 0, "the same unit draws once observerMode bypasses the fog gate");
+});

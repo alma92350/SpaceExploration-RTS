@@ -67,10 +67,12 @@ function electrifiedLight(ctx, state, b, x, y, r) {
   ctx.fill();
 }
 
-export function drawBuildings(ctx, state, view) {
+// observerMode (default false — every existing caller/test stays byte-identical): bypasses the
+// fog gate below, same reasoning as renderUnits.js's drawUnits.
+export function drawBuildings(ctx, state, view, observerMode = false) {
   for (const b of state.buildings.values()) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;   // off-screen (pad for the hp bar above it)
-    if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
+    if (b.owner !== "player" && !observerMode && !isVisibleAt(state.fog, b.x, b.y)) continue;
     const color = state.players[b.owner].color;
     ctx.globalAlpha = b.constructing ? 0.5 : b.recycling ? 0.65 : 1;   // ghosted while going up OR coming down
 
@@ -89,10 +91,10 @@ export function drawBuildings(ctx, state, view) {
 // Set — computed ONCE per frame by the caller (drawFrame) and threaded down here, rather than
 // each of drawBuildingBars/drawJumpStaging/drawPowerGrid/drawUnits reallocating their own
 // `new Set(state.selection)` sixty times a second.
-export function drawBuildingBars(ctx, state, view, selSet) {
+export function drawBuildingBars(ctx, state, view, selSet, observerMode = false) {
   for (const b of state.buildings.values()) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;
-    if (b.owner !== "player" && !isVisibleAt(state.fog, b.x, b.y)) continue;
+    if (b.owner !== "player" && !observerMode && !isVisibleAt(state.fog, b.x, b.y)) continue;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
     drawStoreBar(ctx, b);   // a producer's output-buffer gauge, under the hull
     drawConcernBadge(ctx, state, b);   // paused / stalled / throttled flag, own producers only

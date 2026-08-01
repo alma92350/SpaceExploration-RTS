@@ -8,6 +8,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Observer Mode — a free-look spectator over the Odyssey galaxy.** Press O (or the topbar's
+  🔭 Observe button) to watch how the AI archetypes develop and interact, like a scientist
+  running the simulation and just watching: fog is revealed on whichever world you're looking
+  at, the Galaxy map becomes a free camera jump to ANY world — discovered or not, no fuel, no
+  Spaceport, no change to your real seat — and Space cycles every base on that world, including
+  a neighbour's, not just your own. A live stats panel reads the spectated world's archetype,
+  strategy, diplomatic stance and hostility, army composition by owner and type, buildings and
+  development score, supply, and resources — all data the engine already computes, just newly
+  surfaced. Mouse and keyboard orders are disabled while observing (this isn't your world to
+  command); Escape or a second O press returns you to normal play exactly where you left it —
+  observer.js never touches `state`, `galaxy.activeId`, or the real camera, so nothing about a
+  spectated world's simulation changes because you looked at it. The first of three planned
+  layers (observation now; a history/analytics view and live experimentation controls — changing
+  a world's archetype/difficulty on the fly, controlling sim speed — are follow-ups, not yet
+  built).
+
 - **Patrol orders.** Combat and scout units can now be sent on a looping attack-move circuit
   instead of going idle at the end of a waypoint chain — select a unit with an existing move/
   attack-move order queued and press R to convert it into a loop.

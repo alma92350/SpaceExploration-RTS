@@ -60,9 +60,11 @@ function renderUnderlay(state, mmW, mmH) {
   }
 }
 
-// `pings` (effects.js activePings(), threaded in by boot.js's render callback) is optional and
-// defaults to none, so any other caller that hasn't been updated keeps working unchanged.
-export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH, pings = []) {
+// `pings` (effects.js activePings(), threaded in by boot.js's render callback) and
+// `observerMode` are both optional (default none / false), so any other caller that hasn't
+// been updated keeps working unchanged. observerMode bypasses every fog/discovery gate below,
+// same reasoning as render.js's drawFrame.
+export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH, pings = [], observerMode = false) {
   const { map } = state;
   const sx = mmW / map.width, sy = mmH / map.height;
 
@@ -83,18 +85,18 @@ export function drawMinimap(ctx, state, camera, viewportW, viewportH, mmW, mmH, 
   ctx.globalAlpha = 0.7;
   for (const n of map.nodes) {
     if (n.amount <= 0) continue;
-    if (!isNodeDiscovered(fog, n)) continue;   // undiscovered caches don't dot the minimap either
+    if (!observerMode && !isNodeDiscovered(fog, n)) continue;   // undiscovered caches don't dot the minimap either
     ctx.fillRect(n.x * sx - 1, n.y * sy - 1, 2, 2);
   }
   ctx.globalAlpha = 1;
 
   for (const b of state.buildings.values()) {
-    if (b.owner !== "player" && !isVisibleAt(fog, b.x, b.y)) continue;
+    if (b.owner !== "player" && !observerMode && !isVisibleAt(fog, b.x, b.y)) continue;
     ctx.fillStyle = state.players[b.owner].color;
     ctx.fillRect(b.x * sx - 2, b.y * sy - 2, 4, 4);
   }
   for (const u of state.units.values()) {
-    if (u.owner !== "player" && !isVisibleAt(fog, u.x, u.y)) continue;
+    if (u.owner !== "player" && !observerMode && !isVisibleAt(fog, u.x, u.y)) continue;
     ctx.fillStyle = state.players[u.owner].color;
     ctx.fillRect(u.x * sx - 1, u.y * sy - 1, 2, 2);
   }
