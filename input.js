@@ -262,11 +262,16 @@ export function attachInput(canvas, state, onChange) {
       if (workers.length) { issueAssistBuild(workers, target.id, target.type, queue); sound.playOrder(); onChange(); }
       return;
     }
-    // A completed friendly building with logistics buffers (a factory, the Rig): selected workers
-    // are ASSIGNED to service it — a standing round trip carrying its inputs in and its output out
-    // (engine/haul.js), until re-ordered elsewhere.
+    // A completed friendly building with logistics buffers (a factory, the Rig) OR a fuel-burning
+    // power station (a Reactor/Combustor/Biomass Reactor — BUILDINGS[type].combust, entities.js):
+    // selected workers are ASSIGNED to service it — a standing round trip carrying its inputs in
+    // (and, for a factory/Rig, its output out) — until re-ordered elsewhere. The combust check
+    // mirrors engine/haul.js's own "is this building serviceable" test (its updateBuild/assignService
+    // internals gate on the exact same `recipeOf(b) || BUILDINGS[b.type]?.combust`) — without it, a
+    // power station never matched here, so right-clicking a Worker onto a Reactor that needed
+    // radioactives just silently walked it there instead of fetching fuel.
     if (target && target.owner === "player" && target.kind === "building" && !target.constructing
-        && (recipeOf(target) || storeCapOf(target.type) > 0)) {
+        && (recipeOf(target) || storeCapOf(target.type) > 0 || BUILDINGS[target.type]?.combust)) {
       const workers = selected.filter(u => canLogisticsType(u.type));
       if (workers.length) { issueServiceBuilding(workers, target.id, queue); sound.playOrder(); onChange(); return; }
     }
