@@ -80,7 +80,7 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
  * Build a fresh simulation world. A pure function of its inputs (seed + options): the map
  * regenerates deterministically from the seed, so two same-option runs are identical.
  * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
- *   resourceMult?: number, swapAsym?: boolean, matchTimeLimit?: number, endless?: boolean,
+ *   resourceMult?: number, swapAsym?: boolean, matchTimeLimit?: number, popCap?: number, endless?: boolean,
  *   aiApm?: number, aiMicro?: boolean,
  *   aiStrategy?: string, difficulty?: string, playerFaction?: string, aiFaction?: string }} [opts]
  * @returns {State}
@@ -146,6 +146,13 @@ export function createGameState(opts = {}) {
     // a REAL, deliberately-chosen override, never a copy of the default it would fall back to
     // anyway.
     matchTimeLimit: opts.matchTimeLimit ?? null,
+    // setup.js's Population cap row (200 / 250 / 300 / Max): a hard ceiling supplyCap
+    // (engine/supply.js) clamps the building-derived total to, shared by both owners alike (it's
+    // a match rule, not a per-side or AI-temperament dial like difficulty/aiStrategy — see
+    // engine/state.js's `ai:` block below for that distinction). Defaults to null — Max, i.e.
+    // today's always-uncapped-by-anything-but-buildings behaviour, byte-identical to before this
+    // setting existed.
+    popCap: opts.popCap ?? null,
     // Odyssey (open-world) mode: no skirmish victory — the match never ends by
     // razing the enemy, only when the player loses their single Command Center
     // (see engine/victory.js checkEndlessLoss + engine/galaxy.js).

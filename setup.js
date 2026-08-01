@@ -56,6 +56,18 @@ const MATCH_LENGTH_OPTIONS = [
   { label: "Standard", mult: DEFAULT_MATCH_TIME_LIMIT, note: "40 min" },
   { label: "Marathon", mult: 3600, note: "60 min" },
 ];
+// Population cap (engine/supply.js's popCap clamp): a hard ceiling on top of the building-derived
+// supply cap, shared identically by both the player and the AI — a match rule, not a per-side
+// dial. "Max" is null: today's always-uncapped-by-anything-but-buildings default, so picking it
+// (the default pick, matching setup.popCap's own default below) changes nothing from before this
+// option existed. Offered in both economy modes (skirmish + Odyssey) — a scripted scenario runs a
+// fixed roster instead of open production, so it never queues against a cap to begin with.
+const POP_CAP_OPTIONS = [
+  { label: "200", mult: 200, note: "tight economy" },
+  { label: "250", mult: 250, note: "moderate economy" },
+  { label: "300", mult: 300, note: "large economy" },
+  { label: "Max", mult: null, note: "uncapped — housing is the only limit" },
+];
 // Playable factions for the setup picker — a passive-trait identity for your side
 // (engine/factions.js). Each option's `mult` is the faction id, its note the short
 // tagline of its edge. The AI's faction comes from the world's archetype instead.
@@ -79,7 +91,8 @@ export const STRATEGY_OPTIONS = [
 export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontier", aiStrategy: "default", sizeMult: 1, resourceMult: 1, seed: null,
   startWorld: null,    // Odyssey: explicit start-world pick (a planet id), or null for the seed's own random draw
   swapAsym: false,     // skirmish: play the swapped half of an asymmetric world's matchup (Oort, Nimbus) — see engine/map.js opts.swapAsym
-  matchTimeLimit: DEFAULT_MATCH_TIME_LIMIT };   // skirmish: Match length row (Quick/Standard/Marathon) — see engine/victory.js
+  matchTimeLimit: DEFAULT_MATCH_TIME_LIMIT,   // skirmish: Match length row (Quick/Standard/Marathon) — see engine/victory.js
+  popCap: null };      // economy modes: Population cap row (200/250/300/Max) — see engine/supply.js
 
 // The game modes the splash toggles between.
 const MODES = [
@@ -228,6 +241,14 @@ function renderSetupPanel(mode) {
     resLabel.textContent = "Resources";
     resRow.append(resLabel, optionGroup(setup.resourceMult, RESOURCE_OPTIONS, m => { setup.resourceMult = m; }));
     panel.appendChild(resRow);
+
+    const popRow = document.createElement("div");
+    popRow.className = "setup-row";
+    const popLabel = document.createElement("span");
+    popLabel.className = "setup-label";
+    popLabel.textContent = "Population cap";
+    popRow.append(popLabel, optionGroup(setup.popCap, POP_CAP_OPTIONS, m => { setup.popCap = m; }));
+    panel.appendChild(popRow);
   }
 
   // Match length: skirmish only (see MATCH_LENGTH_OPTIONS above for why Odyssey/scenarios don't

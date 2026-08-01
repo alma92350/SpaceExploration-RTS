@@ -113,7 +113,7 @@ export function startGame(planetId) {
   const fresh = createGameState({ planetId, seed, rng: mulberry32(seed),
     aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy: setup.aiStrategy, difficulty: setup.difficulty,
     sizeMult: setup.sizeMult, resourceMult: setup.resourceMult, swapAsym: setup.swapAsym,
-    matchTimeLimit: setup.matchTimeLimit,
+    matchTimeLimit: setup.matchTimeLimit, popCap: setup.popCap,
     playerFaction: setup.faction, aiFaction });
   bootState(fresh, { intro: true });
 }
@@ -152,7 +152,7 @@ export function startOdyssey() {
   bootGalaxy(createGalaxy({
     seed, difficulty: setup.difficulty, sizeMult: setup.sizeMult, resourceMult: setup.resourceMult,
     playerFaction: setup.faction, aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy: setup.aiStrategy,
-    startId: setup.startWorld,
+    startId: setup.startWorld, popCap: setup.popCap,
   }), { intro: true });
 }
 

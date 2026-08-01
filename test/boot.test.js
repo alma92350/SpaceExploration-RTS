@@ -273,10 +273,12 @@ const { sideMod, PLANET_MODIFIERS } = await import("../engine/map.js");
 const ORIGINAL_DIFFICULTY = setup.difficulty, ORIGINAL_SEED = setup.seed;
 const ORIGINAL_START_WORLD = setup.startWorld, ORIGINAL_SWAP_ASYM = setup.swapAsym;
 const ORIGINAL_MATCH_TIME_LIMIT = setup.matchTimeLimit;
+const ORIGINAL_POP_CAP = setup.popCap;
 function resetSetup() {
   setup.difficulty = ORIGINAL_DIFFICULTY; setup.seed = ORIGINAL_SEED;
   setup.startWorld = ORIGINAL_START_WORLD; setup.swapAsym = ORIGINAL_SWAP_ASYM;
   setup.matchTimeLimit = ORIGINAL_MATCH_TIME_LIMIT;
+  setup.popCap = ORIGINAL_POP_CAP;
 }
 
 test("difficultyDials(): a recognized difficulty key drives the created state's AI with that exact difficulty's aiApm/aiMicro", () => {
@@ -364,6 +366,31 @@ test("setup.matchTimeLimit is plumbed through startGame onto the created state, 
   resetSetup();
 });
 
+test("setup.popCap is plumbed through startGame onto the created state", () => {
+  resetSetup();
+  setup.popCap = 250;
+
+  startGame("ferros");
+
+  assert.equal(game.state.popCap, 250, "the picked Population cap must land on state.popCap unchanged");
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
+test("setup.popCap of Max (null, the default) leaves state.popCap null — byte-identical to before this option existed", () => {
+  resetSetup();
+
+  startGame("ferros");
+
+  assert.equal(game.state.popCap, null);
+
+  hideObjectives();
+  game.state = null;
+  resetSetup();
+});
+
 // Odyssey Setup workstream: the player picks (or rerolls) their starting world instead of one
 // forced random draw (docs/improvement-proposals.md). setup.startWorld is a plain pass-through
 // into createGalaxy's opts.startId (engine/galaxy.js already covers validation/fallback/
@@ -395,6 +422,28 @@ test("startOdyssey(): a null setup.startWorld (Random) draws the galaxy's own se
 
   startOdyssey();   // same seed, still no pick -> must draw the identical world again
   assert.equal(game.galaxy.activeId, withNoPick, "Random reproduces the seed's own draw, not a fresh roll");
+
+  hideObjectives();
+  game.state = null;
+  game.galaxy = null;
+  resetSetup();
+});
+
+// Population cap is a shared MATCH RULE, not a per-world AI-temperament dial (difficulty/
+// aiStrategy) — every world in the galaxy gets the player's own pick, including a background
+// neighbour the player has never visited, not just the active seat (engine/galaxy.js addPlanet
+// threads galaxy.settings.popCap unconditionally, the same way it already does sizeMult/resourceMult).
+test("startOdyssey(): setup.popCap lands on every world's state, active seat and background neighbours alike", () => {
+  resetSetup();
+  setup.popCap = 300;
+
+  startOdyssey();
+
+  assert.equal(game.state.popCap, 300, "the active seat gets the configured cap");
+  const neighbourId = [...game.galaxy.planets.keys()].find(id => id !== game.galaxy.activeId);
+  assert.ok(neighbourId, "the galaxy seeds every other world in the background from turn one");
+  assert.equal(game.galaxy.planets.get(neighbourId).popCap, 300,
+    "a background world the player hasn't even visited yet still carries the same configured cap");
 
   hideObjectives();
   game.state = null;

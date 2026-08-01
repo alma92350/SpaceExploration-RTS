@@ -15,7 +15,7 @@ import { issueBuild, issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet } from "./entities.js";
 import { recipeOf } from "./industry.js";
-import { supplyUsed, supplyCap } from "./supply.js";
+import { supplyUsed, supplyCap, buildingSupplyCap } from "./supply.js";
 import { isNodeDiscovered } from "./fog.js";
 import { playerUnits } from "./state.js";
 import { deployColonyShip } from "./colony.js";
@@ -203,7 +203,14 @@ export function aiBaseAndTech(state, ctx) {
   const blocked = used >= cap - margin;                       // can't fit the unit it's about to build
   const covered = used < cap + pending - margin;              // …but supply already on the way covers it
   const rushSupply = ai.resources.ore >= SUPPLY_RUSH_ORE && pendingCount < MAX_PENDING_HABITATS;
-  if (cc && workers.length > 0 && blocked && (!covered || rushSupply)
+  // A configured hard population cap (state.popCap, setup.js's Population cap row) can sit BELOW
+  // what the AI's own buildings would otherwise grant. Once the raw, unclamped total (this
+  // Habitat's own pending siblings included) already reaches it, one more changes nothing —
+  // supplyCap's own clamp (engine/supply.js) already caps the EFFECTIVE total — so stop raising
+  // them rather than spending ore forever chasing a ceiling already reached (an infinite,
+  // pointless Habitat-spam loop otherwise, since `blocked` alone has no awareness of this ceiling).
+  const rawCapHeadroom = state.popCap == null || buildingSupplyCap(state, "ai") + pending < state.popCap;
+  if (cc && workers.length > 0 && blocked && rawCapHeadroom && (!covered || rushSupply)
       && canAfford(ai.resources, BUILDINGS.habitat.cost)) {
     // Try EVERY Command Center, with a wide search at each: a late-Odyssey capital packs 70+
     // buildings around it, and measured, every candidate spot near the home CC was taken while the

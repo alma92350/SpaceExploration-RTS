@@ -70,7 +70,7 @@ export function neighbourAiProfile(seed, planetId) {
 // randomly-chosen — or explicitly PICKED — starting world) plus the meta-fields
 // (credits, activeId, the world roster) the later phases grow into.
 export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
-  resourceMult = 1, playerFaction = "frontier", aiApm, aiMicro, aiStrategy, startId: startIdOpt } = {}) {
+  resourceMult = 1, playerFaction = "frontier", aiApm, aiMicro, aiStrategy, startId: startIdOpt, popCap = null } = {}) {
   seed = seed >>> 0;
   const pick = mulberry32(seed);
   // Always draw, even when the caller supplies an explicit startId: consuming this draw keeps
@@ -89,7 +89,7 @@ export function createGalaxy({ seed = 1, difficulty = "medium", sizeMult = 1,
     // `startId` records which world was actually landed on (the player's pick, or the seed's own
     // draw) — informational, not read back to reconstruct anything (activeId already IS that
     // world, and persists on its own); rides along for free since `settings` is saved whole.
-    settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro, aiStrategy, startId },
+    settings: { difficulty, sizeMult, resourceMult, playerFaction, aiApm, aiMicro, aiStrategy, startId, popCap },
     tick: 0,                    // integer galaxy-tick counter (drives the background-world schedule)
     time: 0,                    // galaxy-wide sim clock (seconds) — monotonic across jumps; keys the relief cooldown
     entitySeq: 0,               // fresh-id counter for entities relocated across worlds by a jump
@@ -181,7 +181,7 @@ export function addPlanet(galaxy, planetId, { unsettled = false } = {}) {
   const state = createGameState({
     planetId, seed, rng: mulberry32(seed),
     aiApm: profile.aiApm, aiMicro: profile.aiMicro, aiStrategy: profile.aiStrategy, difficulty: profile.difficulty,
-    sizeMult: s.sizeMult, resourceMult: s.resourceMult,
+    sizeMult: s.sizeMult, resourceMult: s.resourceMult, popCap: s.popCap,
     playerFaction: s.playerFaction, aiFaction, endless: true,
   });
   if (unsettled) {
