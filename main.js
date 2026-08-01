@@ -5,8 +5,8 @@
    overlays (chips/objectives/help), saveload (localStorage). Importing them here
    evaluates each module, which self-wires its own listeners; this file owns the
    remaining top-level chrome (mute, volume, the canvases' resize/backing store,
-   the minimap commands, the sheet-collapse toggle, the touch-mode flag) and
-   kicks the first screen off.
+   the minimap commands, the panel-fold toggles (portrait sheet + desktop side panel),
+   the touch-mode flag) and kicks the first screen off.
    ============================================================ */
 
 "use strict";
@@ -14,7 +14,7 @@
 import { game } from "./session.js";
 import {
   canvas, ctx, minimapCanvas, minimapCtx, muteBtn, volumeEl,
-  idleWorkersEl, idleProductionEl, sheetToggleEl, MINIMAP_W, MINIMAP_H, isTouchMode,
+  idleWorkersEl, idleProductionEl, sheetToggleEl, panelToggleEl, MINIMAP_W, MINIMAP_H, isTouchMode,
 } from "./dom.js";
 import { clampCamera } from "./camera.js";
 import { minimapToWorld } from "./minimap.js";
@@ -87,11 +87,25 @@ function watchDPR() {
 // Portrait bottom-sheet collapse: hide the panel to reclaim the whole screen,
 // then resize the canvas into the freed space. The button only shows in the
 // portrait layout (style.css); the class is scoped to that layout too, so it's
-// inert on desktop/landscape.
+// inert on desktop/landscape. Clears panel-collapsed (panelToggleEl's own class, just below)
+// so resizing across the portrait/landscape breakpoint can never leave the OTHER toggle's
+// button showing an "expanded" glyph while its class still has the panel hidden.
 sheetToggleEl.addEventListener("click", () => {
+  document.body.classList.remove("panel-collapsed");
   const collapsed = document.body.classList.toggle("sheet-collapsed");
   sheetToggleEl.textContent = collapsed ? "▴" : "▾";
   requestAnimationFrame(resizeCanvas);   // the view grew/shrank — refit the backing store
+});
+
+// Side-panel collapse: the same fold-it-away idea as the portrait handle above, for the
+// normal (non-portrait) side-column layout — hide the panel to widen the view, then resize the
+// canvas into the freed space. The button only shows outside the portrait layout (style.css);
+// see sheetToggleEl's own handler above for why each toggle clears the other's class.
+panelToggleEl.addEventListener("click", () => {
+  document.body.classList.remove("sheet-collapsed");
+  const collapsed = document.body.classList.toggle("panel-collapsed");
+  panelToggleEl.textContent = collapsed ? "◂" : "▸";
+  requestAnimationFrame(resizeCanvas);
 });
 
 function resizeMinimap() {

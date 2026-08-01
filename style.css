@@ -1094,6 +1094,37 @@ html, body { overscroll-behavior: none; }
 }
 .sheet-toggle:hover { border-color: var(--accent); }
 
+/* A floating handle that folds the side panel away in the normal (non-portrait) layout —
+   same "reclaim the view" idea as .sheet-toggle above, just for the side-column shape instead
+   of the portrait bottom sheet. Anchored to the right edge of #view, vertically centred: since
+   #view is the flexed sibling and #selectionPanel the fixed-width one, right:0 sits exactly on
+   their shared boundary, so the handle rides that seam and slides out to the window's true right
+   edge once the panel is hidden — the same "follows the panel" trick .sheet-toggle already does
+   on the opposite (horizontal) seam in portrait. Hidden inside the portrait media query below,
+   where .sheet-toggle is the one true fold control instead (see main.js: the two toggles clear
+   each other's collapsed class, so they can never disagree about the panel's visibility). */
+.panel-toggle {
+  display: flex;
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  z-index: 6;
+  width: 26px;
+  height: 46px;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.panel-toggle:hover { border-color: var(--accent); }
+body.panel-collapsed #selectionPanel { display: none; }
+
 /* Portrait phones / small tablets held upright: stack the layout so the
    battlefield spans the full width and the selection panel becomes a BOTTOM
    SHEET — the standard one-handed mobile shape. The sheet is height-adaptive
@@ -1129,6 +1160,7 @@ html, body { overscroll-behavior: none; }
 
   .sheet-toggle { display: flex; }
   body.sheet-collapsed #selectionPanel { display: none; }
+  .panel-toggle { display: none; }   /* the bottom-sheet handle above is the one fold control here */
 }
 
 /* ---------- scenario mode: the convoy status strip + dock actions ---------- */
