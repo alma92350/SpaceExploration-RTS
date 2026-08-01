@@ -1167,20 +1167,21 @@ export function unloadFreighter(state, unitId, com, qty) {
   return move;
 }
 
-// A jump delivers every staged freighter's HOLD to the destination colony's stockpile. A freighter
-// the player left EMPTY auto-fills from the origin stockpile most-valuable-first first — the
-// zero-effort "produce here, sell there" default, unchanged — while one the player hand-loaded
-// ships exactly what they chose. Returns the combined delivered manifest (for the arrival toast).
-// `riders` are the units that lifted off; non-freighters (no hold) are skipped.
+// A jump delivers every staged freighter's HOLD to the destination colony's stockpile — exactly
+// what the player hand-loaded (loadFreighter/unloadFreighter), nothing more. A freighter left
+// empty carries nothing across; it does NOT auto-fill from the origin stockpile any more (the
+// previous "empty hold → most-valuable-first" default made a round trip actively work against a
+// player who wanted to haul on the way back only: land empty at a destination, jump home before
+// reloading, and the empty ship would eagerly scoop up local goods and carry them right back,
+// silently undoing a delivery the player had just made — see the reported case in git history).
+// Manual control now means exactly that: load what you want shipped, or it stays put. Returns the
+// combined delivered manifest (for the arrival toast). `riders` are the units that lifted off;
+// non-freighters (no hold) are skipped.
 function loadCargo(from, dest, riders) {
-  const src = from.players.player.resources, dst = dest.players.player.resources;
+  const dst = dest.players.player.resources;
   const delivered = {};
   for (const u of riders) {
     if (!u.freight || !(UNITS[u.type]?.cargoHold)) continue;
-    if (freightUsed(u) === 0) {                                  // empty hold → auto-fill from what's left on the origin
-      const manifest = cargoManifest(from, UNITS[u.type].cargoHold);
-      for (const com in manifest) { src[com] -= manifest[com]; u.freight[com] = manifest[com]; }
-    }
     for (const com in u.freight) {                               // deliver the hold to the destination colony
       dst[com] = (dst[com] || 0) + u.freight[com];
       delivered[com] = (delivered[com] || 0) + u.freight[com];
@@ -1283,7 +1284,7 @@ export function jumpCapital(galaxy, destId, opts = {}) {
   // control-switch hop (see the file header comment) doesn't touch anything here.
   if (pad && riders.length) pad.lastLanding = galaxy.time || 0;
 
-  const cargo = loadCargo(from, dest, riders);   // deliver each staged freighter's hold (empty ones auto-fill)
+  const cargo = loadCargo(from, dest, riders);   // deliver each staged freighter's hold — hand-loaded only
 
   from.selection = []; dest.selection = [];
   from.background = true;    // the world you left keeps evolving on its own

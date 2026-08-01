@@ -692,9 +692,9 @@ function loadableComs(state, f) {
 
 // Freighter cargo hold (Odyssey): load specific goods off THIS world's stockpile into the selected
 // freighter, or unload them back — the manual control over what each ship carries on a jump
-// (engine/galaxy.js load/unloadFreighter). A hold left empty still auto-fills at jump time, so this
-// is optional fine-grained control (ship cheap spice to an industrial world, hold ore back), not a
-// chore. Reuses the market row styling.
+// (engine/galaxy.js load/unloadFreighter). A hold left empty stays empty at jump time — nothing
+// auto-fills any more (engine/galaxy.js loadCargo), so a ship you're deliberately sending home
+// empty (to load on the way back only) actually arrives empty. Reuses the market row styling.
 function renderFreight(state, f) {
   const cap = UNITS[f.type].cargoHold, used = freightUsed(f), room = freightRoom(f);
   const res = state.players.player.resources;
@@ -1776,17 +1776,20 @@ function rebuildSelectionPanel(sel) {
 
     // Cargo hold: manufactured goods ride in the CARGO SHIPS staged for this jump — the hold is
     // their combined capacity (build Haulers/Heavy Haulers/Bulk Freighters at a Command Center and
-    // park them by the pad). Loaded most-valuable-first, up to that capacity.
+    // park them by the pad). Shows what's actually aboard right now (hand-loaded via each ship's
+    // own panel, Load/Unload) — a jump no longer auto-fills an empty hold (engine/galaxy.js
+    // loadCargo), so this preview is exactly what will be delivered, not a hypothetical pick.
     const capacity = freightCapacity(m.riders);
-    const cargo = cargoManifest(state, capacity);
+    const cargo = {};
+    for (const u of m.riders) for (const com in (u.freight || {})) cargo[com] = (cargo[com] || 0) + u.freight[com];
     const cargoTotal = Object.values(cargo).reduce((a, b) => a + b, 0);
     const cargoInfo = document.createElement("p");
     cargoInfo.className = "hint";
     cargoInfo.textContent = capacity === 0
       ? "Cargo hold: none — stage a cargo ship (Hauler / Heavy Hauler / Bulk Freighter) by the pad to haul goods."
       : cargoTotal
-        ? `Cargo hold (${cargoTotal}/${capacity}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — hauled to sell at the destination.`
-        : `Cargo hold (0/${capacity}): empty — manufacture metals/alloys/electronics/machinery to fill your cargo ships.`;
+        ? `Cargo hold (${cargoTotal}/${capacity}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — delivered to the destination.`
+        : `Cargo hold (0/${capacity}): empty — load specific goods on a staged ship's own panel before you jump, or it arrives with nothing.`;
     panelEl.appendChild(cargoInfo);
     const jumpWorlds = game.galaxy.worlds.filter(w => w !== game.galaxy.activeId);
     if (sectionToggle("spaceport:jump", "Jump", jumpWorlds.length)) {
