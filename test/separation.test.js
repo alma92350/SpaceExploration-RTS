@@ -18,6 +18,53 @@ test("overlapping same-owner units get pushed apart", () => {
   assert.ok(endDist > startDist, "the pair should move apart");
 });
 
+// SEPARATION_PAD_MULT (the +20% "idle or in formation" spacing) must never loosen how tightly a
+// squad can mass fire on one target — that's a balance-tuned invariant (test/balance.test.js),
+// not a spacing preference. A same-owner pair in COMBAT MODE (an attack/attack-move order, or
+// already holding a live target) settles at the plain, unpadded combined radius; only a genuinely
+// idle pair gets the wider berth.
+test("two idle same-owner units settle at the padded (wider) distance", () => {
+  const state = { units: new Map() };
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 507, 500);   // inside the padded 16.8 (7+7=14 * 1.2) but outside the bare 14
+  state.units.set(a.id, a);
+  state.units.set(b.id, b);
+
+  for (let i = 0; i < 50; i++) applySeparation(state, 0.05);
+
+  const dist = Math.hypot(b.x - a.x, b.y - a.y);
+  assert.ok(dist >= 16.3, `idle units should settle at ~16.8 (padded), got ${dist.toFixed(1)}`);
+});
+
+test("two same-owner units on attack-move orders sit inside the padded gap (14-16.8) but outside the bare combined radius (14) — no push at all", () => {
+  const state = { units: new Map() };
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 515, 500);   // 15 apart: outside the bare 7+7=14, inside the padded 16.8
+  a.order = { type: "attack-move", x: 5000, y: 500 };
+  b.order = { type: "attack-move", x: 5000, y: 500 };
+  state.units.set(a.id, a);
+  state.units.set(b.id, b);
+
+  applySeparation(state, 0.1);   // already past the bare combined radius — combat mode means no push at all here
+
+  const dist = Math.hypot(b.x - a.x, b.y - a.y);
+  assert.equal(dist, 15, "combat-mode units use the plain unpadded radius — 15 apart is already clear, so no push happens");
+});
+
+test("a same-owner pair with a live acquired target (autoTarget) also settles at the plain unpadded distance", () => {
+  const state = { units: new Map() };
+  const a = makeUnit("skiff", "player", 500, 500);
+  const b = makeUnit("skiff", "player", 505, 500);   // inside the bare 14 combined radius
+  a.autoTarget = "some-enemy-id";
+  state.units.set(a.id, a);
+  state.units.set(b.id, b);
+
+  for (let i = 0; i < 50; i++) applySeparation(state, 0.05);
+
+  const dist = Math.hypot(b.x - a.x, b.y - a.y);
+  assert.ok(dist >= 13.5 && dist < 15, `a pair with one side already engaged should settle at ~14 (unpadded), got ${dist.toFixed(1)}`);
+});
+
 test("repeated ticks fully resolve an overlap without overshooting into orbit", () => {
   const state = { units: new Map() };
   const a = makeUnit("worker", "ai", 300, 300);
@@ -28,7 +75,7 @@ test("repeated ticks fully resolve an overlap without overshooting into orbit", 
   for (let i = 0; i < 200; i++) applySeparation(state, 0.05);
 
   const finalDist = Math.hypot(b.x - a.x, b.y - a.y);
-  const minDist = 6 + 6;   // both workers' radius
+  const minDist = (6 + 6) * 1.2;   // both workers' radius, padded by separation.js's own SEPARATION_PAD_MULT
   assert.ok(finalDist >= minDist - 0.5, "should settle at (about) the non-overlapping distance");
   assert.ok(finalDist < minDist + 1, "should not keep pushing once clear");
 });
@@ -92,7 +139,7 @@ test("a whole cluster spawned on one point spreads out over a few ticks", () => 
       minPairDist = Math.min(minPairDist, Math.hypot(units[i].x - units[j].x, units[i].y - units[j].y));
     }
   }
-  assert.ok(minPairDist >= 13, "no two should still be sitting inside each other's radius (7+7=14)");
+  assert.ok(minPairDist >= 16.3, "no two should still be sitting inside each other's padded radius (7+7=14, *1.2 SEPARATION_PAD_MULT = 16.8)");
 });
 
 // Every test above drives applySeparation through its O(n) fallback (no
@@ -180,8 +227,8 @@ test("a pathological same-owner pile-up (hundreds of units on one point) still c
   let maxDist = 0;
   for (const u of units) maxDist = Math.max(maxDist, Math.hypot(u.x - cx, u.y - cy));
 
-  // An uncapped pass on the same fixture plateaus around ~95-97 (a packed circle of
-  // 150 skiffs) — well below that would mean the bound is leaving pairs permanently
-  // stuck rather than merely rate-limiting how fast they resolve.
+  // An uncapped pass on the same fixture plateaus proportionally higher now that minDist carries
+  // SEPARATION_PAD_MULT (a packed circle of 150 skiffs) — well below the floor here would mean
+  // the bound is leaving pairs permanently stuck rather than merely rate-limiting how fast they resolve.
   assert.ok(maxDist > 70, "a 150-unit pile-up should reach a substantially resolved spread, not settle for a permanently tighter-than-necessary packing");
 });

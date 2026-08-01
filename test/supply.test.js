@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit, removeEntity } from "../engine/state.js";
 import { queueProduction, updateProductionQueue } from "../engine/production.js";
-import { supplyUsed, supplyCap } from "../engine/supply.js";
+import { supplyUsed, supplyCap, buildingSupplyCap } from "../engine/supply.js";
 import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
@@ -29,6 +29,56 @@ test("supplyCap counts only completed buildings — a constructing Habitat grant
 
   habitat.constructing = false;
   assert.equal(supplyCap(state, "player"), 18, "once finished it adds its 8");
+});
+
+/* ---------- setup.js's Population cap row (200/250/300/Max — state.popCap) ---------- */
+
+test("a configured population cap clamps supplyCap below the building-derived total", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const habitat = makeBuilding("habitat", "player", 700, 500);
+  state.buildings.set(habitat.id, habitat);
+  assert.equal(supplyCap(state, "player"), 18, "CC (10) + Habitat (8), unclamped");
+
+  state.popCap = 12;
+  assert.equal(supplyCap(state, "player"), 12, "clamped down to the configured ceiling");
+  assert.equal(buildingSupplyCap(state, "player"), 18,
+    "the raw building-derived total is unaffected — still there for the AI's own headroom check");
+});
+
+test("a population cap ABOVE the building-derived total changes nothing", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.popCap = 500;
+  assert.equal(supplyCap(state, "player"), 10, "still just the seeded CC's own 10 — a cap never RAISES anything");
+});
+
+test("no population cap set (Max, the default) behaves exactly as before this setting existed", () => {
+  const state = createGameState({ planetId: "ferros" });
+  assert.equal(state.popCap, null, "defaults to null — Max/uncapped");
+  assert.equal(supplyCap(state, "player"), 10);
+});
+
+test("a population cap applies identically to both the player and the AI", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const habitat = makeBuilding("habitat", "ai", 700, 500);
+  state.buildings.set(habitat.id, habitat);
+  state.popCap = 12;
+  assert.equal(supplyCap(state, "player"), 10, "player's own building total (10) is already below the cap — unaffected");
+  assert.equal(supplyCap(state, "ai"), 12, "AI's own total (18) gets clamped down exactly the same way");
+});
+
+test("production blocks against a configured population cap even with plenty of housing built", () => {
+  const state = createGameState({ planetId: "ferros" });
+  const habitat = makeBuilding("habitat", "player", 700, 500);
+  state.buildings.set(habitat.id, habitat);   // uncapped cap would be 18 (CC 10 + Habitat 8)
+  state.popCap = 12;
+  const barracks = stockedBarracks(state);
+
+  while (queueProduction(state, barracks.id, "skiff")) {}
+
+  assert.equal(supplyUsed(state, "player"), 12, "stopped at the configured ceiling (3 seeded workers + 9 skiffs), not the building-derived 18");
+  const blocked = state.events.find(e => e.type === "productionBlocked");
+  assert.ok(blocked, "the same productionBlocked event fires for a popCap block as for a building-derived one");
+  assert.equal(blocked.reason, "supply");
 });
 
 test("supplyUsed counts live units and every queued job", () => {
@@ -237,6 +287,29 @@ test("a comfortable supply margin doesn't make the AI spam Habitats it doesn't n
   const before = aiHabitats(state).length;
   runAI(state, THINK_INTERVAL);
   assert.equal(aiHabitats(state).length, before, "no Habitat — the trigger is headroom-driven, not unconditional");
+});
+
+// A configured population cap (state.popCap) can sit at or below what the AI's own buildings
+// already grant — raising another Habitat past that ceiling would only grow the RAW cap
+// (buildingSupplyCap), which supplyCap's own clamp then caps right back down anyway. Without a
+// guard aware of this, the same "blocked, not covered" trigger above would fire every think cycle
+// forever, spending ore on Habitats that never actually raise the EFFECTIVE cap.
+test("a population cap already reached by raw buildings stops the AI from raising more Habitats", () => {
+  const state = aiOnTheSupplyEdge(3);   // the exact fixture the very first trigger test above uses
+  assert.equal(buildingSupplyCap(state, "ai"), 18, "the fixture's raw cap is CC (10) + Habitat (8)");
+  state.popCap = 18;   // exactly the raw cap already reached — no headroom left to gain
+  const before = aiHabitats(state).length;
+  runAI(state, THINK_INTERVAL);
+  assert.equal(aiHabitats(state).length, before,
+    "another Habitat would only raise the raw cap past a ceiling already reached — pointless, so it doesn't try");
+});
+
+test("a population cap still well above the raw building total doesn't suppress the normal Habitat trigger", () => {
+  const state = aiOnTheSupplyEdge(3);
+  state.popCap = 40;   // well above the fixture's raw cap (18) — plenty of headroom before the ceiling bites
+  const before = aiHabitats(state).length;
+  runAI(state, THINK_INTERVAL);
+  assert.equal(aiHabitats(state).length, before + 1, "a distant configured ceiling doesn't block the ordinary deadlock-prevention trigger");
 });
 
 // Two follow-ons from running the fixed AI out to 45 sim-minutes on a built-out world: with the

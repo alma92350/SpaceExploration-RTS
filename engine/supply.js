@@ -5,6 +5,14 @@
    state — never cached anywhere — so a dying building's queue frees its
    reservation with no bookkeeping, and drift is impossible by
    construction (state already holds the whole truth).
+
+   A match can ALSO set a hard ceiling on top of that (state.popCap — setup.js's Population cap
+   option, 200/250/300/Max, null/Max meaning uncapped): supplyCap clamps the building-derived total
+   to it, identically for both owners (it's a shared match rule, not a per-side or AI-temperament
+   dial like difficulty/aiStrategy). buildingSupplyCap exposes the pre-clamp raw total for the one
+   caller that needs to tell "still-blocked" apart from "no housing would help" — engine/aiEconomy.js's
+   own Habitat-build trigger, which would otherwise keep raising a cap a hard ceiling has already
+   overtaken, forever.
    ============================================================ */
 
 "use strict";
@@ -30,7 +38,7 @@ export function supplyUsed(state, owner) {
 // until it finishes, so you can't produce against supply you haven't
 // built yet. Losing a Habitat can leave a player legally over cap
 // (nothing dies; production simply blocks until they rebuild).
-export function supplyCap(state, owner) {
+export function buildingSupplyCap(state, owner) {
   let cap = 0;
   let boost = null;   // the electrify bonus, computed lazily and once — only if a grant building is wired in
   for (const b of state.buildings.values()) {
@@ -46,4 +54,13 @@ export function supplyCap(state, owner) {
     } else cap += grant;
   }
   return cap;
+}
+
+// The cap production.js/hud.js actually enforce/display: the building-derived total above, clamped
+// to the match's configured population cap (state.popCap — null/unset means Max, i.e. today's
+// always-uncapped behaviour, byte-identical to before this setting existed). Never the other way
+// round — a LOWER building-derived total than the configured cap is unaffected (Math.min).
+export function supplyCap(state, owner) {
+  const raw = buildingSupplyCap(state, owner);
+  return (state.popCap != null && state.popCap < raw) ? state.popCap : raw;
 }

@@ -375,6 +375,9 @@ function serPlanet(state) {
     // defaults null (no override, same as every pre-existing save) so no SAVE_VERSION bump per
     // CONTRIBUTING's additive-field rule.
     matchTimeLimit: state.matchTimeLimit ?? null,
+    // setup.js's Population cap row (engine/supply.js's popCap clamp) — additive, defaults null
+    // (Max — uncapped, same as every pre-existing save) so no SAVE_VERSION bump either.
+    popCap: state.popCap ?? null,
     endless: !!state.endless,
     time: state.time, tick: state.tick, over: state.over, winner: state.winner,
     // additive: why the match ended (engine/victory.js finish) — default null, same as an
@@ -497,6 +500,12 @@ function rehydratePlanet(P) {
   // same safe "no override" null rather than a broken instant/never timeout.
   const matchTimeLimit = P.matchTimeLimit == null ? null
     : (Number.isFinite(Number(P.matchTimeLimit)) && Number(P.matchTimeLimit) > 0 ? Number(P.matchTimeLimit) : null);
+  // setup.js's Population cap row (engine/supply.js's popCap clamp): additive and untrusted like
+  // matchTimeLimit just above, same reasoning/shape. null/missing means Max (no ceiling, the
+  // common case, and every pre-existing save); a non-null value is only trusted if it coerces to
+  // a genuinely POSITIVE finite number, else falls back to the same safe "no ceiling" null.
+  const popCap = P.popCap == null ? null
+    : (Number.isFinite(Number(P.popCap)) && Number(P.popCap) > 0 ? Number(P.popCap) : null);
   const map = generateMap(P.planetId, mulberry32((P.seed ?? 0) >>> 0),
     { sizeMult, resourceMult, swapAsym });
   const amounts = new Map(P.nodes.map(n => [n.id, n.amount]));
@@ -595,7 +604,7 @@ function rehydratePlanet(P) {
   const state = {
     time: num(P.time, 0), tick: num(P.tick, 0), over: P.over, winner: P.winner,
     winReason: P.winReason ?? null,   // additive — why the match ended (engine/victory.js finish); null before/absent
-    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult, swapAsym, matchTimeLimit,
+    seed: P.seed, planetId: P.planetId, sizeMult, resourceMult, swapAsym, matchTimeLimit, popCap,
     endless: !!P.endless,
     map,
     owners,
