@@ -78,3 +78,110 @@ test("...and with only a standing player building here, even with no player unit
   runAI(s, THINK);
   assert.ok(attacking(army) > 0, "a standing player building is a real target — the wave still launches");
 });
+
+/* ============================================================
+   Garrison dispersal (engine/aiMilitary.js disperseGarrison): the AI's idle home army — whatever
+   isn't off attacking — spreads across a few stations around its own Command Center(s) instead of
+   sitting clumped at whichever building's rally point produced it. Fixtures below always pre-seed
+   a scout (and keep the test army below the archetype's armyAttackSize) so updateScout/aiOffense's
+   own wave-muster logic never dips into or consumes the units under test — isolating dispersal
+   itself, the same convention the size-triggered/partial-wave tests in test/ai.test.js use.
+   ============================================================ */
+
+function preSeededScout(s, cc) {
+  const scout = makeUnit("skiff", "ai", cc.x, cc.y - 200);
+  scout.order = { type: "move", x: 100, y: 100 };
+  s.units.set(scout.id, scout);
+  s.ai.scoutId = scout.id;
+}
+
+test("an idle home army disperses across more than one station instead of all sharing the same destination", () => {
+  const s = createGameState({ planetId: "ferros" });
+  s.time = 0;
+  const cc = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  preSeededScout(s, cc);
+  const army = [];
+  for (let i = 0; i < 5; i++) {   // well under any archetype's armyAttackSize — no strike should trigger
+    const u = makeUnit("skiff", "ai", cc.x - 30 - i * 4, cc.y);   // clumped near the CC, like a shared rally point
+    s.units.set(u.id, u);
+    army.push(u);
+  }
+
+  runAI(s, THINK);
+
+  const destinations = new Set(
+    army.filter(u => u.order?.type === "move").map(u => `${Math.round(u.order.x)},${Math.round(u.order.y)}`));
+  assert.ok(destinations.size > 1, "the idle army should split across more than one distinct station, not one shared point");
+  for (const u of army) {
+    if (u.order?.type !== "move") continue;
+    const d = Math.hypot(u.order.x - cc.x, u.order.y - cc.y);
+    assert.ok(d > 0 && d < 340, `each station sits a real distance from the CC (${d.toFixed(0)}) but still within the defend-recall radius (340)`);
+  }
+});
+
+test("a unit already fighting (autoTarget set) is left alone by dispersal, not redirected to a station", () => {
+  const s = createGameState({ planetId: "ferros" });
+  s.time = 0;
+  const cc = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  preSeededScout(s, cc);
+  const fighter = makeUnit("skiff", "ai", cc.x - 30, cc.y);
+  fighter.autoTarget = "some-enemy-id";   // already mid-fight via auto-acquire, no formal order needed for that
+  s.units.set(fighter.id, fighter);
+
+  runAI(s, THINK);
+
+  assert.equal(fighter.order, null, "dispersal must never assign a move order to a unit that's already engaged");
+});
+
+test("a unit focus-fired onto a target (focusId set) is also left alone by dispersal", () => {
+  const s = createGameState({ planetId: "ferros" });
+  s.time = 0;
+  const cc = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  preSeededScout(s, cc);
+  const fighter = makeUnit("skiff", "ai", cc.x - 30, cc.y);
+  fighter.focusId = "some-enemy-id";
+  s.units.set(fighter.id, fighter);
+
+  runAI(s, THINK);
+
+  assert.equal(fighter.order, null, "a tactical focus-fire target counts as engaged too, same as autoTarget");
+});
+
+test("a unit far from every Command Center (a stray deep in contested territory) is left alone, not yanked home", () => {
+  const s = createGameState({ planetId: "ferros" });
+  s.time = 0;
+  const cc = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  preSeededScout(s, cc);
+  const stray = makeUnit("skiff", "ai", cc.x + 1000, cc.y + 1000);   // well outside DISPERSAL_HOME_RADIUS (600)
+  s.units.set(stray.id, stray);
+
+  runAI(s, THINK);
+
+  assert.equal(stray.order, null, "a unit this far from home isn't home yet — dispersal leaves it exactly where it stands");
+});
+
+test("multiple Command Centers each disperse their own nearby units to their own ring", () => {
+  const s = createGameState({ planetId: "ferros" });
+  s.time = 0;
+  const homeCC = [...s.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  preSeededScout(s, homeCC);
+  const expansionCC = makeBuilding("command", "ai", homeCC.x + 500, homeCC.y + 500);
+  s.buildings.set(expansionCC.id, expansionCC);
+  const homeUnit = makeUnit("skiff", "ai", homeCC.x - 30, homeCC.y);
+  const expansionUnit = makeUnit("skiff", "ai", expansionCC.x - 30, expansionCC.y);
+  s.units.set(homeUnit.id, homeUnit);
+  s.units.set(expansionUnit.id, expansionUnit);
+
+  runAI(s, THINK);
+
+  assert.equal(homeUnit.order?.type, "move");
+  assert.equal(expansionUnit.order?.type, "move");
+  assert.ok(Math.hypot(homeUnit.order.x - homeCC.x, homeUnit.order.y - homeCC.y) < 340,
+    "the home unit's station rings the home CC");
+  assert.ok(Math.hypot(expansionUnit.order.x - expansionCC.x, expansionUnit.order.y - expansionCC.y) < 340,
+    "the expansion unit's station rings the expansion CC");
+  assert.ok(Math.hypot(homeUnit.order.x - expansionCC.x, homeUnit.order.y - expansionCC.y) > 340,
+    "...not the OTHER Command Center's ring");
+  assert.ok(Math.hypot(expansionUnit.order.x - homeCC.x, expansionUnit.order.y - homeCC.y) > 340,
+    "...and vice versa");
+});

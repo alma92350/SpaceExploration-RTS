@@ -99,6 +99,68 @@ test("accrueActionBudget clamps the banked budget at its burst cap, no matter ho
   assert.equal(state.ai.actionBudget, cap, "the cap keeps holding on later accruals once already at the ceiling");
 });
 
+// ---- Background colonies (state.background, engine/galaxy.js): half APM, nobody's watching ----
+
+test("a background colony accrues action budget at half its configured apm", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.ai.apm = 60;   // a round number: full-rate accrual would be exactly 1/sec
+  state.background = true;
+  state.ai.actionBudget = 0;
+
+  accrueActionBudget(state, 1);
+
+  assert.equal(state.ai.actionBudget, 0.5, "half of the configured 60 apm, not the full rate");
+});
+
+test("the same world accrues at the full configured apm once it's the active seat again", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.ai.apm = 60;
+  state.ai.actionBudget = 0;
+
+  state.background = true;
+  accrueActionBudget(state, 1);
+  assert.equal(state.ai.actionBudget, 0.5);
+
+  state.background = false;   // e.g. the player jumped back — engine/galaxy.js jumpCapital
+  accrueActionBudget(state, 1);
+  assert.equal(state.ai.actionBudget, 1.5, "resumes full-rate accrual — 0.5 banked plus a full 1.0 this second");
+});
+
+test("background halving also halves the burst cap (derived from the same effective apm)", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.ai.apm = 300;   // active cap would be max(2, 300/15) = 20; background halves the EFFECTIVE apm to 150 -> cap 10
+  state.background = true;
+  state.ai.actionBudget = 0;
+
+  accrueActionBudget(state, 1_000_000);
+
+  assert.equal(state.ai.actionBudget, 10, "the burst reserve halves right along with the accrual rate");
+});
+
+test("state.ai.apm itself is never rewritten by background status — only the accrual rate changes", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.ai.apm = 65;   // Medium's real dial (engine/aiDifficulty.js)
+  state.background = true;
+
+  accrueActionBudget(state, 1);
+
+  assert.equal(state.ai.apm, 65, "the configured dial is untouched — display/save/load/difficulty tests all keep reading the real value");
+});
+
+test("a background world under attack still commits its wave — the APM exemption survives backgrounding", () => {
+  const state = createGameState({ planetId: "ferros" });
+  state.ai.apm = 1;
+  state.ai.actionBudget = 0;
+  state.background = true;
+  state.time = state.ai.archetype.attackTimeout + 50;
+  const skiff = makeUnit("skiff", "ai", state.map.bases.ai.x, state.map.bases.ai.y);
+  state.units.set(skiff.id, skiff);
+
+  runAI(state, THINK_INTERVAL);
+
+  assert.equal(skiff.order?.type, "attack-move", "still exempt from the (now-halved) budget — a background world always defends/attacks on schedule");
+});
+
 test("the AI launches repeated attack waves, not just one", () => {
   const state = createGameState({ planetId: "ferros" });
   const archetype = state.ai.archetype;
@@ -481,7 +543,11 @@ test("a size-triggered attack keeps a home guard back; a timeout commit throws e
   runAI(state, THINK_INTERVAL);
 
   const attacking = squad.filter(u => u.order?.type === "attack-move").length;
-  const home = squad.filter(u => !u.order).length;
+  // "Home" means not sent to attack — same test aiOffense's own homeArmy filter uses (!order or
+  // still a plain 'move'): a held-back unit now gets a move order to its dispersed garrison
+  // station (disperseGarrison) rather than sitting with order:null, so checking !u.order alone
+  // would undercount it.
+  const home = squad.filter(u => !u.order || u.order.type === "move").length;
   assert.equal(home, 3, "the Economist holds its garrison of three back");
   assert.equal(attacking, 9, "and sends the surplus");
 });
@@ -521,7 +587,9 @@ test("an Odyssey partial wave sends the forward-most Rusher units even with garr
   runAI(state, THINK_INTERVAL);
 
   const attacking = squad.filter(u => u.order?.type === "attack-move");
-  const home = squad.filter(u => !u.order);
+  // Same broadened "home" check as the garrison test above — a reinforcement unit now gets a
+  // move order to its dispersed station (disperseGarrison) instead of staying order:null.
+  const home = squad.filter(u => !u.order || u.order.type === "move");
   assert.equal(attacking.length, 5, "roughly half the squad probes out this cycle");
   assert.equal(home.length, 5, "...the rest stays as reinforcement");
   const expectedForward = new Set(byDist.slice(0, 5).map(u => u.id));   // the 5 units farthest from home
