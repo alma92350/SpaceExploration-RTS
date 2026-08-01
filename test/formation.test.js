@@ -83,11 +83,11 @@ test("clusterUnits groups a transitive chain (A-B close, B-C close, A-C far) int
 
 // ---- formationSlots: the default (grid, single cluster) path uses the flat, scaled spacing ----
 
-test("formationSlots grid (no shape chosen) matches the flat GRID_SPACING formula (legacy 20, +15% coarser)", () => {
+test("formationSlots grid (no shape chosen) matches the flat GRID_SPACING formula (legacy 20, +15% then a further +20% coarser)", () => {
   const units = [0, 1, 2, 3].map(i => fakeUnit(`u${i}`, "skiff", 0, 0));   // co-located -> one cluster
   const spots = formationSlots(units, 900, 700);
   assert.deepEqual(spots, [
-    { x: 888.5, y: 688.5 }, { x: 911.5, y: 688.5 }, { x: 888.5, y: 711.5 }, { x: 911.5, y: 711.5 },
+    { x: 886.2, y: 686.2 }, { x: 913.8, y: 686.2 }, { x: 886.2, y: 713.8 }, { x: 913.8, y: 713.8 },
   ]);
 });
 
@@ -232,10 +232,13 @@ test("formationSlots lays out a nested formation of formations — tight within 
   assert.ok(betweenClusters > withinNear * 3, "the two sub-formations sit well apart relative to their own tight internal spread");
   assert.ok(betweenClusters > withinFar * 3);
 
-  // The overall layout still centers on the destination, even nested.
+  // The overall layout still centers on the destination, even nested. The tolerance scales with
+  // COARSENESS (engine/formation.js) like every other footprint distance here — a small, pre-existing
+  // rounding asymmetry from the odd (3-per-cluster) count, not a bug: it was ~4.2 at the previous
+  // COARSENESS and is ~5.06 now, both comfortably sub-hull-radius.
   const avgX = spots.reduce((s, p) => s + p.x, 0) / spots.length;
   const avgY = spots.reduce((s, p) => s + p.y, 0) / spots.length;
-  assert.ok(Math.abs(avgX - 1500) < 5 && Math.abs(avgY - 0) < 5, "the nested layout as a whole is still centered on the destination");
+  assert.ok(Math.abs(avgX - 1500) < 6 && Math.abs(avgY - 0) < 6, "the nested layout as a whole is still centered on the destination");
 });
 
 // ---- AI-owned (and owner-less) units never form a squad ----------------------
@@ -603,9 +606,9 @@ test("a formation's travel speed never outruns its slowest member, via the real 
   const traveled = leader.x - 500;
   assert.ok(traveled < UNITS.ranger.speed * 5 * 0.5,
     `the leader (${traveled.toFixed(0)} travelled) moves far slower than the follower's own top speed would allow`);
-  // The formation's grid layout for 2 units puts the follower's slot 23 units off the leader's
-  // own — see the "matches the flat GRID_SPACING formula" test above (spacing 23, cols 2).
-  const gap = Math.hypot(follower.x - (leader.x + 23), follower.y - leader.y);
+  // The formation's grid layout for 2 units puts the follower's slot 27.6 units off the leader's
+  // own — see the "matches the flat GRID_SPACING formula" test above (spacing 27.6, cols 2).
+  const gap = Math.hypot(follower.x - (leader.x + 27.6), follower.y - leader.y);
   assert.ok(gap < 10, `the fast follower stays tight on the slow leader (gap ${gap.toFixed(1)}), not racing ahead and idling`);
 });
 

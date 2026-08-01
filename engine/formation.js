@@ -59,7 +59,7 @@ import { UNITS } from "./entities.js";
 export const FORMATION_SHAPES = ["grid", "line", "wedge", "circle"];
 export const LEADER_POSITIONS = ["front", "back", "center"];
 
-const COARSENESS = 1.15;        // overall formation spacing multiplier — units sat too close at 1x
+const COARSENESS = 1.38;        // overall formation spacing multiplier — 1.15 * 1.2, a further +20% on top of the previous "units sat too close at 1x" pass
 const GRID_SPACING = 20 * COARSENESS;   // legacy formationSpots (engine/commands.js) flat spacing, scaled
 const SPACING_PAD = 8;          // clearance beyond 2x the largest hull's radius, before COARSENESS
 const CLUSTER_RADIUS = 150;     // units within this of each other (transitively) count as one army
