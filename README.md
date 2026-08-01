@@ -43,10 +43,14 @@ The splash screen configures the skirmish before you pick a world. **AI speed** 
 actions-per-minute cap on the opponent — every command it takes (produce, build, expand, research,
 scout) spends one action, so a low setting is a sluggish, forgiving foe and a high one relentless
 (its attack commit is exempt, so it always resolves the game). **Map size** scales the field from
-Small (1600×1000) up to Gigantic (4×) with more caches in the bigger space, and **Resources**
-(Rare / Normal / Abundant) scales every deposit's yield. Whatever the world, every map guarantees a
-near-base surface source of ore, crystals, and radioactives so all builds are possible — the
-planet's own deposit table just shapes how much of each there is.
+Small (1600×1000) up to Gigantic (4×) with more caches in the bigger space, **Resources**
+(Rare / Normal / Abundant) scales every deposit's yield, and **Match length** picks Quick (20 min),
+Standard (40 min), or Marathon (60 min) instead of always the same fixed clock — the final 5
+minutes flip the readout to a countdown next to a live score bar either way. Whatever the world,
+every map guarantees a near-base surface source of ore, crystals, and radioactives so all builds
+are possible — the planet's own deposit table just shapes how much of each there is. Oort's and
+Nimbus's asymmetric matchups also offer a side-swap toggle, so either half is playable from either
+seat.
 
 **Units.** Four combat units. Three form a genuine rock-paper-scissors triangle, not just a single
 hard counter: Skiff (fast, cheap) beats Lancer, Bastion (slow, short-ranged, tanky) beats Skiff,
@@ -57,23 +61,35 @@ defenses and tears through buildings, but has the worst anti-unit damage in the 
 massed Skiffs for a fraction of its cost — a turtle-breaker that's helpless without an escort.
 Scouting what the enemy is building, and countering it, matters.
 
+**Veterancy.** Every confirmed kill counts toward a unit's own record — three permanent ranks
+(earned at 3, 8, and 18 kills) each layer roughly the same compounding bonus, stacking to about
++19% damage dealt and −17% taken at max rank, visible as small chevrons over the health bar.
+Turrets and buildings never rank up; only units that can actually fight do, and the bonus survives
+repair, so a bloodied army is worth pulling back to heal rather than replacing.
+
 **Tech: doctrines and structures.** A Refinery (built by a Worker, like the Barracks) researches
-army-wide upgrades — applied live the instant each finishes developing, not just to future
-production — but they're two **mutually-exclusive doctrines**, so this is a real commitment, not a
-buy-both. **Assault** (Overcharged Weapons → Overcharged Core) stacks more damage dealt; **Bulwark**
-(Reinforced Plating → Reinforced Bulwark) stacks less damage taken — by every unit AND every
-structure, turrets and the Command Center and Habitats included, so it's the turtle doctrine for
-your base as much as your army. Researching either one locks the other out, and each has a Tier-2
-that deepens your chosen path. Assault costs radioactives and Bulwark crystals, so a world's deposit
-specialty (Korrath has no crystals, Vesper no radioactives) tilts which doctrine comes easier.
-Beyond the Refinery, a Foundry and a Datacenter open further research — crystals and radioactives
-fund all of it, so those deposits never dead-end.
+army-wide upgrades — timed rather than instant now (scaled by the world's own tech rating, so a
+Refinery mid-research is a real, raidable window), applied live the moment each finishes, not just
+to future production — but they're three **mutually-exclusive doctrines**, so this is a real
+commitment, not a buy-both. **Assault** (Overcharged Weapons → Overcharged Core → Overdrive
+Actuators) stacks more damage dealt and eventually faster attacks; **Bulwark** (Reinforced Plating →
+Reinforced Bulwark → Self-Sealing Plating) stacks less damage taken and adds out-of-combat regen —
+by every unit AND every structure, turrets and the Command Center and Habitats included, so it's the
+turtle doctrine for your base as much as your army. **Logistics** trades combat power for economy
+and tempo instead. Researching one locks out the other two, and each now runs a full three tiers
+deep, the last gated behind an Arsenal. Assault costs radioactives and Bulwark crystals, so a
+world's deposit specialty (Korrath has no crystals, Vesper no radioactives) tilts which doctrine
+comes easier. Beyond the Refinery, a Foundry and a Datacenter open further research — crystals and
+radioactives fund all of it, so those deposits never dead-end.
 
 **Expanding and fortifying.** The Command Center is buildable (steep — 400 ore, slow to raise), so
 taking a second base is a real mid-game decision: nodes deplete, and a fresh field plus a fresh
-drop-off point is how you outlast a drained home economy. The Sentinel Turret is static defense
-(crystal-funded) that makes raids cost something and base layout matter; the Breacher is the answer
-to a wall of them.
+drop-off point is how you outlast a drained home economy. Static defense now runs three tiers: the
+Sentinel Turret (crystal-funded), the Foundry-gated Bastille (tankier and harder-hitting but
+shorter-ranged), and the Arsenal-gated Aegis Bastion (fires nothing — it just shields everything
+friendly nearby, units and structures alike, by 20%) — all of it makes raids cost something and
+base layout matter, and the Breacher remains the answer to a wall of any of them, since every siege
+unit still strictly outranges every static-defense structure.
 
 **Supply.** Army size is capped by supply, not just ore: every unit costs some, Command Centers
 grant a baseline, and a cheap Habitat raises the ceiling. It's a genuine macro choice (army now vs.
@@ -82,12 +98,15 @@ keeps late-game battles bounded. Losing a Habitat can leave you legally over cap
 but production blocks until you rebuild.
 
 **The AI.** Each world gives the AI a different temperament — Rusher (small economy, commits
-early), Economist (out-scales before attacking, expands and turtles behind turrets), or Balanced —
-and it plays the whole toolkit: it attacks in repeated waves, not just once; it scouts and builds
-the direct counter to whatever combat type you field most; and it expands when its home ore runs
-thin, fortifies the approach lane with turrets, runs multiple Barracks, and raises Habitats to stay
-under supply. It plays under its own fog too — not omniscient — reacting only to what it has
-actually seen.
+early), Economist (out-scales before attacking, expands and turtles behind turrets), Balanced, or
+the Kybernet-only Technologist (small and teched-up — the only archetype that ever fields a
+Colossus) — and it plays the whole toolkit: it attacks in repeated waves, not just once; it scouts
+and reacts to whatever combat type you field most, a hard counter inside the Skiff/Bastion/Lancer
+triangle and a documented cost-efficient answer (usually massed Skiffs) for anything outside it,
+including a wall of your own turrets — more often the higher the difficulty, never on Easy; and it
+expands when its home ore runs thin, fortifies the approach lane with turrets (and Bastilles, once
+it has a Foundry), runs multiple Barracks, and raises Habitats to stay under supply. It plays under
+its own fog too — not omniscient — reacting only to what it has actually seen.
 
 **Worlds.** Six of the nine worlds carry a single rule modifier that applies to both sides —
 Glacius's ice slows everyone, Nimbus's storms shorten sight, Pyralis's open dunes lengthen it, Helix
@@ -109,34 +128,46 @@ resource — and the tech that needs it — you'd otherwise have no access to.
 
 ### Controls
 
-Left-drag to select (Ctrl+drag adds to the selection), right-click to move or
+Left-drag to select (Ctrl+drag adds to the selection, Alt+drag subtracts), right-click to move or
 gather/assist-build/attack/set-rally depending on what's selected and under the cursor,
 Ctrl+right-click to queue that order as a waypoint (chain several to lay down a path — combat units
 attack-move along it), mouse wheel to zoom, WASD/arrow keys or the screen edge to pan. Control
 groups bind with Shift+1–9 and recall with 1–9; double-click a unit to grab every on-screen unit of
-that type; **Q** selects your whole army, **X** halts the selection, **`** cycles idle workers, and
-**P** pauses. Right-click the minimap to order the selection somewhere off-screen. Click a Worker or
-a completed building for build/produce/research options in the side panel (unaffordable options are
-greyed out); a full controls reference sits in the panel whenever nothing is selected, and **F1**
-or **?** opens the help overlay.
+that type (Ctrl+double-click extends the grab to the whole map, not just what's on screen); **Q**
+selects your whole army, **X** halts the selection, **R** turns a selection's already-queued
+waypoint path into a looping patrol, **`** cycles idle workers, **Space** centers on (and cycles
+through) your bases, **Backspace** jumps to the most recent attack ping, **T** opens a full Tech &
+Industry Chart overlay, and **P** pauses. Right-click the minimap to order the selection somewhere
+off-screen. Click a Worker or a completed building for build/produce/research options in the side
+panel (unaffordable options are greyed out); a full controls reference sits in the panel whenever
+nothing is selected, and **F1** or **?** opens the help overlay.
 
 ## The Odyssey
 
-The Odyssey is the open-world meta-layer: instead of a single match, you play a whole galaxy. You
-start on one world, and every world is a full skirmish map — but they never resolve by conquest or
-clock. Instead you hold **universal credits** that travel with you, build a **Spaceport**, and
-**jump** to another world (jumps cost fuel, scaled by distance, funded by trading commodities at
-the market). Settle a new world by carrying a **colony ship** on the jump and deploying it into a
-Command Center; the world you leave becomes a **background colony** that keeps working and pays you
-passive income while you're away.
+The Odyssey is the open-world meta-layer: instead of a single match, you play a whole galaxy. Pick
+your starting world from a card row of all 11 (or roll randomly), and every world is a full
+skirmish map — but they never resolve by conquest or clock. Instead you hold **universal credits**
+that travel with you, build a **Spaceport**, and **jump** to another world (jumps cost fuel, scaled
+by distance and discounted up to 30% by your Spaceport's tier, funded by trading commodities at the
+market). Settle a new world by carrying a **colony ship** on the jump and deploying it into a
+Command Center; the world you leave becomes a **background colony** that keeps working, pays you
+passive income while you're away, and can be handed standing orders (an auto-sell floor, a worker
+headcount to sustain) so it keeps developing unattended.
 
 Each world's neighbour has its own **diplomacy** — a grace period, grievances if you strip-mine or
-attack, and paid tribute truces to buy time — so how you treat a world shapes whether it turns
-hostile and sends waves after you. There's no hard win: the Odyssey is a **play-forever sandbox**,
-and progress is marked by milestone fireworks — colonies founded, an **Antimatter Gate** coming
-online, and **conquest domination** as you pacify neighbour after neighbour — that you keep playing
-past. The world roster is the nine skirmish worlds plus two Odyssey-only extras (a research capital
-and an agri world).
+attack, forgiveness that varies by personality, paid tribute truces, and now gifts plus occasional
+favor requests as an actual road to Allied (which also trades at a tighter market spread) — so how
+you treat a world shapes whether it turns hostile and sends waves after you. A developed neighbour
+on Hard, or a patient one on any difficulty but Easy, can even race its own Antimatter Gate; if it
+finishes, that faction claims the galaxy's unclaimed worlds in one burst and its stance toward you
+locks cold for good. There's no hard win: the Odyssey is a **play-forever sandbox**, and progress is
+marked by milestone fireworks — colonies founded, an **Antimatter Gate** coming online, and
+**conquest domination** as you pacify neighbour after neighbour (a pacified world can never be
+dragged back to war, quietly pays you a small annuity, and ripples its faction's standing toward
+you) — that you keep playing past. Press **O** any time to flip into **Observer Mode**, a free-look
+spectator camera over the whole galaxy with a live stats readout, if you'd rather watch the AI
+factions develop than play a hand yourself. The world roster is the nine skirmish worlds plus two
+Odyssey-only extras (a research capital and an agri world).
 
 ## Saves
 

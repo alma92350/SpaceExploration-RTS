@@ -224,7 +224,7 @@
       <span class="chip"><b>Convoy Escort</b> · <b>Pirate Raider</b> · <b>Bounty Marshal</b> — scripted ops</span>
     </div>
     <div class="meta-line">
-      <span>11 worlds</span><span>19 unit classes</span><span>21 buildings</span><span>3 mutually-exclusive doctrines</span>
+      <span>11 worlds</span><span>17 unit classes</span><span>29 buildings</span><span>3 mutually-exclusive doctrines</span>
     </div>
   </div>
 </header>
@@ -307,7 +307,8 @@
           <tr><td>AI Strategy</td><td class="wrap">Adaptive · Aggressive · Economic · Force Parity</td><td class="wrap">An aggression overlay on top of the opponent's world personality. Skirmish &amp; Odyssey only. See §10.</td></tr>
           <tr><td>Map size</td><td class="wrap">Small · Standard · Large · Gigantic</td><td class="wrap">1×, 2×, 3×, or 4× the reference 1600×1000 field, plus more hidden caches. See §09.</td></tr>
           <tr><td>Resources</td><td class="wrap">Rare (0.6×) · Normal (1×) · Abundant (1.5×)</td><td class="wrap">Multiplies every deposit's amount, map-wide.</td></tr>
-          <tr><td>World</td><td class="wrap">9 skirmish cards (Odyssey opens on a random one of 11)</td><td class="wrap">Fixes the opponent's temperament and any terrain/rule modifier. See §09.</td></tr>
+          <tr><td>Match length</td><td class="wrap">Quick (20 min) · Standard (40 min) · Marathon (60 min)</td><td class="wrap">Skirmish only. See §11 for how the final stretch and a score-decided ending work.</td></tr>
+          <tr><td>World</td><td class="wrap">A card row — 9 for Skirmish, all 11 for Odyssey (including Kybernet &amp; Verdani) plus a 🎲 Random card</td><td class="wrap">Fixes the opponent's temperament and any terrain/rule modifier. See §09. Clicking a card starts the game immediately — there's no reroll limit, just back out and click again to draw fresh. Oort's and Nimbus's Skirmish cards also carry a ⇄ Swap sides toggle to take the AI's half of that world's asymmetric modifier instead of your own.</td></tr>
           <tr><td>Seed</td><td class="wrap">Optional number</td><td class="wrap">Leave blank for a random map; enter a value to reproduce an exact match later.</td></tr>
         </tbody>
       </table>
@@ -320,7 +321,9 @@
         <tbody>
           <tr><td>Left-drag</td><td class="wrap">Box-select your units. A box that catches any combat unit drops workers from the pick automatically.</td></tr>
           <tr><td>Ctrl + left-drag</td><td class="wrap">Add to the current selection instead of replacing it.</td></tr>
+          <tr><td>Alt + left-drag</td><td class="wrap">Subtract the box's catch from the current selection instead of adding to it.</td></tr>
           <tr><td>Double-click a unit</td><td class="wrap">Select every unit of that exact type currently on screen.</td></tr>
+          <tr><td>Ctrl + double-click</td><td class="wrap">Extend that same-type selection to the whole map, not just the visible viewport.</td></tr>
           <tr><td>Right-click</td><td class="wrap">Context order — see the priority list below.</td></tr>
           <tr><td>Right-click + drag</td><td class="wrap">Same order, but the drag direction sets the group's facing.</td></tr>
           <tr><td>Ctrl + right-click</td><td class="wrap">Queue the order as a waypoint — chain several for a multi-leg path.</td></tr>
@@ -330,6 +333,8 @@
         </tbody>
       </table>
     </div>
+
+    <p class="muted">Getting hit off-screen now flashes an attack ping on the minimap — <span class="kbd">Backspace</span> jumps the camera straight to the most recent one instead of hunting for the under-attack banner's few-second window.</p>
 
     <div class="callout note">
       <span class="co-label">The right-click priority chain</span>
@@ -361,13 +366,17 @@
           <tr><td><span class="kbd">E</span></td><td class="wrap">Scout mode — sends a selected Ranger to auto-explore.</td></tr>
           <tr><td><span class="kbd">A</span></td><td class="wrap">Arm attack-move; the next click commits it, <span class="kbd">Esc</span>/right-click cancels.</td></tr>
           <tr><td><span class="kbd">H</span></td><td class="wrap">Hold position — fire in range, never chase.</td></tr>
+          <tr><td><span class="kbd">R</span></td><td class="wrap">Patrol — converts a selection's already-queued move/attack-move waypoints into a standing loop. Lay the path first (right-click / Ctrl+right-click), then press R.</td></tr>
           <tr><td><span class="kbd">F</span></td><td class="wrap">Form up — hold the current formation shape in place.</td></tr>
           <tr><td><span class="kbd">`</span></td><td class="wrap">Jump to the next idle worker.</td></tr>
-          <tr><td><span class="kbd">Space</span></td><td class="wrap">Center the camera on your Command Center.</td></tr>
+          <tr><td><span class="kbd">Backspace</span></td><td class="wrap">Jump the camera to the most recent attack ping.</td></tr>
+          <tr><td><span class="kbd">Space</span></td><td class="wrap">Center the camera on a base. Press again (or repeatedly) to cycle through every base you own.</td></tr>
           <tr><td><span class="kbd">Z</span> <span class="kbd">C</span> <span class="kbd">V</span> <span class="kbd">B</span> <span class="kbd">N</span></td><td class="wrap">Fire the side panel's 1st–5th produce/build option.</td></tr>
           <tr><td>WASD / arrows</td><td class="wrap">Pan the camera (also works by pushing the cursor to the screen edge).</td></tr>
           <tr><td><span class="kbd">P</span></td><td class="wrap">Pause / resume.</td></tr>
           <tr><td><span class="kbd">M</span></td><td class="wrap">Toggle the galaxy starmap (Odyssey only).</td></tr>
+          <tr><td><span class="kbd">O</span></td><td class="wrap">Toggle Observer Mode — a free-look spectator camera over the whole Odyssey galaxy (Odyssey only). See §12.</td></tr>
+          <tr><td><span class="kbd">T</span></td><td class="wrap">Toggle the Tech &amp; Industry Chart — every building, unit gate, and tech node as tier columns, colored by built / affordable / locked.</td></tr>
           <tr><td><span class="kbd">F1</span> / <span class="kbd">?</span></td><td class="wrap">Toggle this game's in-app help overlay.</td></tr>
           <tr><td><span class="kbd">Esc</span></td><td class="wrap">Cancel an armed attack-move, or close whatever overlay is open.</td></tr>
         </tbody>
@@ -377,6 +386,11 @@
     <div class="callout tip">
       <span class="co-label">Pausing is stacked, not toggled</span>
       <p>Five different things can hold the sim paused at once — the manual <span class="kbd">P</span> key, the help overlay, the leave-game confirmation, the Odyssey landing picker, and the starmap. <em>Any one</em> of them is enough to freeze play, and closing one overlay won't resume the game if another reason is still active. The camera keeps panning and zooming the whole time, so you can study a frozen battlefield at leisure.</p>
+    </div>
+
+    <div class="callout note">
+      <span class="co-label">The opening checklist</span>
+      <p>A reactive checklist replaces the old static objectives banner for the first stretch of a match — it tracks what you've actually done (workers trained, a Barracks up, a doctrine picked, a Habitat raised) and checks items off live instead of just counting down a timer.</p>
     </div>
   </section>
 
@@ -393,10 +407,12 @@
 
     <div class="callout note">
       <span class="co-label">Saturation</span>
-      <p>A node supports three full-rate miners (<span class="mono">minerSoftCap</span>). A fourth and beyond each work at only 40% of a share — six workers crammed onto one node average 70% efficiency apiece, not 100%. Spread workers across separate nodes rather than stacking them.</p>
+      <p>A node supports three full-rate miners (<span class="mono">minerSoftCap</span>). A fourth and beyond each work at only 40% of a share — six workers crammed onto one node average 70% efficiency apiece, not 100%. A strained node now draws a warning ring on the map and a line in its panel, so overcrowding is visible at a glance — spread workers across separate nodes rather than stacking them.</p>
     </div>
 
-    <p>When a node hits zero, the worker mining it simply goes idle in place — it will not automatically walk to a fresh node, so an idle-worker check (<span class="kbd">`</span>) is worth a habit late in a match.</p>
+    <p>When a node runs dry, the worker mining it rolls onto the nearest discovered node of the <em>same</em> commodity instead of stopping — preferring one that isn't already saturated. Only when nothing qualifies within reach does it fall back to idling in place, so an idle-worker check (<span class="kbd">`</span>) is still worth a late-match habit.</p>
+
+    <p class="muted">Hovering any resource in the topbar reads its live flow, not just its stock — whether it's climbing or draining and roughly how fast. A commodity flashes red when it's both net-negative <em>and</em> something currently running (a fuel-burning station, a charging Antimatter Gate) actually depends on it — a warning worth acting on before that thing stalls, not after.</p>
 
     <h3 class="sub">Supply</h3>
     <p>Every unit costs supply, checked against a soft population cap. A Command Center grants <strong class="mono">+10</strong>; a Habitat adds <strong class="mono">+8</strong> for a cheap 75 ore. Queued (not yet trained) units already reserve their supply cost, so you can't stuff a production queue past the cap. Losing a Habitat can leave you legally over cap — nothing already built is lost, but new production simply blocks until you rebuild the housing.</p>
@@ -538,14 +554,29 @@
       </div>
       <div class="card">
         <h4>Colossus <span class="pill capital">Tier-3</span></h4>
-        <p class="muted">185 range — nothing outranges it but the Leviathan — plus a <strong>+25</strong> building bonus. Slow and fragile for its cost.</p>
+        <p class="muted">185 range — nothing outranges it but the Leviathan — plus a <strong>+25</strong> building bonus, and every hit splashes 50% of its damage (falling off to nothing at 26 range) onto enemy units caught near the impact — never onto buildings or its own side. Slow and fragile for its cost; a cost-parity Skiff swarm still wins head-on, splash included.</p>
       </div>
     </div>
 
     <div class="callout tip">
-      <span class="co-label">The triangle's blind spot</span>
-      <p>The scripted opponent's counter-building logic only recognizes Skiff, Bastion, and Lancer — the Breacher and every Tier-3/capital unit have no scripted counter-response coded against them at all (see §10). Leaning on siege or specialists denies the AI's reactive tech entirely; it just keeps producing its normal mix.</p>
+      <span class="co-label">The triangle's counter-pick, and its limits</span>
+      <p>The scripted opponent's counter-building only directly recognizes the Skiff/Bastion/Lancer triangle, but it no longer goes blind outside it: massing a Breacher, Dreadnought, Wraith, Colossus, or Leviathan draws a cost-efficient answer of massed Skiffs, and a massed Aegis draws Lancers instead. It also reads a wall of static defense the same way it reads an army — see §10 for exactly how often it reacts, and at what point a turret line draws Breachers.</p>
     </div>
+
+    <h3 class="sub">Veterancy</h3>
+    <p>Every confirmed kill counts toward a unit's own record — only <em>role:</em>combat units (plus a Worker fighting on direct order) can earn it; turrets, buildings, and unarmed support never rank up. Three ranks, each layering the same compounding bonus:</p>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th class="num">Rank</th><th class="num">Confirmed kills</th><th class="num">Damage dealt</th><th class="num">Damage taken</th></tr></thead>
+        <tbody>
+          <tr><td class="num">I</td><td class="num">3</td><td class="num">+6%</td><td class="num">−6%</td></tr>
+          <tr><td class="num">II</td><td class="num">8</td><td class="num">+12.4%</td><td class="num">−11.6%</td></tr>
+          <tr><td class="num">III</td><td class="num">18</td><td class="num">+19.1%</td><td class="num">−16.9%</td></tr>
+        </tbody>
+        <caption>Thresholds are confirmed kills, not damage dealt or engagements survived — reaching rank II in one fight means winning eight separate exchanges, not one. Small chevrons over the unit's health bar show its current rank at a glance.</caption>
+      </table>
+    </div>
+    <p>The bonus is permanent and survives repair — only losing the unit outright, or recycling it, erases it. Pulling a bloodied army back to heal and re-field it beats re-buying it from scratch, for both sides equally.</p>
 
     <h3 class="sub">Odyssey freight &amp; strategic tier</h3>
     <div class="table-wrap">
@@ -623,11 +654,18 @@
           <tr><td>Sentinel Turret</td><td class="num">350</td><td>150 ore + 100 crystals</td><td class="num">12s</td><td class="wrap">Static defense — 20 dmg, 130 range, can't chase</td></tr>
           <tr><td>Habitat</td><td class="num">250</td><td>75 ore</td><td class="num">10s</td><td class="wrap">+8 supply — the softest building in the game, and a real raid target</td></tr>
           <tr><td>Foundry</td><td class="num">450</td><td>175 ore</td><td class="num">22s</td><td class="wrap">Tier-2 gate: Lancer, Breacher, Mender</td></tr>
+          <tr><td>Bastille</td><td class="num">600</td><td>200 ore + 150 crystals + 60 radioactives</td><td class="num">22s</td><td class="wrap">Static defense, tier 2 — 32 dmg, only 115 range but far tankier and harder-hitting than the Turret</td></tr>
           <tr><td>Arsenal</td><td class="num">550</td><td>220 ore</td><td class="num">26s</td><td class="wrap">Tier-3 gate: Dreadnought, Wraith, Aegis, Colossus</td></tr>
+          <tr><td>Aegis Bastion</td><td class="num">500</td><td>250 ore + 180 crystals</td><td class="num">26s</td><td class="wrap">Never fires — every friendly unit &amp; structure within 130 range takes 20% less damage</td></tr>
           <tr><td>Spaceport</td><td class="num">600</td><td>300 ore</td><td class="num">30s</td><td class="wrap">Odyssey jump &amp; freight gate — requires Foundry</td></tr>
           <tr><td>Market</td><td class="num">150</td><td>40 ore</td><td class="num">6s</td><td class="wrap">Odyssey trade panel</td></tr>
         </tbody>
       </table>
+    </div>
+
+    <div class="callout note">
+      <span class="co-label">The static-defense ladder</span>
+      <p>Three tiers of ground-based defense: Sentinel Turret (130 range), Bastille (115 — tankier and harder-hitting instead of longer-ranged), and the Odyssey-only Plasma Torpedo Battery (180, below) — plus the non-firing Aegis Bastion's damage-reduction bubble. Every siege unit still strictly out-ranges every static-defense structure (Breacher 150, Colossus 185, Leviathan 200): static defense holds ground by hp and attrition, never by out-ranging siege.</p>
     </div>
 
     <h3 class="sub">The Odyssey industrial chain</h3>
@@ -644,6 +682,8 @@
         </tbody>
       </table>
     </div>
+
+    <p class="muted">A <strong>Grid Substation</strong> (180 hp, 60 ore + 30 crystals, 10s, no tech required) is a cheap relay, not another plant — 0 Power granted, and it draws a small load of its own once active. Built within a real source's on-grid band, it becomes a second, shorter-range anchor point that nearby factories can measure their own grid distance to instead — one hop only, it can't chain through a second relay — so an expansion doesn't have to buy a whole fuel-burning station just to escape the distance tax.</p>
 
     <div class="flow">
       <span class="fnode good">Ore</span><span class="farrow">→</span>
@@ -665,6 +705,14 @@
       <span class="fnode">AI Foundry</span><span class="farrow">→</span>
       <span class="fnode flare">AI Cores</span>
     </div>
+    <div class="flow">
+      <span class="fnode good">Biomass</span><span class="farrow">→</span>
+      <span class="fnode">Chemical Plant</span><span class="farrow">→</span>
+      <span class="fnode good">Chemicals</span><span class="farrow">→</span>
+      <span class="fnode">Fabricator</span><span class="farrow">→</span>
+      <span class="fnode flare">Goods</span>
+    </div>
+    <div class="flow-req">A genuinely separate branch, not a continuation of the ore spine — the Chemical Plant needs no Smelter or Metallurgy at all. The Fabricator is where it meets the main chain, drawing Alloys from the Assembly Plant. Goods have no further recipe use; they're a credits engine, sold straight on the market.</div>
 
     <div class="table-wrap">
       <table class="data">
@@ -674,10 +722,13 @@
           <tr><td>Assembly Plant</td><td class="num">440</td><td>180 ore</td><td class="num">20s</td><td class="wrap">Smelter + Metallurgy</td><td class="wrap">2 metals + 2 energy → 1 alloy</td></tr>
           <tr><td>Chip Fab</td><td class="num">440</td><td>190 ore</td><td class="num">20s</td><td class="wrap">Smelter + Microelectronics</td><td class="wrap">1 crystal + 1 metal + 2 energy → 1 electronics</td></tr>
           <tr><td>Datacenter</td><td class="num">420</td><td>200 ore</td><td class="num">22s</td><td class="wrap">—</td><td class="wrap">Hosts the Odyssey tech tree — no recipe of its own</td></tr>
+          <tr><td>Chemical Plant</td><td class="num">420</td><td>165 ore</td><td class="num">18s</td><td class="wrap">Industrial Chemistry</td><td class="wrap">2 biomass + 1 energy → 2 chemicals</td></tr>
+          <tr><td>Fabricator</td><td class="num">450</td><td>200 ore</td><td class="num">21s</td><td class="wrap">Assembly Plant + Chemical Plant + Consumer Fabrication</td><td class="wrap">1 alloy + 1 chemicals + 1 energy → 1 goods</td></tr>
           <tr><td>Machine Works</td><td class="num">460</td><td>220 ore</td><td class="num">24s</td><td class="wrap">Assembly Plant + Chip Fab + Precision Machining</td><td class="wrap">1 alloy + 1 electronics + 1 energy → 1 machinery</td></tr>
           <tr><td>Antimatter Forge</td><td class="num">460</td><td>240 ore</td><td class="num">26s</td><td class="wrap">Machine Works + Antimatter Containment</td><td class="wrap">1 machinery + 2 radioactives + 3 energy → 1 antimatter</td></tr>
           <tr><td>AI Foundry</td><td class="num">460</td><td>240 ore</td><td class="num">26s</td><td class="wrap">Chip Fab + Machine Minds</td><td class="wrap">2 electronics + 1 crystal + 3 energy → 1 AI core</td></tr>
           <tr><td>Torpedo Works</td><td class="num">460</td><td>240 ore</td><td class="num">26s</td><td class="wrap">Antimatter Forge + Machine Minds</td><td class="wrap">1 antimatter + 2 alloys + 2 radioactives + 2 energy → 1 plasma torpedo</td></tr>
+          <tr><td>Plasma Torpedo Battery</td><td class="num">420</td><td>250 ore + 10 alloys</td><td class="num">24s</td><td class="wrap">Torpedo Works</td><td class="wrap">Static defense, Strategic tier — 55 dmg, 180 range, but ammo-fed: burns 0.25 plasma torpedoes/shot from an 80-unit magazine workers must haul in, same as feeding a Reactor</td></tr>
           <tr><td>Plasma Rig</td><td class="num">560</td><td>500 ore + 8 machinery + 5 electronics + 3 AI cores</td><td class="num">46s</td><td class="wrap">AI Foundry + Reactor</td><td class="wrap">Perpetual dig — see §04</td></tr>
           <tr><td>Star Dock</td><td class="num">600</td><td>350 ore</td><td class="num">40s</td><td class="wrap">AI Foundry + Torpedo Works</td><td class="wrap">Produces Leviathan, Helium Bomb</td></tr>
           <tr><td>Antimatter Gate</td><td class="num">1200</td><td>800 ore</td><td class="num">60s</td><td class="wrap">Antimatter Forge + AI Foundry + Torpedo Works</td><td class="wrap">The Odyssey win-condition wonder — below</td></tr>
@@ -687,7 +738,7 @@
 
     <div class="callout lore">
       <span class="co-label">The Antimatter Gate</span>
-      <p>Charging draws a full <strong class="mono">150 seconds</strong> at a steady rate, consuming <strong class="mono">30 AI Cores, 45 Antimatter, and 15 Plasma Torpedoes</strong> in total — spent as it charges, so razing it mid-build loses the whole investment. It taxes your power grid (8 Power × grid efficiency) the entire time, but the charge itself isn't power-gated — sniping a Reactor slows your factories, not the Gate.</p>
+      <p>Charging draws a full <strong class="mono">150 seconds</strong> at a steady rate, consuming <strong class="mono">30 AI Cores, 45 Antimatter, and 15 Plasma Torpedoes</strong> in total — spent as it charges, so razing it mid-build loses the whole investment. It taxes your power grid (8 Power × grid efficiency) the entire time, but the charge itself isn't power-gated — sniping a Reactor slows your factories, not the Gate. A persistent charge strip on the HUD tracks your own Gate's progress at all times, warming in color as it climbs and flipping to a stalled look the moment something — starved feed goods, throttled power — stops it from advancing.</p>
     </div>
 
     <h3 class="sub">The power grid</h3>
@@ -704,6 +755,10 @@
       </table>
     </div>
     <p>If total draw exceeds capacity, <em>every</em> consumer throttles by the same fraction at once — never "some run, some stall." <strong>Electrifying</strong> a Command Center, Barracks, Star Dock, or Habitat (a toggle, once the grid exists) adds up to +30% production speed or supply housing, scaled by however much headroom the grid actually has. Banking any amount of <strong>ice</strong> at all halves every factory's non-energy inputs, the Rig's radioactive burn, and fuel consumption grid-wide — at a running cost of 0.1 ice/second for as long as it lasts.</p>
+
+    <h3 class="sub">Logistics &amp; freight</h3>
+    <p>A <strong>Logistics priority</strong> cycle button (Normal → High → Low) on any factory or fuel-burning power station weights the same nearest-first auto-haulage scan every building competes on: High halves its effective distance and raises its hauler/server cap from 2 to 3, Low quadruples its effective distance with no cap change. Useful for telling your haulers which end of a spread-out colony actually matters right now.</p>
+    <p><strong>Freight Lanes</strong> automate the run itself: assign a parked freighter at a Spaceport to a standing route to any other world you hold, and every ~10 seconds it moves its assigned ships' combined cargo capacity of whichever commodities you've filtered in, treasury to treasury, with no further input from you. A lane-assigned ship is a real, physically parked investment — it's excluded from a bulk fleet jump while committed to its route, so pulling it back off the lane is a deliberate choice, not automatic.</p>
   </section>
 
   <!-- ============ 06 DOCTRINES ============ -->
@@ -716,25 +771,28 @@
 
     <div class="table-wrap">
       <table class="data">
-        <thead><tr><th>Doctrine</th><th>Tier</th><th class="wrap">Cost</th><th class="wrap">Effect</th></tr></thead>
+        <thead><tr><th>Doctrine</th><th>Tier</th><th class="wrap">Cost</th><th class="num">Base time*</th><th class="wrap">Effect</th></tr></thead>
         <tbody>
-          <tr><td rowspan="2"><span class="tagdoc assault">⚔ Assault</span></td><td>Overcharged Weapons</td><td class="wrap">150 radioactives</td><td class="wrap">+15% damage dealt</td></tr>
-          <tr><td>Overcharged Core</td><td class="wrap">200 radioactives + 120 ore</td><td class="wrap">+15% more (stacks)</td></tr>
-          <tr><td rowspan="2"><span class="tagdoc bulwark">🛡 Bulwark</span></td><td>Reinforced Plating</td><td class="wrap">150 crystals</td><td class="wrap">−12% damage taken</td></tr>
-          <tr><td>Reinforced Bulwark</td><td class="wrap">200 crystals + 120 ore</td><td class="wrap">−12% more (stacks)</td></tr>
-          <tr><td rowspan="3"><span class="tagdoc logistics">📦 Logistics</span></td><td>Logistics Network</td><td class="wrap">140 crystals</td><td class="wrap">+25% resource yield per haul</td></tr>
-          <tr><td>Rapid Fabrication</td><td class="wrap">160 crystals + 120 ore</td><td class="wrap">−20% unit &amp; building time</td></tr>
-          <tr><td>Field Recycling</td><td class="wrap">180 crystals + 140 ore</td><td class="wrap">+30 points of recycle refund (see §03)</td></tr>
+          <tr><td rowspan="3"><span class="tagdoc assault">⚔ Assault</span></td><td>Overcharged Weapons</td><td class="wrap">150 radioactives</td><td class="num">25s</td><td class="wrap">+15% damage dealt</td></tr>
+          <tr><td>Overcharged Core</td><td class="wrap">200 radioactives + 120 ore</td><td class="num">32s</td><td class="wrap">+15% more (stacks); "combat drive" — +10% move speed closing on an already-acquired target</td></tr>
+          <tr><td>Overdrive Actuators <span class="pill">Arsenal</span></td><td class="wrap">220 radioactives + 140 ore</td><td class="num">38s</td><td class="wrap">−10% attack cooldown — the army (not static defense) shoots faster once engaged</td></tr>
+          <tr><td rowspan="3"><span class="tagdoc bulwark">🛡 Bulwark</span></td><td>Reinforced Plating</td><td class="wrap">150 crystals</td><td class="num">25s</td><td class="wrap">−12% damage taken</td></tr>
+          <tr><td>Reinforced Bulwark</td><td class="wrap">200 crystals + 120 ore</td><td class="num">32s</td><td class="wrap">−12% more (stacks); combat units regen 0.5 hp/s once unhit for 8s</td></tr>
+          <tr><td>Self-Sealing Plating <span class="pill">Arsenal</span></td><td class="wrap">220 crystals + 140 ore</td><td class="num">38s</td><td class="wrap">Regen replaces Tier 2's, doesn't stack with it: 1.5 hp/s, kicks in after just 3s unhit</td></tr>
+          <tr><td rowspan="3"><span class="tagdoc logistics">📦 Logistics</span></td><td>Logistics Network</td><td class="wrap">140 crystals</td><td class="num">25s</td><td class="wrap">+25% resource yield per haul</td></tr>
+          <tr><td>Rapid Fabrication</td><td class="wrap">160 crystals + 120 ore</td><td class="num">32s</td><td class="wrap">−20% unit &amp; building time</td></tr>
+          <tr><td>Field Recycling</td><td class="wrap">180 crystals + 140 ore</td><td class="num">38s</td><td class="wrap">+30 points of recycle refund (see §03)</td></tr>
         </tbody>
+        <caption>*Base time is at a tech-rating-5 world — the identical 0.5× (tech 10) – 2× (tech 1) scaling the Odyssey tech tree below uses, and it applies in Skirmish too: every world carries a tech rating, Odyssey or not. Research is a real, raidable window now, not an instant purchase.</caption>
       </table>
     </div>
 
     <div class="callout caution">
       <span class="co-label">The tooltips undersell the stacking</span>
-      <p>Both tiers of a combat doctrine multiply together rather than adding. Full Assault is <strong>+32.25%</strong> damage dealt (1.15 × 1.15), not +30%. Full Bulwark leaves you taking <strong>77.44%</strong> of normal damage (0.88 × 0.88) — a <strong>22.56%</strong> reduction, not 24%.</p>
+      <p>Every tier of a combat doctrine multiplies together rather than adding. Full Assault (all three tiers) is <strong>+52.1%</strong> damage dealt (1.15³), not +45%. Full Bulwark leaves you taking <strong>68.1%</strong> of normal damage (0.88³) — a <strong>31.9%</strong> reduction, not 36%. Bulwark's regen doesn't compound the same way: Tier 3 <em>replaces</em> Tier 2's healing rate rather than adding to it.</p>
     </div>
 
-    <p>Radioactives fund Assault, crystals fund Bulwark and Logistics — so a world's deposit mix (a crystal-poor world, a radioactive-poor one) quietly tilts which doctrine is the easier commit.</p>
+    <p>Radioactives fund Assault, crystals fund Bulwark and Logistics — so a world's deposit mix (a crystal-poor world, a radioactive-poor one) quietly tilts which doctrine is the easier commit. Both Tier-3 capstones additionally require a completed Arsenal on top of the Refinery itself — the same building that gates the Tier-3 unit roster.</p>
 
     <h3 class="sub">The Odyssey tech tree</h3>
     <p>Researched at a Datacenter, paid for in gathered commodities (no separate research currency), and timed rather than instant — a high-tech world (data rating 10) researches at double speed; a frontier rock (rating 1) at half.</p>
@@ -746,7 +804,7 @@
       <span class="fnode sig">Machine Minds</span><span class="farrow">→</span>
       <span class="fnode sig">Autonomous Freight AI</span>
     </div>
-    <div class="flow-req">Metallurgy also branches to Heavy Alloys; Microelectronics branches to Factory Automation, which itself branches to Reclamation Engineering.</div>
+    <div class="flow-req">Metallurgy also branches to Heavy Alloys; Microelectronics branches to Factory Automation, which itself branches to Reclamation Engineering. Industrial Chemistry is a second, wholly separate root (no prior tech needed) that branches on to Consumer Fabrication — the trade-industry pair in §05, a credits engine that never touches ore-chain tech at all.</div>
     <div class="table-wrap">
       <table class="data">
         <thead><tr><th>Tech</th><th class="wrap">Cost</th><th class="num">Time*</th><th class="wrap">Requires</th><th class="wrap">Effect</th></tr></thead>
@@ -761,9 +819,16 @@
           <tr><td>Antimatter Containment</td><td class="wrap">220 crystals + 100 rad.</td><td class="num">44s</td><td class="wrap">Precision Machining</td><td class="wrap">Unlocks the Antimatter Forge</td></tr>
           <tr><td>Machine Minds</td><td class="wrap">260 crystals + 130 rad.</td><td class="num">48s</td><td class="wrap">Antimatter Containment</td><td class="wrap">Unlocks AI Foundry + Torpedo Works</td></tr>
           <tr><td>Autonomous Freight AI</td><td class="wrap">60 AI cores + 90 electronics</td><td class="num">40s</td><td class="wrap">Machine Minds</td><td class="wrap">Freighters can join the local logistics chain unmanned (burns AI Cores to run)</td></tr>
+          <tr><td>Industrial Chemistry</td><td class="wrap">80 crystals</td><td class="num">20s</td><td class="wrap">—</td><td class="wrap">Unlocks the Chemical Plant</td></tr>
+          <tr><td>Consumer Fabrication</td><td class="wrap">150 crystals + 60 rad.</td><td class="num">36s</td><td class="wrap">Industrial Chemistry</td><td class="wrap">Unlocks the Fabricator</td></tr>
         </tbody>
         <caption>*Time shown is at a tech-rating-5 world; clamped between 0.5× (tech 10) and 2× (tech 1) elsewhere.</caption>
       </table>
+    </div>
+
+    <div class="callout note">
+      <span class="co-label">Canceling refunds in full</span>
+      <p>A queued Datacenter research job can be canceled for a full, un-prorated refund of its cost, even mid-progress — a mis-click no longer strands the cost until completion. Canceling a prerequisite cascades to refund anything else queued behind it that depended on it too.</p>
     </div>
   </section>
 
@@ -776,16 +841,18 @@
     </div>
 
     <h3 class="sub">The damage pipeline</h3>
-    <p>A hit's final damage is a flat base (plus any triangle/building bonus), then five multipliers applied in order:</p>
+    <p>A hit's final damage is a flat base (plus any triangle/building bonus), then seven multipliers applied in order:</p>
     <ol class="tight">
       <li>Base attack + bonus vs. this specific target type + bonus vs. buildings, if applicable</li>
       <li>× the attacker's Assault doctrine multiplier</li>
       <li>× the defender's Bulwark doctrine multiplier</li>
+      <li>× the attacker's veterancy rank (up to +19.1% at rank III — see §04)</li>
+      <li>× the defender's veterancy rank (up to −16.9% at rank III)</li>
       <li>× the attacker's commander (faction) damage trait</li>
       <li>× the attacker's own terrain (+15% from high ground)</li>
-      <li>× 0.82 if the defender stands inside a friendly Aegis's guard aura</li>
+      <li>× the defender's guard aura, if any — 0.82 inside a friendly Aegis unit's bubble, 0.8 inside an Aegis Bastion's (never both at once — only the nearest aura applies)</li>
     </ol>
-    <p>There is no separate armor-mitigation step anywhere in this chain — it's flat bonuses, then straight multiplication, then the result comes off HP.</p>
+    <p>There is no separate armor-mitigation step anywhere in this chain — it's flat bonuses, then straight multiplication, then the result comes off HP. Only <em>role:</em>combat units rank up through veterancy — turrets, the Bastille, and the Aegis Bastion hold ground on hp and ammo alone, never leveling up (see §05).</p>
 
     <h3 class="sub">Targeting &amp; stances</h3>
     <ul class="tight">
@@ -798,6 +865,7 @@
 
     <h3 class="sub">Formations</h3>
     <p>Selecting several units and giving a move order arranges them: <strong>Grid</strong> (a simple block), <strong>Line</strong> (abreast), <strong>Wedge</strong> (a spearhead or a chevron), or <strong>Circle</strong> (a ring). The leader is whichever unit you selected <em>first</em> — Ctrl-click a unit already in the selection to promote it to the front. A formation moves at its slowest member's pace, and separated clusters of units arrange themselves as nested groups rather than one line stretched across the map. <span class="kbd">F</span> holds the current shape in place at a fixed anchor.</p>
+    <p>Any shape other than Grid also ranks its followers by weapon range, automatically: short-ranged units (Bastion, Skiff) take the most forward slots, long-ranged ones (Lancer, Breacher, Colossus) trail behind, and an unarmed support unit (the Mender) sinks to the rearmost slot of all — no manual reordering needed. The leader's own slot is untouched by this ranking; it's always whichever unit you promoted.</p>
     <p>Right-click a friendly unit with a mixed selection to have the rest form a protective escort ring around it that follows wherever it goes — useful for keeping a Mender or a Colony Ship safe mid-march.</p>
   </section>
 
@@ -826,7 +894,7 @@
         <p class="muted">Elite firepower on a lean economy — win the fight, fast.</p>
       </div>
     </div>
-    <p class="muted">The opponent doesn't pick a faction directly — it's fixed by its world temperament instead: a Rusher plays Syndicate, an Economist plays Miners, a Balanced opponent plays Frontier. See §10.</p>
+    <p class="muted">The opponent doesn't pick a faction directly — it's fixed by its world temperament instead: a Rusher plays Syndicate, an Economist plays Miners, a Balanced opponent plays Frontier, and a Technologist also plays Syndicate. See §10.</p>
   </section>
 
   <!-- ============ 09 WORLDS ============ -->
@@ -850,6 +918,11 @@
       </table>
     </div>
 
+    <div class="callout note">
+      <span class="co-label">That 125% sight bonus reaches your guns too</span>
+      <p>Standing on high ground doesn't just extend vision — the identical multiplier stretches weapon engagement range, so a turret or unit up on a ridge acquires and holds targets 25% farther out, on top of the 115% damage bonus. It cuts both ways, though: a unit that <em>isn't</em> standing on high ground can see — or acquire and hold a target on — a high-ground cell only out to <strong>55%</strong> of its normal sight/weapon range; everything past that stays concealed, or simply can't be shot back at. Climb the ridge yourself, or you're fighting half-blind (and short-ranged) against whoever's holding it. Applies identically to the AI's own fog, so a held ridge is a real, symmetric objective for both sides.</p>
+    </div>
+
     <h3 class="sub">Map size &amp; resources</h3>
     <div class="table-wrap">
       <table class="data">
@@ -863,6 +936,8 @@
         <caption>Home ore is always exactly 3 nodes of 350 each, regardless of map size — the opening economy is never stranded by a bigger map. Resources (Rare 0.6× / Normal 1× / Abundant 1.5×) scales every deposit on top of this.</caption>
       </table>
     </div>
+
+    <p class="muted">Large and Gigantic maps also seed a mirrored belt of full-size deposit clusters out in the contested middle — one extra belt per size step — instead of just stretching the same near-base economy across more empty space.</p>
 
     <h3 class="sub">Fog of war</h3>
     <p>Two kinds of knowledge, tracked separately: what's <strong>visible right now</strong> (live, recomputed every tick) and what's ever been <strong>explored</strong> (permanent, never resets). Charted surface deposits near each base are shown from the start — prior map knowledge, not battlefield intel — but hidden caches out in the contested middle stay invisible until a unit's own sight crosses them, at which point they're revealed for good.</p>
@@ -885,7 +960,7 @@
       <p><strong>Nimbus</strong>: you out-scout (you keep 95% sight to their 75%), they out-tempo (12% faster movement) — the storm hits them harder, but they move through it quicker. <strong>Oort</strong>: you out-mine (richer nodes plus a personal +20% on every haul, compounding), they out-build (everything they gather becomes an army 18% faster) — same rich ground, very different plans for it.</p>
     </div>
 
-    <p class="muted">Odyssey adds two further worlds not offered in Skirmish: <strong>Kybernet</strong> (Tech Hub, Economist temperament, the fastest research and factories in the galaxy) and <strong>Verdani</strong> (Agri-World, Balanced temperament, a calm, low-industry neighbour) — see §12.</p>
+    <p class="muted">Odyssey adds two further worlds, both pickable as your own starting world too: <strong>Kybernet</strong> (Tech Hub, Technologist temperament — a small, teched-up elite army and the only archetype that ever fields a Colossus) and <strong>Verdani</strong> (Agri-World, Balanced temperament, a calm, low-industry neighbour) — see §12.</p>
   </section>
 
   <!-- ============ 10 OPPOSITION ============ -->
@@ -905,7 +980,7 @@
           <tr><td>Medium</td><td class="num">65</td><td>Off</td><td class="wrap">A fair, steady pace — usually one action per cycle, sometimes two.</td></tr>
           <tr><td>Hard</td><td class="num">140</td><td>On</td><td class="wrap">Routinely 3–4 actions per cycle, <em>plus</em> focus-fire, kiting, a dedicated scout, feint resistance, and worker raids.</td></tr>
         </tbody>
-        <caption>The opponent re-evaluates the game every 1.5 seconds at every difficulty — a low setting doesn't think less often, it just can't afford to act on most of what it decides. Its attack commits and home defense are never budget-gated at any difficulty, which is exactly why a match always resolves.</caption>
+        <caption>The opponent re-evaluates the game every 1.5 seconds at every difficulty — a low setting doesn't think less often, it just can't afford to act on most of what it decides. Its attack commits and home defense are never budget-gated at any difficulty, which is exactly why a match always resolves. Hard also quietly starts with its own small economic edge — +10% gather yield, −10% build/train time — on top of everything else that difficulty buys it.</caption>
       </table>
     </div>
 
@@ -930,6 +1005,7 @@
           <tr><td><span class="arche rusher">Rusher</span></td><td class="num">4</td><td class="num">4</td><td class="num">90s</td><td class="num">0</td><td class="num">1</td><td class="wrap">Assault · never expands · commits everything each wave</td></tr>
           <tr><td><span class="arche economist">Economist</span></td><td class="num">8</td><td class="num">9</td><td class="num">200s</td><td class="num">2</td><td class="num">2</td><td class="wrap">Bulwark · expands once its field drops below 40% · keeps a guard of 3</td></tr>
           <tr><td><span class="arche balanced">Balanced</span></td><td class="num">6</td><td class="num">6</td><td class="num">150s</td><td class="num">1</td><td class="num">2</td><td class="wrap">Assault · expands below 25% · keeps a guard of 2</td></tr>
+          <tr><td><span class="arche rusher">Technologist</span></td><td class="num">7</td><td class="num">7</td><td class="num">220s</td><td class="num">2</td><td class="num">2</td><td class="wrap">Assault · expands below 30% · keeps a guard of 2 · Kybernet only — the sole archetype that ever fields a Colossus</td></tr>
         </tbody>
         <caption>Wave cadence is a deadline, not just a size gate — even a tiny, half-strength army marches the instant the timer expires, and a timeout wave holds nothing back in reserve.</caption>
       </table>
@@ -938,9 +1014,9 @@
     <h3 class="sub">How it actually plays</h3>
     <ul class="tight">
       <li><strong>Scouting has two different memories.</strong> Terrain and resources it has ever seen are remembered forever. Everything about <em>you</em> — army size, composition, position — is re-derived live, every think-cycle, from only what it can currently see. The instant your army leaves its sight, that intelligence is gone.</li>
-      <li><strong>Counter-building only recognizes the triangle.</strong> Roughly one unit in three reacts to whatever you're fielding most: Skiff answers a Lancer-heavy army, Bastion answers Skiff, Lancer answers Bastion. Breacher, Dreadnought, Wraith, Aegis, Colossus, and the Leviathan have no scripted counter at all — see §04's callout.</li>
+      <li><strong>Counter-building reads the whole roster, not just the triangle — and difficulty sets how often.</strong> Easy never counter-picks at all (a learnable, exploitable army); Medium reconsiders roughly every 3rd unit it completes; Hard, every 2nd. Inside the triangle it's a hard counter (Skiff answers a Lancer-heavy army, Bastion answers Skiff, Lancer answers Bastion); outside it, every unit has a documented cost-efficient answer — mass Skiffs against a Breacher, Dreadnought, Wraith, Colossus, or Leviathan, Lancers specifically against a massed Aegis. It reads a wall of static defense the same way it reads an army: spot more than three of your turrets/Bastilles/Batteries and it specifically starts building Breachers.</li>
       <li><strong>A wave that's been ground down below 40% of its original size retreats</strong> rather than feeding survivors to a lost fight — unless it's a timeout/desperation wave, which never retreats.</li>
-      <li><strong>Fortifications line up toward the map's geometric center</strong>, not specifically toward your base — on an asymmetric map this heuristic can be read and exploited.</li>
+      <li><strong>Fortifications line up toward the map's geometric center</strong>, not specifically toward your base — on an asymmetric map this heuristic can be read and exploited. Once it has a Foundry standing, its turret line mixes in Bastilles too.</li>
       <li><strong>On Hard specifically</strong>, every third wave targets your worker line instead of your base if it can see one, and a small decoy no longer pulls its whole army home (only a proportionate slice does).</li>
     </ul>
   </section>
@@ -950,9 +1026,9 @@
     <div class="sec-head">
       <span class="sec-eyebrow">Section 11</span>
       <h2>Victory &amp; Defeat — Skirmish</h2>
-      <p class="sec-lede">A Skirmish ends the instant only one side still holds a Command Center. If neither side finishes the other off, a 40-minute clock forces a resolution.</p>
+      <p class="sec-lede">A Skirmish ends the instant only one side still holds a Command Center. If neither side finishes the other off, the clock you picked at setup — Quick (20 min), Standard (40 min), or Marathon (60 min) — forces a resolution.</p>
     </div>
-    <p>Past that time limit, the match is scored rather than left hanging: banked, unspent resources count at only a quarter of their value, while everything actually built — every unit and building's own cost — counts in full, and a fielded combat unit counts for 1.35× its cost on top of that. A stockpiling turtle cannot out-score an opponent who spent what they gathered. An exact tie favors the defending player.</p>
+    <p>The final 5 minutes flip the elapsed-time readout to a countdown alongside a live two-sided score bar, so a score-decided ending is never a surprise. Past the time limit, the match is scored rather than left hanging: banked, unspent resources count at only a quarter of their value, while everything actually built — every unit and building's own cost — counts in full, and a fielded combat unit counts for 1.35× its cost on top of that. A stockpiling turtle cannot out-score an opponent who spent what they gathered. An exact tie favors the defending player. The post-game screen states plainly which way the match actually ended — elimination, or the clock — with the full bank/army/structures breakdown whenever score was the decider.</p>
   </section>
 
   <!-- ============ 12 ODYSSEY ============ -->
@@ -964,16 +1040,17 @@
     </div>
 
     <h3 class="sub">Starting out</h3>
-    <p>You begin with <strong class="mono">500 credits</strong> and a single <strong>Colony Ship</strong> on a randomly chosen world — no base yet. Deploy the ship (an instant action, validated against its exact current footprint) to found a complete Command Center plus three free colonist Workers. Every other world is already running in the background with its own AI faction developing on its own timeline — a genuinely <em>living</em> galaxy, not a static map waiting for you to arrive.</p>
+    <p>Pick your starting world from a card row of all 11 (or click 🎲 Random) — Kybernet and Verdani included, not just the 9 Skirmish worlds. Clicking a card starts the campaign immediately, so there's no separate reroll limit: back out and pick again for a fresh draw. You begin with <strong class="mono">500 credits</strong> and a single <strong>Colony Ship</strong> on that world — no base yet. Deploy the ship (an instant action, validated against its exact current footprint) to found a complete Command Center plus three free colonist Workers. Every other world is already running in the background with its own AI faction developing on its own timeline — a genuinely <em>living</em> galaxy, not a static map waiting for you to arrive.</p>
 
     <h3 class="sub">Universal credits</h3>
     <p>A separate pool from any single world's ore/crystals/radioactives economy — credits fund only the meta-layer: jump fuel, market trades, and diplomatic tribute. Earned from passive colony income and from selling on the market.</p>
 
     <h3 class="sub">Jumping between worlds</h3>
-    <p>Requires a completed Spaceport at your current world (tier 1/2/3 carries 12/24/40 supply-points of cargo capacity per jump; upgrades cost 250 then 500 ore). A jump is <strong>free</strong> to any world you've already discovered or still hold a foothold on; a genuinely new destination costs roughly <strong class="mono">340–650 credits</strong> depending on distance. Arriving somewhere with no Spaceport of your own drops you at a hand-picked spot, snapped to a coarse grid — this is not pixel-precise placement.</p>
+    <p>Requires a completed Spaceport at your current world (tier 1/2/3 carries 12/24/40 supply-points of cargo capacity per jump; upgrades cost 250 then 500 ore). A jump is <strong>free</strong> to any world you've already discovered or still hold a foothold on; a genuinely new destination costs roughly <strong class="mono">340–650 credits</strong> depending on distance, discounted 15% at a tier-2 Spaceport and 30% at tier 3 (whichever of your pads on the launching world is highest tier). Arriving somewhere with no Spaceport of your own drops you at a hand-picked spot, snapped to a coarse grid — this is not pixel-precise placement.</p>
 
     <h3 class="sub">Background colonies</h3>
     <p>A world you're not currently standing on keeps running at full simulation speed — gathering, building, researching, fighting, and drifting diplomatically exactly as if you were there, just computed in fewer, bigger batches. Each qualifying building (everything except the Turret, capped at 6 per world) pays <strong class="mono">0.3 credits/second</strong> — up to <strong class="mono">108 credits/minute</strong> from a single well-built colony. You'll get a toast if one is attacked, turns hostile, or is lost outright.</p>
+    <p>A Command Center's <strong>Standing Orders</strong> panel sets policy for while you're away: an auto-sell floor per commodity (25-unit steps) sells any surplus above it into that world's own market — real slippage/glut pricing, additive on top of the passive income above — and a worker-headcount target (0–20) queues one fresh Worker at a time from the colony's own stockpile whenever it's short and its queue is empty, so an unattended colony keeps growing instead of idling out.</p>
 
     <h3 class="sub">Diplomacy</h3>
     <p>Every neighbour holds a stance from −1 (hostile) to +1 (allied), opening at a <strong>Cordial</strong> 0.35 with a guaranteed 7-minute grace period. From there it drifts toward a target set mostly by how depleted their world is — but a neighbour that's genuinely developing its own industry and research is calmer about it, and every kill of their forces sours the relationship immediately regardless.</p>
@@ -989,18 +1066,27 @@
         </tbody>
       </table>
     </div>
-    <p>A <strong>tribute</strong> payment (200 credits, rising steeply each time you pay one on the same world) snaps a souring neighbour back to Neutral for two minutes — a stopgap, not a subscription. Once <em>you</em> have an Antimatter Gate charging anywhere, every neighbour's target stance is dragged toward outright war as the charge climbs — a paid tribute cannot hold that off.</p>
+    <p>A <strong>tribute</strong> payment (200 credits, rising steeply each time you pay one on the same world) snaps a souring neighbour back to Neutral for two minutes — a stopgap, not a subscription. Once <em>you</em> have an Antimatter Gate charging anywhere, every neighbour's target stance is dragged toward outright war as the charge climbs — a paid tribute cannot hold that off. How fast a grudge fades is part of a world's personality too: a soured stance recovers faster on a patient world than an aggressive one, and how long it keeps treating you as an active aggressor swings from roughly 17 minutes (an Aggressive-strategy Warlord world on Hard) down to about 2 (a patient trading world on Easy) — a charging Gate still provokes for as long as it charges, regardless of any of that.</p>
+    <p>Goodwill runs the other direction too: <strong>gift</strong> any commodity you're holding 25+ of to build lasting goodwill toward Allied — it caps out short of an instant alliance and fades over a few minutes without upkeep, so one big dump can't buy friendship outright. An occasional timed <strong>favor request</strong> (a specific commodity, a 90-second window) pays a steep credit premium plus a bigger goodwill jump if you fulfill it. Once a world reaches <strong>Allied</strong>, its market's buy-side spread tightens the closer to full alliance you get — cheaper to trade with, not just safer to stand next to.</p>
     <p>Once hostile, waves scale with how bad things have gotten: a freshly-turned neighbour probes with a handful of units every 30–45 seconds; a fully hostile one commits its whole available force roughly twice as often. If it ever spots your charging Gate, every wave redirects there instead of your base.</p>
 
     <h3 class="sub">A living galaxy</h3>
     <p>Worlds don't just wait for you — a neighbour that develops enough industry and research on its own eventually plants its faction's flag, and the single most-developed one periodically colonises whatever unclaimed, unheld world sits nearest to it. Left unattended, territory quietly shifts on the starmap over the course of a long game, independent of anything you do.</p>
+
+    <div class="callout caution">
+      <span class="co-label">You're not the only one who can build a Gate</span>
+      <p>A neighbour that reaches the Strategic tier and banks a real stockpile of AI Cores, Antimatter, and Plasma Torpedoes can raise and charge a Gate of its own — on Hard difficulty regardless of temperament, or on any non-Easy difficulty if it's a patient developer (Economist, Balanced, Technologist, or an opponent you've set to the Economic strategy). Razing it mid-charge costs them the whole investment, same as it would you. If one finishes, that faction claims every still-unclaimed world in the galaxy in one burst, its economy permanently sharpens, and its stance toward you locks no better than Wary from then on — with no in-game toast or meter warning you as it climbs, so a Hard-difficulty Odyssey is worth checking in on.</p>
+    </div>
+
+    <h3 class="sub">Observer Mode</h3>
+    <p>Press <span class="kbd">O</span> (or the topbar's 🔭 Observe button) to step outside your own seat and watch the galaxy run: fog lifts on whichever world you're looking at, the starmap becomes a free camera jump to <em>any</em> world — discovered or not, no fuel, no Spaceport, no change to your real seat — and <span class="kbd">Space</span> cycles every base on the spectated world, a neighbour's included. A live stats panel reads the spectated world's archetype, strategy, diplomatic stance, army composition by owner, buildings, supply, and resources — data the engine already computes, just newly surfaced. Mouse and keyboard orders are disabled while observing (it isn't your world to command); <span class="kbd">Esc</span> or a second <span class="kbd">O</span> returns you to normal play exactly where you left it, and nothing about a spectated world's simulation changes because you looked at it.</p>
 
     <h3 class="sub">Milestones</h3>
     <ul class="tight">
       <li><strong>Worlds held</strong> — a firework for each new high-water mark of simultaneously-held worlds, up to all 11.</li>
       <li><strong>Capital</strong> — upgrading any Command Center to a permanent Capital (400 ore, doubles its HP).</li>
       <li><strong>Antimatter Gate</strong> — any of your wonders anywhere in the galaxy reaching full charge.</li>
-      <li><strong>Domination</strong> — pacifying 4 of the 11 neighbours (their Command Center destroyed with no undeployed colony ship left to re-found it).</li>
+      <li><strong>Domination</strong> — pacifying 4 of the 11 neighbours: razing a Command Center with no colony ship left to re-found it marks that world <strong>Conquered</strong> for good — it can rebuild and defend itself, but its stance can never be dragged back to war again, and it quietly pays you a small annuity (0.1 credits/second, ~6/minute) for as long as you hold it. Pacifying one world echoes a bounded, temporary chill onto its still-free faction-mates; holding an Allied world does the reverse, warming its faction-mates a little in return.</li>
       <li><strong>Total domination</strong> — pacifying all 11.</li>
     </ul>
 
@@ -1010,7 +1096,7 @@
     </div>
 
     <h3 class="sub">The market</h3>
-    <p>Every commodity in the game is tradeable. Raw deposits price by local abundance (as cheap as 0.6× base where a world is rich in it, as steep as 1.5× where it has none); manufactured goods price by that world's industry rating instead. Trades execute in 25-unit lots, each nudging the price a little further — a large dump or buy re-prices itself as it goes rather than clearing at one flat number.</p>
+    <p>Every commodity in the game is tradeable. Raw deposits price by local abundance (as cheap as 0.6× base where a world is rich in it, as steep as 1.5× where it has none); manufactured goods price by that world's industry rating instead. Trades execute in 25-unit lots, each nudging the price a little further — a large dump or buy re-prices itself as it goes rather than clearing at one flat number. Beyond the single-lot button, <strong>Sell ×4</strong> (100 units) and <strong>Sell All</strong> quote their real proceeds before you click, and a trend glyph on each row tells a brief price dip apart from a deep, slow-draining glut.</p>
   </section>
 
   <!-- ============ 13 OPERATIONS ============ -->
@@ -1046,7 +1132,7 @@
       <p class="sec-lede">Two independent channels, because a quick checkpoint and a deliberate backup are different needs.</p>
     </div>
     <ul class="tight">
-      <li><strong>Autosave</strong> — written every 12 seconds, and again whenever the tab hides or closes. Skirmish and Odyssey each keep their own slot, which is exactly what the setup screen's <em>Continue</em> buttons resume.</li>
+      <li><strong>Autosave</strong> — written every 12 seconds, and again whenever the tab hides or closes. Skirmish and Odyssey each keep their own slot, which is exactly what the setup screen's <em>Continue</em> buttons resume. The last two generations are kept, not just one — a write interrupted mid-save falls back to the previous good one automatically instead of losing the slot outright.</li>
       <li><strong>Save / Load</strong> — an explicit backup to a <span class="mono">.json</span> file on disk, capped at 8MB. Loading auto-detects whether a file is a single-world Skirmish or a whole Odyssey galaxy from its shape.</li>
     </ul>
     <p>Every load is treated as untrusted input: out-of-range numbers are clamped, unrecognized entity or commodity ids are dropped, and a version mismatch — even a newer one — is rejected outright rather than guessed at. There's no migration path across a version bump, so a save from a materially different build simply won't load. Scripted Operations can't be saved at all; leaving one mid-run abandons the attempt.</p>
@@ -1067,15 +1153,15 @@
           <li>Skiff beats Lancer (+10)</li>
           <li>Bastion beats Skiff (+10)</li>
           <li>Lancer beats Bastion (+20)</li>
-          <li>Breacher: siege, weak vs. units, no scripted counter exists for it</li>
+          <li>Breacher: siege, weak vs. units — outside the triangle, so it draws the AI's cost-efficiency answer (massed Skiffs) rather than a hard counter</li>
         </ul>
       </div>
       <div class="card">
         <h4>Core hotkeys</h4>
         <p class="mono muted" style="font-size:.84rem; line-height:2;">
           <span class="kbd">Q</span> army &nbsp; <span class="kbd">X</span> stop &nbsp; <span class="kbd">H</span> hold &nbsp; <span class="kbd">A</span> attack-move<br>
-          <span class="kbd">F</span> form up &nbsp; <span class="kbd">E</span> scout &nbsp; <span class="kbd">`</span> idle worker<br>
-          <span class="kbd">1-9</span> groups &nbsp; <span class="kbd">P</span> pause &nbsp; <span class="kbd">F1</span> help
+          <span class="kbd">R</span> patrol &nbsp; <span class="kbd">F</span> form up &nbsp; <span class="kbd">E</span> scout &nbsp; <span class="kbd">`</span> idle worker<br>
+          <span class="kbd">1-9</span> groups &nbsp; <span class="kbd">P</span> pause &nbsp; <span class="kbd">T</span> tech chart &nbsp; <span class="kbd">F1</span> help
         </p>
       </div>
       <div class="card">
