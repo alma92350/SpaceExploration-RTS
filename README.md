@@ -169,6 +169,10 @@ spectator camera over the whole galaxy with a live stats readout, if you'd rathe
 factions develop than play a hand yourself. The world roster is the nine skirmish worlds plus two
 Odyssey-only extras (a research capital and an agri world).
 
+Aiming to pacify all 11? See
+[docs/odyssey-conquest-strategy.md](docs/odyssey-conquest-strategy.md) for a full campaign playbook
+against Hard difficulty, sourced from the engine and from real `tools/ailab.js` probes.
+
 ## Saves
 
 Because the sim is deterministic and seed-driven, a save is just the serialized dynamic state — the
