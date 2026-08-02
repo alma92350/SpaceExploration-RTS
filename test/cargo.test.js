@@ -47,16 +47,20 @@ test("freightCapacity sums the cargo ships' holds and ignores anything without o
   assert.equal(freightCapacity([makeUnit("skiff", "player", 0, 0)]), 0, "a combat ship has no cargo hold");
 });
 
-test("a jump hauls manufactured goods in the staged cargo ship's hold", () => {
-  const { g, from, destId } = readyToJump(20, ["hauler"]);   // hold 250
+test("an EMPTY staged cargo ship hauls nothing — no more auto-fill on an empty hold", () => {
+  // Reported bug: load goods, jump, unload at the destination, then jump straight back with the
+  // now-empty ship — the old "empty hold auto-fills most-valuable-first" default would eagerly
+  // scoop up whatever was just delivered and carry it right back, silently undoing the delivery.
+  // A player who wants to haul on the return leg only needs an empty outbound ship to actually
+  // arrive empty (engine/galaxy.js loadCargo).
+  const { g, from, destId } = readyToJump(20, ["hauler"]);   // hold 250, left empty — no loadFreighter call
   Object.assign(from.players.player.resources, { alloys: 100, machinery: 50, ore: 500, antimatter: 30 });
   jumpCapital(g, destId);
   const dest = activeState(g);
-  assert.ok((dest.players.player.resources.machinery || 0) >= 50, "machinery arrived at the destination");
-  assert.ok((dest.players.player.resources.alloys || 0) >= 100, "alloys arrived too (150 total ≤ the 250 hold)");
-  assert.ok((from.players.player.resources.alloys || 0) < 100, "…and left the origin colony");
-  assert.equal(from.players.player.resources.ore, 500, "raw ore is never hauled");
-  assert.equal(from.players.player.resources.antimatter, 30, "strategic goods stay put");
+  assert.equal(dest.players.player.resources.machinery || 0, 0, "an empty ship must not auto-fill machinery");
+  assert.equal(dest.players.player.resources.alloys || 0, 0, "…or alloys, or anything else it never carried");
+  assert.equal(from.players.player.resources.machinery, 50, "machinery stays on the origin, untouched");
+  assert.equal(from.players.player.resources.alloys, 100, "…same for alloys — nothing left without being told to");
 });
 
 test("with NO cargo ship staged, a jump hauls nothing", () => {
