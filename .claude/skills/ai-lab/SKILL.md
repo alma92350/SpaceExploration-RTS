@@ -96,14 +96,48 @@ doesn't. Each candidate file: `{ "name": "...", "strategy": "aggressive", "overr
 `sweep`'s baseline-vs-yardstick comparison under the hood, just done N times with clean isolation
 between candidates (each one's overrides are reverted before the next one runs).
 
-**This is not head-to-head play.** Nothing here makes two candidates fight each other — that needs
-`runAI` to drive two independently-configured owners in one match, which it can't do yet (the AI
-controller is hardcoded to a single `"ai"` owner slot; see `docs/odyssey-ai-review.md` §2.8 and
-§3.2's "Ranking candidates against each other"). Report a `leaderboard` result as "beat the same
-fixed opponent by more," never as "beat the other candidates" — the two are not the same claim.
+**`leaderboard` is not head-to-head play** — it's still ranking against the same fixed sparring
+bot, just N times. Report its result as "beat the same fixed opponent by more," never as "beat the
+other candidates" — the two are not the same claim. When the question really is which candidate
+beats the other one, use `duel`/`swiss` below instead.
+
+## Head-to-head: `duel` and `swiss` (real self-play)
+
+The AI controller is owner-parametric (`runAI(state, dt, owner)` — `docs/odyssey-ai-review.md`
+§2.8), so two candidates can now really fight: both driven by the real `runAI`, each with its own
+archetype/strategy/difficulty, resolved by `engine/victory.js`'s own skirmish rule. `tools/selfplay.js`
+is the headless bench this runs on; `tools/ailab.js` wraps it:
+
+```
+node tools/ailab.js duel --a a.json --b b.json [--worlds w1,w2] [--difficulties medium,hard] [--seeds 2]
+node tools/ailab.js duel --candidates a.json,b.json,c.json ...     # round-robin
+node tools/ailab.js swiss --candidates a.json,b.json,...,z.json [--rounds N]   # large pools
+node tools/ailab.js search --tournament-against baseline.json ...  # dial search scored by duel, not score()
+```
+
+Fairness is structural: `pinnedDuelDials(difficulty)` reads the difficulty *once* into one object
+both sides' configs spread from, so apm/micro/difficulty cannot diverge — every row reads them back
+off the live controllers to prove it. `duel` is side-swapped by default (both candidates play both
+owner slots, reported separately, never blended) and keeps every difficulty bracket separate rather
+than averaged. Both defaults exist because naive versions of each were tried first and an
+independent adversarial review caught real bugs in both: a fixed side assignment let a map's own
+`asym` block (`oort`/`nimbus`) decide matches regardless of candidate quality, and Hard difficulty's
+economic edge (`hardEdge`) was only ever seeded onto owner `"ai"`, never a self-play `"player"`
+controller configured for Hard. Full story and numbers in `docs/odyssey-ai-review.md` §2.8 and the
+2026-08-03 ledger rows. If you extend this further: **assume there's another one of these bugs
+until an independent reviewer — a fresh agent with no memory of writing the code — has actually
+tried to find it.** Every tier of this build caught something real; the one tier that skipped
+independent review (a scripting accident, not a deliberate skip) was the one a human had to go back
+and check by hand afterward.
 
 ## Traps specific to this codebase
 
+- **Self-play code must resolve everything from `owner`, never hardcode a side.** Any new AI-phase
+  code has to read the controller via `controllerFor(state, owner)`, the fog via
+  `state.fogs[owner]`, and the enemy via `otherOwner(owner)` (`engine/aiCommon.js`) — a stray
+  `state.ai`/`state.fogAI`/`"ai"` literal in a spot that could run for owner `"player"` is exactly
+  how the two bugs in the section above happened, and it usually still passes `npm test` because
+  the shipped game only ever exercises owner `"ai"`.
 - **Layers compose multiplicatively.** Archetype × strategy × difficulty all multiply
   (`graceMult`, `workerTargetMult`, …). A dial that looks mild in isolation can be a 3×
   swing on Hard + Aggressive + Rusher. Always sweep across difficulties when touching one.

@@ -20,10 +20,18 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard } from "../tools/ailab.js";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard,
+  runDuel, runRoundRobin, pinnedDuelDials, runSwappedDuel, runDuelBrackets, runRoundRobinSwapped, runSearch,
+  runSwissTournament,
+} from "../tools/ailab.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
 import { tick } from "../engine/sim.js";
+import { hashStr } from "../engine/rng.js";
 
 const short = extra => ({ world: "ferros", strategy: "default", difficulty: "medium",
                           opponent: "passive", minutes: 4, sample: 2, seed: 7, ...extra });
@@ -332,4 +340,514 @@ test("a strategy that deliberately caps its army isn't reported as a production 
     "an army-capped strategy sitting on idle Barracks is doing what it was asked to");
   assert.equal(summarise([{ ...base, armyCapped: false }]).idleRichFrac, 1,
     "…an uncapped one doing the same has run out of things to buy");
+});
+
+/* ---------- duel: Tier 2, TRUE head-to-head via Tier 1 self-play ----------
+
+   Unlike leaderboard above (a proxy: every candidate vs the SAME fixed sparring bot), duel
+   makes two candidates fight each other for real via tools/selfplay.js, resolved by engine/
+   victory.js exactly like any other skirmish. These tests guard the three things a "fair
+   fight" claim rests on: it replays byte-identically, it actually detects who won, and the
+   one dial that would silently break fairness (APM/micro, both derived from difficulty) is
+   provably identical for both sides — not just passed as the same CLI flag and trusted. ---------- */
+
+const shortDuel = extra => ({ worlds: ["ferros"], difficulty: "medium", seeds: 1, seedBase: 7, minutes: 5, ...extra });
+
+test("duel is deterministic — same two candidates, same seed, byte-identical result", () => {
+  const a = { name: "A", strategy: "default" };
+  const b = { name: "B", strategy: "aggressive" };
+  const opts = shortDuel();
+  assert.equal(JSON.stringify(runDuel(a, b, opts)), JSON.stringify(runDuel(a, b, opts)),
+    "two identical duels diverged: something reads a clock or an unseeded pick");
+});
+
+test("a different seed genuinely changes the duel (not pinned to one roll)", () => {
+  const a = { name: "A", strategy: "default" };
+  const b = { name: "B", strategy: "aggressive" };
+  const x = runDuel(a, b, shortDuel({ seedBase: 1 }));
+  const y = runDuel(a, b, shortDuel({ seedBase: 2 }));
+  assert.notEqual(JSON.stringify(x.rows), JSON.stringify(y.rows), "two different seed bases produced identical duel rows");
+});
+
+test("duel winner detection: a strong candidate beats a deliberately crippled one, consistently, across worlds and seeds", () => {
+  // neverInitiates + a standing-army cap of ZERO (not engine/aiEconomy.js's warFootingMult
+  // escape hatch — that only multiplies a non-zero base) means this candidate can never field
+  // a defender at all, in skirmish, where neverInitiates is absolute (no desperation timeout
+  // — see engine/aiStrategy.js / the ai-lab skill notes). "default" plays true to its
+  // archetype and DOES attack on its own timeout, so this is elimination, not a coin flip.
+  const normal = { name: "normal", strategy: "default" };
+  const crippled = {
+    name: "crippled", strategy: "labCrippledDuel",
+    overrides: { strategies: { labCrippledDuel: { neverInitiates: true, standingArmyCap: 0 } } },
+  };
+  const res = runDuel(normal, crippled, { worlds: ["korrath", "ferros"], difficulty: "medium", seeds: 2, seedBase: 7, minutes: 20 });
+  assert.equal(res.n, 4, "fixture: 2 worlds x 2 seeds");
+  assert.equal(res.aWins, res.n, `the normal candidate must win every match (got ${JSON.stringify(res.rows.map(r => r.winner))})`);
+  assert.equal(res.bWins, 0);
+  assert.ok(res.rows.every(r => r.winReason === "elimination"),
+    `a defenseless base should lose to a genuine assault before the clock — reasons: ${res.rows.map(r => r.winReason)}`);
+  assert.ok(res.avgMargin > 0, "the winning side's average score margin must be positive");
+  for (const r of res.rows) assert.ok(r.margin > 0, `every individual match margin must favour the winner (${r.world}/${r.seed}: ${r.margin})`);
+});
+
+test("difficulty — and therefore APM/micro — is genuinely pinned identical for both sides, read back from the run itself", () => {
+  // Structural, not a trusted convention: read back state.playerAi/state.ai's OWN configured
+  // dials off each match, for two candidates running DIFFERENT strategies, at two different
+  // difficulties, and assert they agree — the only way they could differ is a bug that let the
+  // two sides read from two different places.
+  for (const difficulty of ["easy", "hard"]) {
+    const dial = DIFFICULTY_OPTIONS.find(o => o.mult === difficulty);
+    const expected = pinnedDuelDials(difficulty);
+    assert.deepEqual(expected, { difficulty, apm: dial.aiApm, micro: !!dial.aiMicro },
+      "pinnedDuelDials must read straight off the named difficulty row");
+
+    const a = { name: "A", strategy: "default" };
+    const b = { name: "B", strategy: "economic" };   // deliberately a DIFFERENT strategy from A
+    const res = runDuel(a, b, shortDuel({ difficulty, seeds: 2 }));
+    assert.ok(res.rows.length > 0, "fixture: the duel actually ran matches");
+    for (const r of res.rows) {
+      assert.equal(r.aDifficulty, difficulty);
+      assert.equal(r.bDifficulty, difficulty);
+      assert.equal(r.aApm, dial.aiApm, `candidate A's own controller must carry ${difficulty}'s aiApm`);
+      assert.equal(r.bApm, dial.aiApm, `candidate B's own controller must carry the SAME aiApm as A, not its own`);
+      assert.equal(r.aMicro, !!dial.aiMicro);
+      assert.equal(r.bMicro, !!dial.aiMicro);
+      assert.equal(r.aApm, r.bApm, "no APM edge between the two sides");
+      assert.equal(r.aMicro, r.bMicro, "no micro edge between the two sides");
+    }
+  }
+});
+
+test("a duel candidate needs a name, on either side", () => {
+  const named = { name: "A", strategy: "default" };
+  assert.throws(() => runDuel({ strategy: "default" }, named, shortDuel()), /candidate A needs a "name"/);
+  assert.throws(() => runDuel(named, { strategy: "default" }, shortDuel()), /candidate B needs a "name"/);
+});
+
+test("a duel's overrides never leak into what runs next", () => {
+  const before = JSON.stringify(STRATEGIES.aggressive);
+  const a = { name: "A", strategy: "aggressive", overrides: { strategies: { aggressive: { garrisonMult: 0.01 } } } };
+  const b = { name: "B", strategy: "default" };
+  runDuel(a, b, shortDuel());
+  assert.equal(JSON.stringify(STRATEGIES.aggressive), before,
+    "STRATEGIES.aggressive must be restored once the duel is done, exactly like runLeaderboard's own promise");
+});
+
+test("round-robin: every pair runs once, and standings tally wins/losses/draws across all of them", () => {
+  const candidates = [{ name: "A", strategy: "default" }, { name: "B", strategy: "economic" }, { name: "C", strategy: "aggressive" }];
+  const { pairs, standings } = runRoundRobin(candidates, shortDuel());
+  assert.equal(pairs.length, 3, "3 candidates -> 3 unordered pairs (AB, AC, BC)");
+  assert.equal(standings.length, 3);
+  const totalWins = standings.reduce((s, c) => s + c.wins, 0);
+  const totalLosses = standings.reduce((s, c) => s + c.losses, 0);
+  assert.equal(totalWins, totalLosses, "every win on one side of a pair is a loss on the other");
+  for (let i = 1; i < standings.length; i++)
+    assert.ok(standings[i - 1].wins >= standings[i].wins, "standings must be sorted most-wins-first");
+});
+
+/* ---------- Tier 3: side-swap (default) + difficulty brackets (never blended) ----------
+
+   runDuel above already pins difficulty/APM/micro identical for both sides within ONE match-up
+   in ONE direction. Tier 3 wraps it with the two things a noisy objective needs before a
+   verdict means anything (docs/odyssey-ai-review.md §3 / the ai-lab skill's standing lesson):
+   both owner-slot assignments run and reported (not just one, and not collapsed into a single
+   number that could hide a side-symmetry bug), and every difficulty asked for is its own
+   standalone result (never averaged across brackets, which would quietly reintroduce the APM
+   confound duel's whole difficulty-pinning exists to prevent). ---------- */
+
+test("Tier 3 duel is side-swapped by default: both directions are present and independently inspectable", () => {
+  const a = { name: "A", strategy: "default" };
+  const b = { name: "B", strategy: "aggressive" };
+  const res = runSwappedDuel(a, b, shortDuel());
+  assert.ok(res.bAsAi && res.aAsAi, "both sub-results must be present in the output");
+  assert.equal(res.bAsAi.aName, "A", 'the "B as ai" sub-result must still label A as A, not swap the names too');
+  assert.equal(res.aAsAi.aName, "A", 'the "A as ai" sub-result must ALSO label A as A -- both directions read from the same A/B perspective');
+  assert.equal(res.n, res.bAsAi.n + res.aAsAi.n, "combined match count is the sum of both directions");
+  assert.equal(res.aWins, res.bAsAi.aWins + res.aAsAi.aWins, "combined A wins must be the sum across both directions");
+  assert.equal(res.bWins, res.bAsAi.bWins + res.aAsAi.bWins, "combined B wins must be the sum across both directions");
+  // The two directions are genuinely separate matches (different owner-slot assignment means a
+  // different duelSeed stream — see tools/ailab.js's own aName/bName-ordered seed derivation),
+  // not one direction's numbers silently duplicated into the other.
+  assert.notEqual(JSON.stringify(res.bAsAi.rows), JSON.stringify(res.aAsAi.rows),
+    "the two directions must be independently-computed matches, not a copy of one relabelled as the other");
+});
+
+test("side-swap doesn't invert win attribution: a strong candidate beats a crippled one in BOTH directions", () => {
+  // Mirrors runDuel's own "duel winner detection" fixture (neverInitiates + a zero standing-army
+  // cap is an absolute defencelessness in skirmish, no desperation timeout), but run through
+  // runSwappedDuel specifically to prove flipDuelResult attributes each win to the right
+  // CANDIDATE, not to whichever owner slot happened to win — the exact bug a naive swap could
+  // introduce silently.
+  const normal = { name: "normal", strategy: "default" };
+  const crippled = {
+    name: "crippled", strategy: "labCrippledSwapDuel",
+    overrides: { strategies: { labCrippledSwapDuel: { neverInitiates: true, standingArmyCap: 0 } } },
+  };
+  const res = runSwappedDuel(normal, crippled, { worlds: ["korrath"], difficulty: "medium", seeds: 1, seedBase: 7, minutes: 20 });
+  assert.equal(res.aWins, res.n, "the normal candidate must win every match, both directions combined");
+  assert.equal(res.bWins, 0);
+  assert.equal(res.bAsAi.aWins, res.bAsAi.n, `normal must win while playing "player" (crippled as "ai")`);
+  assert.equal(res.aAsAi.aWins, res.aAsAi.n,
+    `normal must ALSO win while playing "ai" (crippled as "player") -- proves the relabelling attributes `
+    + `wins to the right candidate, not the right owner slot`);
+});
+
+test("a swapped duel candidate needs a name, on either side", () => {
+  const named = { name: "A", strategy: "default" };
+  assert.throws(() => runSwappedDuel({ strategy: "default" }, named, shortDuel()), /candidate A needs a "name"/);
+  assert.throws(() => runSwappedDuel(named, { strategy: "default" }, shortDuel()), /candidate B needs a "name"/);
+});
+
+test("Tier 3 duel keeps difficulty brackets separate — never blended into one mean", () => {
+  const a = { name: "A", strategy: "default" };
+  const b = { name: "B", strategy: "aggressive" };
+  const brackets = runDuelBrackets(a, b, shortDuel({ difficulties: ["easy", "hard"] }));
+  assert.ok(Array.isArray(brackets), "runDuelBrackets must return one entry per difficulty, never a single blended aggregate");
+  assert.equal(brackets.length, 2, "two difficulties in -> two distinct bracket results out");
+  assert.deepEqual(brackets.map(r => r.difficulty), ["easy", "hard"], "each bracket keeps its own difficulty label");
+  // Genuinely independent runs, not the same numbers relabeled: each bracket's rows must carry
+  // THAT bracket's own aiApm/aiMicro (pinnedDuelDials), and the underlying matches must differ.
+  for (const r of brackets) {
+    const dial = DIFFICULTY_OPTIONS.find(o => o.mult === r.difficulty);
+    for (const row of [...r.bAsAi.rows, ...r.aAsAi.rows]) {
+      assert.equal(row.aApm, dial.aiApm, `${r.difficulty} bracket rows must carry that bracket's own aiApm`);
+      assert.equal(row.bApm, dial.aiApm, `${r.difficulty} bracket rows must pin BOTH sides to that bracket's own aiApm`);
+    }
+  }
+  assert.notEqual(JSON.stringify(brackets[0].bAsAi.rows), JSON.stringify(brackets[1].bAsAi.rows),
+    "easy and hard brackets must be independently-run matches, not one result duplicated under two labels");
+});
+
+test("Tier 3 duel stays deterministic — swapped, bracketed, byte-identical across two runs", () => {
+  const a = { name: "A", strategy: "default" };
+  const b = { name: "B", strategy: "aggressive" };
+  const opts = shortDuel({ difficulties: ["medium", "hard"] });
+  assert.equal(JSON.stringify(runDuelBrackets(a, b, opts)), JSON.stringify(runDuelBrackets(a, b, opts)),
+    "two identical Tier 3 duel runs diverged: something reads a clock or an unseeded pick");
+});
+
+test("a different seed base genuinely changes a Tier 3 duel (not pinned to one roll)", () => {
+  const a = { name: "A", strategy: "default" };
+  const b = { name: "B", strategy: "aggressive" };
+  const x = runDuelBrackets(a, b, shortDuel({ seedBase: 1 }));
+  const y = runDuelBrackets(a, b, shortDuel({ seedBase: 2 }));
+  assert.notEqual(JSON.stringify(x), JSON.stringify(y), "two different seed bases produced identical Tier 3 duel results");
+});
+
+test("round-robin swapped: side-swap and difficulty brackets both apply, standings still balance", () => {
+  const candidates = [{ name: "A", strategy: "default" }, { name: "B", strategy: "economic" }, { name: "C", strategy: "aggressive" }];
+  const brackets = runRoundRobinSwapped(candidates, shortDuel({ difficulties: ["medium", "hard"] }));
+  assert.equal(brackets.length, 2, "two difficulties -> two standalone round-robin brackets, never merged into one table");
+  assert.deepEqual(brackets.map(r => r.difficulty), ["medium", "hard"]);
+  for (const { difficulty, pairs, standings } of brackets) {
+    assert.equal(pairs.length, 3, `3 candidates -> 3 unordered pairs, same as the single-direction round robin (${difficulty})`);
+    assert.equal(standings.length, 3);
+    const totalWins = standings.reduce((s, c) => s + c.wins, 0);
+    const totalLosses = standings.reduce((s, c) => s + c.losses, 0);
+    assert.equal(totalWins, totalLosses, `every win on one side of a pair is a loss on the other (${difficulty})`);
+  }
+});
+
+test("round-robin swapped rejects duplicate candidate names up front, before running anything", () => {
+  const dup = [{ name: "A", strategy: "default" }, { name: "A", strategy: "aggressive" }];
+  assert.throws(() => runRoundRobinSwapped(dup, shortDuel()), /duplicate candidate name/);
+});
+
+/* ---------- search: Tier 4, a second OBJECTIVE for the same coordinate scan ----------
+
+   node tools/ailab.js search already scans a strategy's numeric dials and keeps whichever
+   value scores best against a fixed --opponent sparring bot (score()). --tournament-against
+   swaps ONLY what evaluate() scores a candidate value BY — Tier 2/3's fair, side-swapped,
+   difficulty-bracketed self-play duel (runDuelBrackets) against a named baseline candidate —
+   without touching the coordinate-scan loop itself. These tests guard exactly that seam: the
+   flag genuinely reaches the duel path (not just a relabelled score() run), and omitting the
+   flag reproduces the ORIGINAL search algorithm byte-for-byte, not merely "looks similar". ---------- */
+
+const searchTmpDir = () => mkdtempSync(join(tmpdir(), "ailab-search-test-"));
+
+test("--tournament-against switches the search's evaluate step onto the Tier 2/3 duel path, not score()", () => {
+  const name = "labSearchTournamentDial";
+  applyOverrides({ strategies: { [name]: { garrisonMult: 0.5, attackTimeoutMult: 0.5 } } });
+  const baselinePath = join(searchTmpDir(), "baseline.json");
+  writeFileSync(baselinePath, JSON.stringify({ name: "baselineCandidate", strategy: "default" }));
+
+  const args = {
+    strategy: name, dials: "garrisonMult=0.2:0.8", steps: "1",
+    worlds: "korrath", difficulties: "medium", seeds: "1", minutes: "5", seed: "7",
+    "tournament-against": baselinePath,
+  };
+  const result = runSearch(args);
+  assert.equal(result.mode, "tournament", "the flag must switch the search into tournament mode");
+  assert.equal(result.baseline.name, "baselineCandidate", "the named baseline candidate must be loaded from the JSON file");
+
+  const steps = result.log.filter(e => e.kind === "step");
+  assert.ok(steps.length > 0, "fixture: the search actually evaluated candidate dial values");
+  for (const s of steps) {
+    // Duel-shaped tallies (aWins/bWins/draws summing to n) are only produced by runDuelBrackets —
+    // score()-mode's evaluate never returns them, it returns a `rows` array of run() curves.
+    assert.equal(s.detail.aWins + s.detail.bWins + s.detail.draws, s.detail.n,
+      "tournament-mode evaluate must return duel win/loss/draw tallies that sum to the match count");
+    assert.ok(Array.isArray(s.detail.brackets) && s.detail.brackets.length > 0,
+      "tournament-mode evaluate must carry the runDuelBrackets() result, one entry per difficulty");
+    assert.ok(!("rows" in s.detail), "tournament-mode evaluate must not be score()-mode's run()-row shape");
+    // The underlying matches must be genuine self-play duel rows (engine/victory.js-resolved
+    // skirmishes), not solo score() curves -- winReason/aScore/bScore/swapAsym only exist on a
+    // duelRun() row (tools/ailab.js), never on a sample()/summarise() row.
+    const row = s.detail.brackets[0].bAsAi.rows[0];
+    assert.ok(row, "fixture: at least one underlying duel match ran");
+    for (const field of ["winReason", "aScore", "bScore", "swapAsym", "aName", "bName"])
+      assert.ok(field in row, `tournament-mode's underlying row must be a genuine duel row (missing ${field})`);
+  }
+  assert.ok(typeof result.bestScore === "number" && result.bestScore >= -1 && result.bestScore <= 1,
+    "tournament standing (win differential) must land in [-1, 1]");
+});
+
+test("--tournament-against is deterministic — same dials, same baseline, byte-identical result", () => {
+  const name = "labSearchTournamentDeterminism";
+  applyOverrides({ strategies: { [name]: { garrisonMult: 0.5 } } });
+  const baselinePath = join(searchTmpDir(), "baseline.json");
+  writeFileSync(baselinePath, JSON.stringify({ name: "baselineCandidate", strategy: "economic" }));
+  const args = {
+    strategy: name, dials: "garrisonMult=0.3:0.7", steps: "1",
+    worlds: "korrath", difficulties: "medium", seeds: "1", minutes: "5", seed: "3",
+    "tournament-against": baselinePath,
+  };
+  const strip = r => JSON.stringify({ mode: r.mode, best: r.best, bestScore: r.bestScore,
+    log: r.log.map(e => ({ kind: e.kind, k: e.k, v: e.v, mean: e.mean, better: e.better })) });
+  assert.equal(strip(runSearch(args)), strip(runSearch(args)),
+    "two identical tournament-mode searches diverged: something reads a clock or an unseeded pick");
+});
+
+test("search without --tournament-against reproduces the ORIGINAL solo-score() algorithm exactly (regression, not an assumption)", () => {
+  const name = "labSearchRegression";
+  applyOverrides({ strategies: { [name]: { garrisonMult: 0.5, attackTimeoutMult: 0.5 } } });
+  const dials = [{ k: "garrisonMult", lo: 0.2, hi: 0.8 }];
+  const worlds = ["korrath"], difficulties = ["medium"];
+  const steps = 2, seedBase = 7;
+
+  // Independently replicates the PRE-Tier-4 search algorithm off the public primitives
+  // run()/score()/applyOverrides() -- not a call into runSearch's own refactored internals, so
+  // this is a genuine regression check against runSearch's numbers, not an assumption that the
+  // refactor preserved them.
+  const evalRow = row => {
+    applyOverrides({ strategies: { [`${name}__lab`]: row } });
+    const rows = [];
+    for (const world of worlds)
+      for (const difficulty of difficulties)
+        rows.push(run({
+          world, strategy: `${name}__lab`, difficulty, opponent: "passive",
+          minutes: 3, sample: 2, apm: "real",
+          seed: hashStr(`${seedBase}:${world}:${name}__lab:${difficulty}:0`),
+        }));
+    return rows.reduce((a, r) => a + score(r).total, 0) / rows.length;
+  };
+  const base = { ...(STRATEGIES[name] || {}) };
+  let best = { ...base }, bestScore = evalRow(best);
+  for (const d of dials) {
+    for (let i = 0; i <= steps; i++) {
+      const v = +(d.lo + (d.hi - d.lo) * (i / steps)).toFixed(3);
+      const cand = { ...best, [d.k]: v };
+      const mean = evalRow(cand);
+      if (mean > bestScore + 1e-9) { best = cand; bestScore = mean; }
+    }
+  }
+
+  const args = {
+    strategy: name, dials: "garrisonMult=0.2:0.8", steps: "2",
+    worlds: "korrath", difficulties: "medium", seeds: "1", minutes: "3", sample: "2", seed: "7", opponent: "passive",
+  };
+  const result = runSearch(args);
+  assert.equal(result.mode, "score", "omitting --tournament-against must use the original score() objective");
+  assert.equal(result.baseline, null, "no baseline candidate should be loaded when the flag is absent");
+  assert.equal(result.bestScore, bestScore,
+    "runSearch's bestScore must match the independently-replicated original algorithm exactly");
+  assert.deepEqual(result.best, best,
+    "runSearch's winning dial row must match the independently-replicated original algorithm exactly");
+});
+
+test("search's coordinate-scan mechanics are unchanged: the loop still keeps only genuine improvements, in both objective modes", () => {
+  // Not a duplicate of the regression test above -- this pins the LOOP's own decision rule
+  // ("keep a candidate only if it beats the current best by more than the noise epsilon") by
+  // checking every logged step is internally consistent with `better`, for both objectives.
+  const check = result => {
+    let running = result.log.find(e => e.kind === "start").mean;
+    for (const e of result.log.filter(x => x.kind === "step")) {
+      assert.equal(e.better, e.mean > running + 1e-9, "the `better` flag must follow the loop's own epsilon rule");
+      if (e.better) running = e.mean;
+    }
+    const finalBest = result.log.find(e => e.kind === "best");
+    assert.equal(finalBest.mean, running, "the reported best must be the last kept improvement, in either mode");
+  };
+
+  const scoreName = "labSearchMechanicsScore";
+  applyOverrides({ strategies: { [scoreName]: { garrisonMult: 0.5 } } });
+  check(runSearch({
+    strategy: scoreName, dials: "garrisonMult=0.2:0.8", steps: "2",
+    worlds: "korrath", difficulties: "medium", seeds: "1", minutes: "3", sample: "2", seed: "7", opponent: "passive",
+  }));
+
+  const tournName = "labSearchMechanicsTournament";
+  applyOverrides({ strategies: { [tournName]: { garrisonMult: 0.5 } } });
+  const baselinePath = join(searchTmpDir(), "baseline.json");
+  writeFileSync(baselinePath, JSON.stringify({ name: "baselineCandidate", strategy: "default" }));
+  check(runSearch({
+    strategy: tournName, dials: "garrisonMult=0.3:0.7", steps: "1",
+    worlds: "korrath", difficulties: "medium", seeds: "1", minutes: "5", seed: "3",
+    "tournament-against": baselinePath,
+  }));
+});
+
+test("an unknown --dials flag still prints the usage hint instead of throwing, in either mode", () => {
+  assert.equal(runSearch({ strategy: "default" }), null, "no --dials at all must return null (CLI prints the usage line)");
+});
+
+/* ---------- Tier 5: Swiss pairing — the same runSwappedDuel primitive, a cheaper schedule ----------
+
+   runRoundRobinSwapped above already proves the FAIRNESS of one pairing (side-swap, difficulty
+   brackets, pinned APM/micro). Swiss reuses that primitive unchanged — these tests guard the
+   SCHEDULE on top of it: it actually runs fewer matches than round-robin for a pool where that
+   matters, byes rotate instead of piling onto one candidate, rematches are avoided while an
+   unplayed opponent still exists, standings tally correctly including bye credit, and the whole
+   thing is exactly as deterministic as every other lab command. ---------- */
+
+const shortSwiss = extra => ({ worlds: ["ferros"], seeds: 1, seedBase: 7, minutes: 4, ...extra });
+
+test("Swiss is deterministic — same candidates, same config, byte-identical result", () => {
+  const candidates = [
+    { name: "A", strategy: "default" }, { name: "B", strategy: "aggressive" },
+    { name: "C", strategy: "economic" }, { name: "D", strategy: "default" },
+  ];
+  const opts = shortSwiss();
+  assert.equal(JSON.stringify(runSwissTournament(candidates, opts)), JSON.stringify(runSwissTournament(candidates, opts)),
+    "two identical Swiss tournaments diverged: something reads a clock or an unseeded pick");
+});
+
+test("a different seed base genuinely changes a Swiss tournament (not pinned to one roll)", () => {
+  const candidates = [
+    { name: "A", strategy: "default" }, { name: "B", strategy: "aggressive" },
+    { name: "C", strategy: "economic" }, { name: "D", strategy: "default" },
+  ];
+  const x = runSwissTournament(candidates, shortSwiss({ seedBase: 1 }));
+  const y = runSwissTournament(candidates, shortSwiss({ seedBase: 2 }));
+  assert.notEqual(JSON.stringify(x), JSON.stringify(y), "two different seed bases produced identical Swiss results");
+});
+
+test("Swiss needs at least 2 candidates, and rejects duplicate names up front (round-robin's own guard)", () => {
+  assert.throws(() => runSwissTournament([{ name: "A", strategy: "default" }], shortSwiss()), /at least 2 candidates/);
+  const dup = [{ name: "A", strategy: "default" }, { name: "A", strategy: "aggressive" }];
+  assert.throws(() => runSwissTournament(dup, shortSwiss()), /duplicate candidate name/);
+});
+
+test("default rounds follow ceil(log2(n)), and every round pairs at most floor(n/2) matches", () => {
+  const candidates = Array.from({ length: 8 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const [bracket] = runSwissTournament(candidates, shortSwiss());
+  assert.equal(bracket.rounds, 3, "ceil(log2(8)) = 3, at least the floor of 3");
+  assert.equal(bracket.roundsLog.length, 3);
+  for (const { byeName, matches } of bracket.roundsLog) {
+    assert.equal(matches.length, 4, "8 candidates, even, no bye -> 4 pairings a round");
+    assert.equal(byeName, null, "an even pool never needs a bye");
+  }
+});
+
+test("Swiss runs strictly fewer pairings than full round-robin for a pool large enough for it to matter", () => {
+  const n = 10;
+  const candidates = Array.from({ length: n }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const [bracket] = runSwissTournament(candidates, shortSwiss());
+  const swissPairings = bracket.roundsLog.reduce((a, r) => a + r.matches.length, 0);
+  const roundRobinPairings = (n * (n - 1)) / 2;
+  assert.ok(swissPairings < roundRobinPairings,
+    `Swiss (${swissPairings} pairings over ${bracket.rounds} rounds) should cost less than round-robin's C(${n},2)=${roundRobinPairings}`);
+});
+
+test("byes rotate: nobody gets a second bye while another candidate hasn't had one yet", () => {
+  // 5 candidates (odd) over enough rounds that everyone gets exactly one bye before anyone gets a
+  // second — 5 rounds guarantees every candidate has been the odd one out exactly once.
+  const candidates = Array.from({ length: 5 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const [bracket] = runSwissTournament(candidates, shortSwiss({ rounds: 5 }));
+  const byes = bracket.roundsLog.map(r => r.byeName);
+  assert.equal(new Set(byes).size, 5, `every candidate should get exactly one bye across 5 rounds of 5, got: ${byes.join(", ")}`);
+});
+
+test("a bye is worth a real pairing's own match count, not an arbitrary point", () => {
+  const candidates = Array.from({ length: 3 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const opts = shortSwiss({ worlds: ["ferros", "vesper"], seeds: 2 });
+  const [bracket] = runSwissTournament(candidates, opts);
+  const expected = opts.worlds.length * opts.seeds * 2;   // side-swapped -> both directions
+  assert.equal(bracket.byePoints, expected, "byePoints must equal worlds.length * seeds * 2, the n a real pairing would produce");
+  const round = bracket.roundsLog.find(r => r.byeName);
+  assert.ok(round, "fixture: an odd pool must produce a bye somewhere");
+  assert.equal(round.byePoints, expected);
+  if (round.matches.length) assert.equal(round.matches[0].n, expected, "a real pairing's own match count must match the bye's credit");
+});
+
+test("rematch avoidance: with enough candidates relative to rounds, no pairing repeats", () => {
+  const candidates = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const [bracket] = runSwissTournament(candidates, shortSwiss({ rounds: 3 }));
+  const seen = new Set();
+  for (const { matches } of bracket.roundsLog) {
+    for (const res of matches) {
+      const key = [res.aName, res.bName].sort().join("::");
+      assert.ok(!seen.has(key), `pairing ${key} repeated across rounds even though unplayed opponents remained (6 candidates, 3 rounds)`);
+      seen.add(key);
+    }
+  }
+});
+
+test("Swiss standings: total wins minus total losses equals the bye credit handed out, nothing else", () => {
+  // Every REAL pairing is win/loss-balanced (one side's win is the other's loss, exactly like
+  // round-robin's own invariant) — a bye is the only source of a win with no matching loss.
+  const candidates = Array.from({ length: 5 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const [bracket] = runSwissTournament(candidates, shortSwiss());
+  const totalWins = bracket.standings.reduce((s, c) => s + c.wins, 0);
+  const totalLosses = bracket.standings.reduce((s, c) => s + c.losses, 0);
+  const byeCredit = bracket.roundsLog.filter(r => r.byeName).length * bracket.byePoints;
+  assert.equal(totalWins - totalLosses, byeCredit,
+    "the only win with no corresponding loss anywhere is a bye's own credit");
+});
+
+test("standings are sorted most-wins-first (ties broken by fewer losses)", () => {
+  const candidates = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const [bracket] = runSwissTournament(candidates, shortSwiss());
+  for (let i = 1; i < bracket.standings.length; i++) {
+    const prev = bracket.standings[i - 1], cur = bracket.standings[i];
+    assert.ok(prev.wins > cur.wins || (prev.wins === cur.wins && prev.losses <= cur.losses),
+      `standings order violated at index ${i}: ${JSON.stringify(prev)} before ${JSON.stringify(cur)}`);
+  }
+});
+
+test("a strong candidate rises to the top of Swiss standings against a field of crippled ones", () => {
+  // Same crippled fixture shape as the duel/round-robin tests above (neverInitiates + a zero
+  // standing-army cap is absolute defencelessness in skirmish) — proves the Swiss SCHEDULE, not
+  // just one pairing, surfaces a genuinely stronger candidate at the top.
+  const normal = { name: "normal", strategy: "default" };
+  const crippled = (i) => ({
+    name: `crippled${i}`, strategy: `labSwissCrippled${i}`,
+    overrides: { strategies: { [`labSwissCrippled${i}`]: { neverInitiates: true, standingArmyCap: 0 } } },
+  });
+  const candidates = [normal, crippled(1), crippled(2), crippled(3)];
+  const [bracket] = runSwissTournament(candidates, shortSwiss({ worlds: ["korrath"], minutes: 15, seeds: 1 }));
+  assert.equal(bracket.standings[0].name, "normal",
+    `the only genuine fighter should top the Swiss standings, got: ${JSON.stringify(bracket.standings.map(s => s.name))}`);
+});
+
+test("--difficulties (plural) runs an independent Swiss tournament per difficulty, never blended", () => {
+  const candidates = [
+    { name: "A", strategy: "default" }, { name: "B", strategy: "aggressive" }, { name: "C", strategy: "economic" },
+  ];
+  const brackets = runSwissTournament(candidates, shortSwiss({ difficulties: ["easy", "hard"] }));
+  assert.equal(brackets.length, 2, "two difficulties -> two standalone Swiss tournaments");
+  assert.deepEqual(brackets.map(b => b.difficulty), ["easy", "hard"]);
+  assert.notEqual(JSON.stringify(brackets[0].roundsLog), JSON.stringify(brackets[1].roundsLog),
+    "the two difficulty brackets must be independently-run tournaments, not one relabelled as two");
+});
+
+test("a Swiss tournament's overrides never leak into what runs next", () => {
+  const before = JSON.stringify(STRATEGIES.aggressive);
+  const candidates = [
+    { name: "A", strategy: "aggressive", overrides: { strategies: { aggressive: { garrisonMult: 0.01 } } } },
+    { name: "B", strategy: "default" }, { name: "C", strategy: "economic" },
+  ];
+  runSwissTournament(candidates, shortSwiss());
+  assert.equal(JSON.stringify(STRATEGIES.aggressive), before,
+    "STRATEGIES.aggressive must be restored once the Swiss tournament is done, same promise as duel/round-robin/leaderboard");
 });

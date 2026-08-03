@@ -23,8 +23,23 @@
                                  [--seeds 3] [--minutes 40] [--json out.json] [--csv out.csv] [--full]
      node tools/ailab.js compare --baseline base.json --candidate cand.json
      node tools/ailab.js search  --strategy aggressive --dials 'attackTimeoutMult=0.3:1,garrisonMult=0:1'
-                                 [--steps 4] [--worlds a,b]
+                                 [--steps 4] [--worlds a,b] [--difficulties a,b]
+                                 [--tournament-against baseline.json]
+                                 # default objective: solo score() against the --opponent sparring
+                                 # bot, same as always. --tournament-against swaps ONLY the
+                                 # objective a candidate dial-value is scored by, onto Tier 2/3's
+                                 # fair, side-swapped, difficulty-bracketed self-play duel
+                                 # (runDuelBrackets) against the named baseline candidate JSON
+                                 # ({ name, strategy, overrides }) — the coordinate-scan mechanics
+                                 # (the per-dial, per-step loop, "keep an improvement") are
+                                 # unchanged and don't know which objective is active.
      node tools/ailab.js check   [--worlds a,b] [--minutes 60] [--exit-code]   # the named-defect list
+     node tools/ailab.js duel    --a candA.json --b candB.json [--worlds a,b] [--seeds 2]
+                                 [--difficulties easy,hard] [--seed 1] [--minutes 40] [--json out.json]
+                                 # Tier 3: side-swapped (both candidates play BOTH owner slots, by
+                                 # DEFAULT, not an opt-in) and difficulty-bracketed (each --difficulties
+                                 # entry reported on its own, never blended) — see the DUEL header
+                                 # comment below.
 
    Opponents (--opponent) decide what the AI is measured AGAINST, and the answer differs
    completely between them: none (no player at all) · passive (seats a base, never acts — the
@@ -73,6 +88,8 @@ import { ARCHETYPES, archetypeFor, PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE } f
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
 import { mulberry32, hashStr } from "../engine/rng.js";
+import { createSelfPlayState, runSelfPlayMatch } from "./selfplay.js";
+import { playerScore } from "../engine/victory.js";
 
 const WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 const DT = 0.1;                  // the sim's fixed step, same as the game loop
@@ -534,6 +551,427 @@ export function runLeaderboard(candidates, { worlds, difficulty = "medium", oppo
 }
 
 /* ============================================================
+   DUEL — Tier 2: true head-to-head, not a proxy. Two independently-configured
+   candidates fight each other for real, via Tier 1's self-play (tools/selfplay.js):
+   BOTH sides driven by the real scripted AI (engine/ai.js runAI), never a scripted
+   sparring bot (contrast the LEADERBOARD above, which is exactly that proxy). Skirmish
+   only — createSelfPlayState's default (non-endless) shape — resolved purely by engine/
+   victory.js's own checkWinCondition (elimination, or its score-at-clock timeout),
+   exactly as any other skirmish resolves. No new win condition is invented here.
+
+   FAIRNESS, the one property this command cannot be trusted without: difficulty — and
+   therefore APM and micro, both DERIVED from the difficulty row (engine/aiDifficulty.js
+   DIFFICULTY_OPTIONS: aiApm/aiMicro) — is pinned IDENTICAL for both sides. That isn't a
+   convention the caller has to remember: pinnedDuelDials() below reads the difficulty
+   ONCE into a single `dials` object, and duelRun() spreads that SAME object into both
+   createSelfPlayState `ai` and `playerAi` configs. There is only one variable in the
+   whole call graph that could ever hold "this side's apm/micro/difficulty" — so there is
+   no second code path left that could read a different value for either side, even by
+   mistake. Only `strategy` (and whatever --overrides row it names) differs between the
+   two candidates — that is the entire point of the comparison.
+
+   Candidate A always plays owner "player", candidate B always plays owner "ai" — a fixed,
+   documented mapping. That is NOT enough on its own: some worlds (oort, nimbus — both
+   reachable via --worlds) carry engine/map.js's `asym: { player, ai }` modifier block, a
+   genuinely asymmetric per-owner stat tweak baked into the map, independent of which
+   candidate is playing which owner. A fixed candidate->owner mapping would hand that
+   map-side advantage to the same candidate on every single match — measured empirically at
+   ~6/0 (oort) and ~5/6-inverted (nimbus) for two IDENTICAL candidates, i.e. the map side
+   deciding the match, not candidate quality. So runDuel alternates the engine's own escape
+   hatch for this (`swapAsym`, the same flag the skirmish game exposes so a human can choose
+   which half to play) by replicate parity — even reps (0, 2, …) play the map as generated,
+   odd reps play it with the asym halves exchanged — so across any run of seeds >= 2 on an
+   asym world, each candidate spends half its matches on each side of the map's own
+   asymmetry and neither one's map-side is fixed for the whole run. `swapAsym` is a no-op on
+   every world without an asym block, so this changes nothing for the default roster
+   (korrath/ferros/vesper/kybernet). Each row records the `swapAsym` it actually ran with.
+
+   SCORING: winner/loser/draw comes straight from engine/victory.js's own state.winner/
+   state.over — elimination or its score-at-clock tiebreak, never reinterpreted here (a
+   "draw" here means only that the run hit its safety-net cutoff still undecided, which
+   the tiebreak means should not happen in practice). The "score margin" reported
+   alongside it is exactly the score that tiebreak itself uses — engine/victory.js
+   playerScore/scoreBreakdown (bank + army + structures) — NOT this file's own score()/
+   WEIGHTS system above. That system scores an ODYSSEY play-forever curve: `develop` and
+   `keepGrowing` key off aiDevelopment(state), which engine/diplomacy.js's own header
+   comment says plainly is hardcoded to owner "ai" and that "the whole skirmish path...
+   never calls this"; `pressure`/`hostileIdleFrac` key off hostility()/provoked(), which
+   need state.diplomacy — absent from every skirmish state, self-play included. Forcing
+   that curve-shaped, Odyssey-specific metric onto a skirmish fight it was never built to
+   describe would produce numbers that LOOK like this file's score() but don't mean the
+   same thing. Reusing playerScore instead keeps "score" meaning exactly what it already
+   means everywhere self-play/skirmish resolution is concerned: the real number the match
+   itself would settle a tie with.
+   ============================================================ */
+
+// difficulty -> the ONE dial object both sides read (apm/micro, derived from the same
+// DIFFICULTY_OPTIONS row labWorld's own --apm real already reads for a single side) — see
+// the FAIRNESS paragraph above. Exported so a test can read back exactly what a run should
+// have used, rather than trusting the CLI flag was honoured.
+export function pinnedDuelDials(difficulty) {
+  const opt = DIFFICULTY_OPTIONS.find(o => o.mult === difficulty) || DIFFICULTY_OPTIONS.find(o => o.mult === "medium");
+  // Echo back opt.mult, NOT the raw input: apm/micro already fall back to medium's values when
+  // `difficulty` doesn't match any DIFFICULTY_OPTIONS row, so the reported difficulty has to fall
+  // back with them — otherwise a typo'd/unknown --difficulty would run medium's dials but LABEL
+  // the result with the garbage string, misleading anyone reading a saved --json duel result about
+  // which difficulty actually ran.
+  return { difficulty: opt.mult, apm: opt.aiApm, micro: !!opt.aiMicro };
+}
+
+// Every duel match's seed is derived from (base seed, world, difficulty, BOTH candidate
+// names, replicate) — reproducible on its own, same discipline as runSeed() above, just
+// keyed on the pair rather than a single strategy since a duel row always involves two.
+const duelSeed = (base, world, difficulty, aName, bName, rep) =>
+  hashStr(`${base}:duel:${world}:${difficulty}:${aName}:${bName}:${rep}`);
+
+// Run ONE match: candidate A as owner "player", candidate B as owner "ai", both spending
+// from the SAME `dials` object (see pinnedDuelDials/FAIRNESS above). `swapAsym` exchanges
+// the map's own asym halves (engine/map.js) for THIS match only — see the FAIRNESS
+// paragraph above for why runDuel alternates it by replicate parity rather than holding it
+// fixed. Returns a plain result row, mirroring run()'s own "cfg in, small row out" shape.
+function duelRun({ world, seed, dials, aName, aStrategy, bName, bStrategy, minutes, swapAsym }) {
+  const state = createSelfPlayState({
+    planetId: world, seed, swapAsym,
+    matchTimeLimit: minutes ? minutes * 60 : undefined,
+    ai: { ...dials, strategy: bStrategy },
+    playerAi: { ...dials, strategy: aStrategy },
+  });
+  const result = runSelfPlayMatch(state, minutes ? { maxSeconds: minutes * 60 + 120 } : undefined);
+  const aScore = playerScore(state, "player");
+  const bScore = playerScore(state, "ai");
+  const winner = !result.over ? "draw" : result.winner === "player" ? "a" : "b";
+  return {
+    world, seed, difficulty: dials.difficulty, swapAsym: !!swapAsym,
+    aName, aStrategy, bName, bStrategy,
+    // Read back off the actual controllers, not the input — the structural-fairness test
+    // asserts on exactly these fields, so a bug that let the two dials diverge would show here.
+    aDifficulty: state.playerAi.difficulty, bDifficulty: state.ai.difficulty,
+    aApm: state.playerAi.apm, bApm: state.ai.apm, aMicro: state.playerAi.micro, bMicro: state.ai.micro,
+    winner, winReason: result.winReason, time: +result.time.toFixed(1),
+    aScore: +aScore.toFixed(1), bScore: +bScore.toFixed(1), margin: +(aScore - bScore).toFixed(1),
+  };
+}
+
+// Head-to-head: candidate A vs candidate B across `worlds` x `seeds`, difficulty pinned
+// identical for both (pinnedDuelDials — see the FAIRNESS paragraph above). `worlds`/
+// `difficulty`/`seeds`/`seedBase`/`minutes` mirror runMatrix's own options; each candidate is
+// `{ name, strategy, overrides }`, exactly runLeaderboard's own candidate shape. Overrides
+// from BOTH candidates are applied together, once, before any match runs (they share one
+// live fight, unlike leaderboard's candidates which never meet) — snapshot/restored around
+// the whole call exactly like runLeaderboard does around each candidate, via the same
+// snapshotTables/restoreTables this file already uses.
+export function runDuel(a, b, {
+  worlds = ["korrath", "ferros", "vesper", "kybernet"], difficulty = "medium",
+  seeds = 2, seedBase = 1, minutes,
+} = {}) {
+  if (!a || !a.name) throw new Error('candidate A needs a "name"');
+  if (!b || !b.name) throw new Error('candidate B needs a "name"');
+  const dials = pinnedDuelDials(difficulty);   // read ONCE — see the FAIRNESS paragraph above
+  const snap = snapshotTables();
+  try {
+    if (a.overrides) applyOverrides(a.overrides);
+    if (b.overrides) applyOverrides(b.overrides);
+    const aStrategy = a.strategy || "default", bStrategy = b.strategy || "default";
+    if (!STRATEGIES[aStrategy])
+      throw new Error(`candidate "${a.name}": unknown strategy "${aStrategy}" — define it under overrides.strategies`);
+    if (!STRATEGIES[bStrategy])
+      throw new Error(`candidate "${b.name}": unknown strategy "${bStrategy}" — define it under overrides.strategies`);
+    const rows = [];
+    for (const world of worlds)
+      for (let rep = 0; rep < seeds; rep++)
+        rows.push(duelRun({
+          world, seed: duelSeed(seedBase, world, difficulty, a.name, b.name, rep),
+          dials, aName: a.name, aStrategy, bName: b.name, bStrategy, minutes,
+          // Alternate the map's own asym halves by replicate parity — see the FAIRNESS
+          // paragraph above. A no-op on every world without an `asym` block.
+          swapAsym: rep % 2 === 1,
+        }));
+    const aWins = rows.filter(r => r.winner === "a").length;
+    const bWins = rows.filter(r => r.winner === "b").length;
+    const draws = rows.filter(r => r.winner === "draw").length;
+    const avgMargin = +(rows.reduce((s, r) => s + r.margin, 0) / rows.length).toFixed(1);
+    // dials.difficulty, NOT the raw `difficulty` param — pinnedDuelDials already normalizes an
+    // unknown/typo'd difficulty to "medium" for apm/micro, and every row already reports
+    // dials.difficulty for the same reason (see pinnedDuelDials' own comment); the aggregate has
+    // to agree with its own rows instead of echoing back whatever garbage string was passed in.
+    return { aName: a.name, bName: b.name, aStrategy, bStrategy, difficulty: dials.difficulty, n: rows.length, aWins, bWins, draws, avgMargin, rows };
+  } finally {
+    restoreTables(snap);   // never let this duel's overrides leak into whatever runs next
+  }
+}
+
+// Shared by both round-robin flavours below: the standings Map is keyed by name, so two
+// candidates sharing a name would silently collapse into one entry — an A-vs-A pairing would
+// then read/write the SAME standings object for both sides of that match, corrupting it with a
+// phantom self-match. Guard up front, the same discipline runDuel already applies to a missing
+// name.
+function assertUniqueCandidateNames(candidates) {
+  const seen = new Set();
+  for (const c of candidates) {
+    if (!c || !c.name) throw new Error('every round-robin candidate needs a "name"');
+    if (seen.has(c.name)) throw new Error(`duplicate candidate name "${c.name}" — round-robin standings are keyed by name`);
+    seen.add(c.name);
+  }
+}
+
+// Round-robin over N > 2 candidates: every unordered pair, run through runDuel exactly as a
+// single --a/--b duel would be. A nice-to-have that falls straight out of runDuel already
+// being pair-shaped — deliberately NOT a new tournament engine (no swiss pairing, no bracket):
+// just every pair, once, tallied. Exported so a test can exercise it without going via argv.
+export function runRoundRobin(candidates, opts = {}) {
+  assertUniqueCandidateNames(candidates);
+  const pairs = [];
+  for (let i = 0; i < candidates.length; i++)
+    for (let j = i + 1; j < candidates.length; j++)
+      pairs.push(runDuel(candidates[i], candidates[j], opts));
+  const standings = new Map(candidates.map(c => [c.name, { name: c.name, wins: 0, losses: 0, draws: 0 }]));
+  for (const res of pairs) {
+    const A = standings.get(res.aName), B = standings.get(res.bName);
+    A.wins += res.aWins; A.losses += res.bWins; A.draws += res.draws;
+    B.wins += res.bWins; B.losses += res.aWins; B.draws += res.draws;
+  }
+  return { pairs, standings: [...standings.values()].sort((x, y) => y.wins - x.wins) };
+}
+
+/* ============================================================
+   TIER 3 — a candidate compared against remembered numbers is a candidate compared against
+   nothing (docs/odyssey-ai-review.md §3, the ai-lab skill's standing lesson). runDuel above is
+   already a fair SINGLE match-up: one map-side assignment (A="player", B="ai"), one difficulty.
+   Tier 3 wraps it with the two things a noisy objective needs before a verdict means anything:
+
+   1. SIDE-SWAP, on by DEFAULT (not a flag to remember). runDuel's own header comment already
+      names why: "the two owner slots are not perfectly symmetric, different starting corner,
+      different fog seed stream" — map-side asym (oort/nimbus) is the mechanical example
+      runDuel already documents and corrects for WITHIN one direction (swapAsym by replicate
+      parity), but that only balances the map; it says nothing about whether the "ai" owner
+      slot itself is a structurally easier seat to play (a different think-cadence phase
+      offset, a different fog stream, in principle even an unnoticed engine asymmetry between
+      the two owner code paths). The only way to rule that out is to literally run the pairing
+      both ways — A as "ai"/B as "player", THEN B as "ai"/A as "player" — and look at both
+      halves, not just their sum. runSwappedDuel below returns `aAsAi` and `bAsAi` as two full,
+      independently-inspectable sub-results (not just labelled rows folded into one number) for
+      exactly that reason: a side-symmetry bug would show up as those two disagreeing, and
+      collapsing them into a single aggregate is precisely what would hide it.
+   2. DIFFICULTY as a swept, NEVER-BLENDED axis. runDuelBrackets below takes a LIST of
+      difficulties and runs the full side-swapped pairing separately at each one, returning one
+      result per difficulty — never a mean across them. Averaging across difficulty brackets
+      would let a strategy's edge at one difficulty's APM/micro cap paper over a deficit at
+      another's, which is exactly the APM confound the whole duel mechanism exists to rule out
+      (see the FAIRNESS paragraph on runDuel above) — just reintroduced one level up, between
+      brackets instead of between sides. So each bracket is reported standalone, on purpose.
+   ============================================================ */
+
+// Relabel a runDuel() result (and every one of its rows) from B's perspective to A's — i.e.
+// turn "the result of runDuel(b, a, opts)" into "what A did, reported as if A were the first
+// argument". Only swaps WHICH name/strategy/score a value is filed under; the underlying match
+// numbers (winReason, time, world, seed, swapAsym) are untouched. This is how runSwappedDuel
+// below lets both directions read with the same aName/bName regardless of which candidate
+// runDuel itself treated as owner "player" for that call.
+function flipDuelResult(res) {
+  const flipRow = r => ({
+    ...r,
+    aName: r.bName, bName: r.aName,
+    aStrategy: r.bStrategy, bStrategy: r.aStrategy,
+    aDifficulty: r.bDifficulty, bDifficulty: r.aDifficulty,
+    aApm: r.bApm, bApm: r.aApm, aMicro: r.bMicro, bMicro: r.aMicro,
+    winner: r.winner === "a" ? "b" : r.winner === "b" ? "a" : "draw",
+    aScore: r.bScore, bScore: r.aScore, margin: -r.margin,
+  });
+  return {
+    aName: res.bName, bName: res.aName, aStrategy: res.bStrategy, bStrategy: res.aStrategy,
+    difficulty: res.difficulty, n: res.n,
+    aWins: res.bWins, bWins: res.aWins, draws: res.draws, avgMargin: -res.avgMargin,
+    rows: res.rows.map(flipRow),
+  };
+}
+
+// Candidate A vs candidate B, BOTH ways, aggregated — the side-swap default described above.
+// `bAsAi` is runDuel(a, b, opts) as-is (B plays owner "ai", A plays "player" — runDuel's own
+// fixed mapping). `aAsAi` is runDuel(b, a, opts) relabelled to A's perspective (A plays owner
+// "ai", B plays "player"): same mechanism, opposite assignment. Both are returned in full,
+// alongside the combined tallies, so a caller (or a test) can inspect either direction on its
+// own — see the TIER 3 header comment above for why collapsing them would hide exactly the bug
+// this exists to catch.
+export function runSwappedDuel(a, b, opts = {}) {
+  if (!a || !a.name) throw new Error('candidate A needs a "name"');
+  if (!b || !b.name) throw new Error('candidate B needs a "name"');
+  const bAsAi = runDuel(a, b, opts);
+  const aAsAi = flipDuelResult(runDuel(b, a, opts));
+  const n = bAsAi.n + aAsAi.n;
+  const aWins = bAsAi.aWins + aAsAi.aWins;
+  const bWins = bAsAi.bWins + aAsAi.bWins;
+  const draws = bAsAi.draws + aAsAi.draws;
+  const avgMargin = +(((bAsAi.avgMargin * bAsAi.n) + (aAsAi.avgMargin * aAsAi.n)) / n).toFixed(1);
+  return {
+    aName: a.name, bName: b.name, aStrategy: bAsAi.aStrategy, bStrategy: bAsAi.bStrategy,
+    difficulty: bAsAi.difficulty, n, aWins, bWins, draws, avgMargin,
+    bAsAi, aAsAi,   // the two independently-inspectable directions — see header comment
+  };
+}
+
+// The side-swapped pairing, run separately at every difficulty in `opts.difficulties` (falls
+// back to a single-element list built from `opts.difficulty`, default "medium" — the same
+// default runDuel itself has always used, so an existing single-difficulty caller sees no
+// change). Returns one runSwappedDuel result PER difficulty, each carrying its own `difficulty`
+// field — deliberately an array, never averaged into one row. See the TIER 3 header comment
+// above for why blending brackets would reintroduce the APM confound.
+export function runDuelBrackets(a, b, opts = {}) {
+  const { difficulties, difficulty, ...rest } = opts;
+  const list = difficulties && difficulties.length ? difficulties : [difficulty || "medium"];
+  return list.map(diff => runSwappedDuel(a, b, { ...rest, difficulty: diff }));
+}
+
+// Round-robin, side-swapped, difficulty-bracketed: every unordered pair of `candidates`,
+// duelled via runSwappedDuel, separately at every difficulty in `opts.difficulties` (same
+// fallback as runDuelBrackets). Returns one { difficulty, pairs, standings } per difficulty —
+// never one standings table blended across brackets, for the same reason runDuelBrackets keeps
+// its results separate.
+export function runRoundRobinSwapped(candidates, opts = {}) {
+  assertUniqueCandidateNames(candidates);
+  const { difficulties, difficulty, ...rest } = opts;
+  const list = difficulties && difficulties.length ? difficulties : [difficulty || "medium"];
+  return list.map(diff => {
+    const pairs = [];
+    for (let i = 0; i < candidates.length; i++)
+      for (let j = i + 1; j < candidates.length; j++)
+        pairs.push(runSwappedDuel(candidates[i], candidates[j], { ...rest, difficulty: diff }));
+    const standings = new Map(candidates.map(c => [c.name, { name: c.name, wins: 0, losses: 0, draws: 0 }]));
+    for (const res of pairs) {
+      const A = standings.get(res.aName), B = standings.get(res.bName);
+      A.wins += res.aWins; A.losses += res.bWins; A.draws += res.draws;
+      B.wins += res.bWins; B.losses += res.aWins; B.draws += res.draws;
+    }
+    return { difficulty: diff, pairs, standings: [...standings.values()].sort((x, y) => y.wins - x.wins) };
+  });
+}
+
+/* ============================================================
+   TIER 5 — SWISS PAIRING: a schedule that scales in ROUNDS, not in candidates squared, for
+   candidate pools too large for runRoundRobinSwapped's full round-robin to stay cheap.
+
+   Every pairing above (leaderboard, duel, round-robin) is trustworthy because it's built on
+   runSwappedDuel — side-swapped, difficulty-bracketed, APM/micro pinned identical for both
+   sides. Round-robin's only weakness is its SCHEDULE: C(n,2) pairings, so a pool of 20
+   candidates is already 190 pairings, each `worlds x seeds x 2 sides` matches — the quadratic
+   cost the Tier 5 stretch goal in the roadmap named directly. Swiss pairing is the standard
+   answer (chess/Magic tournament scheduling): each round pairs candidates with the CLOSEST
+   current standing instead of every candidate meeting every other one, so after
+   `rounds` = O(log2 n) rounds the ranking has converged without ever running the full
+   quadratic schedule. This file changes NOTHING about what a "fair fight" means — every
+   pairing below is still exactly one runSwappedDuel call, same fairness guarantees, same
+   opts shape as runDuel/runRoundRobinSwapped. Tier 5 is a new SCHEDULE on top of a trusted
+   primitive, not a new way of deciding who won a match.
+
+   PAIRING RULE (pairRound below): sort the field by current wins (ties keep the stable order
+   they arrive in — i.e. the standings Map's own insertion order, which starts as the input
+   candidate order), then walk down the sorted list pairing each candidate with the
+   highest-standing opponent it hasn't already played. That's the simplest version of the
+   standard Swiss "fold down on repeat" rule — deliberately not a full optimal-matching solver
+   (this bench already prefers "the simplest thing that works" — see the SEARCH header
+   comment above): a forced rematch only happens when every remaining opponent has already
+   been played, which small pools with many rounds can hit and large pools essentially never
+   do.
+
+   BYES: odd `candidates.length` leaves one player unpaired each round. It's awarded to the
+   LOWEST-standing candidate who hasn't had one yet (falling back to lowest-standing overall
+   once everyone has) — standard Swiss practice, and it keeps a bye from ever being handed to
+   the field's current leader. A bye counts as a full pairing's worth of wins (`byePoints`,
+   computed the same way a real pairing's match count would be: `worlds.length * seeds * 2`,
+   the exact `n` runSwappedDuel produces for that opts shape) — anything smaller would make a
+   bye worth less than a real result and distort the standings for the specific candidate the
+   schedule couldn't pair that round, which is not a judgement about their play.
+
+   ROUNDS: default `Math.max(3, Math.ceil(Math.log2(candidates.length)))` — the textbook rule
+   of thumb for how many Swiss rounds separate a field of that size — override with `--rounds`.
+   Like runDuelBrackets/runRoundRobinSwapped, `--difficulties` (plural) runs the WHOLE Swiss
+   schedule again per difficulty, each one its own independent tournament (own pairings, own
+   standings) — never blended, for the identical reason those two keep brackets separate.
+   ============================================================ */
+
+const pairKey = (a, b) => [a, b].sort().join("::");
+
+// One round's pairings off the current standings, sorted highest-first. `played` is the set of
+// pairKey()s already run in ANY earlier round of this bracket; `hadBye` is the set of names
+// already given a bye. Returns { pairs: [[aRow, bRow], ...], byeName } — `pairs` holds the
+// standings rows (not the candidate objects; the caller looks the candidate up by name), so
+// this function stays pure and easy to test on plain data.
+function pairRound(standingsRows, played, hadBye) {
+  const order = [...standingsRows].sort((a, b) => b.wins - a.wins);
+  let byeName = null;
+  if (order.length % 2 === 1) {
+    let idx = -1;
+    for (let i = order.length - 1; i >= 0; i--) if (!hadBye.has(order[i].name)) { idx = i; break; }
+    if (idx === -1) idx = order.length - 1;   // everyone's already had one — lowest standing again
+    byeName = order.splice(idx, 1)[0].name;
+  }
+  const pairs = [];
+  const pool = order;
+  while (pool.length) {
+    const a = pool.shift();
+    let idx = pool.findIndex(b => !played.has(pairKey(a.name, b.name)));
+    if (idx === -1) idx = 0;   // every remaining opponent is a repeat — forced rematch, closest standing
+    const b = pool.splice(idx, 1)[0];
+    pairs.push([a, b]);
+  }
+  return { pairs, byeName };
+}
+
+// One difficulty bracket's whole Swiss schedule: `numRounds` rounds of pairRound, each pairing
+// run through runSwappedDuel exactly like round-robin's own pairs — same opts shape, same
+// fairness. Standings accumulate match wins/losses/draws round over round, same tallying
+// runRoundRobinSwapped already does per pairing.
+function runSwissBracket(candidates, numRounds, opts) {
+  const worlds = opts.worlds || ["korrath", "ferros", "vesper", "kybernet"];
+  const seeds = opts.seeds ?? 2;
+  const byePoints = worlds.length * seeds * 2;   // == a real pairing's runSwappedDuel `n` — see header comment
+  const standings = new Map(candidates.map(c => [c.name, { name: c.name, wins: 0, losses: 0, draws: 0, byes: 0 }]));
+  const played = new Set(), hadBye = new Set();
+  const rounds = [];
+  for (let round = 1; round <= numRounds; round++) {
+    const { pairs, byeName } = pairRound([...standings.values()], played, hadBye);
+    if (byeName) {
+      const row = standings.get(byeName);
+      row.wins += byePoints; row.byes += 1;
+      hadBye.add(byeName);
+    }
+    const matches = [];
+    // Fold the round number into the seed so a forced rematch in a later round isn't a byte-for-byte
+    // copy of the earlier one, while staying fully deterministic (hashStr, no clock, no Math.random)
+    // — the same discipline duelSeed() already applies to world/difficulty/names/rep.
+    const roundSeedBase = hashStr(`${opts.seedBase ?? 1}:swiss:round${round}`);
+    for (const [aRow, bRow] of pairs) {
+      const a = candidates.find(c => c.name === aRow.name);
+      const b = candidates.find(c => c.name === bRow.name);
+      played.add(pairKey(a.name, b.name));
+      const res = runSwappedDuel(a, b, { ...opts, seedBase: roundSeedBase });
+      const A = standings.get(a.name), B = standings.get(b.name);
+      A.wins += res.aWins; A.losses += res.bWins; A.draws += res.draws;
+      B.wins += res.bWins; B.losses += res.aWins; B.draws += res.draws;
+      matches.push(res);
+    }
+    rounds.push({ round, byeName, byePoints: byeName ? byePoints : null, matches });
+  }
+  const standingsList = [...standings.values()].sort((x, y) => y.wins - x.wins || x.losses - y.losses);
+  return { difficulty: opts.difficulty, rounds: numRounds, byePoints, roundsLog: rounds, standings: standingsList };
+}
+
+// Swiss-paired tournament over `candidates`: `Math.max(3, Math.ceil(Math.log2(n)))` rounds by
+// default (override with `opts.rounds`), each round pairing candidates by CLOSEST current
+// standing rather than running the full C(n,2) round-robin — see the TIER 5 header comment
+// above for why and for exactly what stays identical to round-robin (the pairing primitive,
+// runSwappedDuel, and its fairness guarantees) versus what's new (the schedule). Same
+// `--difficulties` plural/never-blended convention as runDuelBrackets/runRoundRobinSwapped:
+// returns one independent { difficulty, rounds, roundsLog, standings } tournament per bracket.
+export function runSwissTournament(candidates, opts = {}) {
+  assertUniqueCandidateNames(candidates);
+  if (candidates.length < 2) throw new Error("a Swiss tournament needs at least 2 candidates");
+  const { difficulties, difficulty, rounds, ...rest } = opts;
+  const list = difficulties && difficulties.length ? difficulties : [difficulty || "medium"];
+  const numRounds = rounds || Math.max(3, Math.ceil(Math.log2(candidates.length)));
+  return list.map(diff => runSwissBracket(candidates, numRounds, { ...rest, difficulty: diff }));
+}
+
+/* ============================================================
    HEALTH CHECKS — the findings this bench already turned up, encoded
 
    Each is a named, reproducible defect rather than a paragraph in a review doc: run the
@@ -629,6 +1067,35 @@ function printTable(rows) {
   for (const r of rows) console.log(cols.map(([, w, f]) => pad(f(r), w)).join(""));
 }
 
+// One single-direction duel's rows plus its aggregate — reuses pad() exactly like printTable()
+// above. Used both standalone (whichever direction is being shown) and by printSwappedDuel
+// below, once per direction.
+function printDuelRows(res) {
+  console.log(pad("world", 10) + pad("seed", 13) + pad("swap", 6) + pad("winner", 8) + pad("reason", 16)
+    + pad("time(s)", 9) + pad("aScore", 9) + pad("bScore", 9) + "margin");
+  for (const r of res.rows)
+    console.log(pad(r.world, 10) + pad(r.seed, 13) + pad(r.swapAsym, 6) + pad(r.winner, 8) + pad(r.winReason || "-", 16)
+      + pad(r.time, 9) + pad(r.aScore, 9) + pad(r.bScore, 9) + r.margin);
+  console.log(`\n${res.aName}: ${res.aWins}W  ${res.bName}: ${res.bWins}W  draws: ${res.draws}  `
+    + `avg score margin (${res.aName} - ${res.bName}): ${res.avgMargin}`);
+}
+
+// A Tier 3 side-swapped, single-difficulty-bracket result (one entry of runDuelBrackets' array):
+// prints BOTH directions (aAsAi/bAsAi) as their own labelled table, per the TIER 3 header
+// comment — never collapsed into one set of rows — then the combined tally.
+function printSwappedDuel(res) {
+  console.log(`DUEL -- ${res.aName} (${res.aStrategy}) vs ${res.bName} (${res.bStrategy}) -- `
+    + `difficulty "${res.difficulty}" pinned identical for both sides, ${res.n} matches total -- `
+    + `side-swapped (both directions below), map-side asym (oort/nimbus) alternated by replicate `
+    + `within each direction, a no-op elsewhere`);
+  console.log(`\n  -- ${res.bName} as "ai", ${res.aName} as "player" (${res.bAsAi.n} matches) --`);
+  printDuelRows(res.bAsAi);
+  console.log(`\n  -- ${res.aName} as "ai", ${res.bName} as "player" (${res.aAsAi.n} matches) --`);
+  printDuelRows(res.aAsAi);
+  console.log(`\nCOMBINED (${res.difficulty}): ${res.aName}: ${res.aWins}W  ${res.bName}: ${res.bWins}W  `
+    + `draws: ${res.draws}  avg score margin (${res.aName} - ${res.bName}): ${res.avgMargin}`);
+}
+
 function printFindings(rows) {
   console.log("\nHealth checks (a row here is a reproducible defect, not a style note):");
   let any = false;
@@ -642,6 +1109,92 @@ function printFindings(rows) {
       + (hits.length > 6 ? `  …+${hits.length - 6}` : ""));
   }
   if (!any) console.log("  (clean)");
+}
+
+/* ============================================================
+   SEARCH — a deterministic coordinate scan over a strategy's numeric dials, keeping an
+   improvement. Deliberately the simplest thing that works; the interesting judgement is which
+   dials to open, and that stays the caller's.
+
+   Two OBJECTIVES an evaluate() step can score a candidate dial-value by, selected once up front
+   and never mixed mid-run:
+     - default: solo score() against the --opponent scripted sparring bot (unchanged from before
+       this file grew a second mode — same runMatrix/score call, same seed derivation).
+     - --tournament-against baseline.json: Tier 2/3's fair, side-swapped, difficulty-bracketed
+       self-play duel (runDuelBrackets) against a FIXED baseline candidate, standing measured as
+       win differential (aWins - bWins) / n across every bracket combined. This is the same
+       "candidate vs a fixed yardstick" shape score()-mode already has — just the yardstick is a
+       real opponent playing the real AI, not a scripted bot's solitaire curve.
+
+   The coordinate-scan mechanics below (the per-dial, per-step loop, "keep an improvement if it
+   beats the current best") are IDENTICAL in both modes and don't know which objective is active
+   — only evaluate()'s own body differs. Returns a plain result object (not console output) so
+   both the CLI and a test can read it directly.
+   ============================================================ */
+
+export function runSearch(args) {
+  const name = args.strategy || "default";
+  const dials = list(args.dials, []).map(d => {
+    const [k, range] = d.split("=");
+    const [lo, hi] = String(range).split(":").map(Number);
+    return { k, lo, hi };
+  });
+  if (!dials.length) return null;   // caller prints the --dials usage line
+  const worlds = list(args.worlds, ["korrath", "ferros", "vesper"]);
+  const difficulties = list(args.difficulties, ["medium"]);
+  const steps = num(args.steps, 4);
+  const base = { ...(STRATEGIES[name] || {}) };
+
+  const baselinePath = args["tournament-against"];
+  const baseline = baselinePath ? JSON.parse(readFileSync(baselinePath, "utf8")) : null;
+  if (baseline && !baseline.name) throw new Error('--tournament-against candidate needs a "name"');
+
+  // Solo score() against the scripted sparring bot — untouched from before this file had a
+  // second mode: same runMatrix call, same score() reduction.
+  const scoreEvaluate = row => {
+    applyOverrides({ strategies: { [`${name}__lab`]: row } });
+    const rows = runMatrix(args, { worlds, strategies: [`${name}__lab`], difficulties, seeds: num(args.seeds, 1) });
+    return { mean: rows.reduce((a, r) => a + score(r).total, 0) / rows.length, rows };
+  };
+  // Tier 2/3 side-swapped, difficulty-bracketed self-play duel standing against the fixed
+  // baseline candidate — runDuelBrackets is the exact function `duel --difficulties` runs; this
+  // just folds its per-bracket tallies into the single scalar the coordinate scan needs to
+  // compare "better than the current best" against, the same job score()'s .total already does
+  // for the default objective.
+  const tournamentEvaluate = row => {
+    applyOverrides({ strategies: { [`${name}__lab`]: row } });
+    const candidate = { name: `${name}__lab`, strategy: `${name}__lab` };
+    const brackets = runDuelBrackets(candidate, baseline, {
+      worlds, difficulties,
+      seeds: num(args.seeds, 1), seedBase: num(args.seed, 1), minutes: num(args.minutes, 40),
+    });
+    const n = brackets.reduce((a, b) => a + b.n, 0);
+    const aWins = brackets.reduce((a, b) => a + b.aWins, 0);
+    const bWins = brackets.reduce((a, b) => a + b.bWins, 0);
+    const draws = brackets.reduce((a, b) => a + b.draws, 0);
+    return { mean: n ? (aWins - bWins) / n : 0, brackets, aWins, bWins, draws, n };
+  };
+  const evaluate = baseline ? tournamentEvaluate : scoreEvaluate;
+
+  const log = [];
+  let best = { ...base }, bestEval = evaluate(best), bestScore = bestEval.mean;
+  log.push({ kind: "start", name, mean: bestScore, dials: pickDials(best, dials) });
+  for (const d of dials) {
+    for (let i = 0; i <= steps; i++) {
+      const v = +(d.lo + (d.hi - d.lo) * (i / steps)).toFixed(3);
+      const cand = { ...best, [d.k]: v };
+      const evald = evaluate(cand);
+      const better = evald.mean > bestScore + 1e-9;
+      log.push({ kind: "step", k: d.k, v, mean: evald.mean, better, detail: evald });
+      if (better) { best = cand; bestScore = evald.mean; bestEval = evald; }
+    }
+  }
+  log.push({ kind: "best", mean: bestScore, dials: pickDials(best, dials) });
+  return {
+    name, dials, worlds, difficulties, steps,
+    mode: baseline ? "tournament" : "score",
+    baseline, best, bestScore, bestEval, log,
+  };
 }
 
 const CMDS = {
@@ -715,42 +1268,30 @@ const CMDS = {
       + `(${sb > sa ? "+" : ""}${((sb - sa) / n).toFixed(3)} per configuration, n=${n})`);
   },
 
-  // Coordinate search over a strategy's numeric dials. Deliberately the simplest thing that
-  // works: a deterministic scan of each dial in turn, keeping an improvement. It's here to
-  // make the search REPRODUCIBLE and cheap to reason about — the interesting judgement is in
-  // which dials to open and what the objective is, and both of those are yours (or Claude's).
   search(args) {
-    const name = args.strategy || "default";
-    const dials = list(args.dials, []).map(d => {
-      const [k, range] = d.split("=");
-      const [lo, hi] = String(range).split(":").map(Number);
-      return { k, lo, hi };
-    });
-    if (!dials.length) { console.log("--dials 'attackTimeoutMult=0.3:1,garrisonMult=0:1'"); return; }
-    const worlds = list(args.worlds, ["korrath", "ferros", "vesper"]);
-    const difficulties = list(args.difficulties, ["medium"]);
-    const steps = num(args.steps, 4);
-    const base = { ...(STRATEGIES[name] || {}) };
-    const evaluate = row => {
-      applyOverrides({ strategies: { [`${name}__lab`]: row } });
-      const rows = runMatrix(args, { worlds, strategies: [`${name}__lab`], difficulties, seeds: num(args.seeds, 1) });
-      return { mean: rows.reduce((a, r) => a + score(r).total, 0) / rows.length, rows };
-    };
-    let best = { ...base }, bestScore = evaluate(best).mean;
-    console.log(`start ${name} -> ${bestScore.toFixed(3)}  ${JSON.stringify(pickDials(best, dials))}`);
-    for (const d of dials) {
-      for (let i = 0; i <= steps; i++) {
-        const v = +(d.lo + (d.hi - d.lo) * (i / steps)).toFixed(3);
-        const cand = { ...best, [d.k]: v };
-        const { mean } = evaluate(cand);
-        const better = mean > bestScore + 1e-9;
-        console.log(`  ${pad(d.k + "=" + v, 32)} ${mean.toFixed(3)}${better ? "  *" : ""}`);
-        if (better) { best = cand; bestScore = mean; }
+    const result = runSearch(args);
+    if (!result) { console.log("--dials 'attackTimeoutMult=0.3:1,garrisonMult=0:1'"); return; }
+    for (const entry of result.log) {
+      if (entry.kind === "start") {
+        console.log(`start ${entry.name} -> ${entry.mean.toFixed(3)}  ${JSON.stringify(entry.dials)}`);
+      } else if (entry.kind === "step") {
+        const tourn = result.mode === "tournament"
+          ? `  (${entry.detail.aWins}W-${entry.detail.bWins}L-${entry.detail.draws}D vs ${result.baseline.name})`
+          : "";
+        console.log(`  ${pad(entry.k + "=" + entry.v, 32)} ${entry.mean.toFixed(3)}${entry.better ? "  *" : ""}${tourn}`);
+      } else if (entry.kind === "best") {
+        console.log(`\nbest ${entry.mean.toFixed(3)}  ${JSON.stringify(entry.dials, null, 1)}`);
       }
     }
-    console.log(`\nbest ${bestScore.toFixed(3)}  ${JSON.stringify(pickDials(best, dials), null, 1)}`);
+    if (result.mode === "tournament") {
+      console.log(`\nTOURNAMENT MODE: each dial value was scored by Tier 2/3 side-swapped, `
+        + `difficulty-bracketed self-play duel standing (win% differential, aWins-bWins over n) `
+        + `against baseline candidate "${result.baseline.name}", NOT solo score() against a `
+        + `scripted sparring bot.`);
+    }
     console.log("\nThis is a LOCAL search on a noisy objective — re-run the winner through "
-      + "`sweep --seeds 3` on the full roster before believing it.");
+      + "`sweep --seeds 3` on the full roster before believing it, then `duel`/`compare` against "
+      + "the baseline, `npm test`, and `ailab check` before promoting anything into engine/.");
   },
 
   check(args) {
@@ -798,6 +1339,93 @@ const CMDS = {
       console.log(`\nwrote ${args.json}`);
     }
   },
+
+  // Tier 3: real head-to-head via Tier 1 self-play (tools/selfplay.js), side-swapped by DEFAULT
+  // and difficulty-bracketed — see the TIER 3 and DUEL header comments above for exactly what's
+  // fair here and why. --a/--b run one pair; --candidates a.json,b.json,c.json (3+) runs every
+  // pair round-robin instead (a nice-to-have — see runRoundRobinSwapped above) and neither flag
+  // combination requires the other to exist. --difficulties (plural, comma list) sweeps several
+  // brackets, each reported on its own; --difficulty (singular) still works as a one-bracket
+  // shorthand, default "medium", unchanged from Tier 2.
+  duel(args) {
+    const duelOpts = {
+      worlds: list(args.worlds, ["korrath", "ferros", "vesper", "kybernet"]),
+      seeds: num(args.seeds, 2),
+      seedBase: num(args.seed, 1),
+      minutes: args.minutes !== undefined ? Number(args.minutes) : undefined,
+    };
+    const difficulties = list(args.difficulties, [args.difficulty || "medium"]);
+    const paths = list(args.candidates, []);
+    if (!args.a && !args.b && paths.length < 2) {
+      console.log('--a candA.json --b candB.json   (or --candidates a.json,b.json,c.json for round-robin)');
+      console.log('[--worlds a,b] [--difficulties medium,hard] [--seeds 2] [--seed 1] [--minutes 40] [--json out.json]');
+      console.log('Every pairing runs side-swapped by default (each candidate plays BOTH owner slots) and');
+      console.log('each --difficulties entry is reported as its own bracket, never blended together.');
+      return;
+    }
+    if (args.a || args.b) {
+      if (!args.a || !args.b) { console.log("duel needs BOTH --a and --b"); return; }
+      const a = JSON.parse(readFileSync(args.a, "utf8"));
+      const b = JSON.parse(readFileSync(args.b, "utf8"));
+      const brackets = runDuelBrackets(a, b, { ...duelOpts, difficulties });
+      for (const res of brackets) { printSwappedDuel(res); console.log(); }
+      if (args.json) { writeFileSync(args.json, JSON.stringify(brackets, null, 1)); console.log(`\nwrote ${args.json}`); }
+      return;
+    }
+    const candidates = paths.map(p => JSON.parse(readFileSync(p, "utf8")));
+    const roundRobinBrackets = runRoundRobinSwapped(candidates, { ...duelOpts, difficulties });
+    for (const { difficulty, pairs, standings } of roundRobinBrackets) {
+      console.log(`\n=== difficulty: ${difficulty} ===`);
+      for (const res of pairs) { printSwappedDuel(res); console.log(); }
+      console.log(`ROUND-ROBIN STANDINGS (${difficulty})`);
+      console.log(pad("#", 4) + pad("candidate", 28) + pad("W", 5) + pad("L", 5) + "D");
+      standings.forEach((s, i) => console.log(pad(String(i + 1), 4) + pad(s.name, 28) + pad(s.wins, 5) + pad(s.losses, 5) + s.draws));
+    }
+    if (args.json) {
+      writeFileSync(args.json, JSON.stringify(roundRobinBrackets, null, 1));
+      console.log(`\nwrote ${args.json}`);
+    }
+  },
+
+  // Tier 5: same runSwappedDuel pairing as `duel --candidates`, a Swiss SCHEDULE instead of full
+  // round-robin — see the TIER 5 header comment above for why and for exactly what stays fair.
+  // Meant for pools too large for round-robin's C(n,2) pairings to stay cheap.
+  swiss(args) {
+    const paths = list(args.candidates, []);
+    if (paths.length < 2) {
+      console.log("--candidates a.json,b.json,c.json,...   (2+ candidates; Swiss pays off once there are many)");
+      console.log("[--rounds N] [--worlds a,b] [--difficulties medium,hard] [--seeds 2] [--seed 1] [--minutes 40] [--json out.json]");
+      console.log("Default rounds: max(3, ceil(log2(candidates))). Each pairing is side-swapped and difficulty-bracketed");
+      console.log("exactly like `duel`; each --difficulties entry runs its own independent Swiss tournament, never blended.");
+      return;
+    }
+    const candidates = paths.map(p => JSON.parse(readFileSync(p, "utf8")));
+    const swissOpts = {
+      worlds: list(args.worlds, ["korrath", "ferros", "vesper", "kybernet"]),
+      seeds: num(args.seeds, 2),
+      seedBase: num(args.seed, 1),
+      minutes: args.minutes !== undefined ? Number(args.minutes) : undefined,
+      difficulties: list(args.difficulties, [args.difficulty || "medium"]),
+      rounds: args.rounds !== undefined ? Number(args.rounds) : undefined,
+    };
+    const brackets = runSwissTournament(candidates, swissOpts);
+    for (const { difficulty, rounds, roundsLog, standings } of brackets) {
+      console.log(`\n=== SWISS -- difficulty: ${difficulty} -- ${rounds} round(s), ${candidates.length} candidates ===`);
+      for (const { round, byeName, byePoints, matches } of roundsLog) {
+        console.log(`\n-- round ${round} --`);
+        if (byeName) console.log(`  bye: ${byeName} (+${byePoints}, a real pairing's worth of match wins)`);
+        for (const res of matches) { printSwappedDuel(res); console.log(); }
+      }
+      console.log(`SWISS STANDINGS (${difficulty})`);
+      console.log(pad("#", 4) + pad("candidate", 28) + pad("W", 5) + pad("L", 5) + pad("D", 5) + "byes");
+      standings.forEach((s, i) =>
+        console.log(pad(String(i + 1), 4) + pad(s.name, 28) + pad(s.wins, 5) + pad(s.losses, 5) + pad(s.draws, 5) + s.byes));
+    }
+    if (args.json) {
+      writeFileSync(args.json, JSON.stringify(brackets, null, 1));
+      console.log(`\nwrote ${args.json}`);
+    }
+  },
 };
 
 const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
@@ -808,7 +1436,14 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
                               [--seeds 3] [--minutes 40] [--json out.json] [--csv out.csv] [--full]
   node tools/ailab.js compare --baseline base.json --candidate cand.json
   node tools/ailab.js search  --strategy aggressive --dials 'attackTimeoutMult=0.3:1,garrisonMult=0:1'
-                              [--steps 4] [--worlds a,b]
+                              [--steps 4] [--worlds a,b] [--difficulties a,b]
+                              [--tournament-against baseline.json]
+                              -- default objective: solo score() against --opponent, unchanged.
+                              --tournament-against swaps ONLY the objective onto a Tier 2/3
+                              side-swapped, difficulty-bracketed self-play duel (runDuelBrackets)
+                              against the named baseline candidate { name, strategy, overrides },
+                              scored by win differential (aWins - bWins) / n. The coordinate-scan
+                              loop itself is unchanged either way.
   node tools/ailab.js check   [--worlds a,b] [--minutes 60] [--exit-code]
   node tools/ailab.js leaderboard --candidates a.json,b.json,c.json
                               [--worlds a,b] [--difficulty medium] [--opponent tech] [--seeds 2]
@@ -817,6 +1452,30 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
                               held equal (a proxy for competitive self-play, not a substitute for
                               it — see the LEADERBOARD header comment). Each candidate file is
                               { "name": "...", "strategy": "aggressive", "overrides": {...} }.
+  node tools/ailab.js duel   --a candA.json --b candB.json
+                              [--worlds a,b] [--difficulties medium,hard] [--seeds 2] [--seed 1]
+                              [--minutes 40] [--json out.json]
+                              -- TRUE head-to-head: candA and candB fight via Tier 1 self-play
+                              (tools/selfplay.js), both sides the real AI, difficulty pinned
+                              identical for both — see the DUEL header comment for the fairness
+                              guarantee. Resolves via engine/victory.js exactly like any skirmish
+                              (elimination or the score-at-clock tiebreak). --candidates
+                              a.json,b.json,c.json instead runs every pair round-robin.
+                              Tier 3, on by default: every pairing is SIDE-SWAPPED (each candidate
+                              plays both the "ai" and "player" owner slot, both halves reported),
+                              and --difficulties (plural) sweeps several brackets, each reported
+                              standalone -- never averaged across difficulty -- see the TIER 3
+                              header comment.
+  node tools/ailab.js swiss  --candidates a.json,b.json,c.json,...
+                              [--rounds N] [--worlds a,b] [--difficulties medium,hard]
+                              [--seeds 2] [--seed 1] [--minutes 40] [--json out.json]
+                              -- Tier 5: the SAME side-swapped, difficulty-bracketed runSwappedDuel
+                              pairing 'duel --candidates' uses, scheduled as SWISS rounds instead
+                              of full round-robin, for candidate pools too large for C(n,2)
+                              pairings to stay cheap. Default rounds: max(3, ceil(log2(n))). Each
+                              round pairs candidates by closest current standing and avoids a
+                              repeat pairing unless every other opponent has already been played
+                              -- see the TIER 5 header comment for the pairing/bye rules.
 
 Common flags
   --overrides f.json   inject candidate rows into the AI tables before running:
