@@ -86,10 +86,15 @@ export const DIFFICULTY_OPTIONS = [
     marketAccess: true, rusherGraduates: true, forgiveness: 0.8, counterEvery: 2 },
 ];
 
-/** The active difficulty entry for this match — DIFFICULTY_OPTIONS' medium entry when
- * state.ai.difficulty is unset or names a key that isn't in the list, the same fallback
- * boot.js's difficultyDials already applies before a match even starts. */
-export function difficultyFor(state) {
-  return DIFFICULTY_OPTIONS.find(o => o.mult === state.ai.difficulty)
+/** The active difficulty entry for `owner` (default "ai", so every existing save/test/call site
+ * that predates self-play reads state.ai.difficulty exactly as before) — DIFFICULTY_OPTIONS'
+ * medium entry when unset or naming a key that isn't in the list, the same fallback boot.js's
+ * difficultyDials already applies before a match even starts. Tier 1 self-play (tools/selfplay.js)
+ * passes owner="player" to read state.playerAi.difficulty instead, its own independently-picked
+ * dial; deliberately NOT an import of engine/aiCommon.js's controllerFor, so this file stays the
+ * pure, import-free leaf its header describes. */
+export function difficultyFor(state, owner = "ai") {
+  const controller = owner === "ai" ? state.ai : state.playerAi;
+  return DIFFICULTY_OPTIONS.find(o => o.mult === (controller && controller.difficulty))
       || DIFFICULTY_OPTIONS.find(o => o.mult === "medium");
 }

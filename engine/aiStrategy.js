@@ -120,8 +120,13 @@ export const STRATEGIES = {
   },
 };
 
-/** The active strategy for this match — STRATEGIES.default if unset/unknown, so every existing
- * save, test, and call site that predates this feature (or just leaves it unset) is unaffected. */
-export function strategyFor(state) {
-  return STRATEGIES[state.ai.strategy] || STRATEGIES.default;
+/** The active strategy for `owner` (default "ai", so every existing save/test/call site that
+ * predates self-play — the overwhelming majority — reads state.ai.strategy exactly as before) —
+ * STRATEGIES.default if unset/unknown. Tier 1 self-play (tools/selfplay.js) passes owner="player"
+ * to read state.playerAi.strategy instead, its own independently-picked overlay; deliberately NOT
+ * an import of engine/aiCommon.js's controllerFor, so this file stays the pure, import-free leaf
+ * its header describes. */
+export function strategyFor(state, owner = "ai") {
+  const controller = owner === "ai" ? state.ai : state.playerAi;
+  return (controller && STRATEGIES[controller.strategy]) || STRATEGIES.default;
 }

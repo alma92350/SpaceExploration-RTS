@@ -130,13 +130,19 @@ export function techMult(upgrades, field, buildingType) {
   return m;
 }
 
-// Difficulty's research-pace dial (engine/aiDifficulty.js), applied to the AI's OWN
-// Datacenter research only — never the player's, even on the same tech-rated world.
-// researchTimeScale above is deliberately per-WORLD (a Syndicate hub is fast for
-// whoever researches there); this is the one further, per-OWNER layer on top of it.
-// 1 (a no-op) for the player and for every difficulty that doesn't set the field.
+// Difficulty's research-pace dial (engine/aiDifficulty.js), applied to an AI CONTROLLER's own
+// Datacenter/Refinery research only — never a human player's, even on the same tech-rated world.
+// researchTimeScale above is deliberately per-WORLD (a Syndicate hub is fast for whoever researches
+// there); this is the one further, per-OWNER layer on top of it. owner "ai" always reads its own
+// difficulty (state.ai.difficulty) — unchanged. owner "player" reads state.playerAi's difficulty
+// ONLY when Tier 1 self-play (tools/selfplay.js) has actually populated it — a human-driven
+// "player" owner (every match that exists outside self-play) has no controller there, so this
+// still resolves to 1 (a no-op), exactly as before. Without this owner-aware read, a self-play
+// "player" controller's own chosen difficulty would silently never apply its research-pace dial —
+// the same class of fairness bug fog-omniscience is, just for a timing dial instead of vision.
 function aiResearchPaceMult(state, owner) {
-  return owner === "ai" ? (difficultyFor(state).researchPaceMult || 1) : 1;
+  if (owner !== "ai" && (owner !== "player" || !state.playerAi)) return 1;
+  return difficultyFor(state, owner).researchPaceMult || 1;
 }
 
 // Which building type researches from which node table — the one thing that

@@ -329,11 +329,15 @@
  * aiContext(); the three *Reserve fields are running ore holdbacks one phase passes to the next
  * (an expansion banks ore that the infrastructure phases then leave alone).
  * @typedef {Object} AiContext
+ * @property {string} owner   which side this snapshot is for — "ai" (always) or "player" (Tier 1 self-play only)
+ * @property {string} enemyOwner   the other side — engine/aiCommon.js otherOwner(owner)
+ * @property {Fog} fog   `owner`'s OWN fog of war (state.fogs[owner]) — every intel-gated read in aiMilitary.js/aiEconomy.js/aiWorkers.js uses this, never a hardcoded state.fogAI
+ * @property {Object} controller   this owner's AI runtime bookkeeping — state.ai for "ai", state.playerAi for "player" (engine/aiCommon.js controllerFor)
  * @property {Archetype} archetype
  * @property {(field: string) => *} arch   reads the archetype field, letting its Odyssey overlay win
- * @property {Strategy} strategy   the player-picked AI strategy (engine/aiStrategy.js strategyFor)
+ * @property {Strategy} strategy   this owner's AI strategy (engine/aiStrategy.js strategyFor(state, owner))
  * @property {boolean} warFooting   true while a strategy with warFootingTime has seen a threat recently (engine/ai.js)
- * @property {Player} ai
+ * @property {Player} ai   this owner's economy/faction Player object (state.players[owner]) — named `ai` for historical/API-stability reasons, not literally owner "ai"
  * @property {Unit[]} workers
  * @property {Unit[]} army
  * @property {Unit[]} rangers

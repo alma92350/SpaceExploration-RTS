@@ -56,6 +56,7 @@ function attackerCentroid(attackers) {
 /** @param {State} state @param {AiContext} ctx */
 export function aiSuperweapon(state, ctx) {
   if (!state.endless) return;   // heliumbomb is odysseyOnly — never exists in a skirmish, so this is a pure no-op there
+  const { owner } = ctx;
   const bomb = ctx.bombs[0];
   if (!bomb || bomb.armed) return;   // none built yet, or already armed/fusing — engine/bomb.js owns it from here
 
@@ -67,7 +68,7 @@ export function aiSuperweapon(state, ctx) {
   // attacker just walked into.
   const nearHome = ctx.cc && Math.hypot(bomb.x - ctx.cc.x, bomb.y - ctx.cc.y) <= DEFEND_RADIUS;
   if (ctx.threats.length > 0 && nearHome) {
-    if (canAct(state)) { bomb.armed = true; spend(state); }
+    if (canAct(state, owner)) { bomb.armed = true; spend(state, owner); }
     return;
   }
 
@@ -78,7 +79,7 @@ export function aiSuperweapon(state, ctx) {
   // own "Detonate Now" HUD button makes, so the AI reaches for the mechanic exactly
   // the way a human would.
   if (!ctx.strategy.useBombOffensively) return;
-  const target = chooseAttackTarget(state, ctx.cc);
+  const target = chooseAttackTarget(state, ctx.cc, owner);
   if (!target) return;
   // Per-target threshold, not one flat guess: the target's own radius plus BOMB_CORE_RADIUS (the
   // blast's peak-damage band, measured to the RIM — engine/bomb.js) so arming here is geometrically
@@ -87,7 +88,7 @@ export function aiSuperweapon(state, ctx) {
   const arriveRadius = targetRadius(target) + BOMB_CORE_RADIUS;
   const d = Math.hypot(bomb.x - target.x, bomb.y - target.y);
   if (d <= arriveRadius) {
-    if (canAct(state)) { bomb.armed = true; lightFuse(state, bomb); spend(state); }
+    if (canAct(state, owner)) { bomb.armed = true; lightFuse(state, bomb); spend(state, owner); }
     return;
   }
 
@@ -99,13 +100,13 @@ export function aiSuperweapon(state, ctx) {
   // into the open by itself.
   const attackers = ctx.army.filter(u => u.order && u.order.type === "attack-move");
   if (!attackers.length) return;
-  if (!bomb.order && canAct(state)) {
+  if (!bomb.order && canAct(state, owner)) {
     // Route toward whichever is closer right now, the wave's own centroid or the target itself —
     // so it travels embedded in the escort rather than racing ahead of (or lagging behind) it,
     // naturally converging on the target as the wave itself closes in.
     const centroid = attackerCentroid(attackers);
     const dest = Math.hypot(bomb.x - centroid.x, bomb.y - centroid.y) < d ? centroid : target;
     issueMove([bomb], dest.x, dest.y);
-    spend(state);
+    spend(state, owner);
   }
 }

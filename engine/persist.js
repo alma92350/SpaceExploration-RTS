@@ -470,6 +470,26 @@ function serPlanet(state) {
       // of an in-flight ship. Persisted so a reload doesn't recompute a different target.
       aiColonyTarget: state.ai.colonyTarget ?? null,
     },
+    // Tier 1 self-play's SECOND, parallel AI controller (owner "player" — see engine/state.js's
+    // createAiController, engine/ai.js's runAI(state, dt, owner)). Purely additive: every save
+    // that predates this feature (and every non-self-play save made after it) has state.playerAi
+    // === null, so this serializes to `null` and rehydratePlanet's `P.playerAi ? … : null` below
+    // reads that back as null too — a byte-identical round trip with NO SAVE_VERSION bump. Field
+    // names mirror the `ai` block above one-for-one (pa-prefixed instead of ai-prefixed) so the
+    // two controllers can never structurally drift.
+    playerAi: state.playerAi ? {
+      paThink: state.playerAi.think ?? 0, paScoutId: state.playerAi.scoutId ?? null,
+      paApm: state.playerAi.apm ?? null, paMicro: !!state.playerAi.micro,
+      paStrategy: state.playerAi.strategy || "default",
+      paDifficulty: state.playerAi.difficulty || "medium",
+      paLastThreatAt: state.playerAi.lastThreatAt ?? null,
+      paActionBudget: state.playerAi.actionBudget ?? 0,
+      paAttackForce: state.playerAi.attackForce ?? 0, paAttackDesperate: !!state.playerAi.attackDesperate,
+      paNextAttackAt: state.playerAi.nextAttackAt ?? null, paUnitsBuilt: state.playerAi.unitsBuilt ?? 0,
+      paWaveCount: state.playerAi.waveCount ?? 0,
+      paNextWaveAt: state.playerAi.nextWaveAt ?? null,
+      paColonyTarget: state.playerAi.colonyTarget ?? null,
+    } : null,
   };
 }
 
@@ -630,6 +650,24 @@ function rehydratePlanet(P) {
       colonyTarget: P.ai.aiColonyTarget ?? null,
       archetype: archetypeFor(P.planetId),
     },
+    // Restore Tier 1 self-play's second controller (see the matching comment in serPlanet above)
+    // — null for every save that predates it or never activated self-play, exactly like state.ai
+    // itself would be if createGameState were ever called without seeding it (it never is; this
+    // is playerAi's only construction path outside tools/selfplay.js's own direct assignment).
+    playerAi: P.playerAi ? {
+      scoutId: P.playerAi.paScoutId, think: P.playerAi.paThink,
+      apm: P.playerAi.paApm, micro: P.playerAi.paMicro,
+      strategy: P.playerAi.paStrategy || "default",
+      difficulty: P.playerAi.paDifficulty || "medium",
+      lastThreatAt: P.playerAi.paLastThreatAt ?? null,
+      actionBudget: P.playerAi.paActionBudget,
+      attackForce: P.playerAi.paAttackForce, attackDesperate: P.playerAi.paAttackDesperate,
+      nextAttackAt: P.playerAi.paNextAttackAt, unitsBuilt: P.playerAi.paUnitsBuilt,
+      waveCount: P.playerAi.paWaveCount ?? 0,
+      nextWaveAt: P.playerAi.paNextWaveAt ?? undefined,
+      colonyTarget: P.playerAi.paColonyTarget ?? null,
+      archetype: archetypeFor(P.planetId),
+    } : null,
     events: [],
     craters,
     wrecks,

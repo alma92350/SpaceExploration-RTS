@@ -1,0 +1,17 @@
+{
+  "name": "Quick Commit",
+  "_hypothesis": "Aggressive already commits sooner with less (attackTimeoutMult 0.55, armyAttackSizeMult 0.6) at the cost of a thin home guard (garrisonMult 0.4). This candidate pushes the timing/muster dials further still, but spends less of that saved ore on home defense than Aggressive gives up — testing whether committing EVEN earlier only pays off if you also keep more of a garrison, or whether Aggressive's own trade-off was already close to the efficient point.",
+  "strategy": "quickcommit",
+  "overrides": {
+    "strategies": {
+      "quickcommit": {
+        "attackTimeoutMult": 0.35,
+        "armyAttackSizeMult": 0.45,
+        "garrisonMult": 0.7,
+        "graceMult": 0.5,
+        "grievanceMult": 1.3,
+        "forgiveness": 0.9
+      }
+    }
+  }
+}

@@ -323,18 +323,38 @@ faction; no AI actually goes anywhere.
 This is a design gap rather than a defect, and it's the largest single lever on how alive the
 galaxy feels.
 
-### 2.8 There is no AI-vs-AI, but there nearly is
+### 2.8 There is no AI-vs-AI, but there nearly is — *done*
 
-**Status: deferred, deliberately.** A contained refactor with no player-visible effect — it buys a
-better *evaluation signal*, not a better game. Worth doing before a serious dial-search campaign;
-not worth bundling into a defect-fix pass.
+**Status: shipped.** `runAI(state, dt, owner = "ai")` and its `aiContext` now resolve everything —
+the controller (`controllerFor(state, owner)`: `state.ai` for `"ai"`, the new `state.playerAi` for
+`"player"`), the enemy owner (`otherOwner`), and the fog grid (`state.fogs[owner]` — `state.fog`
+and `state.fogAI` are now aliases into that same object) — from `owner` alone, instead of every
+phase hardcoding `"ai"`/`state.fogAI`. `state.ai`'s shape and meaning for owner `"ai"` are
+byte-identical to before; a `"player"` call is a safe no-op until a caller populates
+`state.playerAi` (`engine/aiCommon.js`, `engine/aiMilitary.js`, `engine/aiEconomy.js`,
+`engine/aiIndustry.js`, `engine/aiWorkers.js`, `engine/aiSuperweapon.js`, `engine/aiStrategy.js`,
+`engine/aiDifficulty.js`, `engine/techtree.js`, `engine/persist.js` — the last extended
+defensively, no `SAVE_VERSION` bump). The only caller is `tools/selfplay.js`, a new headless bench
+(`createSelfPlayState`/`tickSelfPlay`/`runSelfPlayMatch`) — nothing in `setup.js`/`boot.js`/the
+shipped game changed.
 
-`state.ai` is a single controller slot bound to owner `"ai"`. Across the AI modules
-there are only ~21 owner-literal references, and `engine/state.js` already keeps the
-owner-generic scaffold (`state.owners`, per-owner fog, owner-keyed bases). Making the
-controller owner-parametric — `state.ais[owner]` — is a contained refactor, and it would
-unlock true self-play: the strongest possible evaluation signal, replacing the scripted
-sparring bots below.
+Two real fairness bugs were found and fixed on the way, both by independent adversarial review
+rather than by the implementer noticing its own blind spot — worth naming because they're exactly
+the class of bug a self-play system has to get right or the whole exercise is theater:
+
+- **Hard difficulty's economic edge (`hardEdge`) was seeded onto `state.players.ai` only**, at
+  `createGameState` time — a self-play `"player"` controller configured for Hard got none of the
+  +10%/−10% edge an `"ai"`-owner Hard controller gets for free. Not a fog leak, a real "pays less"
+  asymmetry baked into one-time setup rather than the per-tick phases. Fixed with an exported
+  `seedDifficultyEdge(state, owner)`, called for `"player"` from `tools/selfplay.js` once
+  `state.playerAi` exists.
+- **`duel` (below) never varied which candidate played which owner slot**, so on a world with a
+  map-baked `asym: { player, ai }` stat block (`oort`, `nimbus` — `engine/map.js`), the fixed side
+  assignment decided the match, not candidate quality: two *identical* candidates measured 6–0 on
+  one asym world and 1–5 on the other before the fix. Fixed by alternating `swapAsym` by replicate
+  parity — every `duel` row now records which map side it actually ran.
+
+See §3.2 for what this actually unlocked and §4 for the full record.
 
 ### 2.9 The AI cannot survive an early rush — *new, found while fixing the rest*
 
@@ -446,11 +466,12 @@ the real sim headlessly — a 40-sim-minute world costs ~7 seconds — samples a
 fixed cadence, and prints a scoreboard.
 
 ```
-node tools/ailab.js probe    # one configuration, full time series
-node tools/ailab.js sweep    # a matrix of worlds × strategies × difficulties → scoreboard + JSON
-node tools/ailab.js compare  # A/B two saved sweeps, per-configuration deltas
-node tools/ailab.js search   # deterministic coordinate scan over a strategy's dials
-node tools/ailab.js check    # the named-defect list from section 2, across the roster
+node tools/ailab.js probe        # one configuration, full time series
+node tools/ailab.js sweep        # a matrix of worlds × strategies × difficulties → scoreboard + JSON
+node tools/ailab.js compare      # A/B two saved sweeps, per-configuration deltas
+node tools/ailab.js search       # deterministic coordinate scan over a strategy's dials
+node tools/ailab.js check        # the named-defect list from section 2, across the roster
+node tools/ailab.js leaderboard  # rank N candidates against the SAME fixed opponent — see below
 ```
 
 **A candidate AI is JSON, not a patch.** Because the three tables are plain objects read
@@ -492,6 +513,52 @@ is a reproducible list that shrinks as the AI improves, rather than a paragraph 
 improvement" is indistinguishable from noise) and that the override seam actually reaches the
 sim (or every search measures the baseline against itself).
 
+**Ranking candidates against each other — a proxy for a championship, not the real thing.**
+Every command above measures ONE candidate against the fixed sparring bots. `leaderboard` ranks
+several at once, with difficulty/opponent/worlds/seeds held IDENTICAL across every candidate — so
+comparing them never hands one an APM or micro edge another one doesn't get — and prints the same
+`score()` components, meaned per candidate, sorted best-first:
+
+```
+node tools/ailab.js leaderboard --candidates a.json,b.json,c.json [--difficulty medium] [--opponent tech]
+```
+
+Each candidate file is `{ "name": "...", "strategy": "aggressive", "overrides": {...} }` — see
+`tools/candidates/` for five runnable examples (the four stock strategies plus one novel tweak).
+**Read the result honestly: this is "beats the same non-adaptive yardstick," not "beats the other
+candidates directly."** `leaderboard` stays a proxy on purpose — it's cheap, and it's still the
+right tool when the question is "how does this dial change do against a fixed opponent." When the
+question is actually "which of these strategies beats the *other one*," use `duel` instead.
+
+**True head-to-head — `duel`, `swiss`.** §2.8's self-play refactor means two candidates can now
+really fight, both driven by the real `runAI`, each with its own archetype/strategy/difficulty, in
+a real skirmish resolved by `engine/victory.js`'s own elimination/score-at-clock rule — not a
+sparring bot standing in for one side:
+
+```
+node tools/ailab.js duel --a a.json --b b.json [--worlds w1,w2] [--difficulties medium,hard] [--seeds 2]
+node tools/ailab.js duel --candidates a.json,b.json,c.json ...     # round-robin, every pair once
+node tools/ailab.js swiss --candidates a.json,b.json,c.json,d.json,... [--rounds N]   # for a large pool
+```
+
+Fairness is structural, not conventional: `pinnedDuelDials(difficulty)` reads the difficulty *once*
+into one `dials` object that both sides' configs spread from, so apm/micro/difficulty cannot
+diverge between candidates — every row reads them back off the live controllers to prove it, not
+the CLI input. `duel` runs **side-swapped by default** (candidate A as `"ai"` *and* as `"player"`,
+both reported separately, never blended) and keeps every `--difficulties` bracket separate rather
+than averaging across them — collapsing either of those is exactly what would hide a side- or
+APM-driven asymmetry (see §2.8's two bugs, both of which a naive single-direction, single-bracket
+measurement would have missed). `swiss` is the same fair pairing, scheduled Swiss-style
+(closest-standing pairs, rotated byes, `max(3, ⌈log₂n⌉)` rounds by default) for a candidate pool too
+large for round-robin's quadratic match count. `search --tournament-against baseline.json` points
+the existing coordinate-scan dial search at a candidate's `duel` standing against a fixed baseline
+instead of its solo `score()` — same search mechanics, a fairer objective when what you're actually
+optimizing for is beating another strategy, not a scripted bot.
+
+Candidate files are identical in shape to `leaderboard`'s. All of it lives in `tools/ailab.js` and
+`tools/selfplay.js`; see `test/ai-selfplay.test.js` and the duel/swiss tests in
+`test/ailab.test.js` for the fairness guarantees pinned as tests, not just comments.
+
 ### 3.3 The loop to run with Claude Code
 
 Packaged as a skill at `.claude/skills/ai-lab/SKILL.md`, so Claude picks it up whenever the
@@ -532,8 +599,10 @@ Sequenced so each step makes the next one measurable:
    `neverInitiates` strategy still answers.
 5. **Then** search the dials (§3.3). Tuning multipliers on top of a deadlocked, starving,
    hoarding AI is fitting noise.
-6. **Optional, high leverage:** make the controller owner-parametric (§2.8) and replace the
-   sparring bots with self-play.
+6. **Done:** the controller is owner-parametric (§2.8) and self-play (`duel`/`swiss`, §3.2)
+   replaces the sparring bots for head-to-head comparisons. `leaderboard`'s proxy signal is still
+   the right tool against a fixed opponent; reach for `duel`/`swiss` when the question is which
+   candidate beats the *other one*.
 
 ---
 
@@ -554,3 +623,10 @@ re-run.
 | 2026-07-30 | temperament should govern the grievance/aggression COOLDOWN, not just the souring | `forgiveness` on archetype × strategy × difficulty, driving both the recovery drift and the provocation memory | a ~8× spread across reachable combinations (16.7 min of grudge down to 2.0). Bench: passive **0.619 → 0.619, byte-identical on all five detectors** (correct — a player who never draws blood never provokes anyone, so the dial is a no-op there); skirmisher **0.336 → 0.365**, `hostile-but-idle` 34/44 → 18/44. Read that second number carefully: most of it is the metric getting *fairer*, not the AI playing better — a neighbour that has cooled off, or died, no longer counts as "hostile and refusing to attack". Souring deliberately left on the stock rate, pinned by a test, since the obvious implementation would have slowed it too | **yes** |
 | 2026-07-30 | `production-stall` is one Habitat per 10 s throttling the army | parallel Habitats when supply, not ore, is the bottleneck | **no** — 18/44 before, 18/44 after. Probing the worlds it fires on shows the residue is the Rusher archetype's designed economy (six workers, one Barracks) on Medium, where `rusherGraduates` doesn't apply. Kept anyway: it is what moved supply-deadlock 4→1 | kept, but it did not fix what it was aimed at |
 | 2026-08-01 | the §2.3 Barracks/colony-ship surplus sinks are both finite, so a long-enough Odyssey session outlives them and hoarding returns once a neighbour is fully built out | let sustained ore lift the standing-army cap itself (`standingArmyCap` in `engine/aiEconomy.js`), same `SURPLUS_STEP` escalation shape, Odyssey-only | Raised by a player-uploaded Odyssey save: kybernet held 34,065 ore / 9,285 crystals / 9,240 radioactives behind a 3-unit garrison after ~118 sim-minutes with every upgrade researched and Barracks/CCs at cap. 120-min probes confirm the fix: `helix/matching` 3→11 units, `forge/economic` 3→12, both previously frozen at the floor all run. `sweep --minutes 40` (16 runs) 0.632→0.637, **zero regressions** (`compare`: every delta ≥ 0); `default`/`aggressive` configs byte-identical (never hit this cap). `check` (44 runs, 60 min) `hoarding` 2/44 residual (`korrath/matching`, `oort/matching`) — ore crosses the step threshold once early then plateaus just under the next one, so `armyGrowthTail`'s last-third window reads zero even though the world isn't frozen anymore; not the same failure as before | **yes** |
+| 2026-08-03 | §2.8's owner-parametric refactor is buildable as a contained, additive change without touching the shipped single-AI game | `runAI(state, dt, owner = "ai")`, `state.playerAi` mirroring `state.ai`, `state.fogs[owner]` (`state.fog`/`state.fogAI` now aliases), `controllerFor`/`otherOwner` (`aiCommon.js`) threaded through every AI phase module; new headless bench `tools/selfplay.js` | Full suite 1850→1860 (10 new tests, `test/ai-selfplay.test.js`), zero regressions, `engine-purity`/determinism green. Independent adversarial review (fairness lens + correctness lens, run in parallel, neither trusting the implementer's self-report) found **one real high-severity bug before this was accepted**: Hard difficulty's `hardEdge` economic edge was seeded onto `state.players.ai` only, never a self-play `"player"` controller configured for Hard — a genuine "pays less" asymmetry, not a fog leak. Fixed with `seedDifficultyEdge(state, owner)`. Reviewers also independently falsified fog-isolation live (deliberately lighting single fog cells and confirming causally independent reads both directions) rather than trusting the shipped tests alone | **yes** |
+| 2026-08-03 | a fair `duel` command (`tools/ailab.js`) can be built directly on the self-play refactor, reusing `engine/victory.js`'s own resolution rather than inventing one | `pinnedDuelDials()` reads difficulty once into one object both sides spread from; `runDuel`/`runRoundRobin` | 1860→1867 (7 new tests). Independent review found a **second real high-severity bug**: `duel` always seated candidate A as `"player"` and B as `"ai"`, so on a world with a map-baked `asym` block (`oort`, `nimbus`) the fixed side decided the match — two *identical* candidates measured 6W-0L on oort and 1W-5L on nimbus. Fixed by alternating `swapAsym` by replicate parity; the same repro then measured 4-2 / 3-3, consistent with ordinary variance | **yes** |
+| 2026-08-03 | side-swap (both candidates play both owner slots) and never-blended difficulty brackets close the remaining "is one owner slot structurally easier" and "does averaging across difficulty hide an APM-driven edge" gaps `duel` alone couldn't rule out | `runSwappedDuel`/`runDuelBrackets`/`runRoundRobinSwapped`, side-swap on by default (no opt-out flag, "not an opt-in easy to forget") | 1867→1875 (8 new tests). Review found only non-blocking issues (a cosmetic aggregate-level difficulty-echo bug carried over from `duel`, and a documented note that the two swap directions sample different seeds so a disagreement between them isn't *purely* an owner-slot signal) — no fix cycle needed, passed on first review | **yes** |
+| 2026-08-03 | `search`'s existing coordinate-scan can evaluate candidates by tournament standing instead of solo `score()` against a scripted bot, without changing the scan mechanics or the non-tournament path | `--tournament-against baseline.json` switches `evaluate()` to `runDuelBrackets` against a fixed baseline; `mode`/`detail` shape distinguishes tournament rows from score rows | 1875→1880 (5 new tests). Verifier independently re-ran `runDuelBrackets` on `search`'s own winning candidate and diffed against `search`'s internal result — byte-identical, proving genuine delegation rather than a look-alike calculation. One cosmetic-only finding (an advisory CLI line unconditionally reworded) | **yes** |
+| 2026-08-03 | Swiss pairing (closest-standing pairs, rotated byes, `max(3, ⌈log₂n⌉)` rounds) is the right bounded Tier 5 slice — not an ELO ladder (needs cross-invocation persistence this project has no use for yet) or Odyssey multi-owner (needs the refactor generalized past two slots, out of proportion for a scheduling layer) | `runSwissTournament`, reusing `runSwappedDuel` unchanged as the per-pairing primitive | **Correction below (same date) — this row's own "independently verified" claim was false; see the next row.** A scripting accident in the orchestration crashed before Tier 5 got the same independent verify+review every other tier in this table got; it shipped self-graded (1880→1893, 13 new tests, all green) with nobody else checking it first | **partially — see below** |
+| 2026-08-03 | the row above claimed independent verification Tier 5 never actually received — dispatched two fresh, independent agents (a verifier and an adversarial reviewer, same as every other tier) after the fact to check it for real | — | Both found real problems the self-grading missed. **(1) HIGH:** a bye credited `worlds.length × seeds × 2` (a maximum-margin sweep) as pure wins with zero losses — reproduced live tying a candidate that structurally cannot fight (`neverInitiates` + a zero standing-army cap) with a genuine winner, and confirmed that credit exceeded the best real margin observed across every pairing of the project's own 4 named strategies (best real: 7/8; bye credit: 8/8). **(2) MEDIUM:** the pairing algorithm's own comment and CLI text claimed a repeat pairing only happens when "every remaining opponent has already been played" — false: fuzz-tested against a brute-force ground-truth checker, a plain greedy walk (first-fit, no backtracking) produced an *avoidable* repeat in 25-51% of realistic tournaments at n=6..50, and the shipped "rematch avoidance" test only passed because its hardcoded `seedBase` (7) happened to be lucky (6/9/10 reproducibly failed). **(3) low:** the same difficulty-echo bug class fixed elsewhere that day existed twice more, unpatched, in `runSwissBracket`/`runRoundRobinSwapped`'s own bracket-level field | **yes — this is what the row above should have said** |
+| 2026-08-03 | fix all three, properly this time: a bye must be worth nothing, and rematch-avoidance must actually hold, not just usually | Bye: removed the wins credit entirely — a bye now adds only to its own `byes` counter, never `wins`/`losses` (renamed `byePoints`→`byeMatchCount`, kept as informational-only). Pairing: `pairRound` now backtracks (`findMatching`, bounded by `MATCH_ATTEMPT_CAP`) to find a genuine zero-repeat matching whenever one exists, falling back to the old greedy pass (which allows repeats) only when none does. Difficulty echo: both remaining instances now read through `pinnedDuelDials` | Fuzz-verified the pairing fix at the exact scales the review found failing (n=4..50, realistic sequential simulation, 990 rounds total): **0 avoidable repeats**, down from the review's measured 25-51%. The bye fix directly closes the reviewer's own repro (a non-fighting candidate can no longer tie a genuine winner). Full suite 1893→1897 (new: a direct backtracking-vs-greedy regression test reproducing the reviewer's exact stranding scenario, a genuine-impossibility fallback test, the bye-neutrality tests, and a strengthened rematch-avoidance test run across 5 seed bases including the ones that broke the old algorithm) | **yes** |
