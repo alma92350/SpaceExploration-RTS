@@ -26,7 +26,7 @@ import { join } from "node:path";
 import {
   run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard,
   runDuel, runRoundRobin, pinnedDuelDials, runSwappedDuel, runDuelBrackets, runRoundRobinSwapped, runSearch,
-  runSwissTournament,
+  runSwissTournament, pairRound,
 } from "../tools/ailab.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
@@ -768,41 +768,108 @@ test("byes rotate: nobody gets a second bye while another candidate hasn't had o
   assert.equal(new Set(byes).size, 5, `every candidate should get exactly one bye across 5 rounds of 5, got: ${byes.join(", ")}`);
 });
 
-test("a bye is worth a real pairing's own match count, not an arbitrary point", () => {
+test("a bye is scorable-neutral: it adds to nobody's wins or losses, only its own bye count", () => {
+  // A bye is a candidate the schedule couldn't pair, not a match anyone won — crediting it as a
+  // win (at ANY size) lets a candidate that never fights outrank one that actually won something.
+  // The only thing a bye should move is `byes` (bookkeeping/reporting), never `wins`/`losses`.
   const candidates = Array.from({ length: 3 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
   const opts = shortSwiss({ worlds: ["ferros", "vesper"], seeds: 2 });
   const [bracket] = runSwissTournament(candidates, opts);
-  const expected = opts.worlds.length * opts.seeds * 2;   // side-swapped -> both directions
-  assert.equal(bracket.byePoints, expected, "byePoints must equal worlds.length * seeds * 2, the n a real pairing would produce");
   const round = bracket.roundsLog.find(r => r.byeName);
   assert.ok(round, "fixture: an odd pool must produce a bye somewhere");
-  assert.equal(round.byePoints, expected);
-  if (round.matches.length) assert.equal(round.matches[0].n, expected, "a real pairing's own match count must match the bye's credit");
+  // byeMatchCount is purely informational — "how big a real pairing this round would have been" —
+  // and must still be reported accurately, just never added to anyone's standing.
+  const expectedMatchCount = opts.worlds.length * opts.seeds * 2;
+  assert.equal(bracket.byeMatchCount, expectedMatchCount);
+  assert.equal(round.byeMatchCount, expectedMatchCount);
+});
+
+test("a bye never lets a candidate that structurally cannot fight tie or beat one that actually won", () => {
+  // The exact scenario an independent review found broken: an odd field where one candidate is
+  // neverInitiates + a zero standing-army cap (cannot ever field a fight in skirmish) draws a bye,
+  // and a genuine winner must still rank strictly above it — a bye must never be worth what a real
+  // win is worth.
+  const normal = { name: "normal", strategy: "default" };
+  const crippled = (i) => ({
+    name: `crippled${i}`, strategy: `labByeCrippled${i}`,
+    overrides: { strategies: { [`labByeCrippled${i}`]: { neverInitiates: true, standingArmyCap: 0 } } },
+  });
+  // 3 candidates (odd): normal beats one crippled candidate in a real match, the OTHER crippled
+  // candidate draws the round's bye and therefore never fights anyone at all.
+  const candidates = [normal, crippled(1), crippled(2)];
+  const opts = shortSwiss({ worlds: ["korrath"], minutes: 15, seeds: 1, rounds: 1 });
+  const [bracket] = runSwissTournament(candidates, opts);
+  const byeRecipient = bracket.roundsLog[0].byeName;
+  assert.ok(byeRecipient, "fixture: 3 candidates is odd, a bye must fire");
+  const byeRow = bracket.standings.find(s => s.name === byeRecipient);
+  const normalRow = bracket.standings.find(s => s.name === "normal");
+  assert.equal(byeRow.wins, 0, "a candidate that never fought must have zero wins, bye or not");
+  assert.ok(normalRow.wins > byeRow.wins,
+    `the genuine winner (${normalRow.wins} wins) must rank strictly above a bye recipient that never fought (${byeRow.wins} wins)`);
 });
 
 test("rematch avoidance: with enough candidates relative to rounds, no pairing repeats", () => {
+  // A plain greedy pairing (this test's first version) could strand two candidates together even
+  // when a full zero-repeat matching existed elsewhere in the round — independent review found it
+  // failing 25-51% of the time at these exact scales, and that this very test only passed because
+  // its hardcoded seedBase (7) happened to be a lucky one (seedBases 6, 9, 10 reproducibly failed
+  // with the old algorithm). pairRound now backtracks to find a zero-repeat matching whenever one
+  // exists, so this checks across several seed bases — including the ones independently confirmed
+  // to break the old algorithm — rather than trusting a single roll.
   const candidates = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
-  const [bracket] = runSwissTournament(candidates, shortSwiss({ rounds: 3 }));
-  const seen = new Set();
-  for (const { matches } of bracket.roundsLog) {
-    for (const res of matches) {
-      const key = [res.aName, res.bName].sort().join("::");
-      assert.ok(!seen.has(key), `pairing ${key} repeated across rounds even though unplayed opponents remained (6 candidates, 3 rounds)`);
-      seen.add(key);
+  for (const seedBase of [1, 6, 7, 9, 10]) {
+    const [bracket] = runSwissTournament(candidates, shortSwiss({ rounds: 3, seedBase }));
+    const seen = new Set();
+    for (const { matches } of bracket.roundsLog) {
+      for (const res of matches) {
+        const key = [res.aName, res.bName].sort().join("::");
+        assert.ok(!seen.has(key),
+          `seedBase=${seedBase}: pairing ${key} repeated across rounds even though unplayed opponents remained (6 candidates, 3 rounds)`);
+        seen.add(key);
+      }
     }
   }
 });
 
-test("Swiss standings: total wins minus total losses equals the bye credit handed out, nothing else", () => {
+test("pairRound backtracks to a zero-repeat matching a plain greedy walk would miss", () => {
+  // The exact failure an independent review reproduced: greedily pairing the two joint leaders
+  // first strands the round's one forbidden pair together, even though pairing either leader with
+  // one of them instead leaves a perfectly valid zero-repeat matching for the rest. Tested directly
+  // against pairRound on synthetic standings — fast, and isolates the pairing algorithm from match
+  // simulation entirely.
+  const standings = [
+    { name: "Aggressive", wins: 3, losses: 1 }, { name: "QuickCommit", wins: 3, losses: 1 },
+    { name: "Adaptive", wins: 1, losses: 3 }, { name: "ForceParity", wins: 1, losses: 3 },
+  ];
+  const played = new Set(["Adaptive::ForceParity"]);
+  const { pairs } = pairRound(standings, played, new Set());
+  const pairKeys = pairs.map(([a, b]) => [a.name, b.name].sort().join("::"));
+  assert.equal(pairs.length, 2, "4 candidates must produce 2 pairs");
+  assert.ok(!pairKeys.includes("Adaptive::ForceParity"),
+    `pairRound repeated the one forbidden pair even though a zero-repeat matching existed: got ${pairKeys.join(", ")}`);
+});
+
+test("pairRound still completes (with a forced repeat) when a zero-repeat matching is genuinely impossible", () => {
+  // 4 candidates who have all already played each other (a fully round-robin'd played-set) leave
+  // no zero-repeat option anywhere — pairRound must still return a complete pairing (via its
+  // greedy fallback) rather than hang or throw.
+  const standings = ["A", "B", "C", "D"].map(name => ({ name, wins: 0, losses: 0 }));
+  const played = new Set(["A::B", "A::C", "A::D", "B::C", "B::D", "C::D"]);
+  const { pairs } = pairRound(standings, played, new Set());
+  assert.equal(pairs.length, 2, "must still produce a complete pairing even with no zero-repeat option");
+  const paired = new Set(pairs.flatMap(([a, b]) => [a.name, b.name]));
+  assert.equal(paired.size, 4, "every candidate must appear in exactly one pair");
+});
+
+test("Swiss standings: total wins equal total losses — a bye contributes to neither", () => {
   // Every REAL pairing is win/loss-balanced (one side's win is the other's loss, exactly like
-  // round-robin's own invariant) — a bye is the only source of a win with no matching loss.
+  // round-robin's own invariant), and a bye is now scorable-neutral (previous test) — so unlike a
+  // points-based Swiss ladder, there is no unmatched credit anywhere in these standings at all.
   const candidates = Array.from({ length: 5 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
   const [bracket] = runSwissTournament(candidates, shortSwiss());
   const totalWins = bracket.standings.reduce((s, c) => s + c.wins, 0);
   const totalLosses = bracket.standings.reduce((s, c) => s + c.losses, 0);
-  const byeCredit = bracket.roundsLog.filter(r => r.byeName).length * bracket.byePoints;
-  assert.equal(totalWins - totalLosses, byeCredit,
-    "the only win with no corresponding loss anywhere is a bye's own credit");
+  assert.equal(totalWins, totalLosses, "every win must have a matching loss somewhere — a bye must add to neither");
 });
 
 test("standings are sorted most-wins-first (ties broken by fewer losses)", () => {
@@ -839,6 +906,27 @@ test("--difficulties (plural) runs an independent Swiss tournament per difficult
   assert.deepEqual(brackets.map(b => b.difficulty), ["easy", "hard"]);
   assert.notEqual(JSON.stringify(brackets[0].roundsLog), JSON.stringify(brackets[1].roundsLog),
     "the two difficulty brackets must be independently-run tournaments, not one relabelled as two");
+});
+
+test("an unknown difficulty is normalized everywhere it's reported, not just where matches run: duel, round-robin, Swiss", () => {
+  // pinnedDuelDials() already normalizes an unknown/typo'd difficulty to "medium" for apm/micro,
+  // and every match row reports that normalized value — but three separate top-level aggregate
+  // fields each independently echoed the raw input instead: runDuel's own return, and (found by a
+  // later independent review of this same difficulty-echo bug CLASS) runRoundRobinSwapped's and
+  // runSwissBracket's per-bracket `.difficulty` field. All three must agree with what actually ran.
+  const a = { name: "A", strategy: "default" }, b = { name: "B", strategy: "aggressive" };
+  const c = { name: "C", strategy: "economic" };
+  const short = { worlds: ["ferros"], seeds: 1, minutes: 3 };
+  const bogus = "totallyBogusTypo";
+
+  const duelRes = runDuel(a, b, { ...short, difficulty: bogus });
+  assert.equal(duelRes.difficulty, "medium", "runDuel's aggregate difficulty must be normalized, not the raw input");
+
+  const [rrBracket] = runRoundRobinSwapped([a, b, c], { ...short, difficulty: bogus });
+  assert.equal(rrBracket.difficulty, "medium", "runRoundRobinSwapped's bracket difficulty must be normalized, not the raw input");
+
+  const [swissBracket] = runSwissTournament([a, b, c], { ...short, difficulty: bogus });
+  assert.equal(swissBracket.difficulty, "medium", "runSwissTournament's bracket difficulty must be normalized, not the raw input");
 });
 
 test("a Swiss tournament's overrides never leak into what runs next", () => {
