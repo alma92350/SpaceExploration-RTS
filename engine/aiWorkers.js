@@ -116,12 +116,16 @@ function idleGatherAssign(state, fog, workers) {
   });
 }
 
-export function assignIdleWorkers(state, workers) {
+// `fog` defaults to state.fogAI so the pre-existing single-owner call site (engine/ai.js, owner
+// "ai") reads exactly as before; a self-play "player" controller passes its own ctx.fog
+// (state.fogs.player) instead, so it plans logistics off ITS OWN discovered nodes, never the "ai"
+// owner's — see the fog-fairness discipline this whole module's header comment already documents.
+export function assignIdleWorkers(state, workers, fog = state.fogAI) {
   // ODYSSEY: the AI runs REAL logistics like the player — dedicate a bounded share of workers to
   // feeding/clearing its factories and rig (finite buffers, stalls and all) before the gather pass, so
   // its industry pays the same labour cost the player's does. Skirmish has no factories → no-op there.
   if (state.endless) assignAiLogistics(state, workers);
-  idleGatherAssign(state, state.fogAI, workers);
+  idleGatherAssign(state, fog, workers);
 }
 
 // The PLAYER-side twin of assignIdleWorkers' gather half — reused by a background colony's
@@ -197,11 +201,17 @@ export function plannedMix(state, archetype) {
 // adopts a counter that mix.includes) are prereq-safe through this one filter.
 // A graduated Rusher's Lancer/Dreadnought graduate entries are no exception — they're filtered by
 // this exact same prereqsMet check, so they enter the cycle only once their own gate is built.
-export function effectiveMix(state, archetype) {
+// `owner` defaults to "ai" so every pre-existing call site (this file's own maxSupplyDemand, every
+// test, tools/ailab.js) reads exactly as before. A self-play "player" controller passes its own
+// ctx.owner instead — prereqsMet must check THAT owner's own completed buildings (its own Foundry/
+// Arsenal), never the "ai" owner's: without this, the second controller's mix would silently gate
+// on the FIRST controller's tech, either locking it out of units it can actually build or (worse)
+// "unlocking" ones it can't, a correctness bug on top of the fairness one.
+export function effectiveMix(state, archetype, owner = "ai") {
   const mix = plannedMix(state, archetype).filter(t =>
     UNITS[t]
     && BUILDINGS.barracks.produces?.includes(t)
-    && prereqsMet(state, "ai", UNITS[t])
+    && prereqsMet(state, owner, UNITS[t])
     && affordableOnSurface(state, t));
   return mix.length ? mix : ["skiff"];
 }
@@ -214,14 +224,14 @@ export function effectiveMix(state, archetype) {
 // hard deadlock: production can't queue, and the Habitat that would unblock it never fires.
 // (Measured on a 50-minute Odyssey world — docs/odyssey-ai-review.md §2.2.) Floored at 2, so a
 // world whose mix is all 1- and 2-supply units keeps exactly its old timing.
-export function maxSupplyDemand(state, archetype) {
+export function maxSupplyDemand(state, archetype, owner = "ai") {
   let max = 2;
-  for (const t of effectiveMix(state, archetype)) max = Math.max(max, UNITS[t].supplyCost || 0);
+  for (const t of effectiveMix(state, archetype, owner)) max = Math.max(max, UNITS[t].supplyCost || 0);
   // A Star Dock's capital ships are queued by aiIndustry, which SKIPS rather than retrying when
   // they don't fit — no deadlock there, but the headroom still has to arrive eventually or the
   // deep-industry payoff is unreachable. Only counted once the Star Dock actually stands.
   for (const b of state.buildings.values()) {
-    if (b.owner !== "ai" || b.type !== "stardock" || b.constructing) continue;
+    if (b.owner !== owner || b.type !== "stardock" || b.constructing) continue;
     for (const t of BUILDINGS.stardock.produces || []) max = Math.max(max, UNITS[t]?.supplyCost || 0);
     break;
   }

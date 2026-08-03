@@ -45,7 +45,7 @@ const MAX_PENDING_HABITATS = 3;
 // Odyssey found/survive: no Command Center but a colony ship in hand -> deploy in place. Budget-exempt so even a 1-APM neighbour always seats a base (else it mis-reads as pacified). Skirmish: colonyShip is null -> no-op.
 /** @param {State} state @param {AiContext} ctx */
 export function aiFoundOrSurvive(state, ctx) {
-  const { cc, colonyShip } = ctx;
+  const { cc, colonyShip, controller } = ctx;
   // ODYSSEY — FOUND / SURVIVE: no Command Center but a colony ship in hand → deploy in
   // place to (re)found the base. Covers the opening AND being razed to a lone ship. It's
   // EXEMPT from the APM budget (like the attack commit) so even a 1-APM neighbour always
@@ -53,7 +53,7 @@ export function aiFoundOrSurvive(state, ctx) {
   // engine/galaxy.js). Runs first, at top priority. Skirmish: colonyShip is null → no-op.
   if (state.endless && !cc && colonyShip) {
     if (deployColonyShip(state, colonyShip.id)) {
-      state.ai.colonyTarget = null;   // re-seating cancels any stale expansion intent
+      controller.colonyTarget = null;   // re-seating cancels any stale expansion intent
     } else {
       const spot = findPlacement(state, "command", colonyShip.x, colonyShip.y);   // slide off bad ground, then retry next think
       if (spot && (spot.x !== colonyShip.x || spot.y !== colonyShip.y)) issueMove([colonyShip], spot.x, spot.y);
@@ -64,15 +64,15 @@ export function aiFoundOrSurvive(state, ctx) {
 // Scout Ranger (Tactical) + EXPANSION: once home ore runs thin, found a base on the richest unclaimed cluster (Odyssey by colony ship, skirmish by a worker). Banks toward it via ctx.oreReserve, pausing only lower-priority infrastructure spends.
 /** @param {State} state @param {AiContext} ctx */
 export function aiExpand(state, ctx) {
-  const { ai, cc, workers, rangers, buildings, colonyShip, arch } = ctx;
+  const { ai, cc, workers, rangers, buildings, colonyShip, arch, owner, controller, fog } = ctx;
   // TACTICAL: build one cheap Ranger up front to scout with — far sight,
   // all-terrain, and it doesn't bleed a fighter out of the army the way lending a
   // combat unit does (updateScout prefers it). Standard AI keeps lending a unit,
   // so its economy/opening is untouched. Ore-only and tiny (45), reserve-aware.
-  if (state.ai.micro && cc && workers.length > 0 && rangers.length === 0
+  if (controller.micro && cc && workers.length > 0 && rangers.length === 0
       && !cc.queue.some(j => j.unitType === "ranger")
-      && canAffordKeeping(ai.resources, UNITS.ranger.cost, ctx.oreReserve) && canAct(state)) {
-    if (queueProduction(state, cc.id, "ranger")) spend(state);
+      && canAffordKeeping(ai.resources, UNITS.ranger.cost, ctx.oreReserve) && canAct(state, owner)) {
+    if (queueProduction(state, cc.id, "ranger")) spend(state, owner);
   }
 
   // EXPANSION: once home ore runs thin, found a base on the richest unclaimed cluster.
@@ -84,30 +84,30 @@ export function aiExpand(state, ctx) {
 
   if (state.endless) {
     // ODYSSEY: expand by COLONY SHIP — produce one, move it to a fresh cluster, deploy
-    // on arrival (no more worker-builds-a-CC). A committed target (state.ai.colonyTarget)
+    // on arrival (no more worker-builds-a-CC). A committed target (controller.colonyTarget)
     // keeps the ship homing on a fixed point rather than chasing a shifting cluster.
     const colonyCost = UNITS.colonyship.cost.ore;
-    if (state.ai.colonyTarget && !colonyShip) state.ai.colonyTarget = null;   // ship deployed or died → reset the machine
+    if (controller.colonyTarget && !colonyShip) controller.colonyTarget = null;   // ship deployed or died → reset the machine
 
     if (colonyShip && cc) {                                    // an EXPANSION ship is in flight (a start ship has no cc yet — handled above)
-      if (!state.ai.colonyTarget) {                             // LAUNCH: commit a target and send it
-        const anchor = bestExpansionCluster(state, myCCs);
+      if (!controller.colonyTarget) {                           // LAUNCH: commit a target and send it
+        const anchor = bestExpansionCluster(state, myCCs, fog);
         if (anchor) {
           const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // aim for the home side of the cluster
           const spot = findPlacement(state, "command",
             anchor.x + Math.cos(toward) * EXPANSION_STANDOFF, anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
-          if (spot && canAct(state)) { state.ai.colonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
+          if (spot && canAct(state, owner)) { controller.colonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state, owner); }
         }
       } else {                                                 // HOME IN → DEPLOY on arrival
-        const t = state.ai.colonyTarget;
-        if (Math.hypot(colonyShip.x - t.x, colonyShip.y - t.y) <= COLONY_ARRIVE && canAct(state)) {
-          if (deployColonyShip(state, colonyShip.id)) { state.ai.colonyTarget = null; spend(state); }
+        const t = controller.colonyTarget;
+        if (Math.hypot(colonyShip.x - t.x, colonyShip.y - t.y) <= COLONY_ARRIVE && canAct(state, owner)) {
+          if (deployColonyShip(state, colonyShip.id)) { controller.colonyTarget = null; spend(state, owner); }
           else {   // exact spot went invalid → re-aim to nearby valid ground and keep moving
             const spot = findPlacement(state, "command", colonyShip.x, colonyShip.y);
-            if (spot) { state.ai.colonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state); }
+            if (spot) { controller.colonyTarget = { x: spot.x, y: spot.y }; issueMove([colonyShip], spot.x, spot.y); spend(state, owner); }
           }
-        } else if (!colonyShip.order && !(colonyShip.orderQueue && colonyShip.orderQueue.length) && canAct(state)) {
-          issueMove([colonyShip], t.x, t.y); spend(state);     // fell idle short of target (blocked) → nudge back on course
+        } else if (!colonyShip.order && !(colonyShip.orderQueue && colonyShip.orderQueue.length) && canAct(state, owner)) {
+          issueMove([colonyShip], t.x, t.y); spend(state, owner);     // fell idle short of target (blocked) → nudge back on course
         }
       }
     } else if (!colonyShip && cc && workers.length > 0
@@ -125,9 +125,9 @@ export function aiExpand(state, ctx) {
       // is claimed, and only one ship is ever in flight.
       const surplus = ai.resources.ore >= SURPLUS_EXPAND_ORE;
       if (((threshold > 0 && homeOreFraction(state, myCCs) < threshold) || surplus)
-          && bestExpansionCluster(state, myCCs)) {
+          && bestExpansionCluster(state, myCCs, fog)) {
         ctx.oreReserve = colonyCost;                               // pause infrastructure while banking (units keep flowing)
-        if (ai.resources.ore >= colonyCost && canAct(state) && queueProduction(state, cc.id, "colonyship")) { spend(state); ctx.oreReserve = 0; }
+        if (ai.resources.ore >= colonyCost && canAct(state, owner) && queueProduction(state, cc.id, "colonyship")) { spend(state, owner); ctx.oreReserve = 0; }
       }
     }
   } else {
@@ -136,7 +136,7 @@ export function aiExpand(state, ctx) {
     if (threshold > 0 && cc && workers.length > 0
         && !buildings.some(b => b.type === "command" && b.constructing)) {
       if (homeOreFraction(state, myCCs) < threshold) {
-        const anchor = bestExpansionCluster(state, myCCs);
+        const anchor = bestExpansionCluster(state, myCCs, fog);
         if (anchor) {
           ctx.oreReserve = ccCost;   // bank toward the CC by pausing infrastructure spend
           if (ai.resources.ore >= ccCost) {
@@ -144,8 +144,8 @@ export function aiExpand(state, ctx) {
             const spot = findPlacement(state, "command",
               anchor.x + Math.cos(toward) * EXPANSION_STANDOFF,
               anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
-            if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y)) {
-              spend(state);
+            if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y)) {
+              spend(state, owner);
               ctx.oreReserve = 0;
             }
           }
@@ -158,7 +158,7 @@ export function aiExpand(state, ctx) {
 // Core base build-out + the tech gates: more workers, a Habitat before the supply cap bites, the first Barracks, the Foundry (Tier-2 gate) and Arsenal (Tier-3 gate), and one Mender (Tactical). Sets ctx.foundryReserve / ctx.refineryReserve for the production phase.
 /** @param {State} state @param {AiContext} ctx */
 export function aiBaseAndTech(state, ctx) {
-  const { cc, workers, ai, buildings, barracks, refinery, allBarracks, archetype, arch, strategy } = ctx;
+  const { cc, workers, ai, buildings, barracks, refinery, allBarracks, archetype, arch, strategy, owner, controller } = ctx;
   // The worker target GROWS with the AI's industry: every factory and Plasma Rig it runs needs workers
   // to supply and clear it (engine/haul.js assignAiLogistics), on top of the base gather crew — so the
   // AI builds the LABOUR its economy needs, the same investment the player makes. Odyssey only (the
@@ -169,10 +169,10 @@ export function aiBaseAndTech(state, ctx) {
   // Medium (a no-op), the same multiplicative composition as the strategy layer right above it.
   const industryCount = state.endless
     ? buildings.filter(b => !b.constructing && (recipeOf(b) || BUILDINGS[b.type].rig)).length : 0;
-  const workerTarget = arch("workerTarget") * (strategy.workerTargetMult || 1) * (difficultyFor(state).workerTargetMult || 1)
+  const workerTarget = arch("workerTarget") * (strategy.workerTargetMult || 1) * (difficultyFor(state, owner).workerTargetMult || 1)
     + industryCount * 2;   // ~MAX_SERVERS worth of haulers per factory/rig
-  if (cc && workers.length < workerTarget && cc.queue.length === 0 && canAct(state)) {
-    if (queueProduction(state, cc.id, "worker")) spend(state);
+  if (cc && workers.length < workerTarget && cc.queue.length === 0 && canAct(state, owner)) {
+    if (queueProduction(state, cc.id, "worker")) spend(state, owner);
   }
 
   // Near the cap (or over it after losing a Habitat) with none already going up: put down a
@@ -196,10 +196,10 @@ export function aiBaseAndTech(state, ctx) {
   // units, 3,900 ore banked, Barracks idle two samples in three). Ore it has nothing else to spend
   // on buys headroom instead. Bounded by MAX_PENDING_HABITATS so a rich AI scales its supply, not
   // its footprint.
-  const used = supplyUsed(state, "ai"), cap = supplyCap(state, "ai");
+  const used = supplyUsed(state, owner), cap = supplyCap(state, owner);
   const pendingCount = buildings.filter(b => b.type === "habitat" && b.constructing).length;
   const pending = pendingCount * (BUILDINGS.habitat.supplyGrants || 0);
-  const margin = maxSupplyDemand(state, archetype);
+  const margin = maxSupplyDemand(state, archetype, owner);
   const blocked = used >= cap - margin;                       // can't fit the unit it's about to build
   const covered = used < cap + pending - margin;              // …but supply already on the way covers it
   const rushSupply = ai.resources.ore >= SUPPLY_RUSH_ORE && pendingCount < MAX_PENDING_HABITATS;
@@ -209,7 +209,7 @@ export function aiBaseAndTech(state, ctx) {
   // supplyCap's own clamp (engine/supply.js) already caps the EFFECTIVE total — so stop raising
   // them rather than spending ore forever chasing a ceiling already reached (an infinite,
   // pointless Habitat-spam loop otherwise, since `blocked` alone has no awareness of this ceiling).
-  const rawCapHeadroom = state.popCap == null || buildingSupplyCap(state, "ai") + pending < state.popCap;
+  const rawCapHeadroom = state.popCap == null || buildingSupplyCap(state, owner) + pending < state.popCap;
   if (cc && workers.length > 0 && blocked && rawCapHeadroom && (!covered || rushSupply)
       && canAfford(ai.resources, BUILDINGS.habitat.cost)) {
     // Try EVERY Command Center, with a wide search at each: a late-Odyssey capital packs 70+
@@ -222,7 +222,7 @@ export function aiBaseAndTech(state, ctx) {
       spot = findPlacement(state, "habitat", c.x, c.y + 90, HABITAT_SEARCH_RADIUS);
       if (spot) break;
     }
-    if (spot && canAct(state) && issueBuild(state, workers[0].id, "habitat", spot.x, spot.y)) spend(state);
+    if (spot && canAct(state, owner) && issueBuild(state, workers[0].id, "habitat", spot.x, spot.y)) spend(state, owner);
   }
 
   // First Barracks. Build spots are fixed offsets from the CC, so anything
@@ -231,7 +231,7 @@ export function aiBaseAndTech(state, ctx) {
   // findPlacement slides the request to the nearest valid ground instead.
   if (!barracks && cc && workers.length > 0 && canAfford(ai.resources, BUILDINGS.barracks.cost)) {
     const spot = findPlacement(state, "barracks", cc.x + 90, cc.y - 90);
-    if (spot && canAct(state) && issueBuild(state, workers[0].id, "barracks", spot.x, spot.y)) spend(state);
+    if (spot && canAct(state, owner) && issueBuild(state, workers[0].id, "barracks", spot.x, spot.y)) spend(state, owner);
   }
 
   // FOUNDRY — the military tech gate for the Tier-2 units (Lancer/Breacher).
@@ -253,8 +253,8 @@ export function aiBaseAndTech(state, ctx) {
   if (wantsFoundry && !hasFoundry && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, ctx.oreReserve)) {
     const spot = findPlacement(state, "foundry", cc.x - 90, cc.y + 90);
-    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "foundry", spot.x, spot.y)) {
-      spend(state);
+    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "foundry", spot.x, spot.y)) {
+      spend(state, owner);
       hasFoundry = true;
     }
   }
@@ -280,7 +280,7 @@ export function aiBaseAndTech(state, ctx) {
   if (wantsArsenal && !hasArsenal && foundryHandled && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, ctx.oreReserve + BARRACKS_BUFFER)) {
     const spot = findPlacement(state, "arsenal", cc.x - 90, cc.y - 30);
-    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "arsenal", spot.x, spot.y)) spend(state);
+    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "arsenal", spot.x, spot.y)) spend(state, owner);
   }
   // Refinery reserve, sequenced after the Foundry (Arsenal is unreserved above).
   ctx.refineryReserve = archetype.wantsRefinery && !refinery && foundryHandled && ctx.oreReserve === 0
@@ -295,14 +295,14 @@ export function aiBaseAndTech(state, ctx) {
   // only surplus ore (a mix buffer stays back), and it never attacks or defends —
   // so the resolves-to-a-winner guarantee holds even in the aiMicro resolve variant.
   const foundryDone = buildings.some(b => b.type === "foundry" && !b.constructing);
-  if (state.ai.micro && foundryDone) {
-    const haveMender = playerUnits(state, "ai").some(u => u.type === "mender")
+  if (controller.micro && foundryDone) {
+    const haveMender = playerUnits(state, owner).some(u => u.type === "mender")
       || allBarracks.some(b => b.queue.some(j => j.unitType === "mender"));
     const idleRax = allBarracks.find(b => !b.constructing && b.queue.length === 0);
     if (!haveMender && idleRax
         && canAffordKeeping(ai.resources, UNITS.mender.cost, ctx.oreReserve + BARRACKS_BUFFER)
-        && canAct(state)) {
-      if (queueProduction(state, idleRax.id, "mender")) spend(state);
+        && canAct(state, owner)) {
+      if (queueProduction(state, idleRax.id, "mender")) spend(state, owner);
     }
   }
 }
@@ -334,9 +334,9 @@ function armySurplusBonus(state, ai) {
 // ctx.army.length, a fixed snapshot — an acceptable per-cycle approximation, same spirit as the
 // rest of this AI's think-cycle decisions.
 function standingArmyCap(state, ctx) {
-  const { strategy, ai } = ctx;
+  const { strategy, ai, owner } = ctx;
   if (strategy.matchEnemyForce) {
-    const enemy = visibleEnemyForceCount(state);
+    const enemy = visibleEnemyForceCount(state, owner);
     return Math.max(strategy.matchFloor || 0, Math.round(enemy * (strategy.matchBuffer || 1))) + armySurplusBonus(state, ai);
   }
   if (strategy.standingArmyCap != null) {
@@ -349,7 +349,7 @@ function standingArmyCap(state, ctx) {
 // The shared unit-production cycle across every idle Barracks (Foundry/Refinery reserves held back), Sentinel Turrets along the approach lane, a second Barracks, and the research Refinery.
 /** @param {State} state @param {AiContext} ctx */
 export function aiProduceAndFortify(state, ctx) {
-  const { allBarracks, ai, archetype, strategy, cc, barracks, workers, buildings, army } = ctx;
+  const { allBarracks, ai, archetype, strategy, cc, barracks, workers, buildings, army, owner, controller } = ctx;
   // One shared production cycle across every completed Barracks: consecutive
   // barracks pick up consecutive mix entries, so two of them drain the same
   // sequence twice as fast rather than each running its own. Map insertion
@@ -366,13 +366,13 @@ export function aiProduceAndFortify(state, ctx) {
   if (army.length < standingArmyCap(state, ctx)) {
     for (const b of allBarracks) {
       if (b.constructing || b.queue.length > 0) continue;
-      if (!canAct(state)) break;   // out of action budget this cycle — no more units for now
-      const nextType = pickNextUnitType(state, archetype);
+      if (!canAct(state, owner)) break;   // out of action budget this cycle — no more units for now
+      const nextType = pickNextUnitType(state, archetype, owner);
       if (!canAffordKeeping(ai.resources, UNITS[nextType].cost,
                             ctx.foundryReserve + ctx.refineryReserve + ctx.industryReserve)) continue;   // hold back ore while banking the Foundry / Refinery / industry bootstrap
       if (queueProduction(state, b.id, nextType)) {
-        spend(state);
-        state.ai.unitsBuilt = (state.ai.unitsBuilt || 0) + 1;
+        spend(state, owner);
+        controller.unitsBuilt = (controller.unitsBuilt || 0) + 1;
       }
     }
   }
@@ -397,7 +397,7 @@ export function aiProduceAndFortify(state, ctx) {
       // Foundry actually unlocks it. Falls back to more turrets on a Foundry-less (or
       // still-building) world, so fortifying never stalls waiting on a tech gate an archetype's
       // own build order hasn't reached yet.
-      const type = (i >= 1 && prereqsMet(state, "ai", BUILDINGS.bastille)) ? "bastille" : "turret";
+      const type = (i >= 1 && prereqsMet(state, owner, BUILDINGS.bastille)) ? "bastille" : "turret";
       if (canAfford(ai.resources, BUILDINGS[type].cost)) {
         const mx = state.map.width / 2, my = state.map.height / 2;
         const len = Math.hypot(mx - cc.x, my - cc.y) || 1;
@@ -406,7 +406,7 @@ export function aiProduceAndFortify(state, ctx) {
         const spot = findPlacement(state, type,
           cc.x + dx * (140 + 80 * i) - dy * 30 * side,
           cc.y + dy * (140 + 80 * i) + dx * 30 * side);
-        if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, type, spot.x, spot.y)) spend(state);
+        if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, type, spot.x, spot.y)) spend(state, owner);
       }
     }
   }
@@ -430,7 +430,7 @@ export function aiProduceAndFortify(state, ctx) {
       && allBarracks.length < (archetype.maxBarracks || 1) + surplusBarracks
       && canAffordKeeping(ai.resources, BUILDINGS.barracks.cost, ctx.oreReserve + BARRACKS_BUFFER)) {
     const spot = findPlacement(state, "barracks", cc.x + 90, cc.y + 90);
-    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y)) spend(state);
+    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y)) spend(state, owner);
   }
 
   // REFINERY. Hosts the AI's doctrine research, so it builds exactly one, near
@@ -441,19 +441,19 @@ export function aiProduceAndFortify(state, ctx) {
   if (buildResearchRefinery && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.refinery.cost, ctx.oreReserve)) {
     const spot = findPlacement(state, "refinery", cc.x - 90, cc.y - 90);
-    if (spot && canAct(state) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "refinery", spot.x, spot.y)) spend(state);
+    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "refinery", spot.x, spot.y)) spend(state, owner);
   }
 }
 
 // Research along this archetype's chosen doctrine only, lowest tier first, one purchase per think cycle.
 /** @param {State} state @param {AiContext} ctx */
 export function aiResearch(state, ctx) {
-  const { refinery, ai, archetype } = ctx;
+  const { refinery, ai, archetype, owner } = ctx;
   // Research along this archetype's chosen doctrine only (rusher/balanced go
   // Assault, economist Bulwark), lowest tier first — so it commits to one path
   // and deepens it (T1 then T2) instead of dabbling in both. The doctrine lock
   // in researchUpgrade backs this up. One purchase per think cycle is plenty.
-  if (refinery && !refinery.constructing && canAct(state)) {
+  if (refinery && !refinery.constructing && canAct(state, owner)) {
     // Doctrine research now DEVELOPS OVER TIME (engine/techtree.js updateResearch) instead of
     // landing instantly, so a job can sit queued for many think cycles before it completes.
     // Re-entry guard: bail out early while the Refinery already has something in flight, rather
@@ -464,7 +464,7 @@ export function aiResearch(state, ctx) {
     const path = Object.values(UPGRADES).filter(u => u.doctrine === doctrine).sort((a, b) => a.tier - b.tier);
     for (const u of path) {
       if (ai.upgrades[u.id]) continue;
-      if (researchUpgrade(state, refinery.id, u.id)) { spend(state); break; }
+      if (researchUpgrade(state, refinery.id, u.id)) { spend(state, owner); break; }
     }
   }
 }
@@ -476,16 +476,26 @@ export function aiResearch(state, ctx) {
 // only (state.market is an Odyssey concept, set once per world in engine/galaxy.js addPlanet) and
 // gated by the AI's own APM budget like every other decision, so this needs no separate pacing
 // dial of its own — Hard's higher APM already means more frequent barters for free.
-/** @param {State} state */
-export function aiMarketBarter(state) {
-  if (!state.endless || !state.market || !difficultyFor(state).marketAccess) return;
-  if (canAct(state) && aiBarter(state)) spend(state);
+//
+// `owner` defaults to "ai" and, unlike every other phase in this file, is NOT threaded further:
+// engine/market.js's aiBarter is hardcoded to state.players.ai (Odyssey's market/diplomacy model
+// is explicitly out of Tier 1 self-play's scope — see engine/ai.js's header). The `owner !== "ai"`
+// guard exists purely so a hypothetical future self-play run in Odyssey mode (state.endless with a
+// market) can never have a "player"-owner think cycle silently barter FROM state.players.ai's
+// resources — Tier 1's own scope (skirmish only, no market ever present) never reaches this guard
+// either way, so it's a no-op safety net, not a behavior change for anything shipped today.
+/** @param {State} state @param {string} [owner] */
+export function aiMarketBarter(state, owner = "ai") {
+  if (owner !== "ai" || !state.endless || !state.market || !difficultyFor(state, owner).marketAccess) return;
+  if (canAct(state, owner) && aiBarter(state)) spend(state, owner);
 }
 
 // Fraction of home ore still in the ground: remaining/max summed over every
 // ore node within HOME_RADIUS of one of this AI's Command Centers. No home ore
 // at all reads as fully depleted — which is exactly what should trigger the
-// first expansion the moment the starting seam runs dry.
+// first expansion the moment the starting seam runs dry. Not fog-gated itself
+// (it sums real node state, not what's been scouted) — bestExpansionCluster
+// right below is the one that actually needs a look at the map.
 function homeOreFraction(state, ccs) {
   let amt = 0, max = 0;
   for (const n of state.map.nodes) {
@@ -496,25 +506,26 @@ function homeOreFraction(state, ccs) {
   return max > 0 ? amt / max : 0;
 }
 
-// The ore node worth expanding to: richest surrounding cluster of live nodes,
-// lightly penalized by distance from home so the AI grabs its own side first
-// and only reaches across the map once the near ore is claimed or dry. Only
-// nodes the AI has discovered count (surface ore always, hidden ore caches
-// once scouted) — so on a map where the near ore is spent, the AI has to send
-// its scout out to find somewhere to expand, just like the player. Skips
-// anchors inside CLAIM_RADIUS of any CC (either owner, incl. constructing).
-// Returns null when nothing known is available — which keeps the reserve from
-// ever engaging in a no-room deadlock.
-function bestExpansionCluster(state, myCCs) {
+// The ore node worth expanding to: richest surrounding cluster of live nodes, lightly penalized by
+// distance from home so this controller grabs its own side first and only reaches across the map
+// once the near ore is claimed or dry. Only nodes `fog` has discovered count (surface ore always,
+// hidden ore caches once scouted) — so on a map where the near ore is spent, this controller has to
+// send its own scout out to find somewhere to expand, just like its opponent does with ITS OWN
+// fog. `fog` defaults to state.fogAI so the pre-existing (owner "ai") call sites are unaffected; a
+// self-play "player" controller passes its own ctx.fog (state.fogs.player) instead — never the
+// "ai" owner's fog, which would let it "discover" nodes it has never actually scouted. Skips
+// anchors inside CLAIM_RADIUS of any CC (either owner, incl. constructing). Returns null when
+// nothing known is available — which keeps the reserve from ever engaging in a no-room deadlock.
+function bestExpansionCluster(state, myCCs, fog = state.fogAI) {
   const allCCs = [...state.buildings.values()].filter(b => b.type === "command");
   let best = null, bestScore = -Infinity;
   for (const n of state.map.nodes) {
     if (n.com !== "ore" || n.amount <= 0) continue;                                 // anchor on live ore
-    if (!isNodeDiscovered(state.fogAI, n)) continue;                                // ...that the AI actually knows about
+    if (!isNodeDiscovered(fog, n)) continue;                                        // ...that this controller actually knows about
     if (allCCs.some(c => Math.hypot(c.x - n.x, c.y - n.y) <= CLAIM_RADIUS)) continue;
     let cluster = 0;
     for (const m of state.map.nodes)
-      if (m.amount > 0 && isNodeDiscovered(state.fogAI, m) && Math.hypot(m.x - n.x, m.y - n.y) <= CLUSTER_RADIUS) cluster += m.amount;
+      if (m.amount > 0 && isNodeDiscovered(fog, m) && Math.hypot(m.x - n.x, m.y - n.y) <= CLUSTER_RADIUS) cluster += m.amount;
     const dHome = Math.min(...myCCs.map(c => Math.hypot(c.x - n.x, c.y - n.y)));
     const score = cluster - 0.2 * dHome;   // richness first; keeps it on its own side unless dry
     if (score > bestScore) { bestScore = score; best = n; }

@@ -77,6 +77,37 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
 }
 
 /**
+ * Build a fresh AI controller's runtime bookkeeping — the exact shape shared by state.ai (owner
+ * "ai", always present) and state.playerAi (owner "player", present only when self-play is active
+ * — see tools/selfplay.js). Kept as one factory so the two controllers can never structurally
+ * drift apart; engine/ai.js's runAI(state, dt, owner) and engine/aiCommon.js's controllerFor read
+ * either one the same way. Every field here matches state.ai's own inline literal below field for
+ * field, in the same order, so createGameState's construction of state.ai stays byte-identical.
+ * @param {string} planetId
+ * @param {{ apm?: number, micro?: boolean, strategy?: string, difficulty?: string }} [opts]
+ */
+export function createAiController(planetId, opts = {}) {
+  return {
+    think: 0,               // countdown to this controller's next decision pass (engine/ai.js THINK_INTERVAL)
+    scoutId: null,           // the unit currently out scouting for this controller, if any
+    colonyTarget: null,      // Odyssey: the committed {x,y} deploy spot of this controller's in-flight colony ship (ai.js)
+    apm: opts.apm ?? null,      // actions-per-minute cap; null = unthrottled (default/tests)
+    micro: opts.micro ?? false, // Tactical AI: unit-level micro (focus-fire, kiting). Off by default (and in tests).
+    strategy: opts.strategy || "default",   // player-picked AI strategy (engine/aiStrategy.js) — "default" ⇒ byte-identical to today
+    difficulty: opts.difficulty || "medium",  // splash-screen Easy/Medium/Hard pick (engine/aiDifficulty.js) — read via difficultyFor(state, owner)
+    lastThreatAt: null,     // sim-time of the last seen threat near home — drives the Economic strategy's war-footing window (engine/ai.js)
+    actionBudget: 0,         // accumulated action credits (see engine/aiCommon.js's accrueActionBudget)
+    attackForce: 0,           // size of the current committed attack at its peak — drives the retreat check (ai.js)
+    attackDesperate: false,   // whether the current attack is a fight-to-death timeout commit (never retreats)
+    nextAttackAt: null,      // scheduled time of the next attack commit; null ⇒ use the archetype timeout
+    unitsBuilt: 0,            // total combat units this controller has produced (drives its build cadence)
+    waveCount: 0,             // committed-wave counter — drives the economy-raid cadence (waveCount % RAID_EVERY)
+    nextWaveAt: null,        // Odyssey: scheduled time of the next offensive wave; null ⇒ wave-ready
+    archetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
+  };
+}
+
+/**
  * Build a fresh simulation world. A pure function of its inputs (seed + options): the map
  * regenerates deterministically from the seed, so two same-option runs are identical.
  * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
@@ -172,24 +203,18 @@ export function createGameState(opts = {}) {
     // the save's `ai:` key (engine/persist.js). The think/wave/attack-schedule fields used to be
     // set lazily by ai.js on first tick; initialising them here keeps the shape complete and
     // self-documenting, and is behaviourally identical (they were read `|| 0` / `?? …` anyway).
-    ai: {
-      think: 0,               // countdown to the AI's next decision pass (engine/ai.js THINK_INTERVAL)
-      scoutId: null,          // the unit currently out scouting for the AI, if any
-      colonyTarget: null,     // Odyssey: the committed {x,y} deploy spot of the AI's in-flight colony ship (ai.js)
-      apm: opts.aiApm ?? null,      // AI actions-per-minute cap from the splash screen; null = unthrottled (default/tests)
-      micro: opts.aiMicro ?? false, // Tactical AI: unit-level micro (focus-fire, kiting). Off by default (and in tests).
-      strategy: opts.aiStrategy || "default",   // player-picked AI strategy (engine/aiStrategy.js) — "default" ⇒ byte-identical to today
-      difficulty: opts.difficulty || "medium",  // splash-screen Easy/Medium/Hard pick (engine/aiDifficulty.js) — read via difficultyFor(state)
-      lastThreatAt: null,     // sim-time of the last seen threat near home — drives the Economic strategy's war-footing window (engine/ai.js)
-      actionBudget: 0,        // accumulated action credits (see engine/ai.js's accrueActionBudget)
-      attackForce: 0,         // size of the current committed attack at its peak — drives the retreat check (ai.js)
-      attackDesperate: false, // whether the current attack is a fight-to-death timeout commit (never retreats)
-      nextAttackAt: null,     // scheduled time of the next attack commit; null ⇒ use the archetype timeout
-      unitsBuilt: 0,          // total combat units the AI has produced (drives its build cadence)
-      waveCount: 0,           // committed-wave counter — drives the economy-raid cadence (waveCount % RAID_EVERY)
-      nextWaveAt: null,       // Odyssey: scheduled time of the next offensive wave; null ⇒ wave-ready
-      archetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
-    },
+    ai: createAiController(planetId, {
+      apm: opts.aiApm, micro: opts.aiMicro, strategy: opts.aiStrategy, difficulty: opts.difficulty,
+    }),
+    // A second, parallel AI controller for owner "player" — same shape as `ai` above (see
+    // createAiController), but null for every match that exists today. Tier 1 self-play
+    // (tools/selfplay.js, a headless bench — never setup.js/boot.js/the shipped game) is the only
+    // thing that ever populates it, by assigning a controller object here directly; every other
+    // caller leaves it null, so playerBuildings/playerUnits/runAI's single-owner default path is
+    // completely untouched. Kept OUTSIDE `players` (state.players.player is the human's economy/
+    // faction, unrelated) and outside `ai` itself, exactly parallel to it — see engine/ai.js's
+    // runAI(state, dt, owner) and engine/aiCommon.js's controllerFor.
+    playerAi: null,
     events: [],              // sim events this tick (unitSpawned/attackHit/entityKilled/buildingComplete) — pushed by
                               // production.js/combat.js, drained and turned into sound by main.js each render frame
     craters: [],              // pending Helium Bomb craters awaiting maturity into a real node (engine/bomb.js)
@@ -206,10 +231,32 @@ export function createGameState(opts = {}) {
   // Hard difficulty's economic edge (engine/aiDifficulty.js): seed the synthetic hardEdge
   // upgrade (entities.js) straight onto the AI's own upgrades, once, at creation — never
   // researched, so it needs no Refinery/Datacenter and survives save/load via the ordinary
-  // player.upgrades round-trip (engine/persist.js) with no special-casing.
-  if (difficultyFor(state).economicEdge) state.players.ai.upgrades.hardEdge = true;
+  // player.upgrades round-trip (engine/persist.js) with no special-casing. state.playerAi is
+  // always null at this point (Tier 1 self-play populates it AFTER createGameState returns — see
+  // tools/selfplay.js), so seedDifficultyEdge(state, "player") only ever fires there, once
+  // self-play has actually configured a difficulty for it — see that call site.
+  seedDifficultyEdge(state, "ai");
 
   return state;
+}
+
+/**
+ * Seed Hard difficulty's synthetic `hardEdge` economic-edge upgrade (engine/aiDifficulty.js
+ * economicEdge — +10% gather yield, -10% production time) onto `owner`'s own upgrades, once, if
+ * that owner's OWN configured difficulty (difficultyFor(state, owner)) grants it. Exported so a
+ * caller can apply the exact same rule to a second controller after the fact — Tier 1 self-play
+ * (tools/selfplay.js's createSelfPlayState) populates state.playerAi only AFTER createGameState
+ * has already returned, so owner "player" can never be seeded inline above; without this, a
+ * self-play "player" controller configured with Hard difficulty would fight at a permanent,
+ * un-researchable economic disadvantage against a Hard "ai" — the fairness guarantee (independent
+ * fog, independent action budgets, no double-spend) this whole tier otherwise holds to. A no-op
+ * for any owner whose difficulty doesn't grant the edge (Easy/Medium, or no controller at all yet
+ * — difficultyFor falls back to Medium's defaults either way).
+ * @param {State} state
+ * @param {string} owner
+ */
+export function seedDifficultyEdge(state, owner) {
+  if (difficultyFor(state, owner).economicEdge) state.players[owner].upgrades.hardEdge = true;
 }
 
 /** @returns {Resources} */

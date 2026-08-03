@@ -2,9 +2,21 @@
    AI — the military brain: defend a pressed base, else muster and commit the
    next wave (aiMilitary / aiOffense), optional tactical focus-fire and the
    scout sweep, plus the target/mix helpers (chooseAttackTarget, raidTarget,
-   pickNextUnitType and the counter-pick). Depends on aiCommon (action budget)
-   and aiWorkers (effectiveMix); nothing in aiEconomy/aiIndustry depends back on
-   it except through the exported pickNextUnitType, so there's no import cycle.
+   pickNextUnitType and the counter-pick). Depends on aiCommon (action budget +
+   owner resolution) and aiWorkers (effectiveMix); nothing in aiEconomy/aiIndustry
+   depends back on it except through the exported pickNextUnitType, so there's no
+   import cycle.
+
+   OWNER-GENERIC (Tier 1 self-play, tools/selfplay.js): every function here that
+   reacts to "the enemy" now takes (or reads off ctx) an `owner` — the side THIS
+   call is deciding for — and resolves its opponent and its OWN fog from that,
+   via engine/aiCommon.js's otherOwner/controllerFor. Every exported function
+   defaults `owner` to "ai", so every pre-existing call site (every test, every
+   other engine file, tools/ailab.js) reads exactly as before; only engine/ai.js's
+   runAI(state, dt, owner) ever passes a different owner, and only when Tier 1
+   self-play has populated state.playerAi. Never state.fogAI, never an unfogged
+   raw-state read, for either side — that fog discipline is the single most
+   important property of this whole module.
    ============================================================ */
 
 "use strict";
@@ -14,7 +26,7 @@ import { issueAttackMove, issueMove } from "./commands.js";
 import { isVisibleAt, isExploredAt, nearestUnexploredPoint } from "./fog.js";
 import { hostility, provoked } from "./diplomacy.js";
 import { chargingPlayerWonder } from "./wonder.js";
-import { canAct, spend } from "./aiCommon.js";
+import { canAct, spend, controllerFor, otherOwner } from "./aiCommon.js";
 import { effectiveMix } from "./aiWorkers.js";
 import { playerUnits, playerBuildings } from "./state.js";
 import { difficultyFor } from "./aiDifficulty.js";
@@ -57,7 +69,7 @@ const WAVE_CADENCE_FRAC = 0.3;    // Odyssey: probe spacing as a fraction of att
 // DEFENSE first: if enemy combat is seen pressing a building, recall the army (bar the scout) to meet it. Otherwise OFFENSE: retreat a ground-down wave, then muster and commit the next one (skirmish armyAttackSize, or an Odyssey hostility-paced probe).
 /** @param {State} state @param {AiContext} ctx */
 export function aiMilitary(state, ctx) {
-  const { army, threats } = ctx;
+  const { army, threats, controller } = ctx;
   // DEFENSE first: if the AI can SEE enemy combat units pressing one of its
   // buildings, the whole army (bar the scout) drops what it's doing and rushes
   // that spot — including units already committed forward. This is the recall
@@ -66,11 +78,11 @@ export function aiMilitary(state, ctx) {
   // regardless while its economy burns. Exempt from the APM budget, same as the
   // attack commit, so a slow AI still always defends. Once the threat clears
   // vision, the army re-forms at home and the offensive logic below takes over.
-  const nonScout = army.filter(u => u.id !== state.ai.scoutId);
+  const nonScout = army.filter(u => u.id !== controller.scoutId);
   if (threats.length > 0) {
     if (nonScout.length > 0) {
       const focus = threatCentroid(threats);
-      if (state.ai.micro && nonScout.length > threats.length * 2) {
+      if (controller.micro && nonScout.length > threats.length * 2) {
         // FEINT-RESISTANT (Tactical): a small poke can no longer yank the whole
         // army out of position. Commit only a proportionate defence — the closest
         // units, ~2x the seen threat — and leave the rest on their assignment, so
@@ -104,7 +116,7 @@ export function aiMilitary(state, ctx) {
 // 1 (`|| 1` below), so this is a no-op until a match actually opts into one.
 /** @param {State} state @param {AiContext} ctx @param {Unit[]} nonScout */
 function aiOffense(state, ctx, nonScout) {
-  const { buildings, archetype, strategy } = ctx;
+  const { buildings, archetype, strategy, owner, enemyOwner, fog, controller } = ctx;
   const effAttackTimeout = archetype.attackTimeout * (strategy.attackTimeoutMult || 1);
   const effArmyAttackSize = archetype.armyAttackSize * (strategy.armyAttackSizeMult || 1);
   const effGarrison = Math.round((archetype.garrison || 0) * (strategy.garrisonMult != null ? strategy.garrisonMult : 1));
@@ -126,16 +138,16 @@ function aiOffense(state, ctx, nonScout) {
     // retreats, and a retreat only fires while the AI can SEE enemy combat units
     // near the fight — so against an undefended base (every headless resolve
     // test) it never triggers and the AI razes the base exactly as before.
-    if (!state.ai.attackDesperate && state.ai.attackForce > 0 && attackers.length > 0
-        && attackers.length < state.ai.attackForce * RETREAT_FRACTION && cc) {
+    if (!controller.attackDesperate && controller.attackForce > 0 && attackers.length > 0
+        && attackers.length < controller.attackForce * RETREAT_FRACTION && cc) {
       const focus = threatCentroid(attackers);
-      if (visibleEnemyCombatNear(state, focus.x, focus.y, RETREAT_SIGHT) >= attackers.length) {
+      if (visibleEnemyCombatNear(state, owner, focus.x, focus.y, RETREAT_SIGHT) >= attackers.length) {
         issueMove(attackers, cc.x, cc.y);   // plain move disengages: combat.js skips auto-acquire on a 'move' order
-        state.ai.attackForce = 0;
+        controller.attackForce = 0;
       }
     }
 
-    const nextAttackAt = state.ai.nextAttackAt ?? effAttackTimeout;
+    const nextAttackAt = controller.nextAttackAt ?? effAttackTimeout;
     const timedOut = state.time >= nextAttackAt;
 
     // Build this cycle's strike force. Two regimes, split on whether this world has
@@ -176,7 +188,7 @@ function aiOffense(state, ctx, nonScout) {
           strike = withoutHomeGuard(homeArmy, cc, timedOut ? 0 : effGarrison);
           desperate = timedOut;
         }
-      } else if ((!strategy.neverInitiates || provoked(state)) && playerHasPresence(state)) {
+      } else if ((!strategy.neverInitiates || provoked(state)) && playerHasPresence(state, enemyOwner)) {
         // ODYSSEY only: neverInitiates means "doesn't START fights", not "never fights" — a
         // neighbour the player has bled (or who can see a galaxy-winning Gate charging) answers
         // once its stance has reached war on its own. Without this, two of the four strategies
@@ -187,7 +199,7 @@ function aiOffense(state, ctx, nonScout) {
         const h = hostility(state);
         const pm = (archetype.odyssey && archetype.odyssey.probeMin) || PROBE_MIN;   // archetype's Odyssey probe floor (Rusher 5 > Economist 4 > default 3)
         const muster = Math.max(pm, Math.round(effArmyAttackSize * h));
-        const waveReady = state.time >= (state.ai.nextWaveAt ?? 0);
+        const waveReady = state.time >= (controller.nextWaveAt ?? 0);
         if (h > 0 && waveReady && homeArmy.length >= muster) {
           const available = withoutHomeGuard(homeArmy, cc, effGarrison);   // always hold the home guard
           const commit = Math.min(available.length, Math.max(pm, Math.round(available.length * h)));
@@ -201,30 +213,30 @@ function aiOffense(state, ctx, nonScout) {
       // player's worker line, this one goes for the economy instead of grinding the
       // defended main base — sniping production the way a human harasses. A
       // desperation (timeout) commit always goes for the base so the game resolves.
-      state.ai.waveCount = (state.ai.waveCount || 0) + 1;
+      controller.waveCount = (controller.waveCount || 0) + 1;
       // ODYSSEY FINALE: once the AI can SEE the player's charging Gate, every wave
       // converges on it — razing the galaxy-ender outranks even an economy raid. Still
       // fog-gated (it has to have eyes on the Gate) and Odyssey-only: in a skirmish
       // state.diplomacy is undefined, so `gate` is falsy and the target pick below is
       // byte-for-byte the original `raid || chooseAttackTarget(...)`.
       const charging = state.diplomacy && chargingPlayerWonder(state);
-      const gate = charging && isVisibleAt(state.fogAI, charging.x, charging.y) ? charging : null;
-      const raid = !gate && state.ai.micro && !desperate && state.ai.waveCount % RAID_EVERY === 0 && raidTarget(state);
-      const target = gate || raid || chooseAttackTarget(state, cc);
+      const gate = charging && isVisibleAt(fog, charging.x, charging.y) ? charging : null;
+      const raid = !gate && controller.micro && !desperate && controller.waveCount % RAID_EVERY === 0 && raidTarget(state, owner);
+      const target = gate || raid || chooseAttackTarget(state, cc, owner);
       issueAttackMove(strike, target.x, target.y);
       // Cadence: a skirmish keeps the single attackTimeout clock (unchanged);
       // Odyssey paces the NEXT probe by hostility on its own timer — sparse when
       // merely wary, tight when hostile — so the skirmish clock is never touched.
       if (state.diplomacy) {
-        state.ai.nextWaveAt = state.time + effAttackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state));
+        controller.nextWaveAt = state.time + effAttackTimeout * WAVE_CADENCE_FRAC * (1 - 0.5 * hostility(state));
       } else {
-        state.ai.nextAttackAt = state.time + effAttackTimeout;
+        controller.nextAttackAt = state.time + effAttackTimeout;
       }
       // Reset the retreat baseline to the whole committed force (survivors of a
       // prior wave plus this reinforcement) so a topped-up wave doesn't read as
       // "ground down".
-      state.ai.attackForce = attackers.length + strike.length;
-      state.ai.attackDesperate = desperate;
+      controller.attackForce = attackers.length + strike.length;
+      controller.attackDesperate = desperate;
     }
 
     // GARRISON DISPERSAL: whatever's left of the home army after the strike above (everyone, on
@@ -236,7 +248,7 @@ function aiOffense(state, ctx, nonScout) {
     // itself in place must never be yanked off that fight mid-engagement to go stand in the grid.
     const strikeIds = new Set(strike.map(u => u.id));
     const toDisperse = homeArmy.filter(u => !strikeIds.has(u.id) && u.autoTarget == null && u.focusId == null);
-    disperseGarrison(state, toDisperse, buildings);
+    disperseGarrison(state, owner, toDisperse, buildings);
 }
 
 const GARRISON_SKIRT_CLEARANCE = 40;    // how far past its own outermost building the parked grid sits
@@ -301,10 +313,10 @@ function garrisonSlots(units, cc, buildings, mapWidth, mapHeight) {
   return formationSlots(units, pulled.x, pulled.y, { shape: "grid" });
 }
 
-// Stand the AI's idle home army up in a grid at a single anchor point just outside each of its
-// own Command Centers, instead of leaving it clumped at whichever building's rally point produced
-// it — an orderly parked garrison covers more ground and isn't a single engagement away from
-// losing the AI's whole standing defense. Each Command Center (home, plus any same-map expansion)
+// Stand this controller's idle home army up in a grid at a single anchor point just outside each
+// of its own Command Centers, instead of leaving it clumped at whichever building's rally point
+// produced it — an orderly parked garrison covers more ground and isn't a single engagement away
+// from losing its whole standing defense. Each Command Center (home, plus any same-map expansion)
 // claims its own anchor and whichever idle units are already nearest it AND actually within
 // DISPERSAL_HOME_RADIUS of it (mirrors zoneFirst's own "stay loyal to your own base" spirit,
 // engine/gather.js) — a unit too far from every Command Center is left alone, not redirected.
@@ -323,11 +335,11 @@ function garrisonSlots(units, cc, buildings, mapWidth, mapHeight) {
 // standing at its slot just skips the redundant order (STATION_REACH) instead of re-arriving
 // every cycle. Costs one action, like sending the scout (updateScout) — a management decision,
 // not the exempt attack/defense commit — but only once something real is actually dispatched,
-// not merely offered the chance.
-function disperseGarrison(state, garrison, buildings) {
+// not merely offered the chance. `owner` picks whose action budget (canAct/spend) this spends from.
+function disperseGarrison(state, owner, garrison, buildings) {
   if (!garrison.length) return;
   const ccs = buildings.filter(b => b.type === "command" && !b.constructing);
-  if (!ccs.length || !canAct(state)) return;
+  if (!ccs.length || !canAct(state, owner)) return;
 
   const byCC = new Map(ccs.map(cc => [cc, []]));
   for (const u of garrison) {
@@ -352,19 +364,23 @@ function disperseGarrison(state, garrison, buildings) {
       }
     });
   }
-  if (dispatched) spend(state);
+  if (dispatched) spend(state, owner);
 }
 
 const FOCUS_RANGE = 340;   // only army units this close to the chosen target concentrate on it
 
-// Point every nearby AI combat unit's focus at a single best enemy: the lowest-HP
-// visible enemy combat unit (secure the kill, cut its DPS), tie-broken toward the
-// more dangerous one, then by id for determinism. combat.js reads unit.focusId
-// and prefers it while it's a live enemy in aggro (else falls back to the normal
-// dispersed acquire). Cleared when nothing hostile is in sight, so the razing
-// path uses ordinary targeting untouched.
-export function applyFocusFire(state, army) {
-  const enemies = [...visibleEnemyCombatUnits(state)];
+// Point every nearby combat unit's focus at a single best enemy: the lowest-HP visible enemy
+// combat unit (secure the kill, cut its DPS), tie-broken toward the more dangerous one, then by id
+// for determinism. combat.js reads unit.focusId and prefers it while it's a live enemy in aggro
+// (else falls back to the normal dispersed acquire). Cleared when nothing hostile is in sight, so
+// the razing path uses ordinary targeting untouched. Takes the whole ctx (not just the army) so it
+// reads ctx.owner's OWN fog (via visibleEnemyCombatUnits) rather than ever defaulting to state.fogAI
+// regardless of which side is calling — the same fog discipline every reactive read in this file
+// keeps.
+/** @param {State} state @param {AiContext} ctx */
+export function applyFocusFire(state, ctx) {
+  const { army, owner } = ctx;
+  const enemies = [...visibleEnemyCombatUnits(state, owner)];
   if (!enemies.length) { for (const a of army) a.focusId = null; return; }
   enemies.sort((a, b) => a.hp - b.hp
     || (UNITS[b.type].attack - UNITS[a.type].attack)
@@ -378,36 +394,40 @@ export function applyFocusFire(state, army) {
 const RETREAT_FRACTION = 0.4;   // a committed attack ground below this share of its launch size pulls back
 const RETREAT_SIGHT = 260;      // ...if it can see at least as many enemy combat units this close (still losing)
 
-// Enemy (player-owned) combat units the AI can currently SEE in its own fog —
-// the shared "live visible opposition" filter behind applyFocusFire,
-// visibleEnemyCombatNear and visibleThreatsNearHome, so the two-line
-// owner/role/visibility test lives in exactly one place.
-function* visibleEnemyCombatUnits(state) {
+// Enemy combat units `owner` can currently SEE in ITS OWN fog (state.fogs[owner]) — the shared
+// "live visible opposition" filter behind applyFocusFire, visibleEnemyCombatNear and
+// visibleThreatsNearHome, so the two-line owner/role/visibility test lives in exactly one place.
+// `owner` defaults to "ai" so every pre-existing (single-owner) caller is unaffected; a self-play
+// "player" controller passes its own owner so it reacts to what IT has seen through state.fog,
+// never state.fogAI — the fairness guarantee this whole module exists to keep.
+function* visibleEnemyCombatUnits(state, owner = "ai") {
+  const enemyOwner = otherOwner(owner);
+  const fog = state.fogs[owner];
   for (const u of state.units.values()) {
-    if (u.owner === "ai" || UNITS[u.type].role !== "combat") continue;
-    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+    if (u.owner !== enemyOwner || UNITS[u.type].role !== "combat") continue;
+    if (!isVisibleAt(fog, u.x, u.y)) continue;
     yield u;
   }
 }
 
-// How many enemy (player-owned) combat units the AI can currently SEE, full stop — the
-// "Force Parity" strategy's read of the enemy's strength (engine/aiStrategy.js matchEnemyForce,
-// consumed by engine/aiEconomy.js's standing-army throttle). Deliberately the same fog-limited
-// intel as everything else the AI reacts to (counterToPlayerArmy, visibleThreatsNearHome): an
-// enemy army massed somewhere the AI has never scouted doesn't count until it's actually seen,
-// so "matching" is an honest reaction to known strength, not omniscient mirroring.
-export function visibleEnemyForceCount(state) {
+// How many enemy combat units `owner` can currently SEE, full stop — the "Force Parity" strategy's
+// read of the enemy's strength (engine/aiStrategy.js matchEnemyForce, consumed by
+// engine/aiEconomy.js's standing-army throttle). Deliberately the same fog-limited intel as
+// everything else the AI reacts to (counterToPlayerArmy, visibleThreatsNearHome): an enemy army
+// massed somewhere `owner` has never scouted doesn't count until it's actually seen, so "matching"
+// is an honest reaction to known strength, not omniscient mirroring.
+export function visibleEnemyForceCount(state, owner = "ai") {
   let n = 0;
-  for (const _ of visibleEnemyCombatUnits(state)) n++;
+  for (const _ of visibleEnemyCombatUnits(state, owner)) n++;
   return n;
 }
 
-// Player combat units the AI can currently SEE within `radius` of (x, y) — the
-// live opposition at a fight. Zero against an undefended base, which is what
-// makes the retreat safe for the resolves-to-a-winner guarantee.
-function visibleEnemyCombatNear(state, x, y, radius) {
+// Enemy combat units `owner` can currently SEE within `radius` of (x, y) — the live opposition at
+// a fight. Zero against an undefended base, which is what makes the retreat safe for the
+// resolves-to-a-winner guarantee.
+function visibleEnemyCombatNear(state, owner, x, y, radius) {
   let n = 0;
-  for (const u of visibleEnemyCombatUnits(state)) {
+  for (const u of visibleEnemyCombatUnits(state, owner)) {
     if (Math.hypot(u.x - x, u.y - y) <= radius) n++;
   }
   return n;
@@ -415,15 +435,15 @@ function visibleEnemyCombatNear(state, x, y, radius) {
 
 export const DEFEND_RADIUS = 340;   // enemy combat units this close to an AI building trigger a recall
 
-// Enemy combat units the AI can currently SEE (its own fog) sitting within
-// DEFEND_RADIUS of any building it owns. A lone scouting worker doesn't count —
-// only real combat threats pull the army home, so the AI isn't yanked off an
-// attack by a single drone. What it can't see, it can't react to.
-export function visibleThreatsNearHome(state) {
-  const myBuildings = [...state.buildings.values()].filter(b => b.owner === "ai");
+// Enemy combat units `owner` can currently SEE (its own fog) sitting within DEFEND_RADIUS of any
+// building it owns. A lone scouting worker doesn't count — only real combat threats pull the army
+// home, so the AI isn't yanked off an attack by a single drone. What it can't see, it can't react
+// to. `owner` defaults to "ai" so the pre-existing (single-owner) call site is unaffected.
+export function visibleThreatsNearHome(state, owner = "ai") {
+  const myBuildings = [...state.buildings.values()].filter(b => b.owner === owner);
   if (!myBuildings.length) return [];
   const threats = [];
-  for (const u of visibleEnemyCombatUnits(state)) {
+  for (const u of visibleEnemyCombatUnits(state, owner)) {
     if (myBuildings.some(b => Math.hypot(b.x - u.x, b.y - u.y) <= DEFEND_RADIUS)) threats.push(u);
   }
   return threats;
@@ -450,48 +470,59 @@ function withoutHomeGuard(homeArmy, cc, garrison) {
   return byDistHome.slice(garrison);   // drop the closest `garrison` — they stay home
 }
 
-// Does the player have ANYTHING at all on this world — a unit or a building, either
-// counts? Deliberately NOT fog-gated, unlike the AI's other reactive reads
-// (visibleEnemyForceCount, counterToPlayerArmy, visibleThreatsNearHome): those ask "what
-// can the AI currently see", this asks "could a wave possibly find anyone at all" — a
-// background world the player has never reached has zero of both (engine/galaxy.js
-// addPlanet's `unsettled` seeding strips them at creation), and no amount of fog-of-war
-// nuance changes that a wave sent there fights nobody.
-function playerHasPresence(state) {
-  return playerUnits(state, "player").length > 0 || playerBuildings(state, "player").length > 0;
+// Does `enemyOwner` have ANYTHING at all on this world — a unit or a building, either counts?
+// Deliberately NOT fog-gated, unlike the AI's other reactive reads (visibleEnemyForceCount,
+// counterToPlayerArmy, visibleThreatsNearHome): those ask "what can `owner` currently see", this
+// asks "could a wave possibly find anyone at all" — a background world the player has never
+// reached has zero of both (engine/galaxy.js addPlanet's `unsettled` seeding strips them at
+// creation), and no amount of fog-of-war nuance changes that a wave sent there fights nobody.
+// `owner` defaults to "player" (the caller always means "the OTHER side", and every pre-existing
+// call site is aiOffense's Odyssey branch checking the human player).
+function playerHasPresence(state, owner = "player") {
+  return playerUnits(state, owner).length > 0 || playerBuildings(state, owner).length > 0;
 }
 
 // Where to send the wave. Prefer a seen enemy Command Center (the win
 // condition), then any seen enemy building, then a seen enemy unit (raid the
-// army or worker line). With nothing in sight it goes HUNTING: a player CC is
-// still standing somewhere (the game isn't over), and the player can hold — and
+// army or worker line). With nothing in sight it goes HUNTING: an enemy CC is
+// still standing somewhere (the game isn't over), and the enemy can hold — and
 // hide — several of them, so razing the first is not the win. It first marches on
-// the player's start if it hasn't even charted it yet (the likeliest spot early,
+// the enemy's start if it hasn't even charted it yet (the likeliest spot early,
 // and the fast beeline that keeps the game resolving); once that's explored and
 // empty, it sweeps the nearest unexplored ground, attack-moving to reveal fog,
 // until it turns up a hidden expansion CC — instead of committing forever to a
-// start coordinate the player has long since left.
+// start coordinate the enemy has long since left.
 const RAID_EVERY = 3;   // every Nth Tactical wave goes for the economy instead of the base
 
-// The player's economy to snipe: the nearest player WORKER the AI can see. A
-// Tactical raid peels a wave onto the worker line to cripple production rather
-// than grinding the defended main base. Null when no worker is in sight — nothing
-// to raid, so the caller falls back to the ordinary base assault.
-function raidTarget(state) {
-  const from = state.map.bases.ai;
+// The enemy's economy to snipe: the nearest enemy WORKER `owner` can see. A Tactical raid peels a
+// wave onto the worker line to cripple production rather than grinding the defended main base.
+// Null when no worker is in sight — nothing to raid, so the caller falls back to the ordinary base
+// assault. `owner` defaults to "ai" so the pre-existing (single-owner) call site is unaffected.
+function raidTarget(state, owner = "ai") {
+  const enemyOwner = otherOwner(owner);
+  const fog = state.fogs[owner];
+  const from = state.map.bases[owner];
   let best = null, bestD = Infinity;
   for (const u of state.units.values()) {
-    if (u.owner !== "player" || UNITS[u.type]?.role !== "worker") continue;
-    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;
+    if (u.owner !== enemyOwner || UNITS[u.type]?.role !== "worker") continue;
+    if (!isVisibleAt(fog, u.x, u.y)) continue;
     const d = Math.hypot(u.x - from.x, u.y - from.y);
     if (d < bestD) { bestD = d; best = u; }
   }
   return best ? { x: best.x, y: best.y } : null;
 }
 
-export function chooseAttackTarget(state, cc) {
-  const from = cc || { x: state.map.bases.ai.x, y: state.map.bases.ai.y };
-  const seen = e => e.owner === "player" && isVisibleAt(state.fogAI, e.x, e.y);
+// `owner` defaults to "ai" so the pre-existing (single-owner) call site — including
+// engine/aiSuperweapon.js's own chooseAttackTarget(state, ctx.cc), a file this Tier stays out of —
+// reads exactly as before. A self-play "player" controller passes its own owner, so every read
+// below (seen buildings/units, the fallback start coordinate, the fog sweep) resolves off ITS OWN
+// fog (state.fogs[owner]) and targets the OTHER side (otherOwner(owner)), never a hardcoded
+// "player"/state.fogAI pair.
+export function chooseAttackTarget(state, cc, owner = "ai") {
+  const enemyOwner = otherOwner(owner);
+  const fog = state.fogs[owner];
+  const from = cc || { x: state.map.bases[owner].x, y: state.map.bases[owner].y };
+  const seen = e => e.owner === enemyOwner && isVisibleAt(fog, e.x, e.y);
   const seenBuildings = [...state.buildings.values()].filter(seen);
   const ccs = seenBuildings.filter(b => b.type === "command");
   const nearestOf = list => {
@@ -505,51 +536,56 @@ export function chooseAttackTarget(state, cc) {
   const target = nearestOf(ccs) || nearestOf(seenBuildings)
       || nearestOf([...state.units.values()].filter(seen));
   if (target) return target;
-  const start = state.map.bases.player;
-  if (!isExploredAt(state.fogAI, start.x, start.y)) return start;   // haven't looked at the start yet — go there
-  return nearestUnexploredPoint(state.fogAI, from.x, from.y) || start;   // else search the map for a hidden CC
+  const start = state.map.bases[enemyOwner];
+  if (!isExploredAt(fog, start.x, start.y)) return start;   // haven't looked at the start yet — go there
+  return nearestUnexploredPoint(fog, from.x, from.y) || start;   // else search the map for a hidden CC
 }
 
 // The next unit to build: normally the next entry in the archetype's mix, but
 // every `every`-th unit (COUNTER_EVERY by default; difficulty-shaped — Easy
 // never counter-picks, Hard reacts half again as fast, see aiDifficulty.js's
-// counterEvery) it instead builds the counter to whatever the player fields
+// counterEvery) it instead builds the counter to whatever the enemy fields
 // most, per counterToPlayerArmy below. Both draw from effectiveMix — the mix
 // with entries this map can't pay for dropped (e.g. the Breacher on a world
 // with no radioactives) — so the cycle never stalls on an unbuildable type,
-// and a counter is only chosen when this map can actually build it.
-export function pickNextUnitType(state, archetype) {
-  const mix = effectiveMix(state, archetype);
-  const built = state.ai.unitsBuilt || 0;
-  const every = difficultyFor(state).counterEvery ?? COUNTER_EVERY;
+// and a counter is only chosen when this map can actually build it. `owner`
+// defaults to "ai" so every pre-existing call site (every test, tools/ailab.js)
+// reads exactly as before; a self-play "player" controller passes its own
+// ctx.owner so it counter-picks off ITS OWN fog and ITS OWN unitsBuilt tally,
+// never the "ai" controller's.
+export function pickNextUnitType(state, archetype, owner = "ai") {
+  const mix = effectiveMix(state, archetype, owner);
+  const controller = controllerFor(state, owner);
+  const built = (controller && controller.unitsBuilt) || 0;
+  const every = difficultyFor(state, owner).counterEvery ?? COUNTER_EVERY;
   if (every > 0 && built > 0 && built % every === 0) {
-    const counter = counterToPlayerArmy(state);
+    const counter = counterToPlayerArmy(state, owner);
     if (counter && mix.includes(counter)) return counter;
   }
   return mix[built % mix.length];
 }
 
-// Whatever combat type the player currently fields the most of — among only
-// the units the AI can actually SEE right now (its own fog) — mapped to its
-// counter: COUNTER_OF's hard (bonusVs- or counteredBy-derived) counter first,
-// else the curated SOFT_ANSWER cost-efficiency fallback. No vision of the
-// player's army means no counter-pick, so the AI has to scout or fight to earn
-// that intel, the same as the player. Ties keep whichever type was seen first;
-// there's no meaningfully "correct" pick between two equally common threats.
+// Whatever combat type the enemy currently fields the most of — among only the units `owner` can
+// actually SEE right now (its own fog) — mapped to its counter: COUNTER_OF's hard (bonusVs- or
+// counteredBy-derived) counter first, else the curated SOFT_ANSWER cost-efficiency fallback. No
+// vision of the enemy's army means no counter-pick, so the AI has to scout or fight to earn that
+// intel, the same as its opponent. Ties keep whichever type was seen first; there's no
+// meaningfully "correct" pick between two equally common threats.
 //
-// Static defense is invisible to that unit scan, so a turtling player fielding
-// no army at all was never answered — a separate pass counts visible player
-// buildings that can shoot (fogAI-gated, same discipline as the unit scan) and
-// answers with "breacher" whenever the wall would beat the dominant seen unit
-// type, or is simply large enough to read as a wall on its own (the
-// test/balance.test.js turret-line proof), overriding the unit-type counter
-// above — prefersBuildings targeting and its 150 range (outranging the
-// turret's 130) do the rest once it's queued.
-function counterToPlayerArmy(state) {
+// Static defense is invisible to that unit scan, so a turtling opponent fielding no army at all
+// was never answered — a separate pass counts visible enemy buildings that can shoot (fog-gated,
+// same discipline as the unit scan) and answers with "breacher" whenever the wall would beat the
+// dominant seen unit type, or is simply large enough to read as a wall on its own (the
+// test/balance.test.js turret-line proof), overriding the unit-type counter above —
+// prefersBuildings targeting and its 150 range (outranging the turret's 130) do the rest once it's
+// queued. `owner` defaults to "ai" so the pre-existing (single-owner) call site is unaffected.
+function counterToPlayerArmy(state, owner = "ai") {
+  const enemyOwner = otherOwner(owner);
+  const fog = state.fogs[owner];
   const counts = {};
   for (const u of state.units.values()) {
-    if (u.owner !== "player" || UNITS[u.type].role !== "combat") continue;
-    if (!isVisibleAt(state.fogAI, u.x, u.y)) continue;   // can't counter what it hasn't seen
+    if (u.owner !== enemyOwner || UNITS[u.type].role !== "combat") continue;
+    if (!isVisibleAt(fog, u.x, u.y)) continue;   // can't counter what it hasn't seen
     counts[u.type] = (counts[u.type] || 0) + 1;
   }
   let best = null, bestCount = 0;
@@ -561,22 +597,25 @@ function counterToPlayerArmy(state) {
     // BUILDINGS[b.type]?.attack (not a hardcoded "turret" check) so a future
     // second static-defense tier (docs/improvement-roadmap.md Phase 4, gated on
     // this landing first) is read for free. Only "turret" qualifies today.
-    if (b.owner !== "player" || b.constructing || !BUILDINGS[b.type]?.attack) continue;
-    if (!isVisibleAt(state.fogAI, b.x, b.y)) continue;   // same fog discipline as the unit scan
+    if (b.owner !== enemyOwner || b.constructing || !BUILDINGS[b.type]?.attack) continue;
+    if (!isVisibleAt(fog, b.x, b.y)) continue;   // same fog discipline as the unit scan
     staticDefense++;
   }
   if (staticDefense > 0 && (staticDefense > bestCount || staticDefense > TURRET_WALL_COUNT)) return "breacher";
   return best ? (COUNTER_OF[best] || SOFT_ANSWER[best] || null) : null;
 }
 
-// Keep one spare unit ranging across the contested middle so the AI earns its
-// intel — uncovering hidden caches and spotting the player's forces — instead
-// of knowing the map for free. Only lends a scout once the army can spare one;
-// a box sweep of the centre laid down as plain-move waypoints (it reveals fog
-// rather than diving into a fight), re-issued whenever the scout falls idle or
-// dies. Runs before assignIdleWorkers so a scout is never re-tasked to gather.
-export function updateScout(state, army, rangers, defending = false) {
+// Keep one spare unit ranging across the contested middle so this controller earns its intel —
+// uncovering hidden caches and spotting the enemy's forces — instead of knowing the map for free.
+// Only lends a scout once the army can spare one; a box sweep of the centre laid down as plain-move
+// waypoints (it reveals fog rather than diving into a fight), re-issued whenever the scout falls
+// idle or dies. Runs before assignIdleWorkers so a scout is never re-tasked to gather. Takes the
+// whole ctx (not just army/rangers) so it reads/writes ctx.controller.scoutId (never state.ai's,
+// unless owner IS "ai") and spends from ctx.owner's own action budget.
+/** @param {State} state @param {AiContext} ctx @param {boolean} [defending] */
+export function updateScout(state, ctx, defending = false) {
   if (defending) return;   // base under attack — hold every unit home, don't lend a scout
+  const { army, rangers, owner, enemyOwner, controller } = ctx;
   let scout;
   const ranger = (rangers && rangers.length) ? rangers[0] : null;
   if (ranger) {
@@ -588,27 +627,26 @@ export function updateScout(state, army, rangers, defending = false) {
   } else {
     // No Ranger: fall back to lending a combat unit, but only if one isn't already
     // out — don't pull a second fighter off the line.
-    const current = state.ai.scoutId ? state.units.get(state.ai.scoutId) : null;
+    const current = controller.scoutId ? state.units.get(controller.scoutId) : null;
     if (current && (current.order || (current.orderQueue && current.orderQueue.length))) return;
-    if (army.length < 4) { state.ai.scoutId = null; return; }   // need a genuine spare to lend
-    // `army` is EVERY AI combat unit, not just the idle ones — a prior wave still
-    // mid attack-move stays in it. Only an idle/home unit (no order, or still
-    // walking to the rally point — the same "home army" test aiOffense uses) is
-    // eligible, so a unit actively pressing an assault is never yanked off it to
-    // go scouting instead.
-    scout = army.find(u => u.id !== state.ai.scoutId && (!u.order || u.order.type === "move"));
+    if (army.length < 4) { controller.scoutId = null; return; }   // need a genuine spare to lend
+    // `army` is EVERY combat unit this controller owns, not just the idle ones — a prior wave
+    // still mid attack-move stays in it. Only an idle/home unit (no order, or still walking to
+    // the rally point — the same "home army" test aiOffense uses) is eligible, so a unit actively
+    // pressing an assault is never yanked off it to go scouting instead.
+    scout = army.find(u => u.id !== controller.scoutId && (!u.order || u.order.type === "move"));
   }
-  if (!scout || !canAct(state)) return;   // no spare, or no action budget to send one out yet
-  spend(state);
-  state.ai.scoutId = scout.id;
+  if (!scout || !canAct(state, owner)) return;   // no spare, or no action budget to send one out yet
+  spend(state, owner);
+  controller.scoutId = scout.id;
   const w = state.map.width, h = state.map.height;
   const home = { x: scout.x, y: scout.y };
-  const pb = state.map.bases.player;
+  const pb = state.map.bases[enemyOwner];
   issueMove([scout], w * 0.42, h * 0.22);
   issueMove([scout], w * 0.58, h * 0.22, true);
   issueMove([scout], w * 0.58, h * 0.78, true);
   issueMove([scout], w * 0.42, h * 0.78, true);
-  // ...then swing toward the player's side to actually see the army it needs to
+  // ...then swing toward the enemy's side to actually see the army it needs to
   // counter (a pure centre sweep can miss what's massing at the enemy base),
   // stopping short of diving into the base itself, before folding back home.
   issueMove([scout], home.x + (pb.x - home.x) * 0.6, home.y + (pb.y - home.y) * 0.6, true);
