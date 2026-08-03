@@ -467,6 +467,72 @@ export function applyOverrides(ov = {}) {
   }
 }
 
+// Deep-clone the three live tables so a candidate's overrides can be reverted EXACTLY once its
+// runs are done, leaving the next candidate a clean baseline. Plain data (the whole reason
+// applyOverrides can work at all), so a JSON round-trip clones it safely. Used by runLeaderboard
+// below — two candidates that both patch e.g. "aggressive" must never see each other's edits.
+function snapshotTables() {
+  return {
+    strategies: JSON.parse(JSON.stringify(STRATEGIES)),
+    archetypes: JSON.parse(JSON.stringify(ARCHETYPES)),
+    difficulties: JSON.parse(JSON.stringify(DIFFICULTY_OPTIONS)),
+  };
+}
+function restoreTables(snap) {
+  for (const k of Object.keys(STRATEGIES)) delete STRATEGIES[k];
+  Object.assign(STRATEGIES, snap.strategies);
+  for (const k of Object.keys(ARCHETYPES)) delete ARCHETYPES[k];
+  Object.assign(ARCHETYPES, snap.archetypes);
+  DIFFICULTY_OPTIONS.length = 0;
+  DIFFICULTY_OPTIONS.push(...snap.difficulties);
+}
+
+/* ============================================================
+   LEADERBOARD — Tier 0 of "which strategy is actually better": rank candidates against a
+   FIXED, non-adaptive sparring bot with every other dial held equal, no engine change needed.
+
+   This is NOT head-to-head play. Nothing here makes two candidates fight each other — that
+   needs runAI to drive two independently-configured owners in the same match, which it can't
+   do yet (docs/odyssey-ai-review.md §2.8, "There is no AI-vs-AI, but there nearly is"). What
+   this CAN do today: hold difficulty, opponent, world roster, seed count and minutes IDENTICAL
+   across every candidate — so no candidate gets an APM/micro edge another one doesn't — and rank
+   them by the same score() this bench already uses for solo tuning. "Candidate A beats candidate
+   B" here means "A scored higher against the same yardstick B faced", which is real signal but a
+   PROXY for competitive self-play, not a substitute for it — say so wherever this is reported.
+
+   A candidate is { name, strategy, overrides }: `strategy` (default "default") is which
+   STRATEGIES key this candidate actually runs as; `overrides` (optional) is exactly the
+   --overrides shape, scoped to this one candidate's runs via snapshotTables/restoreTables above.
+   ============================================================ */
+
+export function runLeaderboard(candidates, { worlds, difficulty = "medium", opponent = "tech", seeds = 2, ...rest } = {}) {
+  const results = [];
+  for (const cand of candidates) {
+    if (!cand.name) throw new Error('a candidate needs a "name"');
+    const snap = snapshotTables();
+    try {
+      if (cand.overrides) applyOverrides(cand.overrides);
+      const strategy = cand.strategy || "default";
+      if (!STRATEGIES[strategy])
+        throw new Error(`candidate "${cand.name}": unknown strategy "${strategy}" — define it under overrides.strategies`);
+      const rows = runMatrix({ ...rest, opponent }, { worlds, strategies: [strategy], difficulties: [difficulty], seeds });
+      const scored = rows.map(score);
+      const mean = scored.reduce((a, s) => a + s.total, 0) / scored.length;
+      const partsMean = {};
+      for (const k of Object.keys(WEIGHTS)) {
+        const vals = scored.filter(s => k in s.parts).map(s => s.parts[k]);
+        if (vals.length) partsMean[k] = +(vals.reduce((a, v) => a + v, 0) / vals.length).toFixed(3);
+      }
+      let worstIdx = 0;
+      scored.forEach((s, i) => { if (s.total < scored[worstIdx].total) worstIdx = i; });
+      results.push({ name: cand.name, strategy, mean: +mean.toFixed(3), partsMean, worst: rows[worstIdx], n: rows.length });
+    } finally {
+      restoreTables(snap);   // never let one candidate's patch leak into the next, even on error
+    }
+  }
+  return results.sort((a, b) => b.mean - a.mean);
+}
+
 /* ============================================================
    HEALTH CHECKS — the findings this bench already turned up, encoded
 
@@ -700,6 +766,38 @@ const CMDS = {
     printFindings(rows);
     if (args["exit-code"] === "true" && CHECKS.some(c => rows.some(c.hit))) process.exitCode = 1;
   },
+
+  leaderboard(args) {
+    const paths = list(args.candidates, []);
+    if (!paths.length) { console.log("--candidates a.json,b.json,... (each: { name, strategy, overrides })"); return; }
+    const candidates = paths.map(p => JSON.parse(readFileSync(p, "utf8")));
+    const worlds = list(args.worlds, ["korrath", "ferros", "vesper", "kybernet"]);
+    const difficulty = args.difficulty || "medium";
+    const opponent = args.opponent || "tech";
+    const seeds = num(args.seeds, 2);
+    const results = runLeaderboard(candidates, {
+      worlds, difficulty, opponent, seeds,
+      minutes: args.minutes, sample: args.sample, apm: args.apm, seed: args.seed,
+    });
+
+    console.log("PROXY LEADERBOARD -- ranks candidates by score against a FIXED, non-adaptive sparring");
+    console.log(`bot (${OPPONENTS[opponent].desc}), difficulty "${difficulty}" held identical for every`);
+    console.log("candidate so none gets an APM/micro edge. NOT head-to-head play -- see the LEADERBOARD");
+    console.log("header comment in this file for exactly what that does and doesn't prove.\n");
+    console.log(pad("#", 4) + pad("candidate", 28) + pad("strategy", 13) + pad("score", 8) + "components");
+    results.forEach((r, i) => {
+      const parts = Object.entries(r.partsMean).map(([k, v]) => `${k} ${v.toFixed(2)}`).join("  ");
+      console.log(pad(String(i + 1), 4) + pad(r.name, 28) + pad(r.strategy, 13) + pad(r.mean.toFixed(3), 8) + parts);
+    });
+    console.log("\nweakest matchup per candidate (lowest single score in its own run set):");
+    for (const r of results)
+      console.log(`  ${pad(r.name, 28)} ${r.worst.world}/${r.worst.difficulty}/seed=${r.worst.seed}  `
+        + `${score(r.worst).total.toFixed(3)}`);
+    if (args.json) {
+      writeFileSync(args.json, JSON.stringify(results.map(({ worst, ...r }) => r), null, 1));
+      console.log(`\nwrote ${args.json}`);
+    }
+  },
 };
 
 const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
@@ -712,6 +810,13 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
   node tools/ailab.js search  --strategy aggressive --dials 'attackTimeoutMult=0.3:1,garrisonMult=0:1'
                               [--steps 4] [--worlds a,b]
   node tools/ailab.js check   [--worlds a,b] [--minutes 60] [--exit-code]
+  node tools/ailab.js leaderboard --candidates a.json,b.json,c.json
+                              [--worlds a,b] [--difficulty medium] [--opponent tech] [--seeds 2]
+                              [--json out.json]
+                              -- ranks candidates against the SAME fixed opponent, all other dials
+                              held equal (a proxy for competitive self-play, not a substitute for
+                              it — see the LEADERBOARD header comment). Each candidate file is
+                              { "name": "...", "strategy": "aggressive", "overrides": {...} }.
 
 Common flags
   --overrides f.json   inject candidate rows into the AI tables before running:
@@ -741,4 +846,4 @@ function main(argv) {
 // Only run the CLI when invoked directly, so a test can import run/score/CHECKS.
 if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) main(process.argv.slice(2));
 
-export { run, labWorld, sample, summarise, OPPONENTS, WORLDS };
+export { run, labWorld, sample, summarise, OPPONENTS, WORLDS, snapshotTables, restoreTables };

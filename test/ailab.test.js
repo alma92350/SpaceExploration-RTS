@@ -20,7 +20,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS } from "../tools/ailab.js";
+import { run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard } from "../tools/ailab.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
 import { tick } from "../engine/sim.js";
@@ -257,6 +257,69 @@ test("supply PRESSURE with a Habitat on the way is not a deadlock", () => {
     "blocked, but a Habitat is already going up — it resolves itself");
   assert.equal(frac({ supplyBlocked: true, habitatPending: false, banked: 5000 }), 1,
     "blocked with nothing on the way is the state that never resolves");
+});
+
+/* ---------- leaderboard: Tier 0 of ranking candidates against a fixed yardstick ----------
+
+   Not head-to-head play (see the LEADERBOARD header comment in tools/ailab.js) — these tests
+   guard the two things that would silently break that promise: that ranking two candidates
+   never lets one's overrides bleed into the other's run, and that the whole thing is exactly
+   as deterministic as every other lab run. ---------- */
+
+test("leaderboard is deterministic — same candidates, byte-identical ranking", () => {
+  const candidates = [{ name: "A", strategy: "default" }, { name: "B", strategy: "aggressive" }];
+  const opts = { worlds: ["ferros"], difficulty: "medium", opponent: "passive", seeds: 1, minutes: 4, sample: 2, seed: 7 };
+  const strip = rs => JSON.stringify(rs.map(({ worst, ...r }) => r));
+  assert.equal(strip(runLeaderboard(candidates, opts)), strip(runLeaderboard(candidates, opts)),
+    "two identical leaderboard runs diverged");
+});
+
+test("a candidate's overrides never leak into the next candidate's run", () => {
+  const before = JSON.stringify(STRATEGIES.aggressive);
+  const candidates = [
+    { name: "patched", strategy: "aggressive", overrides: { strategies: { aggressive: { garrisonMult: 0.01 } } } },
+    { name: "plain", strategy: "aggressive" },
+  ];
+  runLeaderboard(candidates, { worlds: ["ferros"], opponent: "passive", seeds: 1, minutes: 3, sample: 2, seed: 7 });
+  assert.equal(JSON.stringify(STRATEGIES.aggressive), before,
+    "STRATEGIES.aggressive must be restored to its pre-leaderboard shape once every candidate has run");
+});
+
+test("leaderboard restores the tables even when a later candidate throws", () => {
+  const before = JSON.stringify(STRATEGIES.aggressive);
+  const candidates = [
+    { name: "patched", strategy: "aggressive", overrides: { strategies: { aggressive: { garrisonMult: 0.02 } } } },
+    { name: "broken", strategy: "doesNotExist" },
+  ];
+  assert.throws(
+    () => runLeaderboard(candidates, { worlds: ["ferros"], opponent: "passive", seeds: 1, minutes: 3, sample: 2, seed: 7 }),
+    /unknown strategy/);
+  assert.equal(JSON.stringify(STRATEGIES.aggressive), before,
+    "an earlier candidate's patch must not survive a later candidate's failure");
+});
+
+test("a candidate needs a name", () => {
+  assert.throws(() => runLeaderboard([{ strategy: "default" }], { worlds: ["ferros"], seeds: 1, minutes: 2 }), /needs a "name"/);
+});
+
+test("leaderboard results are sorted best-first", () => {
+  const candidates = [{ name: "A", strategy: "default" }, { name: "B", strategy: "economic" }, { name: "C", strategy: "aggressive" }];
+  const results = runLeaderboard(candidates, { worlds: ["ferros"], opponent: "passive", seeds: 1, minutes: 3, sample: 2, seed: 7 });
+  for (let i = 1; i < results.length; i++)
+    assert.ok(results[i - 1].mean >= results[i].mean, "leaderboard must be sorted highest score first");
+});
+
+test("leaderboard ranks a crippled candidate below a normal one against an opponent that attacks", () => {
+  // Same override seam the earlier "an overrides row reaches the sim" test already trusts —
+  // this just proves the leaderboard's own ranking (not just the raw score) reflects it.
+  const candidates = [
+    { name: "normal", strategy: "default" },
+    { name: "crippled", strategy: "labCrippled", overrides: { strategies: { labCrippled: { neverInitiates: true, standingArmyCap: 1 } } } },
+  ];
+  const results = runLeaderboard(candidates,
+    { worlds: ["korrath"], difficulty: "medium", opponent: "tech", seeds: 1, minutes: 20, sample: 4, seed: 7 });
+  assert.deepEqual(results.map(r => r.name), ["normal", "crippled"],
+    "a token 1-unit standing army should rank below the default Rusher build against an opponent that presses it");
 });
 
 test("a strategy that deliberately caps its army isn't reported as a production stall", () => {

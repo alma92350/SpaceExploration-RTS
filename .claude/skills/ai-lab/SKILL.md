@@ -85,6 +85,23 @@ sentence ("commit sooner, with less"), and open at most two or three. Re-run any
 through `sweep --seeds 3` on the full roster before believing it — the search optimises a
 noisy mean and will happily overfit three worlds.
 
+## Ranking several candidates at once (a proxy, not self-play)
+
+`node tools/ailab.js leaderboard --candidates a.json,b.json,c.json` runs N candidates through the
+same `sweep` machinery and ranks them by mean `score().total`, with difficulty/opponent/worlds/seeds
+held identical across every one of them — so no candidate gets an APM or micro edge another one
+doesn't. Each candidate file: `{ "name": "...", "strategy": "aggressive", "overrides": {...} }`
+(`overrides` optional; see `tools/candidates/` for runnable examples). Useful when the question is
+"which of several hypotheses is most promising" rather than "did this one change help" — it's still
+`sweep`'s baseline-vs-yardstick comparison under the hood, just done N times with clean isolation
+between candidates (each one's overrides are reverted before the next one runs).
+
+**This is not head-to-head play.** Nothing here makes two candidates fight each other — that needs
+`runAI` to drive two independently-configured owners in one match, which it can't do yet (the AI
+controller is hardcoded to a single `"ai"` owner slot; see `docs/odyssey-ai-review.md` §2.8 and
+§3.2's "Ranking candidates against each other"). Report a `leaderboard` result as "beat the same
+fixed opponent by more," never as "beat the other candidates" — the two are not the same claim.
+
 ## Traps specific to this codebase
 
 - **Layers compose multiplicatively.** Archetype × strategy × difficulty all multiply

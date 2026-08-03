@@ -446,11 +446,12 @@ the real sim headlessly — a 40-sim-minute world costs ~7 seconds — samples a
 fixed cadence, and prints a scoreboard.
 
 ```
-node tools/ailab.js probe    # one configuration, full time series
-node tools/ailab.js sweep    # a matrix of worlds × strategies × difficulties → scoreboard + JSON
-node tools/ailab.js compare  # A/B two saved sweeps, per-configuration deltas
-node tools/ailab.js search   # deterministic coordinate scan over a strategy's dials
-node tools/ailab.js check    # the named-defect list from section 2, across the roster
+node tools/ailab.js probe        # one configuration, full time series
+node tools/ailab.js sweep        # a matrix of worlds × strategies × difficulties → scoreboard + JSON
+node tools/ailab.js compare      # A/B two saved sweeps, per-configuration deltas
+node tools/ailab.js search       # deterministic coordinate scan over a strategy's dials
+node tools/ailab.js check        # the named-defect list from section 2, across the roster
+node tools/ailab.js leaderboard  # rank N candidates against the SAME fixed opponent — see below
 ```
 
 **A candidate AI is JSON, not a patch.** Because the three tables are plain objects read
@@ -491,6 +492,24 @@ is a reproducible list that shrinks as the AI improves, rather than a paragraph 
 `test/ailab.test.js` guards the bench itself: that runs are deterministic (or a "+0.04
 improvement" is indistinguishable from noise) and that the override seam actually reaches the
 sim (or every search measures the baseline against itself).
+
+**Ranking candidates against each other — a proxy for a championship, not the real thing.**
+Every command above measures ONE candidate against the fixed sparring bots. `leaderboard` ranks
+several at once, with difficulty/opponent/worlds/seeds held IDENTICAL across every candidate — so
+comparing them never hands one an APM or micro edge another one doesn't get — and prints the same
+`score()` components, meaned per candidate, sorted best-first:
+
+```
+node tools/ailab.js leaderboard --candidates a.json,b.json,c.json [--difficulty medium] [--opponent tech]
+```
+
+Each candidate file is `{ "name": "...", "strategy": "aggressive", "overrides": {...} }` — see
+`tools/candidates/` for five runnable examples (the four stock strategies plus one novel tweak).
+**Read the result honestly: this is "beats the same non-adaptive yardstick," not "beats the other
+candidates directly."** Two candidates never fight each other here — that needs `runAI` to drive
+two independently-configured owners in one match, which it can't do yet (§2.8). Until that
+lands, `leaderboard` is the cheap, zero-engine-change first rung of that ladder: real information
+for the search loop below, honestly labeled as a proxy rather than mistaken for self-play.
 
 ### 3.3 The loop to run with Claude Code
 
@@ -533,7 +552,9 @@ Sequenced so each step makes the next one measurable:
 5. **Then** search the dials (§3.3). Tuning multipliers on top of a deadlocked, starving,
    hoarding AI is fitting noise.
 6. **Optional, high leverage:** make the controller owner-parametric (§2.8) and replace the
-   sparring bots with self-play.
+   sparring bots with self-play. `leaderboard` (§3.2) is the stepping stone that needs none of
+   that refactor — worth running first, since its results (and where its proxy signal and a real
+   head-to-head one would disagree) sharpen the case for taking on §2.8.
 
 ---
 
