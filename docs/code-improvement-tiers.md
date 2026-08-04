@@ -35,6 +35,32 @@ The **silhouette-collision half of C6** also moves to Tier 2 as the plan intende
 but it goes red until the Antimatter Gate and Torpedo Battery get distinct art, and that is an art
 decision, not a code one.
 
+**Tier 2 is delivered.** All 20 items shipped across five commits. Suite **1,964 → 2,002 tests**, 0
+failures throughout; typecheck clean. Full-suite wall clock **2m17s → 1m34s**.
+
+Three outcomes worth recording, because they changed the plan rather than following it:
+
+- **The per-frame allocation item did not survive measurement.** Memoizing `shade`/`hexA` on
+  `(hex, percent)` looks like an obvious win — tiny fixed key space, called per building per frame.
+  Benchmarked on a 120-building, 306-unit frame it is a *loss*: garbage 51.5 → 62.2 KB/frame, frame
+  time 0.22 → 0.24 ms, because the cache key is itself a fresh string per call. Reverted, with the
+  numbers written at the function so the next attempt starts from a baseline instead of the same
+  intuition. Only the loop-invariant hoist survived.
+- **`tickSelfPlay`'s ordering was corrected in the comment, not the code** — the option the finding
+  explicitly sanctioned. Making the claim true needs either a frozen pre-tick read or moving the
+  `"ai"` call out of `sim.js`'s hardcoded pipeline; both restructure the tick contract, so they sit
+  in Tier 3. The measured bound (one frame, one direction) is now pinned by a characterisation test
+  so it cannot widen unnoticed.
+- **Two fixes changed behaviour a test fixture depended on**, and both were retargeted rather than
+  weakened: consolidating `radiusOf` broke `formation.js`, whose callers pass unit-shaped literals
+  with no `kind` field (the helper resolves by type first, with a comment on why); and the
+  name-based bye tie-break moved which Swiss candidate draws the bye, so a fixture's winner stopped
+  fighting.
+
+The **rebuild-signature co-location** is done to the extent Tier 2 allows: the 141-line expression is
+now a named `panelSignature()` function rather than an inline block, which is the seam the Tier-3
+panel registry moves into. Genuine per-panel co-location needs the decomposition itself.
+
 ## How this was produced
 
 Eight reviewers worked the codebase in parallel, one per domain — engine core sim, AI + `tools/ailab.js`,

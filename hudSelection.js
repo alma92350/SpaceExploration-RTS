@@ -186,22 +186,16 @@ function factorySignature(sel) {
     + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4) + ":" + (iceCoolantMult(state, f.owner) < 1)
     + ":" + (f.logiPriority || "normal");
 }
-
-export function renderSelectionPanel() {
-  const { state, input } = game;
-  const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
-  const aggregated = sel.length > 1 && sel.every(e => e.kind === "unit");
-
-  // Only rebuild the panel's DOM when the set of buttons/rows it should
-  // show would actually change (selection, build-placement mode,
-  // upgrades researched, or the production queue's composition).
-  // Rebuilding on every HUD tick — even though hp/progress numbers
-  // change constantly — replaced the exact button the player was
-  // mid-click on with a fresh DOM node, and a mouseup landing after that
-  // swap could drop the click entirely: felt like only a sliver of the
-  // button was clickable, when really it was a timing race, not a
-  // sizing one.
-  const signature = sel.map(e => `${e.id}:${e.kind === "building" ? e.constructing : ""}`).join(",")
+// The panel's entire reactivity model, in one named place. It decides whether renderSelectionPanel
+// rebuilds at all, so a panel whose own state contributes no term here silently never redraws — the
+// class of bug that left the Freight Lane and Colony Policy controls inert. Extracted out of
+// renderSelectionPanel so it can be read, tested and moved as a unit; the long-term fix is to
+// co-locate each panel's term with the panel that draws it (a registry of
+// { match, signature, render } — docs/code-improvement-tiers.md, Tier 3), and this is the seam that
+// makes that a move rather than a rewrite. test/hudSelection.test.js drives a completeness table
+// over every interactive panel family so a missing term fails loudly instead of shipping dead.
+function panelSignature(sel, state, input, aggregated) {
+  return sel.map(e => `${e.id}:${e.kind === "building" ? e.constructing : ""}`).join(",")
     + "|" + (input.building ? input.building.buildingType : "")
     + "|" + Object.keys(state.players.player.upgrades).sort().join(",")
     + "|" + aggregated
@@ -359,6 +353,24 @@ export function renderSelectionPanel() {
         if (!game.galaxy) return "";
         return JSON.stringify(getColonyPolicy(game.galaxy, state.planetId) || null);
       })();
+}
+
+
+export function renderSelectionPanel() {
+  const { state, input } = game;
+  const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
+  const aggregated = sel.length > 1 && sel.every(e => e.kind === "unit");
+
+  // Only rebuild the panel's DOM when the set of buttons/rows it should
+  // show would actually change (selection, build-placement mode,
+  // upgrades researched, or the production queue's composition).
+  // Rebuilding on every HUD tick — even though hp/progress numbers
+  // change constantly — replaced the exact button the player was
+  // mid-click on with a fresh DOM node, and a mouseup landing after that
+  // swap could drop the click entirely: felt like only a sliver of the
+  // button was clickable, when really it was a timing race, not a
+  // sizing one.
+  const signature = panelSignature(sel, state, input, aggregated);
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
