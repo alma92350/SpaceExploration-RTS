@@ -7,7 +7,7 @@ import { UNITS, UPGRADES } from "../engine/entities.js";
 import { updateResearch, researchTimeScale } from "../engine/techtree.js";
 import { isNodeDiscovered, isExploredAt, isVisibleAt, updateFog } from "../engine/fog.js";
 import { aiDoctrine, effectiveMix, assignIdlePlayerGather } from "../engine/aiWorkers.js";
-import { pickBuilder, accrueActionBudget } from "../engine/aiCommon.js";
+import { pickBuilder, accrueActionBudget, tryBuild } from "../engine/aiCommon.js";
 import { pickNextUnitType } from "../engine/aiMilitary.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
@@ -986,6 +986,69 @@ test("pickBuilder prefers a genuinely idle worker over one mid-build/mid-service
     const picked = pickBuilder([busy, idle], spot.x, spot.y);
     assert.equal(picked.id, idle.id,
       `a worker mid-${busyType} is skipped for the distant idle one, despite being by far the nearest candidate`);
+  }
+});
+
+// ---- Tier 3: tryBuild, the AI's found-a-building protocol (engine/aiCommon.js) ----
+//
+// Thirteen sites across aiEconomy/aiIndustry hand-rolled the same four steps —
+// findPlacement, canAct, issueBuild, spend — and two of the four fail SILENTLY when
+// dropped: omit `spend` and the AI founds buildings for free (its APM dial stops
+// throttling it), omit `canAct` and it ignores the budget outright. Neither shows up
+// as a crash or a failing determinism fingerprint on the default archetype, because
+// the default AI has `apm == null` and canAct/spend are then both no-ops. So the
+// protocol needs a test that runs with the budget ACTUALLY armed.
+test("tryBuild spends exactly one action per building it founds, and none when it founds nothing", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cc = [...state.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  const worker = makeUnit("worker", "ai", cc.x, cc.y + 40);
+  state.units.set(worker.id, worker);
+  state.players.ai.resources.ore = 100000;
+  state.ai.apm = 60;              // arm the budget — with apm null, canAct/spend are no-ops and this proves nothing
+  state.ai.actionBudget = 1;      // exactly one action in hand
+
+  assert.equal(tryBuild(state, "ai", [worker], "barracks", cc.x + 90, cc.y - 90), true,
+    "the first call founds the building and reports it");
+  assert.equal(state.ai.actionBudget, 0, "founding it cost exactly one action");
+  assert.equal(worker.order?.type, "build", "and the chosen worker actually carries the build order");
+
+  // Budget now empty: canAct is false, so the next attempt must not issue an order at all.
+  const before = state.buildings.size;
+  assert.equal(tryBuild(state, "ai", [worker], "refinery", cc.x - 90, cc.y - 90), false,
+    "with the budget spent it declines rather than acting for free");
+  assert.equal(state.buildings.size, before, "no building was founded");
+  assert.equal(state.ai.actionBudget, 0, "and nothing was over-spent into a negative budget");
+});
+
+test("tryBuild reports false and spends nothing when the ground offers no placement", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cc = [...state.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  const worker = makeUnit("worker", "ai", cc.x, cc.y + 40);
+  state.units.set(worker.id, worker);
+  state.players.ai.resources.ore = 100000;
+  state.ai.apm = 60;
+  state.ai.actionBudget = 5;
+
+  // Far outside the map: findPlacement's whole search ring is off-map, so it returns null.
+  const founded = tryBuild(state, "ai", [worker], "barracks", state.map.width + 5000, state.map.height + 5000);
+  assert.equal(founded, false, "no spot, no order");
+  assert.equal(state.ai.actionBudget, 5, "and an action is spent only when an order is actually issued");
+  assert.equal(worker.order, null, "the candidate worker is left alone");
+});
+
+test("tryBuild picks the builder the same way pickBuilder does — a single-worker list always yields that worker", () => {
+  const state = createGameState({ planetId: "ferros", rng: () => 0.5 });
+  const cc = [...state.buildings.values()].find(b => b.owner === "ai" && b.type === "command");
+  state.players.ai.resources.ore = 100000;
+  // Two aiEconomy sites (Habitat, first Barracks) historically passed workers[0] rather than the
+  // nearest free worker. They now pass [workers[0]] so tryBuild's pick is forced to that same unit
+  // — this pins the equivalence, since pickBuilder falls back to workers[0] when the only
+  // candidate is busy, and returns it directly when it is idle.
+  for (const busy of [false, true]) {
+    const only = makeUnit("worker", "ai", cc.x + 400, cc.y + 400);   // deliberately far from the spot
+    if (busy) only.order = { type: "haul" };
+    assert.equal(pickBuilder([only], cc.x, cc.y).id, only.id,
+      `a one-element worker list resolves to that worker whether it is ${busy ? "busy" : "idle"}`);
   }
 });
 

@@ -441,7 +441,7 @@ export function visibleEnemyForceCount(state, owner = "ai") {
 // Enemy combat units `owner` can currently SEE within `radius` of (x, y) — the live opposition at
 // a fight. Zero against an undefended base, which is what makes the retreat safe for the
 // resolves-to-a-winner guarantee.
-function visibleEnemyCombatNear(state, owner, x, y, radius) {
+export function visibleEnemyCombatNear(state, owner, x, y, radius) {
   let n = 0;
   for (const u of visibleEnemyCombatUnits(state, owner)) {
     if (Math.hypot(u.x - x, u.y - y) <= radius) n++;
@@ -465,7 +465,7 @@ export function visibleThreatsNearHome(state, owner = "ai") {
   return threats;
 }
 
-function threatCentroid(threats) {
+export function threatCentroid(threats) {
   let x = 0, y = 0;
   for (const t of threats) { x += t.x; y += t.y; }
   return { x: x / threats.length, y: y / threats.length };
@@ -478,7 +478,15 @@ function threatCentroid(threats) {
 // all-in archetype with garrison:0 (nobody held back, but the order is exactly
 // as load-bearing for a PARTIAL commit as it is when garrison > 0): sort first,
 // then drop the closest `garrison` (zero is a no-op slice, not a skip).
-function withoutHomeGuard(homeArmy, cc, garrison) {
+
+// Exported for direct unit testing. engine/ai.js has ONE export (runAI) and aiContext is private,
+// so every phase test had to stage a whole match — which is the direct cause of two gaps this
+// review found: commit ac44339's army-cap feature shipped with no test at all, and garrisonSlots'
+// corrective branch had never executed under npm test. These helpers are pure arithmetic over
+// plain arguments; exporting them (rather than moving them to a testability-only leaf module,
+// which would need imports back into the phase that owns them) is the smallest change that makes
+// that arithmetic reachable without a staged game.
+export function withoutHomeGuard(homeArmy, cc, garrison) {
   if (homeArmy.length <= garrison) return [];
   if (!cc) return homeArmy.slice();   // nothing to measure distance from — can't sort, return everyone
   const byDistHome = homeArmy.slice().sort((a, b) =>
@@ -494,7 +502,7 @@ function withoutHomeGuard(homeArmy, cc, garrison) {
 // creation), and no amount of fog-of-war nuance changes that a wave sent there fights nobody.
 // `owner` defaults to "player" (the caller always means "the OTHER side", and every pre-existing
 // call site is aiOffense's Odyssey branch checking the human player).
-function playerHasPresence(state, owner = "player") {
+export function playerHasPresence(state, owner = "player") {
   return playerUnits(state, owner).length > 0 || playerBuildings(state, owner).length > 0;
 }
 
@@ -514,7 +522,7 @@ const RAID_EVERY = 3;   // every Nth Tactical wave goes for the economy instead 
 // wave onto the worker line to cripple production rather than grinding the defended main base.
 // Null when no worker is in sight — nothing to raid, so the caller falls back to the ordinary base
 // assault. `owner` defaults to "ai" so the pre-existing (single-owner) call site is unaffected.
-function raidTarget(state, owner = "ai") {
+export function raidTarget(state, owner = "ai") {
   const enemyOwner = otherOwner(owner);
   const fog = state.fogs[owner];
   const from = state.map.bases[owner];
@@ -595,7 +603,7 @@ export function pickNextUnitType(state, archetype, owner = "ai") {
 // test/balance.test.js turret-line proof), overriding the unit-type counter above —
 // prefersBuildings targeting and its 150 range (outranging the turret's 130) do the rest once it's
 // queued. `owner` defaults to "ai" so the pre-existing (single-owner) call site is unaffected.
-function counterToPlayerArmy(state, owner = "ai") {
+export function counterToPlayerArmy(state, owner = "ai") {
   const enemyOwner = otherOwner(owner);
   const fog = state.fogs[owner];
   const counts = {};
