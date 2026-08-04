@@ -4,7 +4,7 @@ import { createGameState, makeUnit } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
 import { issuePatrol } from "../engine/commands.js";
-import { serializeGame, deserializeGame, serializeGalaxy } from "../engine/persist.js";
+import { serializeGame, deserializeGame, serializeGalaxy, SAVE_VERSION, GALAXY_SAVE_VERSION } from "../engine/persist.js";
 import { createGalaxy, stepGalaxy } from "../engine/galaxy.js";
 import { sideMod, PLANET_MODIFIERS } from "../engine/map.js";
 
@@ -272,4 +272,38 @@ test("every field on a live Galaxy is either persisted or on the documented tran
     .filter(k => !((WIRE_ALIAS[k] || k) in payload) && !TRANSIENT_GALAXY.has(k));
   assert.deepEqual(missing, [],
     "Galaxy field(s) neither saved nor declared transient:\n" + missing.join("\n"));
+});
+
+/* ---- T3: the two save versions gate ONE shared per-planet shape ------------------------------
+   gamePayload stamps `v: SAVE_VERSION`, galaxyPayload stamps `v: GALAXY_SAVE_VERSION`, and the
+   galaxy embeds `...serPlanet(state)` per planet with NO per-planet `v`. So an incompatible change
+   to the SHARED shape needs both numbers bumped, and nothing said so: bump only SAVE_VERSION and an
+   Odyssey save passes its own version gate and then feeds stale-shaped planet payloads into
+   rehydratePlanet — the precise failure the exact-match gate exists to prevent (CONTRIBUTING §3).
+   These two guards make that coupling executable. Delete the second one only when the galaxy
+   payload starts stamping its own per-planet version. */
+
+test("the galaxy's per-planet payload has the same shape as a skirmish save's (T3)", () => {
+  const st = createGameState({ planetId: "ferros", seed: 88, rng: mulberry32(88) });
+  const g = createGalaxy({ seed: 88 });
+  const skirmish = serializeGame(st);
+  const planet = serializeGalaxy(g).planets[0];
+
+  // The skirmish payload adds the two whole-save fields; the galaxy planet adds its own per-world
+  // layers. Everything else is serPlanet's shared output and must match key-for-key.
+  const SKIRMISH_ONLY = new Set(["v", "nextEntityId"]);
+  const GALAXY_ONLY = new Set(["background", "market", "diplomacy"]);
+  const a = Object.keys(skirmish).filter(k => !SKIRMISH_ONLY.has(k)).sort();
+  const b = Object.keys(planet).filter(k => !GALAXY_ONLY.has(k)).sort();
+  assert.deepEqual(b, a,
+    "the shared per-planet payload drifted between the two savers — serPlanet feeds both, so a " +
+    "field added to one path and not the other means one of them silently stops round-tripping");
+});
+
+test("GALAXY_SAVE_VERSION must be bumped alongside SAVE_VERSION while serPlanet is shared (T3)", () => {
+  assert.equal(GALAXY_SAVE_VERSION, SAVE_VERSION,
+    "these two gate the SAME per-planet shape (galaxyPayload embeds serPlanet with no per-planet " +
+    "`v`), so bumping one without the other lets an Odyssey save pass its version check and then " +
+    "feed stale-shaped planets into rehydratePlanet. Delete this assertion only when the galaxy " +
+    "payload stamps its own per-planet version.");
 });

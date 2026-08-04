@@ -873,3 +873,22 @@ test("a Torpedo Battery's ammo larder survives a save/load round trip, and an ov
     "an over-cap ammo value is clamped to the battery's own per-commodity slice, same as any other input buffer");
   assert.equal(reloaded2.input.bogus_commodity, undefined, "an unrecognised commodity key is dropped, same as any other input buffer");
 });
+
+test("a haul/service/ferry order with an unrecognised phase is dropped, not left to wedge the unit (T3)", () => {
+  // Each machine is a chain of `if (order.phase === …)`. A phase string matching none of them falls
+  // straight through, so the unit keeps its order and does nothing, every tick, forever.
+  // engine/persist.js sanitizes order COORDS but not order.type or order.phase, so a corrupt save is
+  // enough. engine/sim.js already handles exactly this one level up, for order TYPES: "Any order
+  // type this non-combat/non-support unit can't act on … is dropped rather than left to stick
+  // forever and wedge the unit's whole order queue." The same principle now applies to phases.
+  for (const type of ["haul", "service", "ferry"]) {
+    const { s, cc, workers } = base(4);
+    const rig = plantGenerator(s, cc, "plasmarig");
+    rig.store = { plasmatorp: 50 };
+    const w = workers[0];
+    w.order = { type, phase: "bogus", buildingId: rig.id };
+    for (let i = 0; i < 20; i++) tick(s, 0.1);
+    assert.equal(w.order, null,
+      `a ${type} order with an unknown phase must be dropped rather than wedging the unit forever`);
+  }
+});

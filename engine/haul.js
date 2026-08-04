@@ -378,6 +378,38 @@ export function assignFerry(state, unit) {
   unit.order = { type: "ferry", freighterId: best.id, buildingId: src.id, phase: "toSource" };
 }
 
+// The "walk to the treasury, then act" leg, shared by the four phase machines below. It appeared
+// five times, byte-for-byte apart from what happens on arrival — and that repetition is what let a
+// behavioural divergence (which drop each machine banks at) and two unreachable branches sit
+// unnoticed between the copies. Returns false when there is no Command Center at all, so the caller
+// decides whether that means "drop the job" or "hold position and retry", which is the one thing
+// the five copies genuinely disagreed about on purpose.
+/**
+ * @param {State} state @param {Unit} unit @param {Object} def @param {number} dt
+ * @param {(cc: Building) => void} onArrive
+ * @returns {boolean} false ⇒ no Command Center exists; the caller handles that case
+ */
+function walkToCommandCenter(state, unit, def, dt, onArrive) {
+  const cc = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
+  if (!cc) return false;
+  if (reached(unit, cc)) onArrive(cc);
+  else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
+  return true;
+}
+
+// The phase vocabulary of each state machine below. A phase string matching NONE of a machine's
+// `if (order.phase === …)` branches used to fall straight through, leaving the unit holding the
+// order and doing nothing, every tick, forever — and engine/persist.js sanitizes an order's coords
+// but not its type or phase, so a corrupt save is enough to produce one. engine/sim.js already
+// handles exactly this one level up, for order TYPES ("dropped rather than left to stick forever
+// and wedge the unit's whole order queue"); these make the same guarantee one level down. Listed
+// explicitly rather than inferred, so adding a phase is a deliberate edit rather than a silent
+// fall-through.
+const HAUL_PHASES = new Set(["toSource", "loading", "toDrop"]);
+const SERVICE_PHASES = new Set(["plan", "toCC", "toBuilding", "toReturn"]);
+const FERRY_PHASES = new Set(["plan", "toSource", "toFreighter", "toPickup", "toReturn"]);
+const FREIGHTERSHUTTLE_PHASES = new Set(["toCC", "toAnchor"]);
+
 /**
  * Advance a HAUL job: walk to the producer → load a cargo → carry it to its own Command Center,
  * exactly like a raw gatherer already picks (gather.js nearestGatherDrop) — and bank it there (1:1
@@ -425,6 +457,8 @@ export function updateHaul(state, unit, dt) {
       if (!order.phase) unit.order = null;
     } else stepToward(state, unit, drop.x, drop.y, def.speed, dt);
   }
+  // Unknown phase (a corrupt save, a removed branch): drop the order rather than wedge the unit.
+  if (unit.order === order && !HAUL_PHASES.has(order.phase)) unit.order = null;
 }
 
 // Bank a worker's whole cargo into the owner's treasury (1:1) and empty it.
@@ -482,13 +516,12 @@ export function updateService(state, unit, dt) {
   }
 
   if (order.phase === "toCC") {                                                // load an input at the treasury
-    const cc = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
-    if (!cc) { unit.order = null; return; }
-    if (reached(unit, cc)) {
+    const ok = walkToCommandCenter(state, unit, def, dt, () => {
       const want = Math.min(tripCapacity(def), res[order.com] || 0, inputRoom(b, order.com));
       if (want > 0) { res[order.com] -= want; cargo.com = order.com; cargo.qty = want; order.phase = "toBuilding"; }
       else order.phase = "plan";                                              // treasury dried up → re-plan
-    } else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
+    });
+    if (!ok) unit.order = null;
     return;
   }
 
@@ -506,15 +539,25 @@ export function updateService(state, unit, dt) {
     return;
   }
 
+  // BANKING ASYMMETRY, DELIBERATE. updateHaul banks through nearestGatherDrop, so a gatherer's load
+  // can land in a collection-point freighter parked near the seam; service and ferry returns bank at
+  // the Command Center and will walk past such a ship. That is the intended split, not an oversight:
+  // a collection point is a GATHERING depot (issueSetCollectPoint anchors a freighter to catch
+  // mining output, and assignShuttle exists to run it home in bulk). Routing factory output and
+  // leftover ferry cargo through it would consume the hold the gather flow needs, add a second hop
+  // for goods usually already near the base, and move every multi-base Odyssey replay — for a
+  // convenience gain nobody has asked for. Recorded here so it reads as a decision rather than an
+  // accident of four separately-written machines.
   if (order.phase === "toReturn") {                                            // bank the output at the treasury
-    const cc = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
-    if (!cc) { unit.order = null; return; }
-    if (reached(unit, cc)) {
+    const ok = walkToCommandCenter(state, unit, def, dt, () => {
       bankCargo(state, unit);
       order.phase = endOrLoop(order);
       if (order.phase === null) unit.order = null;
-    } else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
+    });
+    if (!ok) { unit.order = null; return; }
   }
+  // Unknown phase (a corrupt save, a removed branch): drop the order rather than wedge the unit.
+  if (unit.order === order && !SERVICE_PHASES.has(order.phase)) unit.order = null;
 }
 
 // A manually-assigned worker loops (re-plans) forever; an auto one finishes its cycle and idles.
@@ -584,15 +627,17 @@ export function updateFerry(state, unit, dt) {
     return;
   }
 
+  // NOTE `f` is non-null here by construction: the top-of-function block above forces the phase to
+  // "toReturn" (or clears the order outright) whenever the freighter is gone, so neither this branch
+  // nor toPickup below can be entered without one. Two `if (!f)` re-checks used to sit here and were
+  // unreachable — the kind of dead branch four near-identical phase machines accumulate.
   if (order.phase === "toFreighter") {                                    // deliver the load into the freighter's hold
-    if (!f) { order.phase = "plan"; return; }
     if (reached(unit, f)) { depositToFreighter(f, unit); order.phase = "plan"; }
     else stepToward(state, unit, f.x, f.y, def.speed, dt);
     return;
   }
 
   if (order.phase === "toPickup") {                                       // draw some of the freighter's hold
-    if (!f) { order.phase = "plan"; return; }
     if (reached(unit, f)) {
       loadFrom(f.freight, unit, tripCapacity(def));
       order.phase = (unit.cargo && unit.cargo.qty > 0) ? "toReturn" : "plan";
@@ -601,13 +646,14 @@ export function updateFerry(state, unit, dt) {
   }
 
   if (order.phase === "toReturn") {                                       // bank it at the treasury
-    const cc = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
-    if (!cc) { unit.order = null; return; }
-    if (reached(unit, cc)) {
+    const ok = walkToCommandCenter(state, unit, def, dt, () => {
       bankCargo(state, unit);
       order.phase = "plan";
-    } else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
+    });
+    if (!ok) { unit.order = null; return; }
   }
+  // Unknown phase (a corrupt save, a removed branch): drop the order rather than wedge the unit.
+  if (unit.order === order && !FERRY_PHASES.has(order.phase)) unit.order = null;
 }
 
 // Bank a freighter's WHOLE freight hold into the owner's treasury (1:1, every commodity aboard)
@@ -664,10 +710,10 @@ export function updateFreighterShuttle(state, unit, dt) {
   const order = unit.order;
 
   if (order.phase === "toCC") {
-    const cc = nearestCommandCenter(state, unit.owner, unit.x, unit.y);
-    if (!cc) return;   // no CC to deliver to — hold position and cargo, retry next tick
-    if (reached(unit, cc)) { bankFreight(state, unit); order.phase = "toAnchor"; }
-    else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
+    // Unlike the three above, a shuttle with no Command Center HOLDS (position and cargo) and
+    // retries next tick rather than dropping the job — the one case the five copies disagreed on
+    // deliberately, which is why walkToCommandCenter reports it instead of deciding it.
+    walkToCommandCenter(state, unit, def, dt, () => { bankFreight(state, unit); order.phase = "toAnchor"; });
     return;
   }
 
@@ -676,4 +722,6 @@ export function updateFreighterShuttle(state, unit, dt) {
     if (!a || Math.hypot(a.x - unit.x, a.y - unit.y) <= REACH) { unit.order = null; return; }
     stepToward(state, unit, a.x, a.y, def.speed, dt);
   }
+  // Unknown phase (a corrupt save, a removed branch): drop the order rather than wedge the unit.
+  if (unit.order === order && !FREIGHTERSHUTTLE_PHASES.has(order.phase)) unit.order = null;
 }
