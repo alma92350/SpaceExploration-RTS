@@ -1682,3 +1682,27 @@ test("a splash kill's entityKilled event also carries unitType/kind", () => {
   assert.equal(splashKill.unitType, "skiff");
   assert.equal(splashKill.kind, "unit");
 });
+
+test("a plain move order clears a stale auto-acquired target — a retreating unit is not still in combat mode (A13)", () => {
+  // updateCombat returns before the acquisition block on a plain move, and combat.js:57 is the ONLY
+  // place in the whole engine that writes autoTarget — so the field was unreachable-for-clearing for
+  // the entire duration of a move. separation.js's isCombatMode reads it as a combat-mode register,
+  // directly contradicting its own doc comment two lines above ("Deliberately NOT combat mode for a
+  // plain 'move' order… a stale autoTarget reads as still-combat-mode for ONE TICK too long —
+  // harmless"). Pulling a unit out of a fight with Move is the documented way to disengage, so
+  // retreating units used the tight combat packing forever instead of the padded idle spacing.
+  const s = createGameState({ planetId: "ferros", seed: 21 });
+  s.units.clear();
+  const mine = makeUnit("skiff", "player", 700, 500);
+  const foe = makeUnit("skiff", "ai", 720, 500);
+  s.units.set(mine.id, mine);
+  s.units.set(foe.id, foe);
+
+  updateCombat(s, mine, 0.1);
+  assert.equal(mine.autoTarget, foe.id, "fixture sanity: it auto-acquired the enemy");
+
+  mine.order = { type: "move", x: 200, y: 200 };
+  updateCombat(s, mine, 0.1);
+  assert.equal(mine.autoTarget, null,
+    "a plain move order must clear the stale target rather than leaving the unit flagged combat-mode");
+});

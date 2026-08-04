@@ -30,6 +30,14 @@ export function updateCombat(state, unit, dt) {
   unit.attackTimer = Math.max(0, unit.attackTimer - dt);
 
   if (unit.order && unit.order.type === "move") {
+    // Clear the auto-acquired target on the way out. This block returns BEFORE the acquisition
+    // code below, and that code is the only place in the engine that ever writes autoTarget — so
+    // the field was unreachable-for-clearing for the whole duration of a move. separation.js's
+    // isCombatMode reads it, which made a unit pulled out of a fight with Move (the documented way
+    // to disengage) keep the tight combat packing forever instead of the padded idle spacing
+    // SEPARATION_PAD_MULT exists to give it — contradicting isCombatMode's own comment, which
+    // claims a stale autoTarget only reads as combat-mode "for one tick too long".
+    unit.autoTarget = null;
     const arrived = stepToward(state, unit, unit.order.x, unit.order.y, orderedSpeed(def.speed, unit.order), dt);
     if (arrived) unit.order = null;
     return;
