@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    AI STRATEGY — a player-picked overlay, orthogonal to the archetype
    (engine/aiArchetypes.js). The archetype comes from the world/opponent and
@@ -126,6 +127,7 @@ export const STRATEGIES = {
  * to read state.playerAi.strategy instead, its own independently-picked overlay; deliberately NOT
  * an import of engine/aiCommon.js's controllerFor, so this file stays the pure, import-free leaf
  * its header describes. */
+/** @param {State} state @param {string} [owner] @returns {Strategy} */
 export function strategyFor(state, owner = "ai") {
   const controller = owner === "ai" ? state.ai : state.playerAi;
   return (controller && STRATEGIES[controller.strategy]) || STRATEGIES.default;

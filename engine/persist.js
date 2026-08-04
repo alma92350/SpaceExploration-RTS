@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Save / load. Because the sim is deterministic and seed-driven (see
    engine/rng.js), a save doesn't need the whole world — the map (terrain,
@@ -55,6 +56,7 @@ const MAX_SAVE_NODES = 600000;   // total values — a whole galaxy is well unde
 const MAX_SAVE_DEPTH = 200;
 const MAX_STRING_LEN = 4096;
 
+/** Structural gate over untrusted save data. @param {*} input @returns {Object} */
 export function sanitizeSave(input) {
   if (input === null || typeof input !== "object" || Array.isArray(input))
     throw new Error("save is not a valid object");
@@ -685,9 +687,12 @@ function rehydratePlanet(P) {
 // STRING directly. autoSave (the 12 s hot path) uses the string, so it stringifies ONCE instead
 // of stringify→parse→stringify — the fog arrays are large, and the two extra passes were waste.
 function gamePayload(state) { return { v: SAVE_VERSION, nextEntityId: peekEntityId(), ...serPlanet(state) }; }
+/** @param {State} state @returns {Object} */
 export function serializeGame(state) { return JSON.parse(JSON.stringify(gamePayload(state))); }
+/** @param {State} state @returns {string} */
 export function serializeGameString(state) { return JSON.stringify(gamePayload(state)); }
 
+/** @param {*} input @returns {State} */
 export function deserializeGame(input) {
   sanitizeSave(input);                              // reject unsafe/oversized payloads before anything else
   const save = JSON.parse(JSON.stringify(input));   // detach + normalise
@@ -733,9 +738,12 @@ function galaxyPayload(galaxy) {
 }
 // Detached object (serializeGalaxy) vs the JSON string (serializeGalaxyString) — see the
 // serializeGame note; autoSave uses the string to stringify the fog-heavy galaxy just once.
+/** @param {Galaxy} galaxy @returns {Object} */
 export function serializeGalaxy(galaxy) { return JSON.parse(JSON.stringify(galaxyPayload(galaxy))); }
+/** @param {Galaxy} galaxy @returns {string} */
 export function serializeGalaxyString(galaxy) { return JSON.stringify(galaxyPayload(galaxy)); }
 
+/** @param {*} input @returns {Galaxy} */
 export function deserializeGalaxy(input) {
   sanitizeSave(input);                              // reject unsafe/oversized payloads before anything else
   const save = JSON.parse(JSON.stringify(input));
@@ -787,6 +795,11 @@ export function deserializeGalaxy(input) {
       .filter(e => Array.isArray(e) && known.has(e[0]))
       .map(([id, p]) => [id, sanitizePolicy(p)])),
     laneSeq: num(save.laneSeq, 0),
+    // Declared here, next to laneSeq, so this literal has the same shape createGalaxy's does.
+    // It's REFILLED further down (lanes reference units, so they can only be rebuilt once every
+    // planet is loaded) — but starting from the literal means a Galaxy is never momentarily
+    // missing a field its own typedef requires.
+    lanes: [],
   };
   let maxId = 0;
   for (const P of save.planets) {
@@ -828,7 +841,7 @@ export function deserializeGalaxy(input) {
   // ship that got dropped by load-time entity coercion) is silently trimmed, exactly like
   // runLanes' own per-cycle validation does at runtime — this is just that same check run once at
   // load instead of waiting for the next scheduled lane tick.
-  galaxy.lanes = [];
+  galaxy.lanes.length = 0;
   for (const rl of (Array.isArray(save.lanes) ? save.lanes : [])) {
     if (!rl || typeof rl !== "object" || !known.has(rl.from) || !known.has(rl.to)) continue;
     const from = galaxy.planets.get(rl.from);

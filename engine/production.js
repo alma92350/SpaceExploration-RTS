@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Building construction progress and unit production queues.
    ============================================================ */
@@ -29,6 +30,7 @@ function countBuilders(state, building) {
   return n;
 }
 
+/** @param {State} state @param {Building} building @param {number} dt @returns {void} */
 export function updateBuildingConstruction(state, building, dt) {
   if (!building.constructing) return;
   const def = BUILDINGS[building.type];
@@ -65,6 +67,7 @@ export function updateBuildingConstruction(state, building, dt) {
   }
 }
 
+/** @param {State} state @param {Building} building @param {number} dt @returns {void} */
 export function updateProductionQueue(state, building, dt) {
   if (building.constructing || building.queue.length === 0) return;
   const job = building.queue[0];
@@ -111,6 +114,7 @@ export function updateProductionQueue(state, building, dt) {
   }
 }
 
+/** @param {State} state @param {string} buildingId @param {string} unitType @param {boolean} [alt] @returns {boolean} */
 export function queueProduction(state, buildingId, unitType, alt = false) {
   const building = state.buildings.get(buildingId);
   if (!building || building.constructing) return false;
@@ -156,6 +160,7 @@ export function queueProduction(state, buildingId, unitType, alt = false) {
 // beyond the ore itself (a part-built unit doesn't exist as an entity,
 // unlike a part-built building, so there's no partial-progress asset to
 // account for).
+/** @param {State} state @param {string} buildingId @param {number} queueIndex @returns {boolean} */
 export function cancelProduction(state, buildingId, queueIndex) {
   const building = state.buildings.get(buildingId);
   if (!building) return false;
@@ -179,6 +184,7 @@ function negate(cost) {
 // updateResearch, which resolves UPGRADES for a Refinery the same way it resolves
 // TECHS for a Datacenter) before it lands in player.upgrades and takes effect live,
 // army- (and base-) wide.
+/** @param {State} state @param {string} buildingId @param {string} upgradeId @returns {boolean} */
 export function researchUpgrade(state, buildingId, upgradeId) {
   const building = state.buildings.get(buildingId);
   if (!building || building.type !== "refinery" || building.constructing) return false;

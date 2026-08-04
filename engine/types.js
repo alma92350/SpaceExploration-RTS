@@ -162,16 +162,19 @@
  * @property {number} maxHp
  * @property {boolean} constructing
  * @property {number} buildProgress
- * @property {Array<{unitType:string, progress:number}>} queue
+ * @property {Array<{unitType:string, progress:number, alt?:boolean}>} queue   `alt` records that the job was charged the unit's altCost, so cancelProduction refunds the commodity actually paid
  * @property {number} attackTimer
  * @property {string|null} targetId
- * @property {{x:number, y:number}} rally
+ * @property {{x:number, y:number, nodeId?:string|null}} rally   rally-to-resource: a rally dropped on a live node carries its id, and a unit produced there spawns already mining (engine/production.js)
  * @property {number} [tier]          Spaceport upgrade tier (engine/galaxy.js)
  * @property {number} [lastLanding]   Spaceport: galaxy.time it last received a jump (engine/galaxy.js landingZone)
  * @property {Array<{techId:string, progress:number}>} [researchQueue]  Datacenter (TECHS) or Refinery (UPGRADES) — engine/techtree.js updateResearch resolves the right table by building.type
  * @property {boolean} [paused]       player-paused factory / rig / Combustion Generator / Reactor (frees its Power, or — for a source — takes it off the grid, engine/industry.js sourceActive)
  * @property {boolean} [electrified]  Odyssey: a non-power building wired into the grid for +30% (engine/industry.js)
  * @property {number} [charge]        wonder charge 0..1 (engine/wonder.js)
+ * @property {boolean} [rivalAscended] per-BUILDING idempotency latch stamped by engine/victory.js
+ *   checkEndlessWin so a finished rival Gate emits its `rivalGateComplete` event once. Distinct
+ *   from galaxy.rivalAscended, which is the campaign-level Set of ascended WORLD ids
  * @property {number} [digProgress]   Plasma Rig dig-cycle progress (engine/rig.js)
  * @property {number} [digCount]      Plasma Rig completed digs (drives the deterministic yield roll)
  * @property {string} [lastTier]      Plasma Rig last strike tier (HUD)

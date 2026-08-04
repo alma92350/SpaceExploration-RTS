@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Shared building-placement validation. Pure queries over state —
    never mutates. issueBuild consults canPlaceBuilding to reject bad
@@ -21,6 +22,7 @@ const RING_STEP = 24;
 const RING_SPOTS = 12;
 const MAX_SEARCH_RADIUS = 200;
 
+/** @param {State} state @param {string} buildingType @param {number} x @param {number} y @returns {boolean} */
 export function canPlaceBuilding(state, buildingType, x, y) {
   const def = BUILDINGS[buildingType];
   if (!def) return false;
@@ -47,6 +49,7 @@ export function canPlaceBuilding(state, buildingType, x, y) {
 // Deterministic outward ring search: the requested spot if valid, else the
 // first valid candidate scanning rings of RING_STEP at RING_SPOTS fixed
 // angles, else null. No rng — same state in, same spot out.
+/** @param {State} state @param {string} buildingType @param {number} x @param {number} y @param {number} [maxRadius] @returns {{x:number,y:number}|null} */
 export function findPlacement(state, buildingType, x, y, maxRadius = MAX_SEARCH_RADIUS) {
   if (canPlaceBuilding(state, buildingType, x, y)) return { x, y };
   for (let radius = RING_STEP; radius <= maxRadius; radius += RING_STEP) {

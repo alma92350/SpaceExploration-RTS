@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 import { UNITS, BUILDINGS } from "./entities.js";
@@ -23,6 +24,7 @@ export const DEFAULT_MATCH_TIME_LIMIT = 2400;   // 40 minutes of sim time
 // standing over state.owners: for the classic player-vs-ai pair this is exactly
 // the old three-branch check (player-only alive ⇒ player wins, ai-only ⇒ ai,
 // neither ⇒ score), byte-identical, and it already reads for N sides.
+/** @param {State} state @returns {void} */
 export function checkWinCondition(state) {
   if (state.over) return;
   const standing = ownersOf(state).filter(o => hasCommandCenter(state, o));
@@ -39,6 +41,7 @@ export function checkWinCondition(state) {
 // Command Center (their capital seat). Razing a neighbour's CC never ends the
 // game; that world simply keeps evolving. Used in place of checkWinCondition
 // for an endless state (see sim.js).
+/** @param {State} state @returns {void} */
 export function checkEndlessLoss(state) {
   if (state.over) return;
   // In a galaxy there is NO defeat at all — the Odyssey plays forever unless you surrender, and a
@@ -68,6 +71,7 @@ export function checkEndlessLoss(state) {
 //   • AI-owned, OUTSIDE a galaxy: never happens (a skirmish AI never builds a wonder at all, and
 //     a bare standalone-endless test fixture has no galaxy to signal into), so this branch is
 //     simply never reached there — nothing to suppress.
+/** @param {State} state @returns {void} */
 export function checkEndlessWin(state) {
   if (state.over) return;
   for (const b of state.buildings.values()) {
@@ -120,6 +124,7 @@ const COMBAT_BONUS = 1.35;     // an army in the field beats an equal-cost econo
 // same "else" bucket playerScore's own loop already puts them in — so bank+army+structures always
 // equals playerScore's own total by construction (playerScore is defined in terms of this below,
 // not the other way around, so the two can never drift apart).
+/** @param {State} state @param {string} owner @returns {Object.<string, number>} */
 export function scoreBreakdown(state, owner) {
   let bank = 0, army = 0, structures = 0;
   const res = state.players[owner].resources;
@@ -138,6 +143,7 @@ export function scoreBreakdown(state, owner) {
 
 // Exported so a HUD could show the score (and now does — hud.js's endgame score bar, and
 // showGameOver's breakdown). Thin wrapper over scoreBreakdown so the two can never disagree.
+/** @param {State} state @param {string} owner @returns {number} */
 export function playerScore(state, owner) {
   return scoreBreakdown(state, owner).total;
 }
