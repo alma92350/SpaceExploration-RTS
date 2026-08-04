@@ -25,6 +25,7 @@ function newId(prefix) { return `${prefix}${nextEntityId++}`; }
 
 // Save/load (engine/persist.js) needs to snapshot and restore the id counter so a
 // loaded game keeps minting fresh, non-colliding ids from where it left off.
+/** @returns {number} */
 export function peekEntityId() { return nextEntityId; }
 /** @param {number} n */
 export function restoreEntityId(n) { nextEntityId = n; }

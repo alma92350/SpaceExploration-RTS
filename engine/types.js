@@ -56,6 +56,10 @@
  * @property {number} [offsetY]
  * @property {Unit} [leader]      follow-leader: the formation leader this unit is chasing (engine/movement.js keepFollowingLeader) — a live object reference, NEVER persisted (engine/persist.js drops a follow-leader order entirely on save)
  * @property {number} [speedCap]  move/attack-move/hold-formation/scout: a formation leader's travel speed, capped to its slowest member (engine/movement.js orderedSpeed)
+ * @property {number} [tx]        scout: the current leg's destination (engine/scout.js updateScoutMode) — distinct from x/y, which a scout order doesn't use
+ * @property {number} [ty]
+ * @property {boolean} [explore]  scout: this leg is heading for genuinely unexplored ground (vs. a patrol circuit leg)
+ * @property {number} [patrol]    scout: index into scout.js's PATROL circuit, once nothing is left to discover. NOTE the collision: engine/commands.js issuePatrol stamps `patrol: true` as a boolean "requeue me" flag that engine/sim.js reads off orderQueue. Latent today only because issueScout never queues; see docs/code-improvement-tiers.md
  */
 
 /**
@@ -69,6 +73,10 @@
  * @property {number} [armyAttackSize]
  * @property {string} [faction]
  * @property {Object} [odyssey]
+ * @property {number} [turretCount]     how much static defense this temperament wants (engine/aiEconomy.js)
+ * @property {number} [maxBarracks]     cap on production buildings (engine/aiEconomy.js)
+ * @property {number} [garrison]        home guard held back from a push (engine/aiMilitary.js withoutHomeGuard)
+ * @property {boolean} [wantsRefinery]  patient enough to bank for a Refinery and research its doctrine (engine/aiEconomy.js)
  */
 
 /**
@@ -221,6 +229,8 @@
  * @property {{x:number, y:number}|null} colonyTarget
  * @property {number|null} apm
  * @property {boolean} micro
+ * @property {string} strategy     player-picked AI strategy (engine/aiStrategy.js), read via strategyFor(state, owner) — "default" ⇒ byte-identical to the pre-strategy behavior
+ * @property {number|null} lastThreatAt   sim-time of the last threat seen near home; drives the Economic strategy's war-footing window (engine/ai.js)
  * @property {string} difficulty   splash-screen Easy/Medium/Hard pick (engine/aiDifficulty.js), read via difficultyFor(state)
  * @property {number} actionBudget
  * @property {number} attackForce
@@ -270,7 +280,11 @@
  * @property {number} stance
  * @property {number} [depletion]
  * @property {number} [tributes]
- * @property {number} [lastAiUnits]
+ * @property {number|null} [provokedAt]   sim-time the neighbour was last provoked (engine/diplomacy.js)
+ * @property {number} [goodwill]          accumulated gifts/favors credit (engine/diplomacy.js)
+ * @property {*} [request]                the neighbour's pending favor request, or null (engine/diplomacy.js)
+ * @property {number} [lastFavorBucket]   which favor bucket was last offered; -1 ⇒ none yet
+ * @property {number} [lastAiUnits]  attached post-construction by engine/diplomacy.js, not by createDiplomacy
  * @property {boolean} [pacified] Domination with teeth: stamped by engine/galaxy.js checkDomination
  *   when this world is razed — floors the drift target at APPEASE_FLOOR (Neutral) permanently
  * @property {number} [factionEchoUntil] Faction memory (grievance direction): state.time deadline
@@ -295,6 +309,7 @@
  * @property {number} resourceMult
  * @property {boolean} swapAsym   which side plays which half of an asymmetric world's matchup (engine/map.js) — default false
  * @property {number|null} [matchTimeLimit]  a skirmish's Quick/Standard/Marathon override of DEFAULT_MATCH_TIME_LIMIT (engine/victory.js), from setup.js's Match length row — null/unset ⇒ the 40-minute default
+ * @property {number|null} popCap   per-side supply cap from setup.js's population row; null ⇒ the engine default (engine/supply.js)
  * @property {boolean} endless
  * @property {GameMap} map
  * @property {string[]} owners   the world's side ids in iteration order (["player","ai"]) — drives the owner-generic scaffold
@@ -306,6 +321,8 @@
  * @property {Fog} fog
  * @property {Fog} fogAI
  * @property {AiState} ai
+ * @property {AiState|null} playerAi   the SECOND AI controller, driving owner "player" in self-play
+ *   (tools/selfplay.js). null in a normal game; populated after createGameState, never by it
  * @property {Array<Object>} events
  * @property {Array<{id:string, x:number, y:number, owner:string, spawnAt:number}>} craters
  *   pending Helium Bomb craters awaiting maturity into a real ResourceNode (engine/bomb.js)
@@ -367,6 +384,18 @@
  * @property {number} [aiApm]
  * @property {boolean} [aiMicro]
  * @property {string} [aiStrategy]
+ * @property {string} [startId]        which world was actually landed on — the player's pick, or the seed's own draw
+ * @property {number|null} [popCap]    per-side supply cap carried onto every world this galaxy generates
+ */
+
+/**
+ * A standing shipping route between two held worlds (engine/galaxy.js createLane/runLanes).
+ * @typedef {Object} Lane
+ * @property {string} id
+ * @property {string} from
+ * @property {string} to
+ * @property {string[]} commodities
+ * @property {string[]} shipIds   the freighters assigned to fly it; deduplicated by assignShipToLane
  */
 
 /**
@@ -392,4 +421,11 @@
  * @property {Set<string>} discovered
  * @property {Map<string, string>} claims
  * @property {Object[]} expansionNotes transient UI queue — freshly-claimed/expanded worlds awaiting a toast; re-derived on load, never persisted
+ * @property {Lane[]} lanes          Freight Lanes: standing shipping routes between held worlds (runLanes)
+ * @property {number} laneSeq        fresh lane-id counter; must be lifted past every lane id a save carries
+ * @property {Map<string, Object>} [colonyPolicies] per-world colony standing orders (engine/colonyPolicy.js)
+ * @property {Object|null} [rivalGate]     the neighbour Gate currently being tracked, or null (checkRivalGate)
+ * @property {Set<string>} [rivalAscended] worlds whose Gate has completed — the idempotency latch that
+ *   keeps the permanent stance ceiling applied. Created lazily by checkRivalGate
+ * @property {Object[]} [rivalGateNotes]   transient UI queue of rival-Gate events; created lazily
  */

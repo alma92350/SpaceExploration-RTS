@@ -63,7 +63,8 @@ function defOf(entity) {
   return entity.kind === "building" ? BUILDINGS[entity.type] : UNITS[entity.type];
 }
 
-/** The fraction (0.4-0.8) of `entity`'s cost recycling it refunds right now, for its owner. */
+/** The fraction (0.4-0.8) of `entity`'s cost recycling it refunds right now, for its owner.
+ * @param {State} state @param {string} owner @param {Unit|Building} entity @returns {number} */
 export function recycleFrac(state, owner, entity) {
   const def = defOf(entity);
   if (!def) return 0;
@@ -75,6 +76,7 @@ export function recycleFrac(state, owner, entity) {
 
 // A Command Center can't be recycled — scrapping your only (or, mid-Odyssey, any) base for parts
 // is a footgun with no play value, unlike everything else, which is a real, rebuildable choice.
+/** @param {Unit|Building} entity @returns {boolean} */
 export function canRecycle(entity) {
   const def = defOf(entity);
   if (!def || entity.recycling) return false;
@@ -85,6 +87,7 @@ export function canRecycle(entity) {
 // Start recycling `entity` in place. Pure state mutation — engine/commands.js's issueRecycle
 // checks ownership/canRecycle and handles the unit-order-dispatch side (squad release, clearing
 // Hold) before calling this.
+/** @param {Unit|Building} entity @returns {void} */
 export function beginRecycle(entity) {
   const def = defOf(entity);
   const time = Math.max(MIN_RECYCLE_TIME, (def.buildTime || 0) * RECYCLE_TIME_FRAC);
@@ -94,6 +97,7 @@ export function beginRecycle(entity) {
 
 // Cancel an in-progress recycle — free: the target was never disabled beyond refusing new orders
 // (a building) or acting at all (a unit), so this just drops the timer, no partial refund.
+/** @param {Unit|Building} entity @returns {void} */
 export function cancelRecycle(entity) {
   entity.recycling = null;
   if (entity.kind === "unit" && entity.order?.type === "recycle") entity.order = null;
@@ -107,19 +111,25 @@ export function cancelRecycle(entity) {
 // on building it, so recycling recovers all of it rather than letting it vanish with the
 // structure. The single source of truth for both the actual bank (below) and the HUD's refund
 // preview (hudSelection.js), so the two can never drift apart.
+/** @param {State} state @param {Unit|Building} entity @returns {Resources} */
 export function recycleValue(state, entity) {
   const def = defOf(entity);
-  const out = {};
+  const out = /** @type {Resources} */ ({});
   const add = (com, qty) => { if (com && qty > 0) out[com] = (out[com] || 0) + qty; };
   if (def?.cost) {
     const frac = recycleFrac(state, entity.owner, entity);
     for (const [com, qty] of Object.entries(def.cost)) add(com, qty * frac);
   }
   const addBuffer = buf => { if (buf) for (const com in buf) add(com, buf[com] || 0); };
-  addBuffer(entity.store);
-  addBuffer(entity.input);
-  addBuffer(entity.freight);
-  if (entity.cargo) add(entity.cargo.com, entity.cargo.qty || 0);
+  // Probe all four inventory buffers off ONE widened reference rather than narrowing by
+  // entity.kind: a Building carries store/input, a Unit carries freight/cargo, and addBuffer
+  // ignores whichever are absent. Keeping it a single unconditional pass means a future entity
+  // type that carries both still refunds both — narrowing by kind would silently skip one.
+  const inv = /** @type {{store?: Resources, input?: Resources, freight?: Resources, cargo?: Cargo}} */ (entity);
+  addBuffer(inv.store);
+  addBuffer(inv.input);
+  addBuffer(inv.freight);
+  if (inv.cargo) add(inv.cargo.com, inv.cargo.qty || 0);
   return out;
 }
 
@@ -129,7 +139,8 @@ function grantRecycleValue(state, entity) {
 }
 
 /** Advance a recycling BUILDING by dt — called from sim.js's per-building loop. A no-op unless
- * it's actually recycling; removes + refunds it once the timer completes. */
+ * it's actually recycling; removes + refunds it once the timer completes.
+ * @param {State} state @param {Building} building @param {number} dt @returns {void} */
 export function updateBuildingRecycle(state, building, dt) {
   if (!building.recycling) return;
   building.recycling.progress += dt / building.recycling.time;
@@ -142,7 +153,8 @@ export function updateBuildingRecycle(state, building, dt) {
 
 /** Advance a recycling UNIT by dt. Called early from sim.js's updateUnit, same convention as
  * updateBombFuse: returns true whenever the unit is mid-recycle (so the caller skips every other
- * per-tick behaviour — movement, combat, gather, haul — for it this tick), false otherwise. */
+ * per-tick behaviour — movement, combat, gather, haul — for it this tick), false otherwise.
+ * @param {State} state @param {Unit} unit @param {number} dt @returns {boolean} */
 export function updateUnitRecycle(state, unit, dt) {
   if (!unit.recycling) return false;
   unit.recycling.progress += dt / unit.recycling.time;

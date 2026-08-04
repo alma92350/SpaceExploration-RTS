@@ -118,7 +118,8 @@ function priorityWeight(b) {
 // tunable tax on the same scarce strategic good the AI Foundry cultivates, not a token cost.
 const AI_UPKEEP_PER_CAPACITY_PER_SEC = 1 / 2500;
 
-/** AI Cores/sec an autonomous freighter burns while actively working a haul/service job. */
+/** AI Cores/sec an autonomous freighter burns while actively working a haul/service job.
+ * @param {Unit} unit @returns {number} */
 export function aiUpkeepRate(unit) {
   return (UNITS[unit.type]?.cargoHold || 0) * AI_UPKEEP_PER_CAPACITY_PER_SEC;
 }

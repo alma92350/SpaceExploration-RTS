@@ -1,5 +1,5 @@
 {
-  "//": "Editor + `npm run typecheck` config. NOT a build step — nothing is emitted (noEmit) and the shipped code stays plain ES modules. checkJs is off, so ONLY files that opt in with a `// @ts-check` pragma are error-checked; this lets type coverage grow file-by-file. The shared shapes live in engine/types.js.",
+  "//": "Editor + `npm run typecheck` config. NOT a build step — nothing is emitted (noEmit) and the shipped code stays plain ES modules. checkJs is off, so ONLY files that opt in with a `// @ts-check` pragma are error-checked; this lets type coverage grow file-by-file. The shared shapes live in engine/types.js. NOTE: the pragma alone buys nothing while strict/noImplicitAny are off — an un-annotated param is `any`, so a file must annotate its exports with the shared typedefs to actually be checked (test/types-contract.test.js enforces that). tools/ is in the program so the ailab/selfplay benches can opt in too.",
   "compilerOptions": {
     "checkJs": false,
     "allowJs": true,
@@ -13,6 +13,6 @@
     "forceConsistentCasingInFileNames": true,
     "lib": ["ESNext", "DOM", "DOM.Iterable"]
   },
-  "include": ["*.js", "engine/**/*.js"],
+  "include": ["*.js", "engine/**/*.js", "tools/**/*.js"],
   "exclude": ["node_modules", "test"]
 }
