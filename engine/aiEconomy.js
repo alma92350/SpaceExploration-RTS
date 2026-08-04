@@ -248,7 +248,7 @@ export function aiBaseAndTech(state, ctx) {
   // override) that now PLANS to field a Lancer also builds the Foundry that unlocks it, not just
   // the factory chain aiIndustry.js separately climbs (docs/improvement-proposals.md "Graduation
   // reaches the army"). A no-op for every archetype whose own mix already reaches the Foundry.
-  const wantsFoundry = plannedMix(state, archetype).some(t => (UNITS[t]?.requires || []).includes("foundry") && affordableOnSurface(state, t));
+  const wantsFoundry = plannedMix(state, archetype, owner).some(t => (UNITS[t]?.requires || []).includes("foundry") && affordableOnSurface(state, t));
   let hasFoundry = buildings.some(b => b.type === "foundry");   // built or still constructing
   if (wantsFoundry && !hasFoundry && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, ctx.oreReserve)) {
@@ -275,7 +275,7 @@ export function aiBaseAndTech(state, ctx) {
   // (plannedMix — same graduate-extension source as wantsFoundry above) wants a
   // Tier-3 unit build it, so a graduated Rusher's Dreadnought entry reaches this
   // gate too, not just the Foundry.
-  const wantsArsenal = plannedMix(state, archetype).some(t => (UNITS[t]?.requires || []).includes("arsenal") && affordableOnSurface(state, t));
+  const wantsArsenal = plannedMix(state, archetype, owner).some(t => (UNITS[t]?.requires || []).includes("arsenal") && affordableOnSurface(state, t));
   const hasArsenal = buildings.some(b => b.type === "arsenal");
   if (wantsArsenal && !hasArsenal && foundryHandled && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, ctx.oreReserve + BARRACKS_BUFFER)) {

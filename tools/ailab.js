@@ -667,6 +667,7 @@ export function runDuel(a, b, {
   if (!a || !a.name) throw new Error('candidate A needs a "name"');
   if (!b || !b.name) throw new Error('candidate B needs a "name"');
   const dials = pinnedDuelDials(difficulty);   // read ONCE — see the FAIRNESS paragraph above
+  assertNoOverrideCollision(a, b);
   const snap = snapshotTables();
   try {
     if (a.overrides) applyOverrides(a.overrides);
@@ -705,6 +706,24 @@ export function runDuel(a, b, {
 // then read/write the SAME standings object for both sides of that match, corrupting it with a
 // phantom self-match. Guard up front, the same discipline runDuel already applies to a missing
 // name.
+// Two candidates in ONE duel share a single live table (unlike leaderboard's, which never meet and
+// are snapshot/restored per candidate), and applyOverrides MERGES rather than replaces. So if both
+// patch the same key, the second's fields land on top of the first's and BOTH seats play a row
+// belonging to neither — a mirror match that still reports a winner, from seat/seed noise alone.
+// That is the natural A/B workflow (two values of one dial under one strategy name), so refuse it
+// loudly rather than silently measuring nothing.
+function assertNoOverrideCollision(a, b) {
+  for (const table of ["strategies", "archetypes", "difficulties"]) {
+    const aKeys = Object.keys((a.overrides && a.overrides[table]) || {});
+    const bSet = new Set(Object.keys((b.overrides && b.overrides[table]) || {}));
+    const shared = aKeys.filter(k => bSet.has(k));
+    if (shared.length)
+      throw new Error(`both candidates override ${table} "${shared.join('", "')}" — they share one live ` +
+        `table for the duel, so the patches would merge and both sides would play the same row. ` +
+        `Give each candidate its own key (e.g. "${shared[0]}A"/"${shared[0]}B").`);
+  }
+}
+
 function assertUniqueCandidateNames(candidates) {
   const seen = new Set();
   for (const c of candidates) {
@@ -712,6 +731,11 @@ function assertUniqueCandidateNames(candidates) {
     if (seen.has(c.name)) throw new Error(`duplicate candidate name "${c.name}" — round-robin standings are keyed by name`);
     seen.add(c.name);
   }
+  // Every pairing this field will produce goes through runDuel, so catch a collision here rather
+  // than partway through a long tournament.
+  for (let i = 0; i < candidates.length; i++)
+    for (let j = i + 1; j < candidates.length; j++)
+      assertNoOverrideCollision(candidates[i], candidates[j]);
 }
 
 // Round-robin over N > 2 candidates: every unordered pair, run through runDuel exactly as a

@@ -153,8 +153,11 @@ const RUSHER_GRADUATE_TIME = 1200;   // 20 minutes
 // climb + industry reserve read the exact same test; aiIndustry now imports this instead of
 // defining it (see its own header comment). Leaf-safe: aiStrategy.js and aiDifficulty.js are both
 // pure data tables with no imports of their own, so reaching into them here creates no cycle.
-export function wantsDeepIndustry(state, archetype, strategy) {
-  const graduated = !!difficultyFor(state).rusherGraduates && state.time > RUSHER_GRADUATE_TIME;
+export function wantsDeepIndustry(state, archetype, strategy, owner = "ai") {
+  // `owner` matters: difficultyFor defaults to the "ai" controller, so in self-play the asking
+  // controller's graduation used to be decided by the OTHER side's difficulty. Defaulting to "ai"
+  // keeps every single-owner caller byte-identical.
+  const graduated = !!difficultyFor(state, owner).rusherGraduates && state.time > RUSHER_GRADUATE_TIME;
   return !!(archetype.wantsRefinery || strategy.wantsIndustryAlways || graduated);
 }
 
@@ -175,10 +178,10 @@ const GRADUATE_EXTENSION = ["lancer", "lancer", "dreadnought"];
 // (prereqsMet), exactly like every other gated entry already works. Skirmish is untouched: the
 // state.endless gate means a skirmish's planned mix is always exactly archetype.unitMix, whatever
 // the difficulty or elapsed time — the short game stays byte-identical.
-export function plannedMix(state, archetype) {
+export function plannedMix(state, archetype, owner = "ai") {
   const base = archetype.unitMix || [];
   if (!state.endless) return base;
-  if (!wantsDeepIndustry(state, archetype, strategyFor(state))) return base;
+  if (!wantsDeepIndustry(state, archetype, strategyFor(state, owner), owner)) return base;
   if (base.some(t => (UNITS[t]?.requires || []).includes("foundry"))) return base;   // already reaches the Foundry on its own
   return [...base, ...GRADUATE_EXTENSION];
 }
@@ -208,7 +211,7 @@ export function plannedMix(state, archetype) {
 // on the FIRST controller's tech, either locking it out of units it can actually build or (worse)
 // "unlocking" ones it can't, a correctness bug on top of the fairness one.
 export function effectiveMix(state, archetype, owner = "ai") {
-  const mix = plannedMix(state, archetype).filter(t =>
+  const mix = plannedMix(state, archetype, owner).filter(t =>
     UNITS[t]
     && BUILDINGS.barracks.produces?.includes(t)
     && prereqsMet(state, owner, UNITS[t])

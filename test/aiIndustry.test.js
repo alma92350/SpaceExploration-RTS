@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
+import { createGameState, makeBuilding, makeUnit, createAiController } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { runAI } from "../engine/ai.js";
 import { updateProduction } from "../engine/industry.js";
@@ -509,4 +509,37 @@ test("a Medium developer AI in the identical research setup DOES queue Antimatte
     queued = s.players.ai.upgrades.antimatter || (dc.researchQueue || []).some(j => j.techId === "antimatter");
   }
   assert.ok(queued, "Medium researches on past 'machining', exactly as before this feature");
+});
+
+test("plannedMix reads the asking OWNER's difficulty and strategy, not the 'ai' controller's (A12)", () => {
+  // effectiveMix threads `owner` into prereqsMet but called plannedMix with none, and plannedMix in
+  // turn called strategyFor(state)/difficultyFor(state), both of which DEFAULT to owner "ai". So in
+  // self-play the "player" controller's entire deep-industry identity — whether its planned mix
+  // extends past its archetype's own tiers — was decided by the OTHER controller's difficulty. It
+  // propagates: aiEconomy's wantsFoundry/wantsArsenal and aiIndustry's factory climb and industry
+  // reserve are all computed off plannedMix, and rivalGateEligible already passes owner through to
+  // strategyFor while the difficulty read underneath it ignored owner entirely.
+  const s = createGameState({ planetId: "korrath", seed: 3, endless: true, difficulty: "hard" });
+  s.ai.difficulty = "hard";
+  s.playerAi = createAiController("korrath", { difficulty: "easy" });
+  s.time = 2000;                                   // past RUSHER_GRADUATE_TIME
+
+  const easyMix = plannedMix(s, s.playerAi.archetype, "player");
+  assert.deepEqual(easyMix, s.playerAi.archetype.unitMix || [],
+    "an Easy controller must NOT graduate, whatever the other side's difficulty is");
+
+  // ...and the mirror: a Hard controller graduates even when the 'ai' seat is Easy.
+  const s2 = createGameState({ planetId: "korrath", seed: 3, endless: true, difficulty: "easy" });
+  s2.ai.difficulty = "easy";
+  s2.playerAi = createAiController("korrath", { difficulty: "hard" });
+  s2.time = 2000;
+  const hardMix = plannedMix(s2, s2.playerAi.archetype, "player");
+  assert.notDeepEqual(hardMix, s2.playerAi.archetype.unitMix || [],
+    "a Hard controller SHOULD graduate, whatever the other side's difficulty is");
+});
+
+test("plannedMix with no owner is byte-identical to before (A12 backward-compat pin)", () => {
+  const s = createGameState({ planetId: "korrath", seed: 3, endless: true });
+  s.time = 2000;
+  assert.deepEqual(plannedMix(s, s.ai.archetype), plannedMix(s, s.ai.archetype, "ai"));
 });

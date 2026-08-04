@@ -103,7 +103,7 @@ export function rivalGateEligible(state, owner = "ai") {
   for (const com in BUILDINGS.antimatter_gate.feed) banked += res[com] || 0;
   if (banked < RIVAL_GATE_BUFFER) return false;
   const controller = owner === "ai" ? state.ai : state.playerAi;
-  return df.mult === "hard" || wantsDeepIndustry(state, controller.archetype, strategyFor(state, owner));
+  return df.mult === "hard" || wantsDeepIndustry(state, controller.archetype, strategyFor(state, owner), owner);
 }
 
 // How many chain buildings get a BANKING reserve before the AI is expected to fund the rest from
@@ -133,7 +133,7 @@ export function aiIndustryReserve(state, ctx) {
   const reactors = buildings.filter(b => b.type === "reactor");
   if (!reactors.length) { ctx.industryReserve = BUILDINGS.reactor.cost.ore; return; }
   if (reactors.some(b => b.constructing)) return;          // one already on the way — aiIndustry won't start a second
-  if (!wantsDeepIndustry(state, archetype, strategy)) return;
+  if (!wantsDeepIndustry(state, archetype, strategy, owner)) return;
   const chain = industryChainFor(state, owner);
   if (buildings.filter(b => chain.includes(b.type)).length >= INDUSTRY_BOOTSTRAP) return;
   const next = chain.find(t => !buildings.some(b => b.type === t) && prereqsMet(state, owner, BUILDINGS[t]));
@@ -186,7 +186,7 @@ export function aiIndustry(state, ctx) {
   // of what can be an hours-long Odyssey session. Skirmish is untouched regardless — this whole
   // function already returned above on !state.endless, and a skirmish never runs this long anyway.
   // The chain needs the grid, so wait for the Reactor before starting it either way.
-  if (!wantsDeepIndustry(state, archetype, strategy) || !hasReactor) return;
+  if (!wantsDeepIndustry(state, archetype, strategy, owner) || !hasReactor) return;
 
   // FACTORY CHAIN: raise the next chain building whose prereqs (its earlier factory + its research
   // node) are met and that the AI doesn't already have, one per think cycle, reserve-aware. Spread
