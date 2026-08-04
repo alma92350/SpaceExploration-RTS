@@ -10,13 +10,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGameState, makeUnit, makeBuilding, peekEntityId } from "../engine/state.js";
+import { createGameState, makeUnit, makeBuilding, peekEntityId, createAiController } from "../engine/state.js";
 import { UNITS, UPGRADES } from "../engine/entities.js";
 import { TECHS } from "../engine/techtree.js";
 import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
 import { updateProductionQueue } from "../engine/production.js";
 import { serializeGame, deserializeGame, serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
+import { updateService } from "../engine/haul.js";
 import { createGalaxy, activeState, stepGalaxy, checkGalaxyRescue, ODYSSEY_WORLDS } from "../engine/galaxy.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { COM } from "../data.js";
@@ -582,4 +583,211 @@ test("a prototype-pollution payload is rejected on the SKIRMISH load path too, n
   const save2 = freshSkirmishSave(92);
   save2.units[0].evilNest = { a: { constructor: { x: 1 } } };
   assert.throws(() => deserializeGame(save2), /forbidden key/, "a nested constructor key is rejected too, wherever it hides in the payload");
+});
+
+/* ---- Tier-1 save-safety batch (docs/code-improvement-tiers.md B1-B6) ------------------------
+   cleanEntity hardens ENTITIES well. That discipline stopped at the entity boundary: three whole
+   sub-objects reachable from an Odyssey save — the per-world market, the diplomacy block and the
+   AI controller — were written into live state verbatim, and several galaxy meta collections were
+   unfiltered while their siblings three lines away were filtered. */
+
+// A galaxy save to tamper with, with a second world loaded so the per-world blocks are exercised.
+function freshGalaxySave(seed = 5) {
+  const g = createGalaxy({ seed });
+  for (let i = 0; i < 20; i++) stepGalaxy(g, 0.1);
+  return serializeGalaxy(g);
+}
+const planetOf = (save, id) => save.planets.find(p => p.planetId === id) || save.planets[0];
+
+test("a tampered market pressure/glut is clamped into its runtime band on load (B2)", () => {
+  const save = freshGalaxySave(21);
+  const P = planetOf(save);
+  P.market.pressure = { ore: 1e6, metals: -1e6, gas: "abc", "☠notacommodity": 1 };
+  P.market.glut = { alloys: 5, ore: -3 };
+
+  const g = deserializeGalaxy(save);
+  const m = g.planets.get(P.planetId).market;
+  for (const [com, v] of Object.entries(m.pressure)) {
+    assert.ok(Number.isFinite(v), `pressure.${com} must be finite, got ${v}`);
+    assert.ok(v >= -0.6 && v <= 0.6, `pressure.${com} must sit in the runtime band, got ${v}`);
+  }
+  for (const [com, v] of Object.entries(m.glut || {})) {
+    assert.ok(Number.isFinite(v) && v >= 0 && v <= 0.85, `glut.${com} must sit in the runtime band, got ${v}`);
+  }
+  assert.ok(!("☠notacommodity" in m.pressure), "a bogus commodity key must not be injected into the price book");
+});
+
+test("selling into a tampered market never makes galaxy.credits non-finite (B2)", () => {
+  const save = freshGalaxySave(22);
+  const P = planetOf(save);
+  P.market.pressure = { ore: "abc" };
+  const g = deserializeGalaxy(save);
+  const st = g.planets.get(g.activeId);
+  st.players.player.resources.ore = 500;
+  for (let i = 0; i < 40; i++) stepGalaxy(g, 0.1);
+  assert.ok(Number.isFinite(g.credits), `galaxy.credits went non-finite: ${g.credits}`);
+});
+
+test("a legitimately-saved market pressure round-trips exactly (B2 regression fence)", () => {
+  const g0 = createGalaxy({ seed: 23 });
+  const st0 = g0.planets.get(g0.activeId);
+  st0.market.pressure.ore = 0.25;
+  st0.market.glut = { ...(st0.market.glut || {}), alloys: 0.4 };
+  const g = deserializeGalaxy(serializeGalaxy(g0));
+  const m = g.planets.get(g0.activeId).market;
+  assert.equal(m.pressure.ore, 0.25, "a real in-band pressure must survive the clamp unchanged");
+  assert.equal(m.glut.alloys, 0.4, "and so must a real glut");
+});
+
+test("a tampered diplomacy stance is coerced to a finite number in [-1,1] on load (B1)", () => {
+  for (const bad of ["friendly", NaN, 9e9, -9e9, null]) {
+    const save = freshGalaxySave(24);
+    const P = planetOf(save);
+    P.diplomacy = { ...P.diplomacy, stance: bad };
+    const g = deserializeGalaxy(save);
+    const dip = g.planets.get(P.planetId).diplomacy;
+    assert.ok(Number.isFinite(dip.stance), `stance must be finite for input ${String(bad)}, got ${dip.stance}`);
+    assert.ok(Math.abs(dip.stance) <= 1, `stance must stay in [-1,1], got ${dip.stance}`);
+  }
+});
+
+test("a non-numeric stance can never grow into an oversized string that bricks the next save (B1)", () => {
+  // The real failure chain: clamp() is the identity on a non-number, so the drift line
+  // string-CONCATENATES ~3 chars per diplomacy tick. Within ~160 sim-seconds the stance is past
+  // sanitizeSave's own MAX_STRING_LEN, so the autosave the game itself writes can no longer be
+  // loaded — and autosave rotates both generations, so Continue offers nothing.
+  const save = freshGalaxySave(25);
+  planetOf(save).diplomacy = { ...planetOf(save).diplomacy, stance: "x" };
+  const g = deserializeGalaxy(save);
+  for (let i = 0; i < 1600; i++) stepGalaxy(g, 0.1);
+  assert.doesNotThrow(() => deserializeGalaxy(serializeGalaxy(g)),
+    "the game's own autosave must stay loadable after a corrupt stance has been ticked");
+});
+
+test("an arbitrary key on a saved diplomacy block is dropped (B1)", () => {
+  const save = freshGalaxySave(26);
+  planetOf(save).diplomacy = { ...planetOf(save).diplomacy, notARealField: "haxx" };
+  const g = deserializeGalaxy(save);
+  assert.ok(!("notARealField" in g.planets.get(planetOf(save).planetId).diplomacy),
+    "the load path must not let a save inject arbitrary keys onto state.diplomacy");
+});
+
+test("a tampered AI controller block is coerced on load — the attack timeout still works (B3)", () => {
+  const save = freshSkirmishSave(27);
+  Object.assign(save.ai, {
+    aiThink: "abc", aiActionBudget: "5", aiAttackForce: -1e9, aiNextAttackAt: "later",
+    aiUnitsBuilt: null, aiApm: "fast", aiMicro: "yes", aiStrategy: "<script>", aiDifficulty: "impossible",
+  });
+  const st = deserializeGame(save);
+  for (const f of ["think", "actionBudget", "attackForce", "unitsBuilt"])
+    assert.ok(Number.isFinite(st.ai[f]), `ai.${f} must be a finite number, got ${st.ai[f]}`);
+  assert.ok(st.ai.nextAttackAt === null || Number.isFinite(st.ai.nextAttackAt),
+    `ai.nextAttackAt must be null or finite — a string makes 'state.time >= nextAttackAt' false forever, ` +
+    `permanently disabling the AI's attack timeout with no crash (got ${st.ai.nextAttackAt})`);
+  assert.equal(typeof st.ai.micro, "boolean", "ai.micro must be a real boolean");
+  assert.ok(st.ai.apm === null || Number.isFinite(st.ai.apm), "ai.apm must be null or finite");
+  assert.equal(st.ai.strategy, "default", "an unknown strategy must fall back to the default, not survive verbatim");
+  assert.equal(st.ai.difficulty, "medium", "an unknown difficulty must fall back to medium");
+});
+
+test("a populated playerAi controller round-trips field-for-field (B3)", () => {
+  const st0 = createGameState({ planetId: "ferros", seed: 28, rng: mulberry32(28) });
+  st0.playerAi = createAiController("ferros", { apm: 90, micro: true, strategy: "aggressive", difficulty: "hard" });
+  Object.assign(st0.playerAi, { think: 0.7, actionBudget: 3, attackForce: 5, unitsBuilt: 4, waveCount: 2, lastThreatAt: 12.5 });
+  const st = deserializeGame(serializeGame(st0));
+  assert.ok(st.playerAi, "the second self-play controller must survive a save/load at all");
+  for (const f of ["think", "actionBudget", "attackForce", "unitsBuilt", "waveCount", "lastThreatAt", "apm", "micro", "strategy", "difficulty"])
+    assert.deepEqual(st.playerAi[f], st0.playerAi[f], `playerAi.${f} must round-trip`);
+});
+
+test("state.ai and state.playerAi persist the identical field set (B3)", () => {
+  // persist.js promises in a comment that the two controller blocks "can never structurally
+  // drift". Nothing enforced it, and no test touched playerAi at all.
+  const st0 = createGameState({ planetId: "ferros", seed: 29, rng: mulberry32(29) });
+  st0.playerAi = createAiController("ferros");
+  const save = serializeGame(st0);
+  const strip = (block, prefix) => Object.keys(block).map(k => k.slice(prefix.length)).sort();
+  assert.ok(save.playerAi, "a populated playerAi must reach the wire at all");
+  assert.deepEqual(strip(save.playerAi, "pa"), strip(save.ai, "ai"),
+    "the ai/playerAi wire field sets must match one-for-one — persist.js promises they 'can never structurally drift'");
+});
+
+test("a duplicated shipId on a saved lane is de-duplicated on load (B5)", () => {
+  const g0 = createGalaxy({ seed: 30 });
+  const home = g0.planets.get(g0.activeId);
+  const hauler = makeUnit("hauler", "player", home.map.bases.player.x + 30, home.map.bases.player.y);
+  home.units.set(hauler.id, hauler);
+  const save = serializeGalaxy(g0);
+  const other = save.worlds.find(w => w !== g0.activeId);
+  save.lanes = [{ id: "lane1", from: g0.activeId, to: other, commodities: ["ore"], shipIds: [hauler.id, hauler.id, hauler.id] }];
+  save.laneSeq = 1;
+  const g = deserializeGalaxy(save);
+  assert.equal(g.lanes.length, 1, "fixture sanity: the lane survived load");
+  assert.deepEqual(g.lanes[0].shipIds, [hauler.id],
+    "a lane's capacity is summed over shipIds without deduping, so a repeated id multiplies throughput");
+});
+
+test("two saved lanes sharing an id are reduced to one, and laneSeq lifts past every id (B5)", () => {
+  const save = freshGalaxySave(31);
+  const from = save.planets[0].planetId;
+  const other = save.worlds.find(w => w !== from);
+  save.lanes = [
+    { id: "lane1", from, to: other, commodities: ["ore"], shipIds: [] },
+    { id: "lane1", from, to: other, commodities: ["metals"], shipIds: [] },
+    { id: "lane7", from, to: other, commodities: ["gas"], shipIds: [] },
+  ];
+  save.laneSeq = 0;
+  const g = deserializeGalaxy(save);
+  assert.equal(g.lanes.filter(l => l.id === "lane1").length, 1,
+    "a duplicate lane id makes one lane permanently unreachable from the UI (find/findIndex by id)");
+  assert.ok(g.laneSeq >= 7,
+    `laneSeq must be lifted past every lane id the save carries (like maxOwnEntityId/maxGId are), got ${g.laneSeq}`);
+});
+
+test("a tampered rally point is clamped onto the map — produced units never walk off the world (B6)", () => {
+  const save = freshSkirmishSave(32);
+  const cc = save.buildings.find(b => b.type === "command" && b.owner === "player");
+  cc.rally = { x: 1e9, y: 1e9, nodeId: 123 };
+  const st = deserializeGame(save);
+  const loaded = st.buildings.get(cc.id);
+  assert.ok(loaded.rally.x >= 0 && loaded.rally.x <= st.map.width, `rally.x must be on the map, got ${loaded.rally.x}`);
+  assert.ok(loaded.rally.y >= 0 && loaded.rally.y <= st.map.height, `rally.y must be on the map, got ${loaded.rally.y}`);
+  assert.ok(loaded.rally.nodeId === null || typeof loaded.rally.nodeId === "string",
+    "a non-string rally nodeId must be dropped, not fed to the node lookup");
+});
+
+test("a real rally point survives the clamp unchanged (B6 regression fence)", () => {
+  const save = freshSkirmishSave(33);
+  const cc = save.buildings.find(b => b.type === "command" && b.owner === "player");
+  cc.rally = { x: 321, y: 210, nodeId: null };
+  const loaded = deserializeGame(save).buildings.get(cc.id);
+  assert.deepEqual({ x: loaded.rally.x, y: loaded.rally.y }, { x: 321, y: 210 });
+});
+
+test("an AI-logistics freighter whose cargo slot was nulled by load coercion never crashes the tick (B4)", () => {
+  // The cross-module invariant: engine/state.js's makeUnit only gives `cargo` to role==="worker",
+  // and the ONLY thing that mints one for an autonomous freighter is issueSetAILogistics. But
+  // cleanEntity nulls a cargo naming a bogus commodity while leaving aiLogistics:true intact, so a
+  // corrupt save loads "clean" and then throws — inside the rAF loop, past load's try/catch — with
+  // no way back into the game. Verbatim the failure production.js already guards against for its
+  // queue. Driven at updateService directly: the crash needs the ship parked at the Command Center
+  // mid-fetch, which a short whole-sim run doesn't reliably reach.
+  const st = createGameState({ planetId: "ferros", seed: 41, rng: mulberry32(41) });
+  const cc = [...st.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const smelter = makeBuilding("smelter", "player", cc.x + 60, cc.y);
+  smelter.constructing = false;
+  smelter.buildProgress = 1;
+  st.buildings.set(smelter.id, smelter);
+  st.players.player.resources.ore = 500;
+
+  const f = makeUnit("hauler", "player", cc.x, cc.y);
+  f.aiLogistics = true;
+  f.cargo = null;                       // exactly what cleanEntity leaves behind
+  st.units.set(f.id, f);
+  f.order = { type: "service", buildingId: smelter.id, phase: "toCC", com: "ore", aiJob: true };
+
+  assert.doesNotThrow(() => updateService(st, f, 0.1),
+    "a service leg must mint the cargo slot it needs rather than dereferencing null");
+  assert.ok(f.cargo && f.cargo.com === "ore" && f.cargo.qty > 0,
+    "and it must actually load the input it went to fetch");
 });

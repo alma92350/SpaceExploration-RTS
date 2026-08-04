@@ -40,7 +40,12 @@ const SPREAD = 1.15;              // a buy costs 15% more than the matching sell
 const RAW_SPREAD = 1.5;
 const RAW = new Set(TRADEABLE.filter(c => COM[c].tier === "Raw"));   // the deposited/gathered commodities (data.js COM.tier)
 const SLIP_PER_LOT = 0.05;        // each lot traded moves the (fast) price pressure this much
-const PRESSURE_FLOOR = -0.6, PRESSURE_CEIL = 0.6;   // price swings within 40%..160% of equilibrium
+// Exported so the LOAD path (engine/persist.js) clamps a saved price book into exactly the band
+// applySlippage keeps it in at runtime. They used to be private, and the load path enforced
+// nothing at all — a tampered pressure of 1e6 gave a 5,000,005-credit sale price, a negative one
+// made selling LOSE credits, and a string made galaxy.credits permanently NaN (updateMarket is a
+// multiplicative relaxation, so it never self-heals).
+export const PRESSURE_FLOOR = -0.6, PRESSURE_CEIL = 0.6;   // price swings within 40%..160% of equilibrium
 const RECOVERY = 0.06;            // pressure relaxes toward equilibrium at this rate per second (~17s constant)
 // A SLOW, deep saturation term on FACTORY OUTPUT only: dumping produced goods on one
 // world builds a cumulative glut that decays over minutes, not the ~17s of pressure. So
@@ -48,7 +53,7 @@ const RECOVERY = 0.06;            // pressure relaxes toward equilibrium at this
 // make-here / sell-there loop (cargoManifest/freightCapacity exist for exactly this),
 // instead of letting one world absorb unlimited output at a near-flat price.
 const GLUT_PER_LOT = 0.05;        // each lot of produced output sold deepens the local glut this much
-const GLUT_CEIL = 0.85;           // a fully-saturated local market pays as little as 15% of equilibrium
+export const GLUT_CEIL = 0.85;    // a fully-saturated local market pays as little as 15% of equilibrium
 const GLUT_RECOVERY = 1 / 480;    // glut relaxes over ~8 min — far slower than pressure
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }

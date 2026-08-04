@@ -446,6 +446,14 @@ function bankCargo(state, unit) {
 export function updateService(state, unit, dt) {
   const def = UNITS[unit.type];
   const order = unit.order;
+  // Mint the cargo slot here rather than trusting a caller to have done it. makeUnit only gives
+  // `cargo` to role==="worker" (engine/state.js), so an autonomous freighter's slot exists ONLY
+  // because issueSetAILogistics created it — an invariant enforced by one command handler, not by
+  // the loader or by this consumer. cleanEntity nulls a cargo naming a bogus commodity while
+  // leaving aiLogistics:true intact, so a corrupt save used to load "clean" and then throw here on
+  // the fetch leg, inside the rAF loop and past load's try/catch, with no way back into the game.
+  // Every sibling path (loadFrom, updateHaul, depositToFreighter) already guards; this one didn't.
+  const cargo = unit.cargo || (unit.cargo = { com: null, qty: 0 });
   const b = order.buildingId ? state.buildings.get(order.buildingId) : null;
   const res = state.players[unit.owner].resources;
 
@@ -475,7 +483,7 @@ export function updateService(state, unit, dt) {
     if (!cc) { unit.order = null; return; }
     if (reached(unit, cc)) {
       const want = Math.min(tripCapacity(def), res[order.com] || 0, inputRoom(b, order.com));
-      if (want > 0) { res[order.com] -= want; unit.cargo.com = order.com; unit.cargo.qty = want; order.phase = "toBuilding"; }
+      if (want > 0) { res[order.com] -= want; cargo.com = order.com; cargo.qty = want; order.phase = "toBuilding"; }
       else order.phase = "plan";                                              // treasury dried up → re-plan
     } else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
     return;

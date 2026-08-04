@@ -23,6 +23,8 @@ import { createGalaxy, activeState, stepGalaxy, checkRivalGate, galaxyStatus } f
 import { rivalGateEligible, RIVAL_GATE_BUFFER } from "../engine/aiIndustry.js";
 import { checkEndlessWin } from "../engine/victory.js";
 import { chargingWonderOf } from "../engine/wonder.js";
+import { serializeGalaxy, deserializeGalaxy } from "../engine/persist.js";
+import { RIVAL_ASCENSION_STANCE_CEILING } from "../engine/galaxy.js";
 import { BUILDINGS } from "../engine/entities.js";
 import { PEACE_THRESHOLD, createDiplomacy, updateDiplomacy } from "../engine/diplomacy.js";
 import { checkDomination } from "../engine/galaxy.js";
@@ -391,4 +393,52 @@ test("a full galaxy run: a banked, eligible neighbour raises, charges, and ascen
 
   assert.ok(g.reached.has("rival-gate"), "the whole pipeline ran: eligible -> built -> charged -> ascended");
   assert.ok(!activeState(g).over, "never a defeat for the player");
+});
+
+/* ---- A5: the ascension must survive a save/load ---------------------------------------------
+   galaxy.rivalAscended is the idempotency latch the code names as such — but it was never written
+   to the payload (zero hits in engine/persist.js, and zero across test/). Continuing a campaign
+   therefore dropped it, which costs the "permanent" stance ceiling once the Gate is gone and
+   re-fires the ascension event on every reload. Autosave runs every 12 s. */
+
+test("an ascension survives a save/load — the permanent stance ceiling still applies after the Gate is razed", () => {
+  const g = createGalaxy({ seed: 4242 });
+  const worldId = g.worlds.find(w => w !== g.activeId);
+  const st = g.planets.get(worldId);
+  const gate = makeBuilding("antimatter_gate", "ai", 700, 500);
+  gate.charge = 1;
+  gate.constructing = false;
+  st.buildings.set(gate.id, gate);
+  checkRivalGate(g);
+  assert.ok(g.rivalAscended && g.rivalAscended.has(worldId), "fixture sanity: the world ascended");
+
+  st.buildings.delete(gate.id);                       // the Gate is later razed
+  const g2 = deserializeGalaxy(serializeGalaxy(g));
+  assert.ok(g2.rivalAscended && g2.rivalAscended.has(worldId),
+    "the ascension latch must survive the save — without it the ceiling can never be re-applied, " +
+    "because checkRivalGate can only re-latch by finding a completed Gate that no longer exists");
+
+  const st2 = g2.planets.get(worldId);
+  st2.diplomacy.stance = 0.9;
+  checkRivalGate(g2);
+  assert.ok(st2.diplomacy.stance <= RIVAL_ASCENSION_STANCE_CEILING,
+    `the permanent stance ceiling must still be enforced after a reload, got ${st2.diplomacy.stance}`);
+});
+
+test("the ascension event does not re-fire on every reload (A5)", () => {
+  const g = createGalaxy({ seed: 4243 });
+  const worldId = g.worlds.find(w => w !== g.activeId);
+  const st = g.planets.get(worldId);
+  const gate = makeBuilding("antimatter_gate", "ai", 700, 500);
+  gate.charge = 1;
+  gate.constructing = false;
+  st.buildings.set(gate.id, gate);
+  checkRivalGate(g);
+  const before = (g.rivalGateNotes || []).filter(n => n.type === "ascended").length;
+  assert.equal(before, 1, "fixture sanity: the ascension announced itself once");
+
+  const g2 = deserializeGalaxy(serializeGalaxy(g));
+  checkRivalGate(g2);
+  assert.equal((g2.rivalGateNotes || []).filter(n => n.type === "ascended").length, 0,
+    "a reload must not replay an ascension the player was already told about");
 });

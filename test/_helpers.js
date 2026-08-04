@@ -68,6 +68,19 @@ export function entitySnapshot(state) {
   return JSON.stringify({ units, builds, res, fog, tick: state.tick, time: state.time, over: state.over, winner: state.winner });
 }
 
+// JSON.stringify with keys sorted, recursively. The header above promises these fingerprints are
+// "immune to Map-iteration / JSON-key order" — true of entitySnapshot, whose tuples are joined in a
+// fixed field order, but NOT of the two raw JSON.stringify calls below. Live diplomacy grows its
+// fields in whatever order the sim happens to assign them, while a loaded one grows them in the
+// deserializer's order; identical values in a different insertion order then read as a divergence.
+// That's a false failure about the fingerprint, not the sim — exactly what the promise rules out.
+function stableJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(stableJson).join(",") + "]";
+  return "{" + Object.keys(value).sort()
+    .map(k => JSON.stringify(k) + ":" + stableJson(value[k])).join(",") + "}";
+}
+
 // Full-precision fingerprint of a whole galaxy: the meta fields plus, per planet (sorted
 // by id), its entitySnapshot AND the galaxy-side running state that also has to survive a
 // jump/reload — diplomacy stance, market pressure, background flag, AI wave clocks.
@@ -77,8 +90,8 @@ export function galaxySnapshot(galaxy) {
     .map(([id, s]) => [
       id, s.background ? 1 : 0,
       entitySnapshot(s),
-      JSON.stringify(s.diplomacy || {}),
-      JSON.stringify(s.market ? s.market.pressure : {}),
+      stableJson(s.diplomacy || {}),
+      stableJson(s.market ? s.market.pressure : {}),
       // Normalise the AI wave clocks the way the engine (and serPlanet) do: an unset counter is
       // zero, an unscheduled wave is "none". Otherwise a live world's `undefined` vs a reloaded
       // world's serialize-defaulted 0/null would read as a difference when the sim treats them
@@ -93,7 +106,7 @@ export function galaxySnapshot(galaxy) {
     .map(l => [l.id, l.from, l.to, l.commodities.join(","), l.shipIds.join(",")].join("::"));
   const colonyPolicies = [...(galaxy.colonyPolicies || [])]
     .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-    .map(([id, p]) => [id, JSON.stringify(p)].join("::"));
+    .map(([id, p]) => [id, stableJson(p)].join("::"));
   return JSON.stringify({
     seed: galaxy.seed, credits: galaxy.credits, activeId: galaxy.activeId,
     tick: galaxy.tick, time: galaxy.time, entitySeq: galaxy.entitySeq,

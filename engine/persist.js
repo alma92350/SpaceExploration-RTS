@@ -31,8 +31,10 @@ import { LOGI_PRIORITIES } from "./haul.js";   // the enum a building's logiPrio
 // interleave async id-minting work around these calls; see the "module-global" note on
 // nextEntityId in engine/state.js and test/save-hardening.test.js's freshSkirmishSave helper.
 import { peekEntityId, restoreEntityId } from "./state.js";
-import { createMarket } from "./market.js";
+import { createMarket, PRESSURE_FLOOR, PRESSURE_CEIL, GLUT_CEIL } from "./market.js";
 import { createDiplomacy } from "./diplomacy.js";
+import { STRATEGIES } from "./aiStrategy.js";
+import { DIFFICULTY_OPTIONS } from "./aiDifficulty.js";
 import { UNITS, BUILDINGS, UPGRADES, storeCapOf, inputCapOf } from "./entities.js";
 import { TECHS } from "./techtree.js";   // known research nodes — to sanitise a Datacenter's untrusted researchQueue on load
 import { COM } from "../data.js";
@@ -94,6 +96,81 @@ export function sanitizeSave(input) {
 // byte-identical replay guarantee (test/determinism.test.js) is untouched.
 function num(v, fallback = 0) { const n = Number(v); return Number.isFinite(n) ? n : fallback; }
 
+// A saved price book is untrusted like everything else here. Overlay ONLY real commodity keys, and
+// only inside the band applySlippage keeps them in at runtime — the load path used to Object.assign
+// the saved object straight over the fresh one, so a hand-edited (or bit-rotted) pressure of 1e6 was
+// a 5,000,005-credit sale, a negative one made selling lose credits, and a string turned
+// galaxy.credits permanently NaN. Identity for a valid save: real pressures are already in band.
+function coerceBand(dst, src, lo, hi) {
+  if (!src || typeof src !== "object") return;
+  for (const com in dst) {
+    if (!(com in src)) continue;
+    dst[com] = Math.max(lo, Math.min(num(src[com], 0), hi));
+  }
+}
+
+// The per-world diplomacy block used to be restored as `{ ...createDiplomacy(), ...P.diplomacy }` —
+// the untrusted object winning every key, including ones no field list mentions. The damage isn't
+// hypothetical: engine/diplomacy.js's clamp() is the identity on a non-number, so the drift line
+// string-CONCATENATES a non-numeric stance ~3 chars per diplomacy tick. Within ~160 sim-seconds it
+// exceeds sanitizeSave's own MAX_STRING_LEN, and since autosave rotates BOTH generations, the game's
+// own saves become permanently unloadable and the campaign is gone. Whitelist + coerce instead, the
+// same shape cleanPlayer already uses. `request` keeps its existing deeper validation at the call site.
+function cleanDiplomacy(src) {
+  const dip = createDiplomacy();
+  if (!src || typeof src !== "object") return dip;
+  dip.stance = Math.max(-1, Math.min(num(src.stance, dip.stance), 1));
+  dip.depletion = Math.max(0, Math.min(num(src.depletion, 0), 1));
+  dip.tributes = Math.max(0, Math.floor(num(src.tributes, 0)));
+  dip.goodwill = num(src.goodwill, 0);
+  dip.lastFavorBucket = Math.floor(num(src.lastFavorBucket, -1));
+  dip.provokedAt = src.provokedAt == null ? null : num(src.provokedAt, 0);
+  dip.request = (src.request && typeof src.request === "object") ? src.request : null;
+  if (src.lastAiUnits !== undefined) dip.lastAiUnits = Math.max(0, num(src.lastAiUnits, 0));
+  if (src.appeaseUntil !== undefined) dip.appeaseUntil = num(src.appeaseUntil, 0);
+  if (src.factionEchoUntil !== undefined) dip.factionEchoUntil = num(src.factionEchoUntil, 0);
+  if (src.factionWarmth !== undefined) dip.factionWarmth = Math.max(0, num(src.factionWarmth, 0));
+  // Only ADOPT a flag the save actually carries. Unconditionally stamping `pacified: false` would
+  // add a key to the payload that wasn't there before, which the NET round-trip tests correctly
+  // reject: a hardening pass must be the identity on a valid save, byte for byte.
+  if (src.pacified !== undefined) dip.pacified = !!src.pacified;
+  if (src.warAnnounced !== undefined) dip.warAnnounced = !!src.warAnnounced;
+  return dip;
+}
+
+// Both AI controllers (state.ai, state.playerAi) restore through this ONE function, so the promise
+// two comments below — that the two blocks can never structurally drift — is enforced by
+// construction rather than by hand-typing fifteen fields twice. Every value is coerced: the block
+// used to be copied verbatim, and `nextAttackAt: "later"` makes `state.time >= nextAttackAt` false
+// forever, permanently disabling the AI's attack timeout with no crash and no test.
+const KNOWN_STRATEGIES = new Set(Object.keys(STRATEGIES));
+const KNOWN_DIFFICULTIES = new Set(DIFFICULTY_OPTIONS.map(o => o.mult));
+function cleanController(src, prefix, planetId) {
+  const g = key => src ? src[prefix + key] : undefined;
+  const strategy = g("Strategy");
+  const difficulty = g("Difficulty");
+  const target = g("ColonyTarget");
+  return {
+    think: num(g("Think"), 0),
+    scoutId: typeof g("ScoutId") === "string" ? g("ScoutId") : null,
+    colonyTarget: (target && typeof target === "object" && Number.isFinite(Number(target.x)) && Number.isFinite(Number(target.y)))
+      ? { x: num(target.x, 0), y: num(target.y, 0) } : null,
+    apm: g("Apm") == null ? null : num(g("Apm"), 0),
+    micro: !!g("Micro"),
+    strategy: KNOWN_STRATEGIES.has(strategy) ? strategy : "default",
+    difficulty: KNOWN_DIFFICULTIES.has(difficulty) ? difficulty : "medium",
+    lastThreatAt: g("LastThreatAt") == null ? null : num(g("LastThreatAt"), 0),
+    actionBudget: num(g("ActionBudget"), 0),
+    attackForce: Math.max(0, num(g("AttackForce"), 0)),
+    attackDesperate: !!g("AttackDesperate"),
+    nextAttackAt: g("NextAttackAt") == null ? null : num(g("NextAttackAt"), 0),
+    unitsBuilt: Math.max(0, Math.floor(num(g("UnitsBuilt"), 0))),
+    waveCount: Math.max(0, Math.floor(num(g("WaveCount"), 0))),
+    nextWaveAt: g("NextWaveAt") == null ? undefined : num(g("NextWaveAt"), 0),
+    archetype: archetypeFor(planetId),
+  };
+}
+
 // Coerce one entity's numeric fields to finite values, defaulting hp/maxHp from its
 // def and clamping coordinates into the map so a bad value can never poison the spatial
 // hash (NaN,NaN buckets) or the hp accounting (an un-killable NaN-hp ghost).
@@ -115,6 +192,16 @@ function cleanEntity(e, def, map) {
   };
   clampOrderCoords(e.order);
   if (Array.isArray(e.orderQueue)) for (const o of e.orderQueue) clampOrderCoords(o);
+  // A building's `rally` is the one coordinate pair this function used to skip, and it flows to
+  // exactly the same place the order coords do: engine/production.js spawns every produced unit with
+  // `order = { type:"move", x: rally.x, y: rally.y }`. movement.js rejects NaN but not a large FINITE
+  // value, so a tampered 1e9 rally sent every unit the building made walking off the map forever,
+  // outside every fog and grid bound. Same clamp, plus dropping a non-string nodeId before it reaches
+  // the rally-to-resource node lookup.
+  if (e.rally && typeof e.rally === "object") {
+    clampOrderCoords(e.rally);
+    if (e.rally.nodeId !== undefined && typeof e.rally.nodeId !== "string") e.rally.nodeId = null;
+  }
   // A worker's `cargo` hold ({com, qty}) is untrusted too: coerce its qty to a finite value >= 0 (a
   // NaN/negative haul would poison the gather/haul/bank math on the first tick), and DROP the whole
   // cargo (→ null) when it isn't an object or names a bogus commodity — a `com` outside COM would
@@ -638,38 +725,12 @@ function rehydratePlanet(P) {
     // Restore the AI controller's bookkeeping into the grouped `state.ai` (see engine/state.js).
     // Wire keys stay `aiThink`/`aiScoutId`/… under the save's `ai:` object for backward compat;
     // only the live shape is nested. The archetype is re-derived from the planet id, not persisted.
-    ai: {
-      scoutId: P.ai.aiScoutId, think: P.ai.aiThink,
-      apm: P.ai.aiApm, micro: P.ai.aiMicro,
-      strategy: P.ai.aiStrategy || "default",
-      difficulty: P.ai.aiDifficulty || "medium",
-      lastThreatAt: P.ai.aiLastThreatAt ?? null,
-      actionBudget: P.ai.aiActionBudget,
-      attackForce: P.ai.aiAttackForce, attackDesperate: P.ai.aiAttackDesperate,
-      nextAttackAt: P.ai.aiNextAttackAt, unitsBuilt: P.ai.aiUnitsBuilt,
-      waveCount: P.ai.aiWaveCount ?? 0,
-      nextWaveAt: P.ai.aiNextWaveAt ?? undefined,
-      colonyTarget: P.ai.aiColonyTarget ?? null,
-      archetype: archetypeFor(P.planetId),
-    },
+    ai: cleanController(P.ai, "ai", P.planetId),
     // Restore Tier 1 self-play's second controller (see the matching comment in serPlanet above)
     // — null for every save that predates it or never activated self-play, exactly like state.ai
     // itself would be if createGameState were ever called without seeding it (it never is; this
     // is playerAi's only construction path outside tools/selfplay.js's own direct assignment).
-    playerAi: P.playerAi ? {
-      scoutId: P.playerAi.paScoutId, think: P.playerAi.paThink,
-      apm: P.playerAi.paApm, micro: P.playerAi.paMicro,
-      strategy: P.playerAi.paStrategy || "default",
-      difficulty: P.playerAi.paDifficulty || "medium",
-      lastThreatAt: P.playerAi.paLastThreatAt ?? null,
-      actionBudget: P.playerAi.paActionBudget,
-      attackForce: P.playerAi.paAttackForce, attackDesperate: P.playerAi.paAttackDesperate,
-      nextAttackAt: P.playerAi.paNextAttackAt, unitsBuilt: P.playerAi.paUnitsBuilt,
-      waveCount: P.playerAi.paWaveCount ?? 0,
-      nextWaveAt: P.playerAi.paNextWaveAt ?? undefined,
-      colonyTarget: P.playerAi.paColonyTarget ?? null,
-      archetype: archetypeFor(P.planetId),
-    } : null,
+    playerAi: P.playerAi ? cleanController(P.playerAi, "pa", P.planetId) : null,
     events: [],
     craters,
     wrecks,
@@ -718,6 +779,12 @@ function galaxyPayload(galaxy) {
     lastReliefTime: galaxy.lastReliefTime ?? null,   // when the last relief ship dropped, on that same clock
     pacified: [...(galaxy.pacified || [])], wonBy: galaxy.wonBy ?? null,   // conquest progress (additive; old saves default to none)
     reached: [...(galaxy.reached || [])],                                  // progress milestones already celebrated — so a reload doesn't replay their fireworks
+    // THE RIVAL GATE's idempotency latch (engine/galaxy.js checkRivalGate). Additive, so no
+    // GALAXY_SAVE_VERSION bump: an older save simply loads with none, which is today's behaviour.
+    // Without it a reload silently undid an ascension — the "permanent" stance ceiling could never
+    // be re-applied once the Gate was razed (checkRivalGate can only re-latch by FINDING a completed
+    // Gate), and while it still stood the ascension event re-fired on every single Continue.
+    rivalAscended: [...(galaxy.rivalAscended || [])],
     discovered: [...(galaxy.discovered || [])],                            // living galaxy: worlds the player has REACHED (starmap "explored" + free return-jump)
     claims: [...(galaxy.claims || [])],                                     // faction spread: [worldId, faction] pairs (checkExpansion) — the galactic politics on the starmap
     // Colony standing orders (engine/colonyPolicy.js): [worldId, {autoSell, workerTarget}] pairs —
@@ -776,7 +843,8 @@ export function deserializeGalaxy(input) {
     lastReliefTime: Number.isFinite(save.lastReliefTime) ? save.lastReliefTime : undefined,
     colonyNotes: new Map(),   // transient UI bookkeeping — re-derived, never persisted
     pacified: new Set(save.pacified || []), pacifyNotes: [], wonBy: save.wonBy ?? null,
-    reached: new Set(save.reached || []), milestones: [],   // celebrated milestones persist; the firework queue is transient
+    reached: new Set(save.reached || []),
+    rivalAscended: new Set((Array.isArray(save.rivalAscended) ? save.rivalAscended : []).filter(id => ODYSSEY_WORLDS.includes(id))), milestones: [],   // celebrated milestones persist; the firework queue is transient
     // Worlds the player has reached. An OLD save predates the field AND the living galaxy, so it only
     // instantiated worlds the player had actually visited — recover `discovered` as exactly that set
     // (the planet ids present in the save), plus the active world. A NEW save carries the real set.
@@ -806,9 +874,9 @@ export function deserializeGalaxy(input) {
     if (!known.has(P.planetId)) continue;                    // skip a planet payload with an unrecognised id
     const state = rehydratePlanet(P);
     state.market = createMarket(state);                    // base recomputed from the (regenerated) nodes...
-    Object.assign(state.market.pressure, P.market.pressure); // ...then overlay the saved running pressure...
-    if (P.market.glut) Object.assign(state.market.glut, P.market.glut);   // ...and the slow produced-goods glut
-    state.diplomacy = { ...createDiplomacy(), ...P.diplomacy };
+    coerceBand(state.market.pressure, P.market.pressure, PRESSURE_FLOOR, PRESSURE_CEIL);   // ...then overlay the saved running pressure...
+    if (P.market.glut) coerceBand(state.market.glut, P.market.glut, 0, GLUT_CEIL);          // ...and the slow produced-goods glut
+    state.diplomacy = cleanDiplomacy(P.diplomacy);
     // DOMINATION WITH TEETH (engine/galaxy.js checkDomination): an old save's `galaxy.pacified`
     // (rebuilt above) can already list this world from before the diplomacy-side floor flag
     // existed. Re-stamp it here so updateDiplomacy's floor applies to every already-conquered
@@ -842,19 +910,39 @@ export function deserializeGalaxy(input) {
   // runLanes' own per-cycle validation does at runtime — this is just that same check run once at
   // load instead of waiting for the next scheduled lane tick.
   galaxy.lanes.length = 0;
+  const takenLaneIds = new Set();
+  let maxLaneNum = 0;
   for (const rl of (Array.isArray(save.lanes) ? save.lanes : [])) {
     if (!rl || typeof rl !== "object" || !known.has(rl.from) || !known.has(rl.to)) continue;
     const from = galaxy.planets.get(rl.from);
     if (!from) continue;
     const commodities = Array.isArray(rl.commodities) ? rl.commodities.filter(c => COM[c]) : [];
+    // De-duplicate. assignShipToLane guards this at runtime (`if (!lane.shipIds.includes(unitId))`)
+    // and runLanes sums capacity over shipIds WITHOUT deduping, so a repeated id multiplied the
+    // lane's throughput — measured, one 250-hold hauler listed three times moved 750 ore per cycle.
+    const seenShips = new Set();
     const shipIds = Array.isArray(rl.shipIds) ? rl.shipIds.filter(id => {
+      if (seenShips.has(id)) return false;
       const u = from.units.get(id);
-      return !!u && u.owner === "player" && !!(UNITS[u.type] && UNITS[u.type].cargoHold);
+      if (!u || u.owner !== "player" || !(UNITS[u.type] && UNITS[u.type].cargoHold)) return false;
+      seenShips.add(id);
+      return true;
     }) : [];
-    const lane = { id: typeof rl.id === "string" ? rl.id : "lane" + (++galaxy.laneSeq), from: rl.from, to: rl.to, commodities, shipIds };
-    for (const id of shipIds) from.units.get(id).laneId = lane.id;
+    // A lane id must be unique: deleteLane/assignShipToLane/unassignShipFromLane all resolve by
+    // find/findIndex on the id, so a second lane sharing one is permanently unreachable from the UI.
+    let id = typeof rl.id === "string" && !takenLaneIds.has(rl.id) ? rl.id : "lane" + (++galaxy.laneSeq);
+    while (takenLaneIds.has(id)) id = "lane" + (++galaxy.laneSeq);
+    takenLaneIds.add(id);
+    const idNum = /^lane(\d+)$/.exec(id);
+    if (idNum) maxLaneNum = Math.max(maxLaneNum, +idNum[1]);
+    const lane = { id, from: rl.from, to: rl.to, commodities, shipIds };
+    for (const id2 of shipIds) from.units.get(id2).laneId = lane.id;
     galaxy.lanes.push(lane);
   }
+  // Lift the counter past every id actually in use, exactly like maxOwnEntityId and maxGId above do
+  // for their counters. Without it a save carrying "lane1" with laneSeq:0 minted "lane1" again on
+  // the very next createLane, colliding with a live lane.
+  galaxy.laneSeq = Math.max(galaxy.laneSeq, maxLaneNum);
   // The galaxy `entitySeq` is the SEPARATE "g"-id counter — ids minted as "g"+entitySeq in
   // engine/galaxy.js for entities that cross worlds (jump riders, relief + colony ships). Unlike the
   // u/b counter (hardened above via maxOwnEntityId), it was restored as num(save.entitySeq,0) with NO
