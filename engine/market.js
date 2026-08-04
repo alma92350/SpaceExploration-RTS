@@ -222,9 +222,18 @@ export function updateMarket(state, dt) {
 // Commodities worth showing on this world's market: those it deposits, plus any
 // the player is currently carrying (so you can always offload what you hold).
 export function tradeables(state) {
-  const present = new Set(state.map.nodes.map(n => n.com));
-  const res = state.players.player.resources;
-  return TRADEABLE.filter(c => present.has(c) || (res[c] || 0) > 0);
+  return TRADEABLE.filter(c => commodityAvailable(state, "player", c));
+}
+
+// Can `owner` get hold of `com` on this world at all? A local deposit is one way; already HOLDING
+// some is the other, and on a galaxy world that stock can arrive by freight lane, by freighter, or
+// by purchase. The single definition of that rule, because the HUD used to carry its own copy that
+// had dropped the second half — so shipping gas to a gas-free world let the engine accept a Wraith
+// order while the button was ABSENT from the barracks panel entirely: not greyed, not explained.
+export function commodityAvailable(state, owner, com) {
+  const present = state.map.nodes.some(n => n.com === com);
+  const res = state.players[owner] ? state.players[owner].resources : null;
+  return present || (res ? (res[com] || 0) > 0 : false);
 }
 
 /* ---------- AI barter (Tier 3 of the section-08 economic-dial proposal) ---------- */

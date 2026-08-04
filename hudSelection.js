@@ -41,7 +41,7 @@ import { JUMP_COST, jumpCost, jumpManifest, jumpManifestAll, jumpCapacity, space
 import { setColonyPolicy, getColonyPolicy } from "./engine/colonyPolicy.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { deployColonyShip, packCommandCenter, PACK_COST } from "./engine/colony.js";
-import { sell, buy, unitPrice, tradeables, TRADE_LOT, quoteSell } from "./engine/market.js";
+import { sell, buy, unitPrice, tradeables, commodityAvailable, TRADE_LOT, quoteSell } from "./engine/market.js";
 import { stanceLabel, PEACE_THRESHOLD, offerTribute, tributeCost, APPEASE_TIME,
          offerGift, fulfillRequest, GOODWILL_CAP } from "./engine/diplomacy.js";
 import { initiateJump } from "./boot.js";
@@ -341,7 +341,24 @@ export function renderSelectionPanel() {
       })()
     // Rebuild when any selected entity's Recycle state starts/stops/finishes (the button ↔
     // progress-row swap) — the live % itself is then patched in place below, not rebuilt.
-    + "|" + sel.map(e => e.recycling ? "r" : canRecycle(e) ? "c" : "x").join("");
+    + "|" + sel.map(e => e.recycling ? "r" : canRecycle(e) ? "c" : "x").join("")
+    // The two Odyssey panels whose OWN controls the signature used to ignore entirely. Every one
+    // of their handlers is `mutate(); renderHUD();` — and with no term here renderSelectionPanel
+    // returned early, so the panel stayed frozen on the old value. The control read as a no-op,
+    // which invites a second click that silently toggles the change back. Assign/Release only ever
+    // appeared to work by accident: they set u.laneId, which perturbs the Spaceport manifest term.
+    // Kept COARSE (ids and values, not per-frame floats) so these can't churn a rebuild every tick
+    // — a rebuild mid-click is the dropped-click hazard this whole guard exists to avoid.
+    + "|" + (() => {
+        if (!game.galaxy) return "";
+        return (game.galaxy.lanes || [])
+          .filter(l => l.from === game.galaxy.activeId || l.to === game.galaxy.activeId)
+          .map(l => `${l.id}:${l.commodities.join("/")}:${l.shipIds.join("/")}`).join(",");
+      })()
+    + "|" + (() => {
+        if (!game.galaxy) return "";
+        return JSON.stringify(getColonyPolicy(game.galaxy, state.planetId) || null);
+      })();
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -1402,8 +1419,10 @@ function rebuildSelectionPanel(sel) {
     // Only offer a unit this world can actually pay for — a specialty unit
     // (Wraith/gas, Aegis/ice, Colossus/relics) is hidden entirely on a map that
     // deposits none of its commodity, instead of showing a forever-greyed button.
-    const onMap = new Set(state.map.nodes.map(n => n.com));
-    const buildable = t => Object.keys(UNITS[t].cost).every(c => onMap.has(c));
+    // Ask the ENGINE's own predicate, not a local copy. The copy here checked only "a local node
+    // deposits it", which is a rule the engine does not have — commodityAvailable also counts stock
+    // already in the treasury, which on a galaxy world arrives by lane, freighter or purchase.
+    const buildable = t => Object.keys(UNITS[t].cost).every(c => commodityAvailable(state, "player", c));
     const trainable = ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender", "wraith", "aegis", "colossus"].filter(buildable);
     if (sectionToggle("barracks:produce", "Produce", trainable.length)) {
       for (const t of trainable) {
