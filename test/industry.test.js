@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
-import { storeTotal } from "../engine/entities.js";
+import { storeTotal, storeCapOf } from "../engine/entities.js";
 import { tick } from "../engine/sim.js";
 import { createGalaxy, activeState, stepGalaxy } from "../engine/galaxy.js";
 import { sell } from "../engine/market.js";
-import { powerCap, powerDraw, powerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep, buildingConcern, ELECTRIFY_POWER } from "../engine/industry.js";
+import { powerCap, powerDraw, powerThrottle, cachedPowerThrottle, updateProduction, recipeOf, planetIndustryScale, powerEfficiency, POWER_TIERS, hasIceCoolant, iceCoolantMult, chargeIceUpkeep, buildingConcern, ELECTRIFY_POWER } from "../engine/industry.js";
 import { BUILDINGS } from "../engine/entities.js";
+
 import { deployColonyShip } from "../engine/colony.js";
 
 // The industry helpers read only state.buildings and state.players[owner].resources,
@@ -485,4 +486,49 @@ test("powerCap: a Substation relay grants no Power capacity of its own — only 
 test("powerDraw: a linked Substation relay adds its own small flat grid draw (the ELECTRIFY_POWER idiom)", () => {
   const s = stub([reactor({ x: 0, y: 0 }), substation({ x: 50, y: 0 })]);   // well within the linked band → full efficiency
   assert.ok(near(powerDraw(s, "player"), ELECTRIFY_POWER), "a well-linked relay draws the flat relay amount at full (×1.0) efficiency");
+});
+
+test("cachedPowerThrottle re-computes when the grid changes, even on a state with no tick counter (A11)", () => {
+  // The cache invalidates on state.tick. A state with no tick field — the hand-built stub idiom used
+  // throughout this file, and anything else that doesn't come from tick() — stored
+  // _powerCacheTick = undefined, and `undefined !== undefined` is false FOREVER, so the very first
+  // result was frozen for the life of the state.
+  const s = stub([{ id: "f1", type: "smelter" }]);
+  assert.equal(s.tick, undefined, "fixture sanity: this stub has no tick counter");
+
+  const first = cachedPowerThrottle(s, "player");
+  s.buildings.set("r1", { id: "r1", owner: "player", constructing: false, type: "reactor", powered: true });
+  const fresh = powerThrottle(s, "player");
+  assert.notEqual(fresh, first, "fixture sanity: the grid really did change");
+  assert.equal(cachedPowerThrottle(s, "player"), fresh,
+    "the cache must not hand back a stale throttle on a state it cannot key");
+});
+
+test("buildingConcern's bufferFull threshold agrees with updateProduction's own gate (A11)", () => {
+  // buildingConcern claims to mirror updateProduction's gating "exactly, so the badge never
+  // disagrees with what's actually happening in the sim". It didn't: the factory branch called it
+  // full at storeRoom <= 1e-6 while updateProduction produces for ANY positive room (`frac > 0`).
+  const s = createGameState({ planetId: "ferros", seed: 3 });
+  const sm = makeBuilding("smelter", "player", 700, 500);
+  sm.constructing = false;
+  sm.buildProgress = 1;
+  s.buildings.set(sm.id, sm);
+  const reactor = makeBuilding("reactor", "player", 660, 500);
+  reactor.constructing = false;
+  reactor.powered = true;
+  s.buildings.set(reactor.id, reactor);
+
+  const recipe = recipeOf(sm);
+  sm.input = sm.input || {};
+  sm.store = sm.store || {};
+  for (const com in recipe.in) if (com !== "energy") sm.input[com] = 1000;
+  sm.store[recipe.out] = storeCapOf("smelter") - 5e-7;       // a sliver of room: tiny, but positive
+
+  // Read the badge FIRST, while the sliver is still open — production itself closes it.
+  const concern = buildingConcern(s, sm);
+  const before = sm.store[recipe.out];
+  updateProduction(s, sm, 0.1);
+  assert.ok(sm.store[recipe.out] > before, "fixture sanity: the sim really does still produce into that sliver");
+  assert.notEqual(concern && concern.code, "bufferFull",
+    "the badge must not read bufferFull while updateProduction is still banking output");
 });

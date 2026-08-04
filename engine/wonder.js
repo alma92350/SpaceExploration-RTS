@@ -40,7 +40,18 @@ export function updateWonder(state, building, dt) {
   // via powerDraw, but the charge itself isn't power-gated, so a sniped Reactor
   // can't stall it), clamped by the scarcest fed good in stock (measured in "full
   // charges' worth", so we never overspend).
-  let p = dt / def.chargeTime;
+  // A FINISHED Gate consumes nothing. Nothing used to stop it: the charge clamped to 1 but the
+  // spend didn't, and while a standalone endless game is masked by checkEndlessWin ending the
+  // match, a galaxy Gate is explicitly "a milestone, never a win — play forever"
+  // (engine/victory.js) with sim.js calling this every tick. So a completed Gate went on burning
+  // its feed per sim-second forever, in the three scarcest goods in the game, on the winning line
+  // of play — and the Leviathan competes for exactly those three.
+  const charge = building.charge || 0;
+  if (charge >= 1) return;
+
+  // Cap the step at the charge actually REMAINING, so the final partial tick pays for what it
+  // banks rather than for a whole step it only partly used.
+  let p = Math.min(dt / def.chargeTime, 1 - charge);
   for (const com in feed) {
     const perCharge = feed[com] * def.chargeTime;
     if (perCharge > 0) p = Math.min(p, (res[com] || 0) / perCharge);
@@ -48,7 +59,7 @@ export function updateWonder(state, building, dt) {
   if (!(p > 0)) return;
 
   for (const com in feed) res[com] = (res[com] || 0) - p * feed[com] * def.chargeTime;
-  building.charge = Math.min(1, (building.charge || 0) + p);
+  building.charge = Math.min(1, charge + p);
   state.events.push({ type: "wonderCharging", charge: building.charge, x: building.x, y: building.y, owner: building.owner });
 }
 

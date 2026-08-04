@@ -477,6 +477,28 @@ test("redefining a leader's squad with a smaller group stops (not just unlinks) 
   assert.equal(a.order.type, "follow-leader", "A is still following");
 });
 
+test("redefining a squad that drops TWO followers releases both, not just the first (A2)", () => {
+  // The release loop splices the array it is iterating, and a for...of iterator is index-based, so
+  // every splice SKIPS the next element. The test above drops one follower — and the LAST one —
+  // which is exactly why the bug hid: you need two adjacent drops to see the skip. The survivor
+  // keeps squadLeader pointing at a leader whose own list no longer contains it, breaking the
+  // bidirectional invariant setSquadLeader's comment promises.
+  const leader = fakePlayerUnit("L", "skiff", 0, 0);
+  const a = fakePlayerUnit("A", "skiff", 0, 0);
+  const b = fakePlayerUnit("B", "skiff", 0, 0);
+  const c = fakePlayerUnit("C", "skiff", 0, 0);
+  issueHoldFormation([leader, a, b, c]);
+  assert.deepEqual(leader.squadFollowers, [a, b, c]);
+
+  issueMove([leader, c], 500, 0);   // drops BOTH a and b, which are adjacent in the list
+
+  assert.deepEqual(leader.squadFollowers, [c], "only C remains in the squad");
+  assert.equal(a.squadLeader, undefined, "A was released");
+  assert.equal(a.order, null, "A is actually stopped");
+  assert.equal(b.squadLeader, undefined, "B was released too — not skipped by the splice");
+  assert.equal(b.order, null, "B is actually stopped, not left chasing a leader that dropped it");
+});
+
 // ---- click-and-drag facing (engine/commands.js applyFacing) ------------------
 
 test("issueMove with an explicit heading stamps every commanded unit's facing; a plain move clears it", () => {

@@ -4,7 +4,7 @@ import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { updateHaul, assignHaul, updateService, assignService, countLogistics } from "../engine/haul.js";
 import { issueSetLogiPriority } from "../engine/commands.js";
-import { storeTotal, inputTotal, inputRoom, inputCapOf, UNITS } from "../engine/entities.js";
+import { storeTotal, inputTotal, inputRoom, inputCapOf, UNITS, BUILDINGS } from "../engine/entities.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { mulberry32 } from "./_helpers.js";
 
@@ -628,6 +628,43 @@ test("countLogistics resets a power station's `servers` tally each tick, same as
 
   countLogistics(s);
   assert.equal(gen.servers, 1, "…and the tick after that");
+});
+
+test("countLogistics resets an AMMO-fed battery's `servers` tally each tick too (A3)", () => {
+  // The same bug the power-station fix above closed, on the third input-taking kind. countLogistics
+  // resets `servers` for a factory (recipeOf) or a fuel burner (combust) — but inputNeedsOf later
+  // grew a `def.ammo` branch, and a Torpedo Battery is neither of those and has no store cap, so its
+  // tally only ever climbed. After one resupply run it sat permanently above MAX_SERVERS and
+  // assignService rejected it forever: the game's top-tier static defense silently became a
+  // hand-micro structure the moment it first shot its magazine dry.
+  const { s, cc, workers } = base(4);
+  const battery = plantGenerator(s, cc, "torpedobattery");
+  const w = workers[0];
+  w.order = { type: "service", buildingId: battery.id, phase: "plan" };
+
+  countLogistics(s);
+  assert.equal(battery.servers, 1, "re-tallied fresh from the one live order");
+  countLogistics(s);
+  assert.equal(battery.servers, 1, "still exactly 1 the next tick — the tally doesn't just keep growing");
+  countLogistics(s);
+  assert.equal(battery.servers, 1, "…and the tick after that");
+});
+
+test("a Torpedo Battery can be auto-resupplied a SECOND time, not just once (A3)", () => {
+  const { s, cc } = base(4);
+  const battery = plantGenerator(s, cc, "torpedobattery");
+  const ammo = BUILDINGS.torpedobattery.ammo.com;
+  s.players.player.resources[ammo] = 500;
+
+  for (let i = 0; i < 900; i++) tick(s, 0.1);
+  assert.ok((battery.input?.[ammo] || 0) > 0, "fixture sanity: the first resupply actually landed");
+
+  battery.input[ammo] = 0;                       // it shoots the magazine dry
+  for (const u of s.units.values()) if (u.order?.type === "service") u.order = null;
+  for (let i = 0; i < 900; i++) tick(s, 0.1);
+  assert.ok((battery.input?.[ammo] || 0) > 0,
+    "an idle worker must be re-offered the battery — after the first run its servers tally used to " +
+    "sit above MAX_SERVERS forever, so no worker was ever assigned to it again");
 });
 
 test("a Combustion Generator's fuel larder is deterministic: two same-seed runs end up identically fuelled", () => {

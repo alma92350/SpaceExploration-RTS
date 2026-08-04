@@ -297,9 +297,16 @@ export function powerThrottle(state, owner) {
 // sim.js's countMiners/countLogistics/countMenderTargets ("freeze it once per tick, reuse it"), the
 // real computation now runs at most once per owner per tick no matter how many factories/rigs ask.
 // Keyed on state.tick, so it self-invalidates the instant a real tick advances — and any caller that
-// never goes through updateProduction/updatePlasmaRig (powerThrottle itself, the HUD, repair.js,
-// aiIndustry.js, a direct test call…) never touches this cache and stays exactly as fresh as before.
+// never goes through updateProduction/updatePlasmaRig (powerThrottle itself, repair.js,
+// aiIndustry.js, a direct test call…) never touches this cache and stays exactly as fresh as
+// before. NOTE: the HUD is NOT in that list — buildingConcern, ninety lines below in this very
+// file, calls cachedPowerThrottle, and renderBuildings.js calls buildingConcern every frame.
 function ownerPowerCache(state) {
+  // A state with NO tick counter can't be keyed safely: storing `_powerCacheTick = undefined` makes
+  // the invalidation test `undefined !== undefined` false forever, freezing the very first result
+  // for the life of the state. That's reachable from the hand-built stubs in test/industry.test.js
+  // and from any caller that doesn't come through tick(). Such a state simply doesn't get a cache.
+  if (!Number.isFinite(state.tick)) return null;
   if (!state._powerCache || state._powerCacheTick !== state.tick) {
     state._powerCache = Object.create(null);
     state._powerCacheTick = state.tick;
@@ -311,6 +318,7 @@ function ownerPowerCache(state) {
  * powerThrottle fresh — same formula, same inputs — just computed at most once per owner per tick. */
 export function cachedPowerThrottle(state, owner) {
   const cache = ownerPowerCache(state);
+  if (!cache) return powerThrottle(state, owner);
   const cached = cache[owner];
   if (cached !== undefined) return cached;
   return cache[owner] = powerThrottle(state, owner);
@@ -419,6 +427,10 @@ export function buildingConcern(state, b) {
     if (com === "energy") continue;
     if ((input[com] || 0) < recipe.in[com] * iceMult) return { level: "bad", code: "starved" };
   }
-  if (storeRoom(b) <= 1e-6) return { level: "bad", code: "bufferFull" };
+  // Match updateProduction's own gate EXACTLY: it caps frac by storeRoom/outPerBatch and produces
+  // whenever `frac > 0`, i.e. for ANY positive room. A 1e-6 epsilon here read "bufferFull" while the
+  // sim was still banking output, which is precisely the badge/sim disagreement the comment above
+  // promises can't happen. (The rig branch's 1e-9 is right — it mirrors rig.js's own threshold.)
+  if (storeRoom(b) <= 0) return { level: "bad", code: "bufferFull" };
   return throttle < 0.995 ? { level: "warn", code: "throttled" } : null;
 }

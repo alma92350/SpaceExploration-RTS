@@ -96,7 +96,13 @@ export function keepFormationStation(state, unit, speed, dt) {
 export function keepFollowingLeader(state, unit, speed, dt) {
   const o = unit.order;
   const leader = o.leader;
-  if (!leader || leader.hp <= 0) { unit.order = null; return false; }
+  // Ask the STATE whether the leader still exists, not just its hp. A follow-leader order holds a
+  // live object REFERENCE, and two removal paths delete a unit that is still at full hp —
+  // deployColonyShip (engine/colony.js) and updateUnitRecycle (engine/recycle.js). Escorting a
+  // colony ship and deploying it is the canonical Odyssey play, and an hp-only check left both
+  // escorts permanently pinned to a ship no longer in state.units, orbiting its frozen last
+  // position. (escort orders are immune: escortSlot resolves through state.units.get every tick.)
+  if (!leader || leader.hp <= 0 || !state.units.has(leader.id)) { unit.order = null; return false; }
   stepToward(state, unit, leader.x + o.offsetX, leader.y + o.offsetY, speed, dt);
   return true;
 }
