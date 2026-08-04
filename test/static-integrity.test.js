@@ -319,3 +319,42 @@ test("the shipped module graph has no import cycle outside the known UI cluster 
     "import cycle(s) other than the documented UI cluster (see overlays.js's note on live bindings):\n" +
     sccs.map(c => c.join(", ")).join("\n"));
 });
+
+test("no shipped module imports a name it never uses", () => {
+  // hudSelection.js was importing twenty symbols it never referenced — repairBtn, departBtn,
+  // saveBtn, pauseBtn, starmapBtn, resourcesEl, clockEl, scenarioStatusEl and more — leftovers
+  // from code that moved to hud.js. A dead import is not merely tidy-up: it advertises a
+  // dependency that doesn't exist, so anyone reading the file's import block to learn what it
+  // couples to is misled, and the module-reachability guard above counts an edge nothing walks.
+  // With no check, the list only ever grows, because removing an import is exactly the step a
+  // hurried refactor skips.
+  //
+  // Deliberately textual, not a real parse: a name is "used" if it appears anywhere in the file
+  // outside the import block. That can only ever UNDER-report (a name mentioned in a comment
+  // counts as used), which is the right direction for a guard nobody should have to argue with.
+  // Whole import STATEMENTS are stripped, and what is left is the body. An earlier cut tried to
+  // find where the import block ENDS by walking lines — and every file here opens with a prose
+  // header comment, so the walk broke out on the first sentence containing a bracket, left the
+  // imports themselves inside the "body", and found every name trivially "used". The guard passed
+  // on a file with twenty dead imports. Stripping the statements has no boundary to get wrong.
+  const STATEMENT = /^import\s[\s\S]*?from\s*["'][^"']+["'];?|^import\s*["'][^"']+["'];?/gm;
+  const NAMED = /import\s*\{([^}]*)\}\s*from\s*["'][^"']+["']/g;
+  const offenders = [];
+  for (const f of shippedJs()) {
+    const src = readFileSync(f, "utf8");
+    // Deliberately textual, not a real parse: a name counts as used if it appears anywhere in
+    // what remains, comments included. That can only ever UNDER-report, which is the right
+    // direction for a guard nobody should have to argue with.
+    const body = src.replace(STATEMENT, "");
+    for (const m of src.matchAll(NAMED)) {
+      for (const part of m[1].split(",")) {
+        const name = part.trim().split(/\s+as\s+/).pop().trim();
+        if (!name) continue;
+        if (!new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(body)) {
+          offenders.push(`${relative(root, f)}: imports \`${name}\` but never uses it`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `dead imports:\n  ${offenders.join("\n  ")}`);
+});

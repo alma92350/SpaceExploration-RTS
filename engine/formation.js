@@ -55,7 +55,6 @@
 "use strict";
 
 import { radiusOf } from "./colliders.js";
-import { UNITS } from "./entities.js";
 
 export const FORMATION_SHAPES = ["grid", "line", "wedge", "circle"];
 export const LEADER_POSITIONS = ["front", "back", "center"];

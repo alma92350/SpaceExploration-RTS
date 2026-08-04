@@ -14,7 +14,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, prereqsMet, SPENDABLE } from "./entities.js";
+import { BUILDINGS, UNITS, prereqsMet, SPENDABLE } from "./entities.js";
 import { assignService, assignHaul, countLogistics } from "./haul.js";
 import { assignRepair, countRepairJobs } from "./repair.js";
 import { isNodeDiscovered } from "./fog.js";

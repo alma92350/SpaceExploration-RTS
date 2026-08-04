@@ -13,7 +13,7 @@ import { issueMove, issueGather, issueAttack, issueAttackMove, issueBuild, issue
 import { UNITS, BUILDINGS, storeCapOf, canGatherType, canLogisticsType, canBuildCategory } from "./engine/entities.js";
 import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
-import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, dragCamera, pinchZoomPan } from "./camera.js";
+import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, pinchZoomPan } from "./camera.js";
 import * as sound from "./sound.js";
 import { toggleObserverMode, exitObserverMode, cycleObserverBase,
          observerWheelZoom, observerDragStart, observerDragMove, observerDragEnd, tickObserverCamera } from "./observer.js";
