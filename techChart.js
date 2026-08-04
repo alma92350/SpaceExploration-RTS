@@ -353,9 +353,9 @@ function toggleTechChart() { if (techChartEl.classList.contains("hidden")) openT
 
 // Self-wired, like starmap.js: the topbar button and the T key toggle it, Esc closes it, and
 // clicking the backdrop (the overlay itself, not a node) also closes it.
-techChartBtn.addEventListener("click", toggleTechChart);
-techChartEl.addEventListener("click", e => { if (e.target === techChartEl) closeTechChart(); });
-window.addEventListener("keydown", e => {
+if (techChartBtn) techChartBtn.addEventListener("click", toggleTechChart);
+if (techChartEl) techChartEl.addEventListener("click", e => { if (e.target === techChartEl) closeTechChart(); });
+if (typeof window !== "undefined" && window) window.addEventListener("keydown", e => {
   if ((e.key === "t" || e.key === "T") && !e.ctrlKey && !e.metaKey && !e.altKey && game.state) {
     // Don't hijack a key meant for a FOCUSED control (a HUD button, a text input, …) — the same
     // guard input.js's own keydown listener uses for its positional hotkeys.

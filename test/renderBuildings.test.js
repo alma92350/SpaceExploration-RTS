@@ -146,8 +146,9 @@ test("drawBuildingShape tolerates the icon stub state (no players/time) for ever
 // Reactor at all), and a freshly-built factory/Rig that hasn't received any input/fuel yet (no
 // `input`/`store` keys set) — the most common real-game shape, and the one most likely to trip an
 // unguarded property read.
-test("drawBuildingBars does not throw for a fresh, a paused, or an unpowered factory/Rig/power station", () => {
+test("drawBuildingBars draws real output, and a paused producer is drawn differently (C8)", () => {
   const fog = createFog({ width: 800, height: 600 });
+  const pausedCalls = {};
   for (const withReactor of [true, false]) {
     for (const paused of [true, false]) {
       const buildings = new Map();
@@ -165,10 +166,23 @@ test("drawBuildingBars does not throw for a fresh, a paused, or an unpowered fac
         fog,
         players: { player: { color: "#5ec8ff", upgrades: {}, resources: { radioactives: 50 } } },
       };
-      assert.doesNotThrow(() => drawBuildingBars(fakeCtx(), state, null, new Set()),
+      // Not just doesNotThrow: replacing drawBuildingBars' body with `return;` used to SURVIVE the
+      // full suite, so every health bar, build-progress bar, output gauge and paused/stalled badge
+      // in the game could vanish with CI green. This file's recording ctx already exists — use it.
+      const { ctx, calls } = tracedCtx();
+      assert.doesNotThrow(() => drawBuildingBars(ctx, state, null, new Set()),
         `withReactor=${withReactor} paused=${paused}`);
+      assert.ok(calls.length > 0,
+        `drawBuildingBars must actually draw something (withReactor=${withReactor} paused=${paused})`);
+      if (withReactor) pausedCalls[String(paused)] = calls.length;
     }
   }
+  // A paused producer must be drawn DIFFERENTLY from a running one — that badge is the player's
+  // only signal that a factory has stalled. (Not "more calls": a running-but-throttled factory
+  // draws the busier badge of the two.)
+  assert.notEqual(pausedCalls["true"], pausedCalls["false"],
+    `a paused producer must draw a different badge from a running one — got ${pausedCalls["true"]} ` +
+    `calls paused vs ${pausedCalls["false"]} running`);
 });
 
 /* ============================================================
@@ -274,4 +288,24 @@ test("drawBuildingShape tolerates the icon stub state (no players/time/owner) fo
     const b = { id: "__icon__", type: t, x: 0, y: 0, radius: BUILDINGS[t].radius };
     assert.doesNotThrow(() => drawBuildingShape(fakeCtx(), stub, b, "#5ec8ff"), t);
   }
+});
+
+test("drawBuildingBars draws a health bar for a damaged building (C8)", () => {
+  // The mutation that used to survive the whole suite: `return;` at the top of drawBuildingBars.
+  // Nothing asserted that a bar is ever drawn, so every health bar, build-progress bar and output
+  // gauge in the game could vanish with CI green on both Node versions.
+  const fog = createFog({ width: 800, height: 600 });
+  const b = makeBuilding("barracks", "player", 60, 0);
+  b.hp = Math.round(b.maxHp * 0.4);
+  const state = {
+    buildings: new Map([[b.id, b]]),
+    units: new Map(),
+    selection: [],
+    fog,
+    players: { player: { color: "#5ec8ff", upgrades: {}, resources: {} } },
+  };
+  const { ctx, calls } = tracedCtx();
+  drawBuildingBars(ctx, state, null, new Set());
+  assert.ok(calls.some(c => c[0] === "fillRect"),
+    "a damaged building must get a health bar — this is the assertion the doesNotThrow-only test lacked");
 });

@@ -43,3 +43,28 @@ test("queryNeighbors is deterministic — same grid and query give the same orde
     queryNeighbors(grid, 150, 150, 180).map(u => u.id),
   );
 });
+
+test("queryNeighbors returns a REUSED buffer — a second call invalidates the first result (C15)", () => {
+  // Turns an implicit comment into an executable contract. engine/grid.js's _scratch is a
+  // module-global array cleared on every call, and its comment states the invariant callers rely on:
+  // "none makes a second queryNeighbors call while a prior result is still being iterated". Two
+  // call sites hold the buffer ACROSS a loop body (separation.js's applySeparation iterates up to 40
+  // entries calling separatePair; movement.js's senseLateralAvoidance walks the whole candidate
+  // list), so adding one grid-based helper inside either would silently corrupt the outer iteration.
+  // The failure mode — "some pairs randomly skip separation" — is DETERMINISTICALLY wrong in both
+  // runs, so no determinism test can see it.
+  const state = { units: new Map() };
+  for (let i = 0; i < 6; i++) {
+    const u = { id: `u${i}`, x: 100 + i * 5, y: 100, hp: 10, owner: "player" };
+    state.units.set(u.id, u);
+  }
+  const g = buildUnitGrid(state);
+  const first = queryNeighbors(g, 100, 100, 50);
+  const firstContents = [...first];
+  const second = queryNeighbors(g, 5000, 5000, 50);
+  assert.equal(first, second,
+    "same array identity — this reuse IS the documented contract, which is why a caller must not " +
+    "hold a result across another query");
+  assert.notDeepEqual(firstContents, [...second],
+    "fixture sanity: the two queries really do have different answers, so the aliasing is observable");
+});

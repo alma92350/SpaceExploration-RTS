@@ -68,7 +68,7 @@ let gateMilestone = 0;
 // Where the last under-attack alert fired lives on game.lastAttackAt (session.js, next to
 // supplyBlockedUntil) rather than a module-local var — input.js's Backspace "jump to last
 // alert" key reads it too, not just the banner click below.
-underAttackEl.addEventListener("click", () => {
+if (underAttackEl) underAttackEl.addEventListener("click", () => {
   if (!game.lastAttackAt || !game.input || !game.state) return;
   const cam = game.input.getCamera();
   cam.x = game.lastAttackAt.x;

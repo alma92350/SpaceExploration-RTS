@@ -34,15 +34,15 @@ import { updateObjectives } from "./overlays.js";
 // Scenario dock actions — wired once. They read game.state at click time, and
 // re-render immediately so the button state / budget update without waiting for
 // the next HUD tick.
-repairBtn.addEventListener("click", () => { if (game.state && repairConvoy(game.state)) renderHUD(); });
-departBtn.addEventListener("click", () => { if (game.state) { departNow(game.state); renderHUD(); } });
+if (repairBtn) repairBtn.addEventListener("click", () => { if (game.state && repairConvoy(game.state)) renderHUD(); });
+if (departBtn) departBtn.addEventListener("click", () => { if (game.state) { departNow(game.state); renderHUD(); } });
 
 // The Gate charge chip's click-to-jump — mirrors boot.js's underAttackEl listener exactly
 // (getCamera() -> set x/y -> clampCamera against the current viewport). Unlike an under-attack
 // PING (a transient event whose coordinates have to be remembered because the thing itself is
 // long gone by click time), the Gate is a stationary building that's still sitting in
 // state.buildings when this fires, so its position is looked up live rather than cached.
-gateChipEl.addEventListener("click", () => {
+if (gateChipEl) gateChipEl.addEventListener("click", () => {
   if (!game.input || !game.state) return;
   const wonder = [...game.state.buildings.values()].find(b => BUILDINGS[b.type]?.wonder && b.owner === "player" && !b.constructing);
   if (!wonder) return;

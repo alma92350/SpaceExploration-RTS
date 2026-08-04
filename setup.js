@@ -289,6 +289,7 @@ function renderSetupPanel(mode) {
 const SCENARIO_START = { escort: startScenario, raider: startRaider, bounty: startBounty };
 
 export function renderMapSelect() {
+  if (!mapSelectEl) return;   // import-safe under Node (CONTRIBUTING: follow the dom.js idiom)
   const isScenario = SCENARIOS.includes(setup.mode);
   const odyssey = setup.mode === "odyssey";
   const copy = SCENARIO_COPY[setup.mode];   // defined for scenarios + Odyssey; undefined for skirmish

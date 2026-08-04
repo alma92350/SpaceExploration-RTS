@@ -119,4 +119,4 @@ export function renderObserverPanel() {
   renderPanelBody(state);
 }
 
-observerBtn.addEventListener("click", () => { toggleObserverMode(); renderObserverPanel(); });
+if (observerBtn) observerBtn.addEventListener("click", () => { toggleObserverMode(); renderObserverPanel(); });

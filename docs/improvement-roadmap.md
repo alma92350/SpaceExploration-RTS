@@ -74,7 +74,6 @@ engineer/session can run this concurrently.
 | **Counter-intelligence rework** — out-of-triangle counters + soft-answer fallback + turret-wall reading, one PR | Combat "out-of-triangle" + AI "soft-answer fallback" + Defense "read a turret wall", merged | M | engine/aiMilitary.js, engine/entities.js |
 | Difficulty-shaped counter-picking cadence | AI | S | engine/aiDifficulty.js, engine/aiMilitary.js |
 | Graduation reaches the army (Rusher techs the Foundry) | AI | M | engine/aiWorkers.js, engine/aiIndustry.js, engine/aiEconomy.js |
-| A fourth archetype: the Technologist on Kybernet | AI | M | engine/aiArchetypes.js |
 | Measure the Helium Bomb blast to the target's rim | Defense | S | engine/bomb.js, engine/aiSuperweapon.js |
 | The Helium Bomb travels with the wave | AI | S | engine/aiSuperweapon.js |
 

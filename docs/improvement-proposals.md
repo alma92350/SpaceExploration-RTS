@@ -484,9 +484,11 @@ The critic's twelve green-light-first picks, chosen for player impact per unit o
 
 **Where.** engine/aiMilitary.js: add the SOFT_ANSWER const beside COUNTER_OF and change counterToPlayerArmy's return to `COUNTER_OF[best] || SOFT_ANSWER[best] || null`. Tune the specific entries with the ailab tech bot (see the bench proposal) rather than by hand; pin one test asserting a visible massed-breacher player army yields a skiff pick. Touches nothing else — pickNextUnitType and effectiveMix already handle prereqs/affordability.
 
-#### A fourth archetype: the Technologist on Kybernet
+#### A fourth archetype: the Technologist on Kybernet — SHIPPED (commit 17e2aad)
 
-*Effort: medium · Impact: 3/5*
+*Effort: medium · Impact: 3/5 — **delivered**; ARCHETYPES.technologist exists and
+ODYSSEY_EXTRA_ARCHETYPE maps Kybernet to it. The Problem statement below describes the
+world as it was BEFORE that commit and is kept for the record.*
 
 **Problem.** Eleven worlds share three archetypes (rusher x3, economist x4, balanced x4 — engine/aiArchetypes.js PLANET_ARCHETYPE + ODYSSEY_EXTRA_ARCHETYPE), so a full Odyssey session meets the same three temperaments over and over, and Kybernet — the research capital, tech 10, whose whole identity is fastest research (engine/techtree.js researchTimeScale) and fastest factories — plays as a generic Economist. No archetype ever fields the Colossus (no mix contains it), so one of the four Arsenal specialists is dead content on the AI side.
 

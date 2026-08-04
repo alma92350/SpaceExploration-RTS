@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve, relative, sep } from "node:path";
 import { walkJs } from "./_helpers.js";
 
@@ -220,4 +220,30 @@ test("boot.js resolves the seed through one shared helper, not copy-pasted at ev
   const helperCalls = [...bootSrc.matchAll(/\bresolveSeed\(setup\)/g)].length;
   assert.ok(helperCalls >= 5,
     `expected resolveSeed(setup) to be called at every start* site (>=5: skirmish, escort, raider, bounty, Odyssey), found ${helperCalls}`);
+});
+
+test("every shipped UI module imports cleanly under Node with no DOM (C10)", () => {
+  // CONTRIBUTING.md: "UI modules should stay import-safe under Node (guard top-level
+  // window/document access), so their logic can be unit-tested. dom.js already resolves `document`
+  // defensively; follow that pattern." Eight of eleven root UI modules threw, and the pattern was
+  // inconsistent WITHIN files — boot.js guards one addEventListener and not the one twenty lines
+  // above it. Nothing caught it because all thirteen DOM test files install globalThis.document
+  // BEFORE importing, which papers over the violation permanently.
+  //
+  // Each module is spawned in its OWN child process: a sibling test file's stub, or an earlier
+  // module in this loop, would otherwise mask the very failure being checked.
+  const broken = [];
+  for (const file of browserJs()) {
+    const rel = relative(root, file);
+    if (rel.startsWith("engine" + sep)) continue;          // the engine is DOM-free by its own guard
+    try {
+      execFileSync(process.execPath, ["--input-type=module", "-e", `import(${JSON.stringify(pathToFileURL(file).href)})`],
+        { stdio: "pipe", timeout: 20000 });
+    } catch (e) {
+      broken.push(`${rel}: ${String(e.stderr || e.message).split("\n").find(l => /Error/.test(l)) || "failed"}`);
+    }
+  }
+  assert.deepEqual(broken, [],
+    "UI module(s) that throw when imported without a DOM — guard the top-level element access the way " +
+    "dom.js does:\n" + broken.join("\n"));
 });
