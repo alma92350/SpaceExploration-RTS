@@ -38,7 +38,7 @@ import { DIFFICULTY_OPTIONS } from "./aiDifficulty.js";
 import { UNITS, BUILDINGS, UPGRADES, storeCapOf, inputCapOf } from "./entities.js";
 import { TECHS } from "./techtree.js";   // known research nodes — to sanitise a Datacenter's untrusted researchQueue on load
 import { COM } from "../data.js";
-import { ODYSSEY_WORLDS } from "./galaxy.js";
+import { ODYSSEY_WORLDS, isMilestoneId } from "./galaxy.js";
 import { sanitizePolicy } from "./colonyPolicy.js";
 
 export const SAVE_VERSION = 1;
@@ -116,6 +116,28 @@ function coerceBand(dst, src, lo, hi) {
 // exceeds sanitizeSave's own MAX_STRING_LEN, and since autosave rotates BOTH generations, the game's
 // own saves become permanently unloadable and the campaign is gone. Whitelist + coerce instead, the
 // same shape cleanPlayer already uses. `request` keeps its existing deeper validation at the call site.
+// The galaxy's own settings are untrusted too, and they are the one block that flows into WORLD
+// GENERATION: addPlanet passes sizeMult/resourceMult straight to createGameState, so a NaN or a
+// string there builds a NaN-sized map on the next jump — which then defeats every coordinate clamp
+// cleanEntity performs, since those clamp against map.width/height. A missing block used to throw
+// mid-jump on s.difficulty. Same shape rehydratePlanet already uses for its own multipliers.
+function cleanGalaxySettings(src) {
+  const s = (src && typeof src === "object") ? src : {};
+  const difficulty = DIFFICULTY_OPTIONS.some(o => o.mult === s.difficulty) ? s.difficulty : "medium";
+  const strategy = KNOWN_STRATEGIES.has(s.aiStrategy) ? s.aiStrategy : undefined;
+  return {
+    difficulty,
+    sizeMult: Math.max(0.1, num(s.sizeMult, 1)),
+    resourceMult: Math.max(0.1, num(s.resourceMult, 1)),
+    playerFaction: typeof s.playerFaction === "string" ? s.playerFaction : "frontier",
+    aiApm: s.aiApm == null ? undefined : num(s.aiApm, 0),
+    aiMicro: s.aiMicro == null ? undefined : !!s.aiMicro,
+    aiStrategy: strategy,
+    startId: ODYSSEY_WORLDS.includes(s.startId) ? s.startId : undefined,
+    popCap: s.popCap == null ? null : Math.max(0, num(s.popCap, 0)),
+  };
+}
+
 function cleanDiplomacy(src) {
   const dip = createDiplomacy();
   if (!src || typeof src !== "object") return dip;
@@ -838,17 +860,25 @@ export function deserializeGalaxy(input) {
 
   const galaxy = {
     seed: save.seed, credits: num(save.credits, 0), activeId: save.activeId, worlds,
-    planets: new Map(), settings: save.settings,
+    planets: new Map(), settings: cleanGalaxySettings(save.settings),
     tick: num(save.galaxyTick, 0), time: num(save.galaxyTime, 0), entitySeq: num(save.entitySeq, 0),
     lastReliefTime: Number.isFinite(save.lastReliefTime) ? save.lastReliefTime : undefined,
     colonyNotes: new Map(),   // transient UI bookkeeping — re-derived, never persisted
-    pacified: new Set(save.pacified || []), pacifyNotes: [], wonBy: save.wonBy ?? null,
-    reached: new Set(save.reached || []),
+    // Filtered like `claims` and `worlds` three lines below, which were already careful. Unfiltered,
+    // a junk id counted toward DOMINATION_TARGET (a raw `.size` check) and PACIFIED_INCOME, and
+    // inflated the "worlds visited" readout galaxyStatus puts on the starmap.
+    pacified: new Set((Array.isArray(save.pacified) ? save.pacified : []).filter(id => ODYSSEY_WORLDS.includes(id))),
+    pacifyNotes: [],
+    wonBy: typeof save.wonBy === "string" ? save.wonBy : null,
+    // `reached` holds MILESTONE ids, not world ids — filtering it against the world roster would
+    // silently drop every genuine milestone and replay its fireworks on the next load.
+    reached: new Set((Array.isArray(save.reached) ? save.reached : []).filter(isMilestoneId)),
     rivalAscended: new Set((Array.isArray(save.rivalAscended) ? save.rivalAscended : []).filter(id => ODYSSEY_WORLDS.includes(id))), milestones: [],   // celebrated milestones persist; the firework queue is transient
     // Worlds the player has reached. An OLD save predates the field AND the living galaxy, so it only
     // instantiated worlds the player had actually visited — recover `discovered` as exactly that set
     // (the planet ids present in the save), plus the active world. A NEW save carries the real set.
-    discovered: new Set(save.discovered || [save.activeId, ...save.planets.map(P => P.planetId)]),
+    discovered: new Set((Array.isArray(save.discovered) ? save.discovered
+      : [save.activeId, ...save.planets.map(P => P.planetId)]).filter(id => ODYSSEY_WORLDS.includes(id))),
     // Faction spread (checkExpansion). Restored as a Map of [worldId, faction]; keep only real world
     // ids (defence-in-depth behind the roster filter). Old saves predate it → empty (no claims yet).
     claims: new Map((Array.isArray(save.claims) ? save.claims : [])

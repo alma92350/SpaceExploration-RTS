@@ -371,6 +371,16 @@ export function surrenderGalaxy(galaxy) {
 // Record a one-time progress milestone — a firework, drained UI-side by boot.js. Idempotent
 // per id, and `reached` persists (engine/persist.js) so a reload never replays a milestone
 // you've already celebrated.
+// The complete milestone vocabulary — the ONLY ids reachMilestone ever mints. Exported so the load
+// path can filter a saved `reached` set against it (engine/persist.js): an unfiltered set let a
+// hand-edited save inject junk, and — more importantly — filtering against the WORLD roster instead
+// would silently drop every real milestone and replay its fireworks on the next load.
+export const MILESTONE_IDS = ["capital", "gate", "domination", "domination:all", "rival-gate"];
+/** True for any id reachMilestone can produce, including the per-world `world:N` family. */
+export function isMilestoneId(id) {
+  return typeof id === "string" && (MILESTONE_IDS.includes(id) || /^world:\d+$/.test(id));
+}
+
 function reachMilestone(galaxy, id) {
   if (galaxy.reached.has(id)) return;
   galaxy.reached.add(id);

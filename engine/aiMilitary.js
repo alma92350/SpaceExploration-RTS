@@ -254,7 +254,7 @@ function aiOffense(state, ctx, nonScout) {
 const GARRISON_SKIRT_CLEARANCE = 40;    // how far past its own outermost building the parked grid sits
 const GARRISON_MIN_RING_RADIUS = 160;   // floor for a base that's nothing but a bare Command Center yet
 const OWN_BASE_SCAN_RADIUS = 320;       // buildings farther than this from a CC belong to a different base, not this one's footprint
-const STATION_REACH = 30;               // close enough to its own slot that re-issuing the same move order would be a no-op
+export const STATION_REACH = 30;        // close enough to its own slot that re-issuing the same move order would be a no-op
 // A unit farther than this from EVERY Command Center isn't "home" yet — a stray unit deep in
 // contested or enemy territory (a retreat straggler, a unit some other mechanism dropped there)
 // must never get yanked partway across the map onto the grid; it should keep doing whatever
@@ -298,19 +298,35 @@ function baseFootprintRadius(cc, buildings) {
 // and asked again — one corrective pass, not a search, since a grid's own footprint doesn't change
 // with where it's centered. Keeps the WHOLE parked group, not just its middle, inside the radius
 // an attack still recalls it from, however many units end up in it.
-function garrisonSlots(units, cc, buildings, mapWidth, mapHeight) {
+// Exported so its geometry can be unit-tested directly. The corrective branch below had NEVER
+// executed under `npm test`: every dispersal test uses 1 or 5 units around a bare Command Center,
+// and a bare CC's grid doesn't overshoot until ~60 units.
+export function garrisonSlots(units, cc, buildings, mapWidth, mapHeight) {
   const away = Math.atan2(cc.y - mapHeight / 2, cc.x - mapWidth / 2);
   const radius = baseFootprintRadius(cc, buildings);
   const anchorAt = r => ({ x: cc.x + Math.cos(away) * r, y: cc.y + Math.sin(away) * r });
 
-  const anchor = anchorAt(radius);
-  const slots = formationSlots(units, anchor.x, anchor.y, { shape: "grid" });
   const limit = DEFEND_RADIUS - STATION_REACH;
-  const farthest = Math.max(...slots.map(s => Math.hypot(s.x - cc.x, s.y - cc.y)));
-  if (farthest <= limit) return slots;
+  const farthestOf = ss => Math.max(...ss.map(s => Math.hypot(s.x - cc.x, s.y - cc.y)));
 
-  const pulled = anchorAt(Math.max(GARRISON_MIN_RING_RADIUS, radius - (farthest - limit)));
-  return formationSlots(units, pulled.x, pulled.y, { shape: "grid" });
+  let ringRadius = radius;
+  let slots = formationSlots(units, anchorAt(ringRadius).x, anchorAt(ringRadius).y, { shape: "grid" });
+  // Iterate to a fixed point instead of correcting once. The old single pass assumed pulling the
+  // anchor in by the overshoot removes the overshoot — true only if the farthest slot lay on the
+  // pull-back axis. It doesn't: it's an off-axis grid CORNER, so max|slot - cc| is not a linear
+  // function of the ring radius and one pass always left a residual, growing with garrison size
+  // (measured 0.1px at 60 units, 1.2px at 80). A handful of passes converge; the loop is bounded so
+  // a pathological footprint can't spin, and the floor keeps a bare base's ring off its own skirt.
+  for (let pass = 0; pass < 8; pass++) {
+    const farthest = farthestOf(slots);
+    if (farthest <= limit) break;
+    const next = Math.max(GARRISON_MIN_RING_RADIUS, ringRadius - (farthest - limit));
+    if (next === ringRadius) break;                    // already at the floor — nothing more to give
+    ringRadius = next;
+    const a = anchorAt(ringRadius);
+    slots = formationSlots(units, a.x, a.y, { shape: "grid" });
+  }
+  return slots;
 }
 
 // Stand this controller's idle home army up in a grid at a single anchor point just outside each

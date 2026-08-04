@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
-import { assignHaul, assignService, assignFerry } from "../engine/haul.js";
+import { assignHaul, assignService, assignFerry, assignShuttle } from "../engine/haul.js";
+import { storeCapOf } from "../engine/entities.js";
 import { mulberry32 } from "./_helpers.js";
 
 // A two-base layout shared by every test below: CC-A at the origin, CC-B 1000 away on the same
@@ -160,4 +161,45 @@ test("with only ONE Command Center, zone-first degenerates to the plain nearest 
   assignHaul(s, worker);
 
   assert.equal(worker.order.buildingId, near.id, "plain nearest-distance still wins when there's only one zone");
+});
+
+test("a partly-loaded collection-point freighter shuttles home when its OWN zone has nothing left (T2)", () => {
+  // assignShuttle's "don't leave yet" guard ran nearestBacklogProducer with no home id, so it fell
+  // through zoneFirst's UNBOUNDED global second pass: the ship waited on a backlog anywhere in the
+  // empire, however far away, even though every producer that could actually feed it is zone-local
+  // (assignFerry is zone-first). It was also the only zone-aware scan in the file that didn't
+  // forward unit.homeCC, so pinning the ship's home base didn't help either. The stall scales with
+  // how well the player is doing — more bases means more chance something somewhere is backed up.
+  const { s, ccA, ccB } = twoBases(5);
+  const freighter = makeUnit("hauler", "player", ccA.x + 30, ccA.y);
+  freighter.collectPoint = true;
+  freighter.anchor = { x: freighter.x, y: freighter.y };
+  freighter.freight = { ore: 30 };                       // partly loaded
+  s.units.set(freighter.id, freighter);
+
+  // A backed-up producer in the OTHER zone, and nothing at all in this one.
+  const rig = makeBuilding("plasmarig", "player", ccB.x + 40, ccB.y);
+  rig.constructing = false;
+  rig.store = { plasmatorp: storeCapOf("plasmarig") };
+  s.buildings.set(rig.id, rig);
+
+  assignShuttle(s, freighter);
+  assert.ok(freighter.order && freighter.order.type === "shuttle",
+    "with its own zone empty the ship must deliver, not wait on another base's backlog");
+});
+
+test("a partly-loaded freighter still waits while its OWN zone is backed up (T2 fence)", () => {
+  const { s, ccA } = twoBases(6);
+  const freighter = makeUnit("hauler", "player", ccA.x + 30, ccA.y);
+  freighter.collectPoint = true;
+  freighter.anchor = { x: freighter.x, y: freighter.y };
+  freighter.freight = { ore: 30 };
+  s.units.set(freighter.id, freighter);
+  const rig = makeBuilding("plasmarig", "player", ccA.x + 60, ccA.y);
+  rig.constructing = false;
+  rig.store = { plasmatorp: storeCapOf("plasmarig") };
+  s.buildings.set(rig.id, rig);
+
+  assignShuttle(s, freighter);
+  assert.equal(freighter.order, null, "there is still more worth waiting for, right here");
 });

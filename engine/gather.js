@@ -135,9 +135,16 @@ export function updateGather(state, unit, dt) {
         // worth. Whatever doesn't fit stays aboard the worker; the next "toDrop" tick re-picks the
         // nearest drop and tries again (this same Hauler if it's freed up room, another one, or the
         // Command Center) — no special-casing needed, nearestGatherDrop already re-runs every tick.
-        const rawMove = Math.min(unit.cargo.qty, freightRoom(drop));
+        // Clamp the CREDITED amount, then derive how much cargo that consumes. Clamping the raw
+        // quantity instead and applying the bonus afterwards let a partial deposit land more than
+        // fits (measured: 251 into a 250 hold at the Logistics Network's 1.25x), which breaks the
+        // hold's capacity AND "a save round-trips identically" — persist.js truncates the excess on
+        // load, so continuing a game stopped being the same as saving and continuing it. That
+        // second half is invisible to every replay test: both runs agree until someone saves.
+        const credited = Math.min(unit.cargo.qty * mult, freightRoom(drop));
+        const rawMove = credited / mult;
         if (rawMove > 0) {
-          drop.freight[unit.cargo.com] = (drop.freight[unit.cargo.com] || 0) + rawMove * mult;
+          drop.freight[unit.cargo.com] = (drop.freight[unit.cargo.com] || 0) + credited;
           unit.cargo.qty -= rawMove;
           if (unit.cargo.qty <= 1e-9) { unit.cargo.qty = 0; unit.cargo.com = null; }
         }

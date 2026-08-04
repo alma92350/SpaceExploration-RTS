@@ -185,3 +185,26 @@ test("multiple Command Centers each disperse their own nearby units to their own
   assert.ok(Math.hypot(expansionUnit.order.x - homeCC.x, expansionUnit.order.y - homeCC.y) > 340,
     "...and vice versa");
 });
+
+test("garrisonSlots keeps a large parked group inside the recall radius, corners included (T2)", async () => {
+  // The header claims the corrective pull-back "keeps the WHOLE parked group, not just its middle,
+  // inside the radius". The premise is false: the anchor is pulled back RADIALLY, but the farthest
+  // slot is an off-axis grid CORNER, so max|slot - cc| is not a linear function of the anchor's
+  // radius and one pass never converges. Measured residual grows with garrison size — 0.1px at 8
+  // units, 1.7px at 40. The branch had also never executed under npm test: every dispersal test
+  // uses 1 or 5 units around a bare Command Center, which doesn't overshoot until ~60.
+  const { garrisonSlots, DEFEND_RADIUS, STATION_REACH } = await import("../engine/aiMilitary.js");
+  const cc = makeBuilding("command", "ai", 1500, 500);
+  const buildings = [cc];
+  for (let i = 0; i < 8; i++)                         // a built-out footprint, so the ring starts wide
+    buildings.push(makeBuilding("barracks", "ai", cc.x + Math.cos(i) * 90, cc.y + Math.sin(i) * 90));
+  // 80, not 40: measured, the corrective branch doesn't fire at all below ~60 units, so a smaller
+  // fixture asserts nothing about it. Residual grows with size — 0.1px at 60, 1.2px at 80.
+  const units = Array.from({ length: 80 }, () => makeUnit("skiff", "ai", cc.x, cc.y));
+
+  const slots = garrisonSlots(units, cc, buildings, 2400, 1000);
+  const limit = DEFEND_RADIUS - STATION_REACH;
+  const farthest = Math.max(...slots.map(s => Math.hypot(s.x - cc.x, s.y - cc.y)));
+  assert.ok(farthest <= limit + 1e-6,
+    `every parked slot must sit inside the recall radius — farthest ${farthest.toFixed(2)} vs limit ${limit}`);
+});
