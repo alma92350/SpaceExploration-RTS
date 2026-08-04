@@ -114,6 +114,8 @@ sound.setMuted(true);
 
 const { game } = await import("../session.js");
 const { createGameState, makeBuilding, makeUnit } = await import("../engine/state.js");
+const { BUILDINGS } = await import("../engine/entities.js");
+const { commodityAvailable } = await import("../engine/market.js");
 const { mulberry32 } = await import("../engine/rng.js");
 const { panelEl } = await import("../dom.js");
 const { renderSelectionPanel, resetSelectionSignature } = await import("../hudSelection.js");
@@ -1233,3 +1235,34 @@ for (const [name, mutate] of PANEL_MUTATIONS) {
       `${name} changed the simulation but the panel didn't redraw — its controls read as no-ops`);
   });
 }
+
+test("every unit in BUILDINGS[type].produces gets a produce button on that building's panel (T2)", () => {
+  // The rosters were copied out of engine/entities.js into three different hand-maintained shapes
+  // in the HUD — two identical literals and one pair of unrolled blocks — while the ENGINE already
+  // owns and enforces the list (queueProduction refuses anything not in `produces`). Adding a unit
+  // to a building's roster therefore made it buildable by the engine and by the AI, but invisible
+  // in the UI, with nothing failing. The Odyssey gate was duplicated DIFFERENTLY too: the engine
+  // gates per-unit on `def.odysseyOnly && !state.endless` while the HUD hand-split the array.
+  const { state } = setupOdyssey(71);
+  for (const type of ["command", "barracks", "stardock"]) {
+    const b = makeBuilding(type, "player", 700, 500);
+    b.constructing = false;
+    state.buildings.set(b.id, b);
+    state.selection = [b.id];
+    resetSelectionSignature();
+    renderSelectionPanel();
+    for (const t of BUILDINGS[type].produces || []) {
+      // Two legitimate reasons a produced unit isn't offered, both engine rules rather than HUD
+      // opinions: it's Odyssey-only in a skirmish (queueProduction's own gate), or this world can
+      // neither mine nor stock one of its cost commodities (commodityAvailable — a forever-greyed
+      // button helps nobody). Everything else must be on the panel.
+      const def = UNITS[t];
+      if (def.odysseyOnly && !state.endless && !game.galaxy) continue;
+      if (!Object.keys(def.cost).every(c => commodityAvailable(state, "player", c))) continue;
+      assert.ok(findButton(`Produce ${def.name}`),
+        `${type}'s panel is missing a button for ${t}, which BUILDINGS.${type}.produces lists ` +
+        `and queueProduction would accept`);
+    }
+    state.buildings.delete(b.id);
+  }
+});

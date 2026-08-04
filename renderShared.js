@@ -135,6 +135,12 @@ export function seededRng(seed) {
 // Lightens (positive percent) or darkens (negative) a "#rrggbb" color, used
 // to derive hull-shadow/highlight tones from a player's own color so
 // buildings/units read as one paint job rather than a flat single fill.
+// NOT memoized, and deliberately so. This is called per building per frame and builds a few
+// short-lived strings, so caching on (hex, percent) looks like an easy win — it was tried and
+// MEASURED, and it is a loss: the cache key is itself a fresh string per call, which costs more
+// than the result it saves. On a 120-building, 306-unit frame the memo took garbage from
+// 51.5 KB/frame to 62.2 and the frame from 0.22ms to 0.24. Left plain; test/renderShared.test.js
+// pins the returned strings either way, so a future attempt starts from a real baseline.
 export function shade(hex, percent) {
   const num = parseInt(hex.slice(1), 16);
   const amt = Math.round(2.55 * percent);
