@@ -1,0 +1,2088 @@
+{
+  "empty selection": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Drag-select units, or click a building."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Idle Worker ( ` )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Select Army ( Q )"
+      },
+      {
+        "tag": "div",
+        "cls": "legend"
+      }
+    ]
+  },
+  "one command center": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Command Center — 1000/1000 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Produce (3)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Worker (50 ore)  ( Z )"
+          }
+        ],
+        "title": "40 hp · 4 dmg · rng 15 · spd 60 · 1 supply"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Worker (50 biomass)  ( C )"
+          }
+        ],
+        "title": "Worker paid in 50 biomass instead of ore"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Ranger (45 ore)  ( V )"
+          }
+        ],
+        "title": "50 hp · 6 dmg · rng 22 · spd 115 · 1 supply"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it."
+      }
+    ]
+  },
+  "command center, player rich": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Command Center — 1000/1000 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Produce (3)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Worker (50 ore)  ( Z )"
+          }
+        ],
+        "title": "40 hp · 4 dmg · rng 15 · spd 60 · 1 supply"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Worker (50 biomass)  ( C )"
+          }
+        ],
+        "title": "Worker paid in 50 biomass instead of ore"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Ranger (45 ore)  ( V )"
+          }
+        ],
+        "title": "50 hp · 6 dmg · rng 22 · spd 115 · 1 supply"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it."
+      }
+    ]
+  },
+  "command center with a queued worker": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Command Center — 1000/1000 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Produce (3)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Worker (50 ore)  ( Z )"
+          }
+        ],
+        "title": "40 hp · 4 dmg · rng 15 · spd 60 · 1 supply"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Worker (50 biomass)  ( C )"
+          }
+        ],
+        "title": "Worker paid in 50 biomass instead of ore"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Ranger (45 ore)  ( V )"
+          }
+        ],
+        "title": "50 hp · 6 dmg · rng 22 · spd 115 · 1 supply"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-row queue-row",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "queue-label",
+            "text": "Worker — 0%"
+          },
+          {
+            "tag": "button",
+            "cls": "queue-cancel",
+            "text": "×",
+            "title": "Cancel (full refund)"
+          }
+        ]
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it."
+      }
+    ]
+  },
+  "one worker": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Worker — 40/40 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Build (9)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Barracks (150 ore)  ( Z )"
+          }
+        ],
+        "title": "500 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Foundry (175 ore)  ( C )"
+          }
+        ],
+        "title": "Requires Barracks"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Arsenal (220 ore)  ( V )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Refinery (200 ore)  ( B )"
+          }
+        ],
+        "title": "400 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Sentinel Turret (150 ore, 100 crystals)  ( N )"
+          }
+        ],
+        "title": "350 hp · 20 dmg · rng 130"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Bastille (200 ore, 150 crystals, 60 radioactives)"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Aegis Bastion (250 ore, 180 crystals)"
+          }
+        ],
+        "title": "Requires Arsenal"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Habitat (75 ore)"
+          }
+        ],
+        "title": "250 hp · +8 supply"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Command Center (400 ore)"
+          }
+        ],
+        "title": "1000 hp · +10 supply · resource drop-off"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+20 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "two workers": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "2× Worker — 100% hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Build (9)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Barracks (150 ore)  ( Z )"
+          }
+        ],
+        "title": "500 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Foundry (175 ore)  ( C )"
+          }
+        ],
+        "title": "Requires Barracks"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Arsenal (220 ore)  ( V )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Refinery (200 ore)  ( B )"
+          }
+        ],
+        "title": "400 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Sentinel Turret (150 ore, 100 crystals)  ( N )"
+          }
+        ],
+        "title": "350 hp · 20 dmg · rng 130"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Bastille (200 ore, 150 crystals, 60 radioactives)"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Aegis Bastion (250 ore, 180 crystals)"
+          }
+        ],
+        "title": "Requires Arsenal"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Habitat (75 ore)"
+          }
+        ],
+        "title": "250 hp · +8 supply"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Command Center (400 ore)"
+          }
+        ],
+        "title": "1000 hp · +10 supply · resource drop-off"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-group",
+        "text": "Formation"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "The first unit you selected leads — the rest follow it, even on a later solo move. Ctrl+click a unit already in the selection to promote it to leader instead."
+      },
+      {
+        "tag": "div",
+        "cls": "formation-row",
+        "kids": [
+          {
+            "tag": "button",
+            "cls": "btn formation-btn active",
+            "text": "Grid",
+            "title": "A simple spread — no leader, no facing"
+          },
+          {
+            "tag": "button",
+            "cls": "btn formation-btn",
+            "text": "Line",
+            "title": "Abreast the direction of travel, the leader nudged to the front or back"
+          },
+          {
+            "tag": "button",
+            "cls": "btn formation-btn",
+            "text": "Wedge",
+            "title": "A V: the leader at the tip (front) or shielded at the rear vertex (back)"
+          },
+          {
+            "tag": "button",
+            "cls": "btn formation-btn",
+            "text": "Circle",
+            "title": "A ring around the leader at its center, protected"
+          }
+        ]
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Hold Formation ( F )",
+        "title": "Form up right here in the chosen shape and hold — a defensive stance for the whole group, not just one ship"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle Selected (40%)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "mixed unit selection": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "button",
+        "cls": "sel-row sel-row-summary type-row",
+        "text": "2× Skiff — 100% hp · ▼ falls to Bastion",
+        "title": "Select only your Skiffs"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-row sel-row-summary type-row",
+        "text": "1× Bastion — 100% hp · ▼ falls to Lancer",
+        "title": "Select only your Bastions"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-group",
+        "text": "Formation"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "The first unit you selected leads — the rest follow it, even on a later solo move. Ctrl+click a unit already in the selection to promote it to leader instead."
+      },
+      {
+        "tag": "div",
+        "cls": "formation-row",
+        "kids": [
+          {
+            "tag": "button",
+            "cls": "btn formation-btn active",
+            "text": "Grid",
+            "title": "A simple spread — no leader, no facing"
+          },
+          {
+            "tag": "button",
+            "cls": "btn formation-btn",
+            "text": "Line",
+            "title": "Abreast the direction of travel, the leader nudged to the front or back"
+          },
+          {
+            "tag": "button",
+            "cls": "btn formation-btn",
+            "text": "Wedge",
+            "title": "A V: the leader at the tip (front) or shielded at the rear vertex (back)"
+          },
+          {
+            "tag": "button",
+            "cls": "btn formation-btn",
+            "text": "Circle",
+            "title": "A ring around the leader at its center, protected"
+          }
+        ]
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Hold Formation ( F )",
+        "title": "Form up right here in the chosen shape and hold — a defensive stance for the whole group, not just one ship"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle Selected (40%)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Attack-Move ( A )",
+        "title": "Then tap the map: units advance and engage anything met on the way"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Hold Position ( H )",
+        "title": "Fire on anything in range, but hold ground — don't chase out of position"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "A + click to attack-move. Right-click moves (ignores enemies). Right-drag also sets a facing. Ctrl+right-click queues a waypoint."
+      }
+    ]
+  },
+  "a damaged building": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Barracks — 200/500 hp"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-note bad",
+        "text": "Damaged — right-click with a worker selected to repair"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Produce (6)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Skiff (100 ore)  ( Z )"
+          }
+        ],
+        "title": "72 hp · 12 dmg · rng 40 · spd 90 · 1 supply\n▲ strong vs Lancer\n▼ falls to Bastion"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Bastion (160 ore)  ( C )"
+          }
+        ],
+        "title": "160 hp · 10 dmg · rng 44 · spd 68 · 2 supply\n▲ strong vs Skiff\n▼ falls to Lancer"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Lancer (150 ore)  ( V )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Breacher (100 ore, 60 radioactives)  ( B )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Dreadnought (240 ore, 100 radioactives)  ( N )"
+          }
+        ],
+        "title": "Requires Arsenal"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Mender (90 ore, 60 crystals)"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+60 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it."
+      }
+    ]
+  },
+  "barracks": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Barracks — 500/500 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Produce (6)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Skiff (100 ore)  ( Z )"
+          }
+        ],
+        "title": "72 hp · 12 dmg · rng 40 · spd 90 · 1 supply\n▲ strong vs Lancer\n▼ falls to Bastion"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Bastion (160 ore)  ( C )"
+          }
+        ],
+        "title": "160 hp · 10 dmg · rng 44 · spd 68 · 2 supply\n▲ strong vs Skiff\n▼ falls to Lancer"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Lancer (150 ore)  ( V )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Breacher (100 ore, 60 radioactives)  ( B )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Dreadnought (240 ore, 100 radioactives)  ( N )"
+          }
+        ],
+        "title": "Requires Arsenal"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Mender (90 ore, 60 crystals)"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+60 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it."
+      }
+    ]
+  },
+  "refinery": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Refinery — 400/400 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Research (9)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "⚔️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Overcharged Weapons · Assault (150 radioactives)"
+          }
+        ],
+        "title": "+15% damage dealt by all combat units"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "⚔️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Overcharged Core · Assault (200 radioactives, 120 ore)"
+          }
+        ],
+        "title": "Requires Overcharged Weapons"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "⚡"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Overdrive Actuators · Assault (220 radioactives, 140 ore)"
+          }
+        ],
+        "title": "Requires Overcharged Core"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🛡️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Reinforced Plating · Bulwark (150 crystals)"
+          }
+        ],
+        "title": "-12% damage taken by all units and structures"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🛡️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Reinforced Bulwark · Bulwark (200 crystals, 120 ore)"
+          }
+        ],
+        "title": "Requires Reinforced Plating"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🩹"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Self-Sealing Plating · Bulwark (220 crystals, 140 ore)"
+          }
+        ],
+        "title": "Requires Reinforced Bulwark"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "📦"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Logistics Network · Logistics (140 crystals)"
+          }
+        ],
+        "title": "+25% resource yield from every haul"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "📦"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Rapid Fabrication · Logistics (160 crystals, 120 ore)"
+          }
+        ],
+        "title": "Requires Logistics Network"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "♻️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Field Recycling · Logistics (180 crystals, 140 ore)"
+          }
+        ],
+        "title": "Requires Rapid Fabrication"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+80 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "datacenter": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Datacenter — 420/420 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Research (12)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "⛓️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Metallurgy (80 crystals)"
+          }
+        ],
+        "title": "Unlock the Assembly Plant — refine metals into alloys."
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "⚡"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Fusion Containment (70 crystals)"
+          }
+        ],
+        "title": "+50% Power from every Reactor."
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🔩"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Heavy Alloys (110 crystals)"
+          }
+        ],
+        "title": "Requires Metallurgy"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🖥️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Microelectronics (120 crystals)"
+          }
+        ],
+        "title": "Requires Metallurgy"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🤖"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Factory Automation (130 crystals, 40 radioactives)"
+          }
+        ],
+        "title": "Requires Microelectronics"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🛠️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Precision Machining (150 crystals, 60 radioactives)"
+          }
+        ],
+        "title": "Requires Microelectronics"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🌀"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Antimatter Containment (220 crystals, 100 radioactives)"
+          }
+        ],
+        "title": "Requires Precision Machining"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🧠"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Machine Minds (260 crystals, 130 radioactives)"
+          }
+        ],
+        "title": "Requires Antimatter Containment"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "🧠"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Autonomous Freight AI (60 ai, 90 electronics)"
+          }
+        ],
+        "title": "Requires Machine Minds"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "♻️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Reclamation Engineering (140 crystals, 40 radioactives)"
+          }
+        ],
+        "title": "Requires Factory Automation"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "⚗️"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Industrial Chemistry (80 crystals)"
+          }
+        ],
+        "title": "Unlock the Chemical Plant — refine biomass into chemicals."
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "span",
+            "cls": "btn-icon btn-emoji",
+            "text": "📦"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Research Consumer Fabrication (150 crystals, 60 radioactives)"
+          }
+        ],
+        "title": "Requires Industrial Chemistry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+80 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "reactor": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Reactor — 400/400 hp"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-note bad",
+        "text": "Stalled — larder empty (needs Radioactives hauled in)"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-note",
+        "text": "Larder 0/80☢️ — carried in by workers"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Powers your factories over its own grid — if total draw outruns your Power, every factory throttles. Burns 0.12/s of Radioactives while running; a worker keeps the larder fed like a factory's input, or pause it."
+      },
+      {
+        "tag": "div",
+        "cls": "sel-note",
+        "text": "No ice banked — bank some to halve fuel/input burn and Power draw"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Logistics priority: ● Normal",
+        "title": "Even weight with every other building — click to raise to High"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "⏸ Pause",
+        "title": "Take it off the grid until resumed, without demolishing it"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+60 ore)",
+        "title": "Scrap it for 50% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "habitat": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Habitat — 250/250 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+30 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "foundry": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Foundry — 450/450 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+70 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "arsenal": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Arsenal — 550/550 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+88 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "stardock": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Star Dock — 600/600 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+140 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "turret": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Sentinel Turret — 350/350 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+60 ore, 40 crystals)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "a constructing building": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Barracks — 500/500 hp"
+      }
+    ]
+  },
+  "an enemy building": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Barracks — 500/500 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Produce (6)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Skiff (100 ore)  ( Z )"
+          }
+        ],
+        "title": "72 hp · 12 dmg · rng 40 · spd 90 · 1 supply\n▲ strong vs Lancer\n▼ falls to Bastion"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Bastion (160 ore)  ( C )"
+          }
+        ],
+        "title": "160 hp · 10 dmg · rng 44 · spd 68 · 2 supply\n▲ strong vs Skiff\n▼ falls to Lancer"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Lancer (150 ore)  ( V )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Breacher (100 ore, 60 radioactives)  ( B )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Dreadnought (240 ore, 100 radioactives)  ( N )"
+          }
+        ],
+        "title": "Requires Arsenal"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Produce Mender (90 ore, 60 crystals)"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+60 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Right-click to set a rally point — right-click a resource node to rally new workers straight onto it."
+      }
+    ]
+  },
+  "an enemy unit": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Skiff — 72/72 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+40 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Attack-Move ( A )",
+        "title": "Then tap the map: units advance and engage anything met on the way"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Hold Position ( H )",
+        "title": "Fire on anything in range, but hold ground — don't chase out of position"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "A + click to attack-move. Right-click moves (ignores enemies). Right-drag also sets a facing. Ctrl+right-click queues a waypoint."
+      }
+    ]
+  },
+  "a freighter": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Freighter — 220/220 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+)",
+        "title": "Scrap it for 50% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "a mender": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Mender — 70/70 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "🔧 Auto-repair: OFF",
+        "title": "Roam to the nearest damaged building/unit and mend it automatically"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+45 ore, 30 crystals)",
+        "title": "Scrap it for 50% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "a ranger": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Ranger — 50/50 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+18 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Scout Mode ( E )",
+        "title": "Auto-explore: the Ranger ranges toward the nearest unexplored ground — leading its formation at the group's pace if it has one, on its own otherwise"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Ranger: all-terrain, far sight. E to auto-scout; right-click to move it yourself."
+      }
+    ]
+  },
+  "a worker mid-gather": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Worker — 40/40 hp"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-note warn",
+        "text": "Miners 4/3 — diminishing returns"
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Build (9)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Barracks (150 ore)  ( Z )"
+          }
+        ],
+        "title": "500 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Foundry (175 ore)  ( C )"
+          }
+        ],
+        "title": "Requires Barracks"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Arsenal (220 ore)  ( V )"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Refinery (200 ore)  ( B )"
+          }
+        ],
+        "title": "400 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Sentinel Turret (150 ore, 100 crystals)  ( N )"
+          }
+        ],
+        "title": "350 hp · 20 dmg · rng 130"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Bastille (200 ore, 150 crystals, 60 radioactives)"
+          }
+        ],
+        "title": "Requires Foundry"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Aegis Bastion (250 ore, 180 crystals)"
+          }
+        ],
+        "title": "Requires Arsenal"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Habitat (75 ore)"
+          }
+        ],
+        "title": "250 hp · +8 supply"
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon disabled",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "Build Command Center (400 ore)"
+          }
+        ],
+        "title": "1000 hp · +10 supply · resource drop-off"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+20 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  },
+  "a building placement in progress": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Worker — 40/40 hp"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Stop ( X )"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+20 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Click the map to place it. Right-click to cancel."
+      }
+    ]
+  },
+  "a spaceport in a galaxy": {
+    "tag": "div",
+    "kids": [
+      {
+        "tag": "div",
+        "cls": "sel-row sel-row-summary",
+        "text": "Spaceport — 600/600 hp"
+      },
+      {
+        "tag": "div",
+        "cls": "sel-note good",
+        "text": "Spaceport · Tier 1/3 · jump capacity 12 supply"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Jump the fleet staged by the pad to another world — free to a world you already hold, fuel scaled by distance to reach a new one. A jump lifts up to 12 supply (ship population); a larger fleet crosses in several jumps. Your bases here stay as a colony."
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Fleet staged: 6/12 supply (4 units) — all fit in one jump."
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "You hold more than one Spaceport — a jump lifts staged units from ALL of them together: 6/24 supply combined this trip."
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "A Colony Ship is loaded — jump to a new world and deploy it to found a base."
+      },
+      {
+        "tag": "button",
+        "cls": "btn has-icon",
+        "kids": [
+          {
+            "tag": "img",
+            "cls": "btn-icon"
+          },
+          {
+            "tag": "span",
+            "cls": "btn-label",
+            "text": "⬆ Upgrade to Tier 2 (250 ore) — capacity 24"
+          }
+        ],
+        "title": "A bigger launch pad: jump capacity 12 → 24 supply, so more of your fleet crosses per jump. New-world fuel drops to ×0.85 too."
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "Cargo hold: none — stage a cargo ship (Hauler / Heavy Hauler / Bulk Freighter) by the pad to haul goods."
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Jump (10)"
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Korrath · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Ferros Prime · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Vesper · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Glacius · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Nimbus · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Pyralis · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Helix Belt · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Oort Reach · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Forge Station · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "Jump ▸ Verdani · your colony",
+        "title": "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+      },
+      {
+        "tag": "button",
+        "cls": "sel-group sel-collapsible",
+        "text": "▾ Freight Lanes (0)"
+      },
+      {
+        "tag": "p",
+        "cls": "hint",
+        "text": "No other colony to route to yet — settle a second world to open a lane."
+      },
+      {
+        "tag": "button",
+        "cls": "btn",
+        "text": "♻ Recycle (+120 ore)",
+        "title": "Scrap it for 40% of its cost back, plus everything in its larder/hold right now — takes a little time in place, and a Command Center can't be recycled"
+      }
+    ]
+  }
+}
