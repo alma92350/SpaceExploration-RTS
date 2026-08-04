@@ -11,7 +11,7 @@
 import { COM } from "./data.js";
 import { isNodeDiscovered } from "./engine/fog.js";
 import { UNITS } from "./engine/entities.js";
-import { hashStr, seededRng, pathPoints, inView } from "./renderShared.js";
+import { hashStr, seededRng, pathPoints, inView, centeredText } from "./renderShared.js";
 
 // The same amber "running, just not at full rate" tone renderBuildings.js's producer-concern
 // badge uses (CONCERN_STYLE.warn) — a saturated node isn't dead, just diminishing.
@@ -34,10 +34,9 @@ export function drawNodes(ctx, state, view, observerMode = false) {
       else drawRockyNode(ctx, n, r); // mine / exploit — ore, crystals, radioactives, ice, relics
     }
 
-    ctx.font = "10px sans-serif";
-    ctx.textAlign = "center";
     ctx.fillStyle = "#05070f";
-    ctx.fillText(COM[n.com]?.ico || "?", n.x, n.y + 3);
+    // baseline "alphabetic": this glyph sits on a hand-tuned +3 offset, not vertically centered.
+    centeredText(ctx, COM[n.com]?.ico || "?", n.x, n.y + 3, "10px sans-serif", "alphabetic");
 
     // Saturation cue: node.miners is retallied every tick by sim.js countMiners, but nothing used
     // to render it, so a node six workers deep just looked like ordinary slow income with no

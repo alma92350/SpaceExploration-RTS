@@ -4,12 +4,7 @@ import { createFog, updateFog } from "../engine/fog.js";
 import { makeUnit, makeBuilding } from "../engine/state.js";
 import { BUILDINGS } from "../engine/entities.js";
 import { drawBuildings, drawBuildingShape, drawBuildingBars } from "../renderBuildings.js";
-
-// A stub 2D context that no-ops any method the drawing code happens to call, instead of
-// hand-enumerating the canvas API — keeps this test robust to unrelated rendering changes.
-function fakeCtx() {
-  return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
-}
+import { fakeCtx } from "./_dom.js";
 
 // Extends test/render-roster.test.js's own richer variant: RECORDS each ctx method call as a
 // (name, rounded-args) tuple instead of swallowing it, so a test can tell two draws apart — e.g.

@@ -12,13 +12,11 @@
 "use strict";
 
 import { queueProduction } from "./production.js";
-import { issueBuild } from "./commands.js";
-import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, canAfford, prereqsMet, isElectrifiable } from "./entities.js";
 import { powerCap, powerDraw } from "./industry.js";
 import { researchTech } from "./techtree.js";
 import { supplyUsed, supplyCap } from "./supply.js";
-import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
+import { canAct, spend, canAffordKeeping, tryBuild } from "./aiCommon.js";
 import { wantsDeepIndustry } from "./aiWorkers.js";
 import { difficultyFor } from "./aiDifficulty.js";
 import { strategyFor } from "./aiStrategy.js";
@@ -163,8 +161,7 @@ export function aiIndustry(state, ctx) {
   const reactorPending = reactors.some(b => b.constructing);
   const wantMorePower = !reactors.length || (cap > 0 && draw > cap * 0.85);
   if (wantMorePower && !reactorPending && canAffordKeeping(ai.resources, BUILDINGS.reactor.cost, ctx.oreReserve) && canAct(state, owner)) {
-    const spot = findPlacement(state, "reactor", cc.x - 60, cc.y + 60);
-    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "reactor", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, "reactor", cc.x - 60, cc.y + 60);
   }
 
   // ELECTRIFY: once the grid is live, wire the base's non-power buildings in — 30% faster unit
@@ -196,8 +193,7 @@ export function aiIndustry(state, ctx) {
   const nextFactory = chain.find(t => !buildings.some(b => b.type === t) && prereqsMet(state, owner, BUILDINGS[t]));
   if (nextFactory && canAffordKeeping(ai.resources, BUILDINGS[nextFactory].cost, ctx.oreReserve) && canAct(state, owner)) {
     const ang = industryCount * 2.4, rad = 120 + 18 * industryCount;
-    const spot = findPlacement(state, nextFactory, cc.x + Math.cos(ang) * rad, cc.y + Math.sin(ang) * rad);
-    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, nextFactory, spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, nextFactory, cc.x + Math.cos(ang) * rad, cc.y + Math.sin(ang) * rad);
   }
 
   // RESEARCH: at a completed Datacenter, queue the next unowned node whose prereqs are met (lowest
@@ -218,8 +214,7 @@ export function aiIndustry(state, ctx) {
   const hasStardock = buildings.some(b => b.type === "stardock");
   if (!hasStardock && prereqsMet(state, owner, BUILDINGS.stardock)
       && canAffordKeeping(ai.resources, BUILDINGS.stardock.cost, ctx.oreReserve) && canAct(state, owner)) {
-    const spot = findPlacement(state, "stardock", cc.x + 120, cc.y - 90);
-    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "stardock", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, "stardock", cc.x + 120, cc.y - 90);
   }
   // Train a Leviathan at a completed, idle Star Dock when the manufactured strategic goods (AI Cores
   // + Plasma Torpedoes) are on hand and there's supply for the 8-supply capital ship. queueProduction
@@ -252,8 +247,7 @@ export function aiIndustry(state, ctx) {
   const hasRig = buildings.some(b => b.type === "plasmarig");
   if (!hasRig && prereqsMet(state, owner, BUILDINGS.plasmarig)
       && canAffordKeeping(ai.resources, BUILDINGS.plasmarig.cost, ctx.oreReserve) && canAct(state, owner)) {
-    const spot = findPlacement(state, "plasmarig", cc.x - 120, cc.y - 90);
-    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "plasmarig", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, "plasmarig", cc.x - 120, cc.y - 90);
   }
 
   // THE RIVAL GATE: once rivalGateEligible (above) — the Strategic tier standing, a real
@@ -266,7 +260,6 @@ export function aiIndustry(state, ctx) {
   const hasGate = buildings.some(b => b.type === "antimatter_gate");
   if (!hasGate && rivalGateEligible(state, owner)
       && canAffordKeeping(ai.resources, BUILDINGS.antimatter_gate.cost, ctx.oreReserve) && canAct(state, owner)) {
-    const spot = findPlacement(state, "antimatter_gate", cc.x - 150, cc.y + 150);
-    if (spot && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "antimatter_gate", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, "antimatter_gate", cc.x - 150, cc.y + 150);
   }
 }

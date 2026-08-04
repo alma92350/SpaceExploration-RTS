@@ -1,14 +1,22 @@
 // @ts-check
 /* ============================================================
    AI — shared primitives used by every decision phase (engine/ai.js and the
-   aiEconomy / aiMilitary / aiIndustry phase modules). Kept in one leaf module
-   with no engine imports so the phase modules can share them without a cycle:
-   owner resolution (controllerFor/otherOwner), the APM action budget (the
-   configurable AI speed), the reserve-aware affordability check, and the
-   "which idle worker founds this building" pick.
+   aiEconomy / aiMilitary / aiIndustry phase modules): owner resolution
+   (controllerFor/otherOwner), the APM action budget (the configurable AI
+   speed), the reserve-aware affordability check, the "which idle worker founds
+   this building" pick, and the found-a-building protocol those picks feed.
+
+   Imports only DOWNWARD, into commands/colliders — never back into an AI phase
+   module — so the phase modules can all share it without a cycle. That is the
+   invariant, not "no engine imports": commands.js and colliders.js have no
+   route back to the AI layer, and test/static-integrity.test.js's SCC check
+   holds the whole engine to it.
    ============================================================ */
 
 "use strict";
+
+import { issueBuild } from "./commands.js";
+import { findPlacement } from "./colliders.js";
 
 const APM_BURST_FRAC = 1 / 15;   // a busy AI can bank at most ~4 seconds' worth of unspent actions
 
@@ -100,4 +108,44 @@ export function pickBuilder(workers, x, y) {
     if (d < bestD) { bestD = d; best = w; }
   }
   return best || workers[0];
+}
+
+/* ---------- founding a building ---------- */
+
+// The AI's found-a-building protocol, in one place: slide the request to valid ground,
+// check the action budget, issue the order, and charge the budget for it. Thirteen sites
+// across aiEconomy.js and aiIndustry.js hand-rolled these four steps, and two of the four
+// fail SILENTLY when dropped — omit `spend` and the AI founds buildings for free (its APM
+// dial quietly stops throttling it), omit `canAct` and it ignores the budget outright.
+// Neither shows up as a crash, and neither shows up in a determinism fingerprint on the
+// default archetype, because the default AI has `apm == null` and both calls are then
+// no-ops. Only the APM-limited difficulties and self-play can see the difference.
+//
+// findPlacement is what makes the fixed build offsets safe: a node or an earlier building
+// squatting on the nominal spot would make issueBuild reject the identical coordinates
+// every think cycle and stall the order forever, so the search slides it to the nearest
+// valid ground instead.
+//
+// `workers` is a candidate list, not a single unit, because the builder is chosen by
+// distance to the spot that placement actually settled on — which isn't known until after
+// the search. Two sites (the Habitat and the first Barracks) historically founded with
+// workers[0] rather than the nearest free worker; they pass [workers[0]] so the pick is
+// forced to that same unit, since pickBuilder returns a lone candidate either way. Widening
+// them to the full list would change which unit walks to the site, and with it the
+// determinism fingerprint — a behaviour change, not a refactor.
+/** @param {State} state @param {string} owner @param {Unit[]} workers @param {string} type @param {number} x @param {number} y @param {number} [maxRadius] @returns {boolean} */
+export function tryBuild(state, owner, workers, type, x, y, maxRadius) {
+  return tryBuildAt(state, owner, workers, type, findPlacement(state, type, x, y, maxRadius));
+}
+
+// tryBuild for a caller that already searched for its own spot (the Habitat scans every
+// completed Command Center and takes the first that yields one). `spot` may be null —
+// "nowhere to put it" is an ordinary outcome, not an error.
+/** @param {State} state @param {string} owner @param {Unit[]} workers @param {string} type @param {{x:number,y:number}|null} spot @returns {boolean} */
+export function tryBuildAt(state, owner, workers, type, spot) {
+  if (!spot || !workers.length || !canAct(state, owner)) return false;
+  const builder = pickBuilder(workers, spot.x, spot.y);
+  if (!builder || !issueBuild(state, builder.id, type, spot.x, spot.y)) return false;
+  spend(state, owner);
+  return true;
 }

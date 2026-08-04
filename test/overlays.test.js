@@ -9,6 +9,7 @@ import { mulberry32 } from "../engine/rng.js";
 import { deployColonyShip } from "../engine/colony.js";
 import { scoreBreakdown, playerScore } from "../engine/victory.js";
 import * as sound from "../sound.js";
+import { installFakeDom } from "./_dom.js";
 
 /* ============================================================
    overlays.js has no existing test file. This one covers showGalaxyToast's MAX_TOASTS=3 eviction
@@ -34,77 +35,18 @@ import * as sound from "../sound.js";
    departBtn, boot.js's underAttackEl, saveload.js's saveBtn/loadBtn/homeBtn — none of THOSE three
    guarded by `typeof window !== "undefined"` either, only by a truthy-button check). Proven
    already: hudSelection.js (line 44) imports boot.js directly too, AND hudSelection.js also
-   imports overlays.js itself (line 46, for flashHint) — so test/hudSelection.test.js's own
-   FakeElement/fakeDocument already imports this exact graph cleanly today, with `window` left
+   imports overlays.js itself (line 46, for flashHint) — so test/hudSelection.test.js already
+   imports this exact graph cleanly today with the same shared harness, with `window` left
    deliberately UNDEFINED so every `typeof window !== "undefined"` guard anywhere in that graph
    (overlays.js's own help-toggle wiring included) stays off — no real timer/listener starts on
-   import. Reused here almost verbatim; the two capabilities added beyond that file's copy:
+   import. Two of the shared FakeElement's capabilities are load-bearing HERE specifically:
    showGalaxyToast calls `.remove()` directly on a toast element (`evict.remove()` / `oldest.remove()`
    / the internal `remove` closure's `el.remove()`) — the real DOM's "detach yourself from your
-   parent", not exercised by hudSelection.js — and reads `stack.firstElementChild`. Both need real
-   parent-tracking, added to appendChild/append below.
+   parent" — and reads `stack.firstElementChild`. Both rest on the parent-tracking appendChild/
+   append do.
    ============================================================ */
 
-class FakeElement extends EventTarget {
-  constructor(tag = "div") {
-    super();
-    this.tagName = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this._classes = new Set();
-    this.classList = {
-      add: (...c) => c.forEach(x => this._classes.add(x)),
-      remove: (...c) => c.forEach(x => this._classes.delete(x)),
-      toggle: (c, f) => { f === undefined ? (this._classes.has(c) ? this._classes.delete(c) : this._classes.add(c)) : (f ? this._classes.add(c) : this._classes.delete(c)); },
-      contains: c => this._classes.has(c),
-    };
-  }
-  get className() { return [...this._classes].join(" "); }
-  set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  // Real per-instance parent tracking (beyond test/hudSelection.test.js's own copy, which never
-  // needed it) — see the header comment: showGalaxyToast's eviction removes a CHILD toast
-  // directly, the real DOM's Element.remove(), which needs to know its own parent to splice
-  // itself out of.
-  appendChild(c) { c._parent = this; this.children.push(c); return c; }
-  append(...cs) { cs.forEach(c => { c._parent = this; this.children.push(c); }); }
-  remove() {
-    if (!this._parent) return;
-    const i = this._parent.children.indexOf(this);
-    if (i !== -1) this._parent.children.splice(i, 1);
-    this._parent = null;
-  }
-  // children are pushed in append order, so index 0 IS the oldest — what showGalaxyToast's
-  // all-clickable eviction branch (`stack.firstElementChild`) needs.
-  get firstElementChild() { return this.children[0] || null; }
-  // Real (if shallow) innerHTML round-trip — beyond the original "" -> clear-children special
-  // case this file's toast tests needed — so showGameOver's score-breakdown div (built with a raw
-  // innerHTML template, mirroring showScenarioEnd's own existing idiom) is actually inspectable
-  // below, rather than always reading back empty. No real HTML PARSING (nothing here needs the
-  // set string to become real child nodes, only to be readable again as the string it was).
-  set innerHTML(v) { this._html = v; if (v === "") this.children = []; }
-  get innerHTML() { return this._html ?? ""; }
-  querySelector() { return null; }
-  querySelectorAll() { return []; }
-  getContext() { return null; }
-  click() { this.dispatchEvent(new Event("click")); }
-}
-
-function fakeDocument() {
-  const byId = new Map();
-  const body = new FakeElement("body");
-  return {
-    // Real per-id identity, same reasoning as test/hudSelection.test.js's fakeDocument: dom.js
-    // resolves each handle exactly ONCE at import time, and every later doc.getElementById(id)
-    // here must keep returning that SAME object, or the exported `galaxyToastEl` this file
-    // imports below would silently diverge from what showGalaxyToast is actually appending to.
-    getElementById(id) { if (!byId.has(id)) byId.set(id, new FakeElement("div")); return byId.get(id); },
-    createElement(tag) { return new FakeElement(tag); },
-    body,
-  };
-}
-
-globalThis.document = fakeDocument();
+installFakeDom();
 // `window` deliberately left undefined — see the header comment: every `typeof window !==
 // "undefined"` guard anywhere in the imported graph (overlays.js's own help-toggle wiring,
 // saveload.js's autosave timer) stays off, so importing this module starts no real timer or
@@ -247,8 +189,9 @@ test("eviction never triggers below the cap: three toasts with a non-clickable o
    proposal's own lists) and paints a live checklist; updateObjectives(game) is the per-HUD-tick
    driver (hud.js renderHUD) that keeps it reactive and retires it once every item is satisfied.
 
-   FakeElement (above) already gives real appendChild/classList/EventTarget behavior, so no
-   further test double is needed to inspect the painted rows directly via objectivesEl.children.
+   The shared FakeElement (test/_dom.js) already gives real appendChild/classList/EventTarget
+   behavior, so no further test double is needed to inspect the painted rows directly via
+   objectivesEl.children.
    ============================================================ */
 
 function objRows() {

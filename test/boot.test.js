@@ -9,6 +9,7 @@ import { game } from "../session.js";
 // bottom of this file) so initiateJump's own tests don't re-roll it slightly differently.
 import { jumpReadyGalaxy } from "./_helpers.js";
 import { makeBuilding } from "../engine/state.js";
+import { installFakeDom, fakeCtx, FakeElement } from "./_dom.js";
 
 /* ============================================================
    boot.js's pause-reason refcounting is the #4 finding from the test-suite review (boot.js
@@ -31,8 +32,8 @@ import { makeBuilding } from "../engine/state.js";
    boot.js's own `underAttackEl.addEventListener(...)` (line ~68). Under plain `node --test`
    (no `document` global) dom.js resolves every handle to `null` by design, so those calls
    throw at IMPORT time unless `document` already exists. saveload.js already imports boot.js
-   and test/saveload.test.js proved the fix: define a fake `globalThis.document` BEFORE the
-   dynamic `await import(...)`, so dom.js's handles resolve to stub elements instead of null.
+   and test/saveload.test.js proved the fix: install the shared fake `document` (test/_dom.js)
+   BEFORE the dynamic `await import(...)`, so dom.js's handles resolve to elements, not null.
    `window` is deliberately left UNDEFINED — saveload.js and overlays.js both guard their own
    real browser wiring behind `typeof window !== "undefined"`, and leaving it undefined keeps
    those guards off, exactly as intended for a Node-side unit test (no real timers/listeners).
@@ -40,66 +41,24 @@ import { makeBuilding } from "../engine/state.js";
    Confirmed by reading boot.js's own module-scope code (everything NOT inside a function
    body): the only two executable statements are `underAttackEl.addEventListener(...)` and
    `if (pauseBtn) pauseBtn.addEventListener("click", togglePause);` — both satisfied by the
-   stub below the same way saveload.test.js's is.
+   shared harness.
 
-   The one thing saveload.test.js's stub doesn't need but this file does: a WORKING
-   `classList`. boot.js's private syncPause() calls
+   What this file leans on hardest is a WORKING `classList`. boot.js's private syncPause() calls
    `document.body.classList.toggle("paused", manual)` at RUNTIME (every pauseLoop/resumeLoop/
    togglePause call, not just at import) — since boot.js exports no paused-query, that class
    (plus, secondarily, the topbar pause button's label — also set by syncPause) is the ONLY
-   observable signal of pause state from outside the module. saveload.test.js's classList
-   stub hardcodes `contains() { return false; }`, which would make every assertion below
-   pass or fail for the wrong reason. classList here is instead backed by a real Set.
+   observable signal of pause state from outside the module. An earlier hand-rolled stub in this
+   repo hardcoded `contains() { return false; }`, which would make every assertion below pass or
+   fail for the wrong reason; the shared FakeElement backs classList with a real Set.
+   `context: fakeCtx` because the landing-picker section far below drives a REAL
+   openLandingPicker(), which draws into the canvas it creates.
    ============================================================ */
 
-function makeClassList() {
-  const _c = new Set();
-  return {
-    _c,
-    add(c) { _c.add(c); },
-    remove(c) { _c.delete(c); },
-    toggle(c, force) { force === undefined ? (_c.has(c) ? _c.delete(c) : _c.add(c)) : (force ? _c.add(c) : _c.delete(c)); },
-    contains(c) { return _c.has(c); },
-  };
-}
-
-const stubEl = () => {
-  const el = {
-    // Real (if shallow) children/appendChild/remove — beyond the original inert no-op — needed
-    // once the P6 colony-alert tests below drive notifyColony() for real: it unconditionally
-    // calls overlays.js's showGalaxyToast, which reads `stack.children.length` and, at cap, calls
-    // `.remove()` on an evicted child (overlays.js — same real-DOM surface test/overlays.test.js's
-    // own FakeElement already tracks, for the identical reason). Harmless to every earlier test
-    // above, none of which ever inspected a stub's children.
-    children: [],
-    addEventListener() {},
-    removeEventListener() {},
-    classList: makeClassList(),
-    style: {},
-    dataset: {},
-    getContext() { return null; },
-    appendChild(c) { c._parent = el; el.children.push(c); return c; },
-    remove() {
-      if (!el._parent) return;
-      const i = el._parent.children.indexOf(el);
-      if (i !== -1) el._parent.children.splice(i, 1);
-      el._parent = null;
-    },
-    // Needed once startGame() is driven for real, below (P1 finding #8) — overlays.js's
-    // showObjectives() calls objectivesEl.querySelector(".obj-close").addEventListener(...). See
-    // that section's own header comment for the full empirical trace of what else this required.
-    querySelector() { return stubEl(); },
-  };
-  return el;
-};
-
-globalThis.document = {
-  getElementById() { return stubEl(); },
-  body: stubEl(),   // syncPause()'s "paused" class (and input.js's "touch" class, unused here) live on this one
-  createElement() { return stubEl(); },
-  addEventListener() {},
-  removeEventListener() {},
-};
+const doc = installFakeDom({ context: fakeCtx });
+// boot.js/input.js wire a couple of listeners onto the document node itself; the shared harness
+// models elements, not the document, so these two stay local no-ops.
+doc.addEventListener = () => {};
+doc.removeEventListener = () => {};
 
 const { pauseLoop, resumeLoop, togglePause, startGame, startOdyssey, initiateJump, notifyColony } = await import("../boot.js");
 // dom.js is already loaded (boot.js imports it statically) — re-importing it here just returns
@@ -226,8 +185,8 @@ test("resumeLoop() on a reason that was never added is harmless", () => {
      1. overlays.js's showObjectives() — called by bootState whenever `intro: true`, which
         startGame's own call to bootState always passes — does
         `objectivesEl.querySelector(".obj-close").addEventListener("click", hideObjectives)`.
-        The stubEl() above had no querySelector; one line was added to it (harmless to the pause
-        tests above, which never reach this code path).
+        The shared FakeElement's querySelector really walks the built tree, so it finds the
+        close button showObjectives just appended.
      2. input.js's attachInput() (bootState wires every fresh state to one) registers its
         mouseup/keydown/keyup/blur listeners directly on the bare `window` global — unlike
         saveload.js's and overlays.js's own browser wiring, this call is NOT behind a
@@ -498,33 +457,14 @@ test("startGame(): setup.swapAsym threads through to the created state's swapped
    too, where node:test's `mock.module` isn't available even if the target were only 22+). Read in
    full (landingPicker.js) for exactly what DOM surface it touches: div/h2/p/canvas/button elements
    via document.createElement, a 2D context to draw into, and one document.body.appendChild for the
-   overlay itself — landingPickEl/withLandingPickDom below build just enough of a document for it
-   to run to completion for real, and the overlay it genuinely appends is the observable proof a
-   picker really opened. The swap is installed and restored inside EACH test body (never at module
+   overlay itself — withLandingPickDom below swaps in a document built from the shared harness,
+   enough for it to run to completion for real, and the overlay it genuinely appends is the
+   observable proof a picker really opened. The swap is installed and restored inside EACH test body (never at module
    scope), so it can never affect another test regardless of where in the file it's written — every
    test body here only runs after this whole module's own top-level evaluation (every statement in
    this file, top to bottom) has already finished.
    ============================================================ */
 
-// A no-op-Proxy 2D context — same idiom as test/hudSelection.test.js's fakeCtx(): any method call
-// tolerated, any property read/write round-trips through a plain backing object — so
-// openLandingPicker's draw() (fillStyle/fillRect/strokeStyle/beginPath/arc/stroke/…) runs to
-// completion without hand-enumerating the canvas API.
-function fakeLandingPickCtx() {
-  return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
-}
-// Everything document.createElement(...) needs to survive a REAL openLandingPicker() call
-// (confirmed by reading it in full): setAttribute/append/focus/remove beyond what this file's own
-// stubEl() above offers, plus a WORKING (not null) 2D context specifically for its canvas.
-function landingPickEl(tag) {
-  return {
-    addEventListener() {}, removeEventListener() {},
-    classList: makeClassList(), style: {}, dataset: {},
-    getContext() { return tag === "canvas" ? fakeLandingPickCtx() : null; },
-    appendChild(c) { return c; }, append() {}, setAttribute() {}, remove() {}, focus() {},
-    querySelector() { return landingPickEl("div"); },
-  };
-}
 // Swap in a document capable of running the real openLandingPicker for the duration of `fn`
 // (synchronous), returning whatever got appended to document.body — restored in a `finally` so a
 // failing assertion can never leak the swap into a later test.
@@ -532,7 +472,7 @@ function withLandingPickDom(fn) {
   const appended = [];
   const originalCreateElement = document.createElement;
   const originalAppendChild = document.body.appendChild;
-  document.createElement = tag => landingPickEl(tag);
+  document.createElement = tag => new FakeElement(tag);
   document.body.appendChild = c => { appended.push(c); return c; };
   try { fn(); } finally { document.createElement = originalCreateElement; document.body.appendChild = originalAppendChild; }
   return appended;

@@ -4,6 +4,7 @@ import * as sound from "../sound.js";
 import { createGameState, makeBuilding } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { DEFAULT_MATCH_TIME_LIMIT } from "../engine/victory.js";
+import { installFakeDom, fakeCtx } from "./_dom.js";
 
 /* ============================================================
    hud.js's endgame clock (docs/improvement-proposals.md "Make the clock endgame visible, honest,
@@ -12,64 +13,15 @@ import { DEFAULT_MATCH_TIME_LIMIT } from "../engine/victory.js";
    (playerScore(state,"player"/"ai")) — the score is otherwise completely invisible in-game, per
    the proposal's own Problem statement.
 
-   renderHUD has no dedicated test file today. The DOM/import-graph setup below is test/
-   hudSelection.test.js's own FakeElement/fakeDocument, reused near verbatim (see that file's
-   header comment for the full empirical trace of why each piece is needed) — hud.js imports
-   hudSelection.js directly (renderSelectionPanel), so the exact same transitive graph (render.js,
-   boot.js, engine/*, …) has to import cleanly under Node, and that file already proves this
-   fakeDocument does it.
+   renderHUD has no dedicated test file today. The DOM setup is the shared harness in
+   test/_dom.js (see its header for why each piece exists, and test/hudSelection.test.js's for
+   the full empirical trace of the import-order constraint). hud.js imports hudSelection.js
+   directly (renderSelectionPanel), so the exact same transitive graph (render.js, boot.js,
+   engine/*, …) has to import cleanly under Node. `context: fakeCtx` because renderSelectionPanel's
+   icon buttons run render.js's spriteIcon, which needs a live 2D context and a toDataURL.
    ============================================================ */
 
-class FakeElement extends EventTarget {
-  constructor(tag = "div") {
-    super();
-    this.tagName = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this._classes = new Set();
-    this.classList = {
-      add: (...c) => c.forEach(x => this._classes.add(x)),
-      remove: (...c) => c.forEach(x => this._classes.delete(x)),
-      toggle: (c, f) => { f === undefined ? (this._classes.has(c) ? this._classes.delete(c) : this._classes.add(c)) : (f ? this._classes.add(c) : this._classes.delete(c)); },
-      contains: c => this._classes.has(c),
-    };
-  }
-  get className() { return [...this._classes].join(" "); }
-  set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  appendChild(c) { this.children.push(c); return c; }
-  append(...cs) { this.children.push(...cs); }
-  set innerHTML(v) { if (v === "") this.children = []; }
-  get innerHTML() { return ""; }
-  querySelector(selector) { return this._queryAll(selector)[0] || null; }
-  querySelectorAll(selector) { return this._queryAll(selector); }
-  _queryAll(selector) {
-    const cls = selector.slice(1);
-    const out = [];
-    const walk = kids => { for (const c of kids) { if (c._classes?.has(cls)) out.push(c); if (c.children) walk(c.children); } };
-    walk(this.children);
-    return out;
-  }
-  getContext() { return fakeCtx(); }
-  toDataURL() { return "data:image/fake,"; }
-  click() { this.dispatchEvent(new Event("click")); }
-}
-
-function fakeCtx() {
-  return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
-}
-
-function fakeDocument() {
-  const byId = new Map();
-  const body = new FakeElement("body");
-  return {
-    getElementById(id) { if (!byId.has(id)) byId.set(id, new FakeElement("div")); return byId.get(id); },
-    createElement(tag) { return new FakeElement(tag); },
-    body,
-  };
-}
-
-globalThis.document = fakeDocument();
+installFakeDom({ context: fakeCtx });
 // `window` deliberately left undefined, same reasoning as hudSelection.test.js/overlays.test.js:
 // every `typeof window !== "undefined"` guard in the imported graph stays off, so no real
 // timer/listener starts on import.

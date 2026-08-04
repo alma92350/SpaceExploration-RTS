@@ -61,6 +61,74 @@ The **rebuild-signature co-location** is done to the extent Tier 2 allows: the 1
 now a named `panelSignature()` function rather than an inline block, which is the seam the Tier-3
 panel registry moves into. Genuine per-panel co-location needs the decomposition itself.
 
+**Tier 3 is delivered.** All seven refactors resolved across eight commits. Suite **2,002 → 2,051
+tests**, 0 failures throughout; typecheck clean.
+
+Every design question in the table below now has an answer, and three of them changed what got built:
+
+- **The AI decision seam is "export in place", not a new `aiDecisions.js` leaf.** The helpers read
+  `state` and `ctx` and belong with their phase; a module existing only for testability would have to
+  import back into the layer it came from. Nine predicates are now exported and directly drivable.
+  The 13-site build idiom did collapse — into `tryBuild`/`tryBuildAt` — once it was clear the two
+  steps that fail *silently* are `canAct` and `spend`: omit the first and the AI ignores its APM
+  budget, omit the second and it founds buildings for free. Neither shows up on the default
+  archetype, whose `apm` is `null`, which is why five sites had already drifted to relying on a
+  `canAct` three lines up. The builder stays a parameter, because two sites have always founded with
+  `workers[0]` rather than the nearest free worker, and collapsing that would move the determinism
+  fingerprint — a behaviour change, not a refactor.
+- **The declarative save schema was evaluated and rejected, and replaced with the guard it was for.**
+  Every field's sanitizer in `persist.js` is deliberately different (`popCap`/`matchTimeLimit` must
+  *not* go through `num()`, since `Number(null) === 0` turns "no override" into "end the match at
+  time 0"), and the comments explaining each choice are the most valuable thing in the file. A table
+  would wrap that same bespoke logic in per-entry closures while the payload has to stay
+  byte-identical: more risk, less clarity, no new safety. What the table was *for* — catching a field
+  written by `serPlanet` and never read by `rehydratePlanet` — is now a payload-level round-trip
+  comparison for the game save and the galaxy save alike, so the next such field fails immediately
+  instead of resetting silently on load.
+- **`hudSelection.js` split by "derive vs render", not by panel.** The registry the table proposes is
+  still the destination, but the seam that mattered first was `panelSignature` — the panel's entire
+  reactivity model, which decides whether it rebuilds *at all*. It and the derivations it shares with
+  the renderers now live in `hudPanelSignature.js`, a genuine leaf outside the `hud → hudSelection`
+  cycle: 2,242 → 1,915 lines, with the panel's output byte-identical, verified rather than assumed by
+  the golden lock the table asked for (25 fixtures, committed one commit ahead of the first
+  extraction).
+
+Four things the work turned up that were not in the plan:
+
+- **Three guards written during Tier 3 were vacuous on their first cut, and each was caught by
+  mutation rather than by review.** The dead-import guard located the import block by walking lines
+  until one stopped looking like an import — and since every file opens with a prose header comment,
+  it broke out on the first sentence containing a bracket and reported a file with *twenty* dead
+  imports as clean. The save round-trip guard's first mutation (a field defaulting identically on
+  both passes) proved nothing, because both payloads agreed. The panel-fixture guard used a node
+  count as a proxy for "the setup took" and flagged the Habitat, whose whole panel is legitimately
+  two rows. The lesson is the same one Tier 1's mutation pass taught: a green guard is evidence of
+  nothing until you have watched it go red.
+- **25 dead imports in `hudSelection.js` alone**, twenty of them predating this work — `repairBtn`,
+  `departBtn`, `saveBtn`, `pauseBtn`, `starmapBtn`, `resourcesEl`, `clockEl`, `scenarioStatusEl` and
+  more, left behind by code that moved to `hud.js`. A dead import advertises a dependency that does
+  not exist, so the import block misleads anyone reading it, and the module-reachability guard counts
+  an edge nothing walks. The new guard found three more elsewhere (`aiWorkers`'s `UPGRADES`,
+  `formation`'s `UNITS`, `input`'s `dragCamera`).
+- **The DOM test double had grown to nine hand-rolled copies**, and the differences between them were
+  not considered decisions — they were whichever subset of the DOM the file that copied it happened
+  to need. `overlays`' copy tracked parents so `.remove()` really spliced and `hudSelection`'s did
+  not; `hud`'s `querySelector` walked the tree and `update`'s was hardcoded to `null`; `observer`'s
+  `getBoundingClientRect` returned a real 800×600 box and `saveload`'s returned zeros; `saveload`'s
+  `appendChild` discarded its argument outright. A test written against a weak copy silently asserts
+  less than the identical test written against a strong one, and nothing told you which you had.
+  Consolidated into `test/_dom.js` with no assertion weakened — the two axes that genuinely change
+  what the code under test does (the 2D context, the viewport size) stay configurable.
+- **The render extraction found its own targets by measurement rather than by the plan's list.** Of
+  the proposed primitives, the ones that earned their place were the three where copying had already
+  caused or hidden a bug: `centeredText` (whose *restore* is the point — `textAlign` is canvas-wide
+  state, and two sites shipped without it, invisible only because `drawFrame`'s outer save/restore
+  swallowed the damage once per frame), `drawLabelChip` (two sites had independently hand-rolled the
+  same plate arithmetic), and `hiddenByFog` (four copies of a rule whose failure is silent in the
+  direction that matters — it paints the enemy's army through the fog). A blanket `fillStroked`
+  collapse was measured and skipped: the 26 candidate sites set their fill/stroke state in enough
+  different orders that a helper would have moved the assignments, not removed them.
+
 ## How this was produced
 
 Eight reviewers worked the codebase in parallel, one per domain — engine core sim, AI + `tools/ailab.js`,
@@ -357,6 +425,26 @@ surface.
 Do not start these until the design question in each is answered. All are worth doing eventually; none is
 urgent, and each is a poor first PR.
 
+**All seven are now delivered** (see Status, above, for the three whose answers changed what got built).
+Outcomes, in the table's order:
+
+1. `hudSelection.js` — split by *derive vs render*: `hudPanelSignature.js`, 2,242 → 1,915 lines, behind a
+   25-fixture golden lock landed one commit ahead of the extraction. The per-panel registry remains the
+   destination; this is the seam it moves into.
+2. `haul.js` — four explicit `*_PHASES` sets with a terminal unknown-phase guard. The collection-point
+   asymmetry was ruled **intentional** and is now documented at the code rather than inferable from it.
+3. AI decisions — nine predicates exported in place; the 13-site build idiom collapsed into
+   `tryBuild`/`tryBuildAt`.
+4. Save schema — the field table was **rejected on inspection** and replaced by a payload-level
+   round-trip guard, which delivers the property the table was for.
+5. Render boilerplate — `centeredText`, `drawLabelChip`, `hiddenByFog`. A blanket `fillStroked` collapse
+   was measured and skipped.
+6. Test harness — nine hand-rolled DOM doubles consolidated into `test/_dom.js`, one file at a time, with
+   a suite-integrity guard against regrowth.
+7. Formation ranking — **per-cluster**, not global. The first test written for it compared destinations
+   to *origin* centroids and so measured nothing; rewritten to the real invariant (ranking permutes
+   within a cluster, never across).
+
 | Refactor | The question to answer first | Safety net required before starting |
 |---|---|---|
 | **`hudSelection.js` decomposition** — 2,201 lines, 2 exports, one 845-line function with 17 entity-type branches. Proposed: a panel registry of `{ key, match, signature, render }` over five modules, leaving a ~250-line orchestrator. Co-locating `signature` with `render` is what structurally prevents A6 recurring. | Registry shape, and whether the runtime `hudSelection → hud → hudSelection` cycle constrains it | Golden `panelTree()` serializer over ~20 fixtures, committed *with* the harness; every extraction commit must leave all goldens untouched |
@@ -390,6 +478,10 @@ Five PRs, ordered so each makes the next safer. Roughly a week of focused work f
 
 Then reassess. Tier 2 splits cleanly across parallel workstreams; Tier 3 should wait until its design
 questions have actual answers.
+
+*(Historical: this sequence was followed. Tier 1 shipped in seven commits, Tier 2 in five, Tier 3 in
+eight — each tier merged as its own PR, with the design questions answered in writing before the
+corresponding Tier-3 refactor started.)*
 
 ---
 

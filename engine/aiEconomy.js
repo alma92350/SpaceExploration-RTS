@@ -11,7 +11,7 @@
 "use strict";
 
 import { queueProduction, researchUpgrade } from "./production.js";
-import { issueBuild, issueMove } from "./commands.js";
+import { issueMove } from "./commands.js";
 import { findPlacement } from "./colliders.js";
 import { BUILDINGS, UNITS, UPGRADES, canAfford, prereqsMet } from "./entities.js";
 import { recipeOf } from "./industry.js";
@@ -19,7 +19,7 @@ import { supplyUsed, supplyCap, buildingSupplyCap } from "./supply.js";
 import { isNodeDiscovered } from "./fog.js";
 import { playerUnits } from "./state.js";
 import { deployColonyShip } from "./colony.js";
-import { canAct, spend, canAffordKeeping, pickBuilder } from "./aiCommon.js";
+import { canAct, spend, canAffordKeeping, tryBuild, tryBuildAt } from "./aiCommon.js";
 import { affordableOnSurface, aiDoctrine, maxSupplyDemand, plannedMix } from "./aiWorkers.js";
 import { pickNextUnitType, visibleEnemyForceCount } from "./aiMilitary.js";
 import { difficultyFor } from "./aiDifficulty.js";
@@ -141,11 +141,9 @@ export function aiExpand(state, ctx) {
           ctx.oreReserve = ccCost;   // bank toward the CC by pausing infrastructure spend
           if (ai.resources.ore >= ccCost) {
             const toward = Math.atan2(cc.y - anchor.y, cc.x - anchor.x);   // place on the home side of the cluster
-            const spot = findPlacement(state, "command",
-              anchor.x + Math.cos(toward) * EXPANSION_STANDOFF,
-              anchor.y + Math.sin(toward) * EXPANSION_STANDOFF);
-            if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "command", spot.x, spot.y)) {
-              spend(state, owner);
+            if (tryBuild(state, owner, workers, "command",
+                anchor.x + Math.cos(toward) * EXPANSION_STANDOFF,
+                anchor.y + Math.sin(toward) * EXPANSION_STANDOFF)) {
               ctx.oreReserve = 0;
             }
           }
@@ -222,16 +220,13 @@ export function aiBaseAndTech(state, ctx) {
       spot = findPlacement(state, "habitat", c.x, c.y + 90, HABITAT_SEARCH_RADIUS);
       if (spot) break;
     }
-    if (spot && canAct(state, owner) && issueBuild(state, workers[0].id, "habitat", spot.x, spot.y)) spend(state, owner);
+    tryBuildAt(state, owner, [workers[0]], "habitat", spot);   // [workers[0]], not workers: this site has always founded with the first worker, not the nearest free one
   }
 
-  // First Barracks. Build spots are fixed offsets from the CC, so anything
-  // already sitting there (a node, an earlier building) would make issueBuild
-  // reject the same spot every think cycle and stall the order forever —
-  // findPlacement slides the request to the nearest valid ground instead.
+  // First Barracks. Build spots are fixed offsets from the CC; tryBuild's placement
+  // search is what keeps that safe (see its comment in aiCommon.js).
   if (!barracks && cc && workers.length > 0 && canAfford(ai.resources, BUILDINGS.barracks.cost)) {
-    const spot = findPlacement(state, "barracks", cc.x + 90, cc.y - 90);
-    if (spot && canAct(state, owner) && issueBuild(state, workers[0].id, "barracks", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, [workers[0]], "barracks", cc.x + 90, cc.y - 90);   // [workers[0]]: founded by the first worker, not the nearest free one
   }
 
   // FOUNDRY — the military tech gate for the Tier-2 units (Lancer/Breacher).
@@ -252,11 +247,7 @@ export function aiBaseAndTech(state, ctx) {
   let hasFoundry = buildings.some(b => b.type === "foundry");   // built or still constructing
   if (wantsFoundry && !hasFoundry && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.foundry.cost, ctx.oreReserve)) {
-    const spot = findPlacement(state, "foundry", cc.x - 90, cc.y + 90);
-    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "foundry", spot.x, spot.y)) {
-      spend(state, owner);
-      hasFoundry = true;
-    }
+    if (tryBuild(state, owner, workers, "foundry", cc.x - 90, cc.y + 90)) hasFoundry = true;
   }
   // While teching, reserve the Foundry's ore from unit production so the AI
   // actually banks its cost instead of spending every spare 100 on another
@@ -279,8 +270,7 @@ export function aiBaseAndTech(state, ctx) {
   const hasArsenal = buildings.some(b => b.type === "arsenal");
   if (wantsArsenal && !hasArsenal && foundryHandled && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.arsenal.cost, ctx.oreReserve + BARRACKS_BUFFER)) {
-    const spot = findPlacement(state, "arsenal", cc.x - 90, cc.y - 30);
-    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "arsenal", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, "arsenal", cc.x - 90, cc.y - 30);
   }
   // Refinery reserve, sequenced after the Foundry (Arsenal is unreserved above).
   ctx.refineryReserve = archetype.wantsRefinery && !refinery && foundryHandled && ctx.oreReserve === 0
@@ -321,7 +311,7 @@ export function aiBaseAndTech(state, ctx) {
 // production spends the ore straight back down, and the garrison itself is still bounded by
 // supply (aiBaseAndTech only raises Habitats up to state.popCap) — so this cannot run away into
 // an unbounded army the way an uncapped income stream would otherwise threaten to.
-function armySurplusBonus(state, ai) {
+export function armySurplusBonus(state, ai) {
   return state.endless ? Math.floor(ai.resources.ore / SURPLUS_STEP) : 0;
 }
 
@@ -333,7 +323,15 @@ function armySurplusBonus(state, ai) {
 // aiming a bit above parity with a floor for a not-yet-scouted enemy. Read once per cycle against
 // ctx.army.length, a fixed snapshot — an acceptable per-cycle approximation, same spirit as the
 // rest of this AI's think-cycle decisions.
-function standingArmyCap(state, ctx) {
+
+// Exported for direct unit testing. engine/ai.js has ONE export (runAI) and aiContext is private,
+// so every phase test had to stage a whole match — which is the direct cause of two gaps this
+// review found: commit ac44339's army-cap feature shipped with no test at all, and garrisonSlots'
+// corrective branch had never executed under npm test. These helpers are pure arithmetic over
+// plain arguments; exporting them (rather than moving them to a testability-only leaf module,
+// which would need imports back into the phase that owns them) is the smallest change that makes
+// that arithmetic reachable without a staged game.
+export function standingArmyCap(state, ctx) {
   const { strategy, ai, owner } = ctx;
   if (strategy.matchEnemyForce) {
     const enemy = visibleEnemyForceCount(state, owner);
@@ -403,10 +401,9 @@ export function aiProduceAndFortify(state, ctx) {
         const len = Math.hypot(mx - cc.x, my - cc.y) || 1;
         const dx = (mx - cc.x) / len, dy = (my - cc.y) / len;   // the approach vector
         const side = i % 2 === 0 ? 1 : -1;
-        const spot = findPlacement(state, type,
+        tryBuild(state, owner, workers, type,
           cc.x + dx * (140 + 80 * i) - dy * 30 * side,
           cc.y + dy * (140 + 80 * i) + dx * 30 * side);
-        if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, type, spot.x, spot.y)) spend(state, owner);
       }
     }
   }
@@ -429,8 +426,7 @@ export function aiProduceAndFortify(state, ctx) {
   if (barracks && !barracks.constructing && cc && workers.length > 0
       && allBarracks.length < (archetype.maxBarracks || 1) + surplusBarracks
       && canAffordKeeping(ai.resources, BUILDINGS.barracks.cost, ctx.oreReserve + BARRACKS_BUFFER)) {
-    const spot = findPlacement(state, "barracks", cc.x + 90, cc.y + 90);
-    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "barracks", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, "barracks", cc.x + 90, cc.y + 90);
   }
 
   // REFINERY. Hosts the AI's doctrine research, so it builds exactly one, near
@@ -440,8 +436,7 @@ export function aiProduceAndFortify(state, ctx) {
   const buildResearchRefinery = refineries.length === 0;   // ungated by archetype, as before
   if (buildResearchRefinery && barracks && !barracks.constructing && cc && workers.length > 0
       && canAffordKeeping(ai.resources, BUILDINGS.refinery.cost, ctx.oreReserve)) {
-    const spot = findPlacement(state, "refinery", cc.x - 90, cc.y - 90);
-    if (spot && canAct(state, owner) && issueBuild(state, pickBuilder(workers, spot.x, spot.y).id, "refinery", spot.x, spot.y)) spend(state, owner);
+    tryBuild(state, owner, workers, "refinery", cc.x - 90, cc.y - 90);
   }
 }
 
@@ -496,7 +491,7 @@ export function aiMarketBarter(state, owner = "ai") {
 // first expansion the moment the starting seam runs dry. Not fog-gated itself
 // (it sums real node state, not what's been scouted) — bestExpansionCluster
 // right below is the one that actually needs a look at the map.
-function homeOreFraction(state, ccs) {
+export function homeOreFraction(state, ccs) {
   let amt = 0, max = 0;
   for (const n of state.map.nodes) {
     if (n.com !== "ore") continue;

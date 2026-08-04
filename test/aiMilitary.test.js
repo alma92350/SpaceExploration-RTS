@@ -208,3 +208,33 @@ test("garrisonSlots keeps a large parked group inside the recall radius, corners
   assert.ok(farthest <= limit + 1e-6,
     `every parked slot must sit inside the recall radius — farthest ${farthest.toFixed(2)} vs limit ${limit}`);
 });
+
+/* ---- T3: the decision arithmetic, tested directly ------------------------------------------
+   These are pure functions over plain arguments, and until now every one of them could only be
+   reached by staging a whole match through runAI. That is the direct cause of two coverage gaps
+   this review found (an army-cap feature with no test at all, and a corrective branch that had
+   never executed), so the point of exporting them is that the arithmetic is now cheap to pin. */
+
+test("withoutHomeGuard keeps the `garrison` units NEAREST home and releases the rest (T3)", async () => {
+  const { withoutHomeGuard } = await import("../engine/aiMilitary.js");
+  const cc = { x: 0, y: 0 };
+  const near = { id: "near", x: 10, y: 0 };
+  const mid = { id: "mid", x: 100, y: 0 };
+  const far = { id: "far", x: 500, y: 0 };
+  const army = [far, near, mid];                       // deliberately unsorted
+
+  assert.deepEqual(withoutHomeGuard(army, cc, 0).map(u => u.id), ["near", "mid", "far"],
+    "garrison 0 releases everyone, nearest-home first");
+  assert.deepEqual(withoutHomeGuard(army, cc, 1).map(u => u.id), ["mid", "far"],
+    "the single closest unit stays home");
+  assert.deepEqual(withoutHomeGuard(army, cc, 3), [], "a garrison at or above the army size keeps everyone");
+  assert.deepEqual(withoutHomeGuard(army, cc, 9), [], "…and above it too");
+  assert.deepEqual(withoutHomeGuard(army, null, 1).map(u => u.id).sort(), ["far", "mid", "near"],
+    "with no Command Center there is nothing to measure from, so everyone is released");
+});
+
+test("threatCentroid averages the threat positions (T3)", async () => {
+  const { threatCentroid } = await import("../engine/aiMilitary.js");
+  assert.deepEqual(threatCentroid([{ x: 0, y: 0 }, { x: 10, y: 20 }]), { x: 5, y: 10 });
+  assert.deepEqual(threatCentroid([{ x: 7, y: -3 }]), { x: 7, y: -3 });
+});

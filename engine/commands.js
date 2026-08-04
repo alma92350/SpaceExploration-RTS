@@ -9,7 +9,7 @@
 import { BUILDINGS, UNITS, canAfford, payCost, prereqsMet, canGatherType, canLogisticsType, canBuildCategory } from "./entities.js";
 import { canPlaceBuilding } from "./colliders.js";
 import { makeBuilding } from "./state.js";
-import { formationSlots, resolveHeading } from "./formation.js";
+import { formationSlots, resolveHeading, clusterUnits } from "./formation.js";
 import { FREIGHTER_AI_TECH, LOGI_PRIORITIES } from "./haul.js";
 import { canRecycle, beginRecycle, cancelRecycle } from "./recycle.js";
 
@@ -88,17 +88,42 @@ function groupSpeedCap(units) {
 function rankSlotsByRange(units, spots, x, y, formation) {
   const leaderSpot = spots[0];
   const heading = resolveHeading(units, x, y, formation);
-  const byRange = units.slice(1).sort((a, b) => {
+  const followers = units.slice(1);
+  const slotOf = new Map(units.map((u, i) => [u, spots[i]]));
+
+  // Rank WITHIN each spatial cluster, not across the whole selection. formationSlots deliberately
+  // gives each cluster its own sub-formation — "spaced by each cluster's own footprint so
+  // sub-formations can't overlap" — and clusterUnits promises it "preserves each unit's relative
+  // position". A single global sort of all followers by range against all slots by forwardness had
+  // no cluster awareness in either half, so two armies far apart cross-swapped sub-formations and
+  // each walked the extra distance to the other's slots: the resulting shape was still correct, but
+  // units marched through each other to reach it, which reads as pathing jank rather than as two
+  // features disagreeing. Ranking per cluster honours both — each keeps its members, and each is
+  // internally range-layered, which is the whole point of the layering.
+  const byRange = us => us.slice().sort((a, b) => {
     const ra = UNITS[a.type]?.range ?? Infinity, rb = UNITS[b.type]?.range ?? Infinity;
     return ra !== rb ? ra - rb : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   });
-  const byForwardness = spots.slice(1).sort((s1, s2) => {
+  const byForwardness = ss => ss.slice().sort((s1, s2) => {
     const f1 = (s1.x - leaderSpot.x) * heading.x + (s1.y - leaderSpot.y) * heading.y;
     const f2 = (s2.x - leaderSpot.x) * heading.x + (s2.y - leaderSpot.y) * heading.y;
     return f2 - f1;
   });
-  const spotFor = new Map(byRange.map((u, i) => [u, byForwardness[i]]));
-  return [leaderSpot, ...units.slice(1).map(u => spotFor.get(u))];
+
+  // Cluster the WHOLE selection, exactly as formationSlots does — not just the followers. Excluding
+  // the leader first splits its own cluster-mates off into singletons, which re-creates the very
+  // cross-cluster swap this is fixing. The leader's slot is then held out of its group's pool,
+  // since spots[0] passes through untouched by design.
+  const leader = units[0];
+  const spotFor = new Map();
+  for (const group of clusterUnits(units)) {
+    const members = group.filter(u => u !== leader);
+    if (!members.length) continue;
+    const ranked = byRange(members);
+    const ordered = byForwardness(members.map(u => slotOf.get(u)));
+    ranked.forEach((u, i) => spotFor.set(u, ordered[i]));
+  }
+  return [leaderSpot, ...followers.map(u => spotFor.get(u))];
 }
 
 // The shared machinery behind issueMove/issueAttackMove/issueHoldFormation: lay the group out

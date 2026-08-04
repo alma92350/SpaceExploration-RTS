@@ -14,6 +14,8 @@
 
 "use strict";
 
+import { isVisibleAt } from "./engine/fog.js";
+
 // A light, near-white accent used for hull details (sensor eyes, canopy
 // glass, engine glow, antenna lights) across both players' colors — the
 // same "light outline reads at small sizes" reasoning the old triangle
@@ -192,4 +194,62 @@ export function drawHealthBar(ctx, cx, y, w, hp, maxHp, force = false) {
   ctx.fillRect(cx - w / 2, y, w, 3);
   ctx.fillStyle = pct > 0.6 ? "#4ade80" : pct > 0.3 ? "#fbbf24" : "#f87171";
   ctx.fillRect(cx - w / 2, y, w * pct, 3);
+}
+
+// Centered text, with the canvas defaults put back afterwards.
+//
+// The restore is the whole point. textAlign/textBaseline are CANVAS-WIDE state, not per-call
+// arguments, so a helper that centers text and walks away shifts every later draw in the frame.
+// That is not hypothetical: two sites here shipped without the restore and were invisible
+// precisely because drawFrame's outer save/restore papered over them once per frame — the
+// mis-aligned text was whatever happened to be drawn NEXT, in a different file. Making the pair
+// un-splittable is the only fix that stays fixed.
+//
+// A caller already inside its own ctx.save()/restore() doesn't need this and can set the state
+// directly; this is for the majority that aren't.
+/** @param {any} ctx @param {string} text @param {number} x @param {number} y @param {string} font @param {string} [baseline] */
+export function centeredText(ctx, text, x, y, font, baseline = "middle") {
+  ctx.font = font;
+  ctx.textAlign = "center";
+  ctx.textBaseline = baseline;
+  ctx.fillText(text, x, y);
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+}
+
+// A label on a dark plate, centered on x and sitting with its BASELINE at y — the floating
+// annotation the placement ghosts hang above a building footprint (the grid-efficiency readout,
+// the Plasma Rig survey verdict). The plate is measured from the text so it always fits, which is
+// the part worth having in one place: the two call sites had independently hand-rolled the same
+// `measureText → fillRect(x - w/2 - 5, y - 15, w + 10, 17)` arithmetic, and a plate sized by a
+// stale constant is a legible label on an illegible background.
+//
+// Assumes the caller holds a ctx.save() — it leaves font/textAlign/textBaseline/fillStyle set,
+// exactly as the inline code it replaces did.
+/** @param {any} ctx @param {string} label @param {number} x @param {number} y @param {string} color @param {string} [plate] */
+export function drawLabelChip(ctx, label, x, y, color, plate = "rgba(5, 7, 15, 0.78)") {
+  ctx.font = "bold 13px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  const w = ctx.measureText(label).width;
+  ctx.fillStyle = plate;
+  ctx.fillRect(x - w / 2 - 5, y - 15, w + 10, 17);
+  ctx.fillStyle = color;
+  ctx.fillText(label, x, y);
+}
+
+// "Should this entity be drawn at all?" — the fog rule, in one named place.
+//
+// Four draw passes (units' hulls, units' overlays, buildings' hulls, buildings' bars) each
+// carried their own copy of `owner !== "player" && !observerMode && !isVisibleAt(...)`. Every
+// clause is easy to get backwards and the failure is silent in the direction that matters: an
+// inverted or dropped test doesn't crash or look wrong, it quietly paints the enemy's army
+// through the fog. Naming it makes the rule auditable and drivable from a test instead of
+// re-derived at four call sites.
+//
+// observerMode is the self-play/replay camera: it bypasses the gate rather than mutating
+// state.fog, so what the player's own fog records is untouched (see observer.js's header).
+/** @param {State} state @param {{owner:string}} e @param {number} x @param {number} y @param {boolean} [observerMode] @returns {boolean} */
+export function hiddenByFog(state, e, x, y, observerMode = false) {
+  return e.owner !== "player" && !observerMode && !isVisibleAt(state.fog, x, y);
 }

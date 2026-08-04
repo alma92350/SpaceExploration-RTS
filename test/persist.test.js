@@ -4,7 +4,7 @@ import { createGameState, makeUnit } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
 import { issuePatrol } from "../engine/commands.js";
-import { serializeGame, deserializeGame, serializeGalaxy } from "../engine/persist.js";
+import { serializeGame, deserializeGame, serializeGalaxy, deserializeGalaxy, SAVE_VERSION, GALAXY_SAVE_VERSION } from "../engine/persist.js";
 import { createGalaxy, stepGalaxy } from "../engine/galaxy.js";
 import { sideMod, PLANET_MODIFIERS } from "../engine/map.js";
 
@@ -272,4 +272,112 @@ test("every field on a live Galaxy is either persisted or on the documented tran
     .filter(k => !((WIRE_ALIAS[k] || k) in payload) && !TRANSIENT_GALAXY.has(k));
   assert.deepEqual(missing, [],
     "Galaxy field(s) neither saved nor declared transient:\n" + missing.join("\n"));
+});
+
+/* ---- T3: the two save versions gate ONE shared per-planet shape ------------------------------
+   gamePayload stamps `v: SAVE_VERSION`, galaxyPayload stamps `v: GALAXY_SAVE_VERSION`, and the
+   galaxy embeds `...serPlanet(state)` per planet with NO per-planet `v`. So an incompatible change
+   to the SHARED shape needs both numbers bumped, and nothing said so: bump only SAVE_VERSION and an
+   Odyssey save passes its own version gate and then feeds stale-shaped planet payloads into
+   rehydratePlanet — the precise failure the exact-match gate exists to prevent (CONTRIBUTING §3).
+   These two guards make that coupling executable. Delete the second one only when the galaxy
+   payload starts stamping its own per-planet version. */
+
+test("the galaxy's per-planet payload has the same shape as a skirmish save's (T3)", () => {
+  const st = createGameState({ planetId: "ferros", seed: 88, rng: mulberry32(88) });
+  const g = createGalaxy({ seed: 88 });
+  const skirmish = serializeGame(st);
+  const planet = serializeGalaxy(g).planets[0];
+
+  // The skirmish payload adds the two whole-save fields; the galaxy planet adds its own per-world
+  // layers. Everything else is serPlanet's shared output and must match key-for-key.
+  const SKIRMISH_ONLY = new Set(["v", "nextEntityId"]);
+  const GALAXY_ONLY = new Set(["background", "market", "diplomacy"]);
+  const a = Object.keys(skirmish).filter(k => !SKIRMISH_ONLY.has(k)).sort();
+  const b = Object.keys(planet).filter(k => !GALAXY_ONLY.has(k)).sort();
+  assert.deepEqual(b, a,
+    "the shared per-planet payload drifted between the two savers — serPlanet feeds both, so a " +
+    "field added to one path and not the other means one of them silently stops round-tripping");
+});
+
+test("GALAXY_SAVE_VERSION must be bumped alongside SAVE_VERSION while serPlanet is shared (T3)", () => {
+  assert.equal(GALAXY_SAVE_VERSION, SAVE_VERSION,
+    "these two gate the SAME per-planet shape (galaxyPayload embeds serPlanet with no per-planet " +
+    "`v`), so bumping one without the other lets an Odyssey save pass its version check and then " +
+    "feed stale-shaped planets into rehydratePlanet. Delete this assertion only when the galaxy " +
+    "payload stamps its own per-planet version.");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   PAYLOAD-LEVEL ROUND TRIP — the guard that covers the fields nobody has thought of yet.
+
+   Every field-specific round-trip test above (swapAsym, matchTimeLimit, popCap, winReason,
+   lastHitAt, …) exists because someone remembered to write it when they added the field. That is
+   coverage by recollection: it says nothing about the NEXT field, and the failure mode it guards
+   against — serPlanet writes a field, rehydratePlanet never reads it, so the value silently
+   resets on load — is invisible to `snapshot()` above, which compares a hand-listed subset.
+
+   This compares the whole payload instead: save, load, save again, and require the two payloads
+   to be identical. Any field that is written but not read shows up as a diff, automatically, the
+   first time someone adds one. docs/code-improvement-tiers.md proposed a declarative {key, ser,
+   clean} field table for the same reason; this delivers the property that table was for, without
+   a rewrite of code where every field's sanitizer is deliberately different (popCap and
+   matchTimeLimit must NOT go through num(), sizeMult must, swapAsym is a bare coercion) and the
+   comments explaining why are the most valuable thing in the file.
+   --------------------------------------------------------------------------------------------- */
+
+// Deep, key-order-independent difference between two payloads, as a list of dotted paths. Key
+// ORDER is deliberately ignored: it is a property of the object literals, not of what a save
+// preserves, and locking it would fail on a harmless reordering while missing every real bug.
+function diffPaths(a, b, path = "", out = []) {
+  if (a === b) return out;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
+    if (a !== b) out.push(`${path || "<root>"}: ${JSON.stringify(a)} -> ${JSON.stringify(b)}`);
+    return out;
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) { out.push(`${path}: array/object mismatch`); return out; }
+  if (Array.isArray(a) && a.length !== b.length) { out.push(`${path}.length: ${a.length} -> ${b.length}`); return out; }
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) diffPaths(a[k], b[k], path ? `${path}.${k}` : k, out);
+  return out;
+}
+
+test("a save survives a full round trip field-for-field, not just in the fields someone listed", () => {
+  // A deliberately BUSY state: 800 ticks of a micro-AI match builds and loses buildings, moves
+  // and kills units, mines nodes down, reveals fog, fills queues and banks resources — so the
+  // payload actually carries most of what it can carry, rather than a pristine opening position
+  // where half the fields are still at their defaults and would round-trip by accident.
+  const a = createGameState({ planetId: "ferros", seed: 5150, rng: mulberry32(5150), aiMicro: true });
+  a.matchTimeLimit = 1500;   // the two additive null-by-default overrides, explicitly set, so
+  a.popCap = 90;             // "preserved" is distinguishable from "defaulted back to null"
+  for (let i = 0; i < 800; i++) tick(a, 0.1);
+
+  const first = serializeGame(a);
+  const second = serializeGame(deserializeGame(JSON.parse(JSON.stringify(first))));
+
+  // A diff-based test passes trivially against an empty payload, so pin that the fixture really
+  // is busy before trusting the comparison — same failure mode the panel golden's own fixture
+  // guard exists for.
+  assert.ok(first.units.length >= 4, `expected a populated save, got ${first.units.length} units`);
+  assert.ok(first.buildings.length >= 2, `expected several buildings, got ${first.buildings.length}`);
+  assert.equal(first.popCap, 90, "and the explicitly-set overrides really reached the payload");
+  assert.equal(first.matchTimeLimit, 1500);
+
+  assert.deepEqual(diffPaths(first, second), [],
+    "a field written by serPlanet but never read back by rehydratePlanet resets silently on load");
+});
+
+test("the same holds for a galaxy save", () => {
+  // Same reasoning one level up: galaxyPayload/deserializeGalaxy have their own additive fields
+  // (lanes, rivalAscended, colony policies, the per-world settings), added the same way and with
+  // the same "written but never read" failure available to each.
+  const g = createGalaxy({ seed: 909, rng: mulberry32(909) });
+  for (let i = 0; i < 60; i++) stepGalaxy(g, 1);
+
+  const first = serializeGalaxy(g);
+  const second = serializeGalaxy(deserializeGalaxy(JSON.parse(JSON.stringify(first))));
+
+  assert.ok(first.worlds.length >= 2, `expected a real galaxy, got ${first.worlds?.length} worlds`);
+
+  assert.deepEqual(diffPaths(first, second), [],
+    "a galaxy field written but never read back resets silently on load");
 });

@@ -1,52 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { installFakeDom } from "./_dom.js";
 
 /* ============================================================
-   Same FakeElement/fakeDocument idiom as test/starmap.test.js — see that file's header
+   Same shared-DOM-harness (test/_dom.js) setup as test/starmap.test.js — see that file's header
    comment for why the stub must exist before ANY import and why the import order below
    (boot.js first, while `window` is still undefined, THEN window, THEN the module under
    test) matters. observer.js sits in the same import graph (boot.js and starmap.js both
    pull it in now), so it needs the exact same treatment.
    ============================================================ */
 
-class FakeElement extends EventTarget {
-  constructor(tag = "div") {
-    super();
-    this.tagName = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this.clientWidth = 800;
-    this.clientHeight = 600;
-    this._classes = new Set();
-    this.classList = {
-      add: (...c) => c.forEach(x => this._classes.add(x)),
-      remove: (...c) => c.forEach(x => this._classes.delete(x)),
-      toggle: (c, f) => { f === undefined ? (this._classes.has(c) ? this._classes.delete(c) : this._classes.add(c)) : (f ? this._classes.add(c) : this._classes.delete(c)); },
-      contains: c => this._classes.has(c),
-    };
-  }
-  get className() { return [...this._classes].join(" "); }
-  set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  appendChild(c) { this.children.push(c); return c; }
-  append(...cs) { this.children.push(...cs); }
-  set innerHTML(v) { if (v === "") this.children = []; }
-  get innerHTML() { return ""; }
-  getContext() { return null; }
-  getBoundingClientRect() { return { left: 0, top: 0, width: this.clientWidth, height: this.clientHeight }; }
-  click() { this.dispatchEvent(new Event("click")); }
-}
-
-function fakeDocument() {
-  const byId = new Map();
-  return {
-    getElementById(id) { if (!byId.has(id)) byId.set(id, new FakeElement("div")); return byId.get(id); },
-    createElement(tag) { return new FakeElement(tag); },
-    body: new FakeElement("body"),
-  };
-}
-
-globalThis.document = fakeDocument();
+installFakeDom();
 await import("../boot.js");
 globalThis.window = { addEventListener() {}, removeEventListener() {} };
 
