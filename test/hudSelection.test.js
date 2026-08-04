@@ -117,6 +117,9 @@ const { createGameState, makeBuilding, makeUnit } = await import("../engine/stat
 const { mulberry32 } = await import("../engine/rng.js");
 const { panelEl } = await import("../dom.js");
 const { renderSelectionPanel, resetSelectionSignature } = await import("../hudSelection.js");
+const { jumpReadyGalaxy } = await import("./_helpers.js");
+const { activeState, createLane } = await import("../engine/galaxy.js");
+const { setColonyPolicy } = await import("../engine/colonyPolicy.js");
 const { queueProduction, researchUpgrade } = await import("../engine/production.js");
 const { UNITS, UPGRADES } = await import("../engine/entities.js");
 const { createMarket, TRADE_LOT, quoteSell, updateMarket } = await import("../engine/market.js");
@@ -1117,4 +1120,90 @@ test("a freighter's cargo row survives an unrelated renderSelectionPanel tick wi
   assert.equal(labelAfter, labelBefore,
     "an unrelated tick must not touch a freighter cargo row at all — it has no data-com to live-patch, " +
     "and the pre-fix bug was refreshMarketRows silently overwriting it with 'undefined ◈NaN' anyway");
+});
+
+/* ---------------------------------------------------------------------------------------------
+   A6 — the rebuild signature must WATCH every panel it draws. renderSelectionPanel returns early
+   unless its 141-line signature string changed, so a panel whose state contributes no term to that
+   string never redraws: its buttons mutate the sim and the UI stays frozen on the old value, which
+   reads as a no-op and invites the player to click again and silently toggle the change back. Two
+   whole Odyssey panel families were in that state — Freight Lanes and Colony Policy.
+   --------------------------------------------------------------------------------------------- */
+
+function setupOdyssey(seed = 61) {
+  resetSelectionSignature();
+  const g = jumpReadyGalaxy(seed);
+  const state = activeState(g);
+  game.state = state;
+  game.galaxy = g;
+  game.input = { building: null, attackArmed: false, focusIdleWorker() {}, selectAllArmy() {} };
+  game.collapsedSections = new Set();
+  game.hotkeyActions = [];
+  const cc = [...state.buildings.values()].find(b => b.type === "command" && b.owner === "player");
+  state.selection = [cc.id];
+  return { g, state, cc };
+}
+
+test("changing a Freight Lane's commodities rebuilds the panel (A6)", () => {
+  const { g, state } = setupOdyssey();
+  const dest = g.worlds.find(w => w !== g.activeId);
+  const lane = createLane(g, g.activeId, dest, ["ore"]);
+  assert.ok(lane, "fixture sanity: a lane was created");
+
+  renderSelectionPanel();
+  const before = [...panelEl.children];
+  lane.commodities.push("metals");                       // exactly what a commodity chip's click does
+  renderSelectionPanel();
+  assert.ok(!sameNodes([...panelEl.children], before),
+    "a lane's commodity filter changed, so the panel must redraw — otherwise the ✓/— never flips");
+});
+
+test("creating a new Freight Lane rebuilds the panel (A6)", () => {
+  const { g } = setupOdyssey(62);
+  const dest = g.worlds.find(w => w !== g.activeId);
+  renderSelectionPanel();
+  const before = [...panelEl.children];
+  createLane(g, g.activeId, dest, []);                   // exactly what "+ New Lane" does
+  renderSelectionPanel();
+  assert.ok(!sameNodes([...panelEl.children], before),
+    "a brand-new lane must appear — an empty one perturbs nothing else the signature watches");
+});
+
+test("changing a colony's standing orders rebuilds the panel (A6)", () => {
+  const { g, state } = setupOdyssey(63);
+  renderSelectionPanel();
+  const before = [...panelEl.children];
+  setColonyPolicy(g, state.planetId, { autoSell: { enabled: true, floors: {} }, workerTarget: 3 });
+  renderSelectionPanel();
+  assert.ok(!sameNodes([...panelEl.children], before),
+    "Auto-sell gates a whole sub-section, so toggling it must redraw or the floor rows never appear");
+});
+
+test("a specialty unit stays offered once its commodity is in the treasury, even with no local node (A10)", () => {
+  // The HUD reimplemented availability as "every cost commodity has a local node" — a rule the
+  // engine does not have. queueProduction checks produces/odysseyOnly/prereqsMet/canAfford/supply,
+  // and the engine's OWN equivalent (market.tradeables) is the same predicate one clause longer:
+  // `present.has(c) || (res[c] || 0) > 0`. The HUD's copy had dropped the "or you hold some" half,
+  // so shipping gas to a gas-free world made the Wraith button vanish rather than grey out.
+  const { state } = setupOdyssey(64);
+  const gasUnit = "wraith";
+  const gasCost = Object.keys(UNITS[gasUnit].cost).find(c => !state.map.nodes.some(n => n.com === c));
+  assert.ok(gasCost, `fixture sanity: ${gasUnit} needs a commodity this world has no node for`);
+
+  const barracks = makeBuilding("barracks", "player", 700, 500);
+  barracks.constructing = false;
+  state.buildings.set(barracks.id, barracks);
+  state.selection = [barracks.id];
+
+  state.players.player.resources[gasCost] = 0;
+  resetSelectionSignature();
+  renderSelectionPanel();
+  assert.equal(findButton(`Produce ${UNITS[gasUnit].name}`), undefined,
+    "with neither a node nor any stock it stays hidden, as before");
+
+  state.players.player.resources[gasCost] = UNITS[gasUnit].cost[gasCost] * 4;
+  resetSelectionSignature();
+  renderSelectionPanel();
+  assert.ok(findButton(`Produce ${UNITS[gasUnit].name}`),
+    "holding the commodity must offer the unit — the engine would accept the order");
 });

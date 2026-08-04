@@ -310,9 +310,9 @@ function toggleStarmap() { if (starmapEl.classList.contains("hidden")) openStarm
 // Self-wired, like the other overlays: the topbar button and the M key toggle it
 // (M only in Odyssey — there's no galaxy otherwise), Esc closes it. Clicking the
 // backdrop (the overlay itself, not a world button) also closes.
-starmapBtn.addEventListener("click", toggleStarmap);
-starmapEl.addEventListener("click", e => { if (e.target === starmapEl) closeStarmap(); });
-window.addEventListener("keydown", e => {
+if (starmapBtn) starmapBtn.addEventListener("click", toggleStarmap);
+if (starmapEl) starmapEl.addEventListener("click", e => { if (e.target === starmapEl) closeStarmap(); });
+if (typeof window !== "undefined") window.addEventListener("keydown", e => {
   if ((e.key === "m" || e.key === "M") && game.galaxy) { e.preventDefault(); toggleStarmap(); }
   else if (e.key === "Escape" && !starmapEl.classList.contains("hidden")) closeStarmap();
 });

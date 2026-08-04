@@ -2,12 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip, hasColonyShip, COLONY_SHIP_WORKERS, packCommandCenter, PACK_COST } from "../engine/colony.js";
-import { canPlaceBuilding } from "../engine/colliders.js";
+import { canPlaceBuilding, findPlacement } from "../engine/colliders.js";
 import { queueProduction } from "../engine/production.js";
 import { checkEndlessLoss } from "../engine/victory.js";
 import { createGalaxy, activeState, checkDomination, galaxyStatus } from "../engine/galaxy.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 import { runAI } from "../engine/ai.js";
+import { issueMove } from "../engine/commands.js";
+import { tick } from "../engine/sim.js";
 
 const THINK = 1.5;
 const playerShip = s => [...s.units.values()].find(u => u.owner === "player" && u.type === "colonyship");
@@ -240,4 +242,34 @@ test("the AI keeps at most one colony ship in flight", () => {
   assert.equal([...s.units.values()].filter(u => u.owner === "ai" && u.type === "colonyship").length, 1,
     "no second ship is produced while one is in flight");
   assert.ok(!cc.queue.some(j => j.unitType === "colonyship"), "and none queued at the CC");
+});
+
+test("escorts following a colony ship are released the moment it deploys — not left chasing a removed ship (A1)", () => {
+  // keepFollowingLeader decides its leader is gone by hp alone. Every combat/bomb death zeroes hp
+  // before removeEntity, so that holds there — but deployColonyShip removes the ship at FULL hp.
+  // Escorting a colony ship to a site and deploying it is the canonical Odyssey play, and it left
+  // both escorts permanently pinned to a unit no longer in state.units, orbiting its frozen last
+  // position. They still accept a new direct order, so it reads as "my units randomly stopped
+  // obeying the formation" rather than as a bug.
+  const st = createGameState({ planetId: "ferros", seed: 7 });
+  const spot = findPlacement(st, "command", st.map.width / 2, st.map.height / 2);
+  assert.ok(spot, "fixture sanity: an open deploy site exists");
+  const ship = makeUnit("colonyship", "player", spot.x, spot.y);
+  st.units.set(ship.id, ship);
+  const e1 = makeUnit("skiff", "player", ship.x + 20, ship.y);
+  const e2 = makeUnit("skiff", "player", ship.x - 20, ship.y);
+  st.units.set(e1.id, e1);
+  st.units.set(e2.id, e2);
+
+  issueMove([ship, e1, e2], ship.x + 120, ship.y + 80, false, { shape: "wedge" });
+  assert.equal(e1.order.type, "follow-leader", "fixture sanity: the escorts are following the ship");
+  assert.equal(e2.order.type, "follow-leader");
+
+  deployColonyShip(st, ship.id);
+  assert.ok(!st.units.has(ship.id), "fixture sanity: the ship is gone from the state");
+  assert.ok(ship.hp > 0, "fixture sanity: and it was removed ALIVE — which is why an hp check misses it");
+
+  tick(st, 0.1);
+  assert.equal(e1.order, null, "the escort must be released, not left chasing a removed ship");
+  assert.equal(e2.order, null);
 });

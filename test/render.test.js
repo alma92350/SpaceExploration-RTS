@@ -60,7 +60,7 @@ function trackedDocument() {
 const doc = trackedDocument();
 globalThis.document = doc;
 
-const { drawFogBase, drawTerrain } = await import("../render.js");
+const { drawFogBase, drawTerrain, drawFrame } = await import("../render.js");
 
 // Reconstructs the ordered (x, y, w, h, color) rects a recorded ctx actually painted, pairing
 // each fillRect with the most recently set fillStyle — the same pairing the real Canvas 2D API
@@ -317,4 +317,115 @@ test("integration: real createFog/updateFog output feeds drawFogBase and washes 
   assert.doesNotThrow(() => drawFogBase(ctx, { fog }, null));
   const fillRectCount = ctx.calls.filter(c => c.fn === "fillRect").length;
   assert.ok(fillRectCount > 0, "the vacated, now-explored-but-not-visible area should get the fog wash");
+});
+
+/* ---- A7: a throwing draw must not permanently corrupt every later frame -------------------- */
+
+// A ctx that tracks save/restore depth and can be told to throw once from inside a draw.
+function depthCtx({ throwOn } = {}) {
+  const state = { depth: 0, max: 0 };
+  const ctx = new Proxy({}, {
+    get(t, prop) {
+      if (prop === "_depth") return state;
+      return (...args) => {
+        if (prop === "save") { state.depth++; state.max = Math.max(state.max, state.depth); }
+        else if (prop === "restore") state.depth--;
+        else if (prop === throwOn) throw new Error("boom in a draw");
+        if (prop === "measureText") return { width: 10 };
+        return undefined;
+      };
+    },
+    set() { return true; },
+  });
+  return ctx;
+}
+
+test("a throwing draw leaves the canvas save-stack balanced (A7)", async () => {
+  // engine/loop.js deliberately swallows a throwing render so the loop survives a bad entity. That
+  // only works if the frame unwinds cleanly: drawFrame's save() had no matching restore() on the
+  // throw path, so the camera transform was never popped. Every LATER frame then drew on top of the
+  // leaked one — including the backdrop fillRect, which is why the screen stopped clearing at all.
+  // The loop keeps running and the view is dead forever, which to a player is a freeze.
+  const { createGameState } = await import("../engine/state.js");
+  const st = createGameState({ planetId: "ferros", seed: 5 });
+  const camera = { x: st.map.width / 2, y: st.map.height / 2, zoom: 1 };
+
+  const ok = depthCtx();
+  drawFrame(ok, st, camera, 800, 600, null, null, 1, true);
+  assert.equal(ok._depth.depth, 0, "a clean frame is balanced");
+  assert.ok(ok._depth.max > 0, "fixture sanity: the frame really did save/restore");
+
+  const bad = depthCtx({ throwOn: "lineTo" });
+  assert.throws(() => drawFrame(bad, st, camera, 800, 600, null, null, 1, true), /boom in a draw/);
+  assert.equal(bad._depth.depth, 0,
+    "a frame that threw must still pop its camera transform — otherwise every later frame is drawn " +
+    "on top of it and the backdrop clear lands in world space");
+});
+
+/* ---- C7: the frame orchestrator and the other exports nothing ever called ------------------
+   Nine of fourteen exported render entry points had ZERO call sites across the whole suite,
+   drawFrame among them — the one function that owns the draw ORDER, threads the selection set, and
+   holds the save/restore of A7. That is why A7 and drawRallyPoint's crash both shipped. */
+
+test("drawFrame draws building bars after every hull (C7)", async () => {
+  // render.js's own comment records the bug this ordering exists to prevent: a unit drawn later
+  // painting its hull over an earlier building's health bar, "exactly when the bar matters most".
+  // Nothing asserted the order, so a reshuffle would silently reintroduce it.
+  const { createGameState } = await import("../engine/state.js");
+  const st = createGameState({ planetId: "ferros", seed: 6 });
+  const dmg = [...st.buildings.values()].find(b => b.owner === "player");
+  dmg.hp = Math.round(dmg.maxHp * 0.5);
+  const camera = { x: dmg.x, y: dmg.y, zoom: 1 };
+
+  const calls = [];
+  const ctx = new Proxy({}, {
+    get: (t, p) => (...args) => { calls.push(String(p)); return p === "measureText" ? { width: 10 } : undefined; },
+    set: () => true,
+  });
+  drawFrame(ctx, st, camera, 800, 600, null, null, 1, true);
+
+  const lastHull = calls.lastIndexOf("fill");
+  const lastBar = calls.lastIndexOf("fillRect");
+  assert.ok(lastHull >= 0 && lastBar >= 0, "fixture sanity: the frame drew both hulls and bars");
+  assert.ok(lastBar > lastHull,
+    "the bar pass must run after every hull, or a later hull paints over an earlier building's bar");
+});
+
+test("every exported render entry point survives a realistic frame (C7)", async () => {
+  // Smoke coverage for the nine exports that had no call site at all. One of them
+  // (drawRallyPoint) was genuinely crashing; the rest were merely unguarded.
+  const { createGameState, makeUnit } = await import("../engine/state.js");
+  const { BUILDINGS } = await import("../engine/entities.js");
+  const R = await import("../render.js");
+  const RB = await import("../renderBuildings.js");
+  const RE = await import("../renderEffects.js");
+
+  const st = createGameState({ planetId: "ferros", seed: 6 });
+  const cc = [...st.buildings.values()].find(b => b.owner === "player" && BUILDINGS[b.type].produces);
+  const worker = [...st.units.values()].find(u => u.owner === "player");
+  st.selection = [cc.id, worker.id];
+  worker.order = { type: "move", x: 400, y: 400 };
+  worker.orderQueue = [{ type: "move", x: 500, y: 500 }];
+  const escort = makeUnit("skiff", "player", worker.x + 20, worker.y);
+  escort.order = { type: "escort", targetId: worker.id };
+  st.units.set(escort.id, escort);
+
+  const ctx = new Proxy({}, {
+    get: (t, p) => (...args) => (p === "measureText" ? { width: 10 } : undefined),
+    set: () => true,
+  });
+  const view = { x: 0, y: 0, w: st.map.width, h: st.map.height };
+  for (const [name, call] of [
+    ["spriteIcon", () => R.spriteIcon(ctx, { kind: "unit", type: "skiff" }, 10, 10, 16, "#5ec8ff")],
+    ["drawJumpStaging", () => RB.drawJumpStaging(ctx, st, view)],
+    ["drawPowerGrid", () => RB.drawPowerGrid(ctx, st, view)],
+    ["drawScenario", () => RE.drawScenario(ctx, st, view)],
+    ["drawSelectionRings", () => RE.drawSelectionRings(ctx, st, new Set(st.selection))],
+    ["drawRallyPoint", () => RE.drawRallyPoint(ctx, st)],
+    ["drawWaypoints", () => RE.drawWaypoints(ctx, st)],
+    ["drawEscortLinks", () => RE.drawEscortLinks(ctx, st)],
+    ["drawDragBox", () => RE.drawDragBox(ctx, { x0: 10, y0: 10, x1: 90, y1: 70 })],
+  ]) {
+    assert.doesNotThrow(call, `${name} threw on a realistic frame`);
+  }
 });

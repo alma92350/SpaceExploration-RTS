@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Autonomous scout mode for the Ranger (order type "scout"): range the
    map on its own, always heading for the nearest unexplored ground, so
@@ -35,6 +36,7 @@ const REACH = 6;   // close enough to a scout waypoint to count as arrived and r
 // intel (enemy movements) instead of parking. Fractions of the map dims.
 const PATROL = [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]];
 
+/** @param {State} state @param {Unit} unit @param {number} dt @returns {void} */
 export function updateScoutMode(state, unit, dt) {
   const def = UNITS[unit.type];
   const fog = unit.owner === "player" ? state.fog : state.fogAI;

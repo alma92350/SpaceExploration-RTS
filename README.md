@@ -30,6 +30,14 @@ simulated skirmish played out to a winner and a galaxy played across multiple wo
 determinism, purity, and static-integrity guards. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
 invariants those guard.
 
+```
+npm run typecheck
+```
+
+Type-checks the JSDoc-annotated files against the shared shapes in `engine/types.js`
+(`tsc -p jsconfig.json`; needs a TypeScript compiler on the path, or `npx -y typescript`). CI runs
+it as a required step alongside the suite, so it is worth running before you push.
+
 ## The skirmish
 
 A 1v1 real-time match against a scripted AI on one of nine charted worlds, picked at the start.
@@ -208,16 +216,27 @@ which is what that "whether it keeps your saves" note above is warning you about
   local avoidance, gather, combat, production, supply, placement validation, fog of war, AI, the
   market, diplomacy, colony/jump mechanics, and save serialization. Runs headless under
   `node --test`.
-- `render.js` / `minimap.js` / `input.js` / `camera.js` / `hud.js` / `overlays.js` / `setup.js` —
-  the canvas view, minimap, mouse/keyboard controls, camera, and UI chrome.
-- `boot.js` / `session.js` / `saveload.js` — wiring the sim to the page, session state, and
-  save/load.
+- `main.js` — **the page's only entry point** (`index.html` loads it and nothing else). Its
+  side-effect-only imports (`starmap.js`, `techChart.js`, `update.js`) are load-bearing: those
+  modules self-wire their buttons and hotkeys at module-load time, so dropping one silently
+  disables a feature rather than raising an error.
+- `render.js` / `renderUnits.js` / `renderBuildings.js` / `renderEffects.js` / `renderNodes.js` /
+  `renderShared.js` / `minimap.js` / `camera.js` / `effects.js` — the canvas view. `render.js`
+  orchestrates the frame; the `render*.js` family draws units, buildings, effects and nodes; there
+  are no images, every silhouette is vector drawing code.
+- `input.js` — mouse/keyboard/touch controls and the right-click command ladder.
+- `hud.js` / `hudSelection.js` / `overlays.js` / `setup.js` / `landingPicker.js` /
+  `observerPanel.js` / `techChart.js` / `starmap.js` / `dom.js` — UI chrome. `hudSelection.js` owns
+  the selection panel and is the largest file in the repo.
+- `boot.js` / `session.js` / `saveload.js` / `update.js` / `version.js` / `saveShape.js` — wiring
+  the sim to the page, session state, save/load, and the version/auto-update check.
+- `sound.js` / `observer.js` — audio cues and Observer Mode.
 - `data.js` — pure content (factions, the commodity catalog, production recipes, the charted
   worlds).
 - `tools/serve.js` — the zero-dependency dev server behind `npm start`.
-- `tools/ailab.js` — a headless bench for measuring and tuning the Odyssey AI: it runs the sim
-  without a browser, scores the opponent over a long session, and A/B-tests candidate AIs supplied
-  as JSON. See [docs/odyssey-ai-review.md](docs/odyssey-ai-review.md).
+- `tools/ailab.js` / `tools/selfplay.js` — a headless bench for measuring and tuning the Odyssey
+  AI: it runs the sim without a browser, scores the opponent over a long session, and A/B-tests
+  candidate AIs supplied as JSON. See [docs/odyssey-ai-review.md](docs/odyssey-ai-review.md).
 
 ## Background: why a separate repo
 

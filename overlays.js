@@ -311,6 +311,7 @@ function helpRows(rows) {
     `<div class="help-row"><span class="help-key">${k}</span><span>${v}</span></div>`).join("");
 }
 export function buildHelpOverlay() {
+  if (!helpOverlayEl) return;   // import-safe under Node (CONTRIBUTING: follow the dom.js idiom)
   helpOverlayEl.innerHTML = `<div class="help-card"><h2>Controls &amp; Help</h2>`
     + `<h3 class="help-sub">Mouse &amp; keyboard</h3>${helpRows(HELP_ROWS)}`
     + `<h3 class="help-sub">Touch</h3>${helpRows(TOUCH_HELP_ROWS)}`

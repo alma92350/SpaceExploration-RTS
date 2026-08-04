@@ -205,3 +205,22 @@ test("a patrol order's flag round-trips through save/load with no dedicated pers
     "the whole queue length (including the trailing copy of the active leg — see test/commands.test.js) is preserved");
   assert.ok(reloaded.orderQueue.every(o => o.patrol === true), "every queued leg's patrol flag survives too");
 });
+
+test("every AI-controller bookkeeping field survives a save/load round trip (C9)", () => {
+  // Dropping aiColonyTarget, aiLastThreatAt, or the ENTIRE playerAi block from persist.js used to
+  // survive the full suite. (aiWaveCount and a wonder's charge were both killed by it, so the
+  // per-field round-trip pattern existed — it just stopped short.) Each carries a comment in
+  // persist.js explaining why losing it is a bug: aiColonyTarget is "the committed deploy spot of an
+  // in-flight ship. Persisted so a reload doesn't recompute a different target". The failure mode is
+  // "the AI behaves differently after reload" — the hardest class of bug to report.
+  const st0 = createGameState({ planetId: "ferros", seed: 77, rng: mulberry32(77) });
+  Object.assign(st0.ai, {
+    think: 0.9, scoutId: null, colonyTarget: { x: 321, y: 210 }, apm: 90, micro: true,
+    strategy: "aggressive", difficulty: "hard", lastThreatAt: 12.5, actionBudget: 3,
+    attackForce: 5, attackDesperate: true, nextAttackAt: 44, unitsBuilt: 7, waveCount: 2,
+  });
+  const st = deserializeGame(serializeGame(st0));
+  for (const f of ["think", "colonyTarget", "apm", "micro", "strategy", "difficulty", "lastThreatAt",
+                   "actionBudget", "attackForce", "attackDesperate", "nextAttackAt", "unitsBuilt", "waveCount"])
+    assert.deepEqual(st.ai[f], st0.ai[f], `state.ai.${f} must round-trip`);
+});

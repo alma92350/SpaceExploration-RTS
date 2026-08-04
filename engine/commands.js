@@ -159,7 +159,11 @@ function dispatchFormation(units, x, y, formation, queue, makeLeaderOrder) {
   // isn't part of it this time is released — and actually stopped, not just unlinked, so a
   // dropped unit doesn't silently keep chasing a leader that no longer lists it.
   if (leader.squadFollowers) {
-    for (const old of leader.squadFollowers) {
+    // Iterate a SNAPSHOT: setSquadLeader(old, null) splices `old` out of this very array, and a
+    // for...of iterator is index-based, so mutating in place skips the next element. Dropping two
+    // adjacent followers used to release only the first, leaving the second with squadLeader
+    // pointing at a leader whose own list no longer contained it.
+    for (const old of [...leader.squadFollowers]) {
       if (!newFollowers.includes(old)) { setSquadLeader(old, null); old.order = null; }
     }
   }

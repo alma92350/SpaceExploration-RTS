@@ -153,3 +153,36 @@ test("a mid-charge Gate survives a save/load", () => {
   const rgate = [...activeState(restored).buildings.values()].find(b => b.type === "antimatter_gate");
   assert.ok(Math.abs(rgate.charge - mid) < 1e-9, "the charge round-trips exactly");
 });
+
+test("a Gate at full charge stops consuming — it never keeps draining the Strategic tier (A4)", () => {
+  // updateWonder clamped the CHARGE but not the SPEND, and nothing returned early at charge >= 1.
+  // In a standalone endless state that's masked because checkEndlessWin finishes the game — but a
+  // GALAXY Gate is explicitly "a milestone, never a win — play forever" (engine/victory.js), and
+  // sim.js calls updateWonder unconditionally every tick. So a completed Gate went on eating its
+  // feed at feed[com] per sim-second, indefinitely, in the three scarcest goods in the game, on the
+  // winning line of play — and the Leviathan competes for exactly those three.
+  const { state, gate } = withGate();
+  gate.charge = 1;
+  const before = { ...state.players.player.resources };
+  for (let i = 0; i < 100; i++) updateWonder(state, gate, 0.1);
+  for (const com in BUILDINGS.antimatter_gate.feed)
+    assert.equal(state.players.player.resources[com], before[com],
+      `a finished Gate must not keep spending ${com}`);
+});
+
+test("a Gate's final partial tick pays only for the charge it actually banks (A4)", () => {
+  // The same off-by-a-clamp from the other side: charge clamps to 1 while the goods are debited for
+  // the whole of p, so the last tick overpays for charge it never received.
+  const { state, gate } = withGate();
+  const def = BUILDINGS.antimatter_gate;
+  gate.charge = 0.995;
+  const before = { ...state.players.player.resources };
+  updateWonder(state, gate, def.chargeTime);          // a whole charge's worth of dt in one step
+  assert.equal(gate.charge, 1, "it completes");
+  for (const com in def.feed) {
+    const spent = before[com] - state.players.player.resources[com];
+    const owed = 0.005 * def.feed[com] * def.chargeTime;
+    assert.ok(spent <= owed + 1e-9,
+      `${com}: spent ${spent} for the last 0.5% of charge, which is only worth ${owed}`);
+  }
+});

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit } from "../engine/state.js";
 import { drawUnits } from "../renderUnits.js";
+import { facing, resetFacing } from "../renderShared.js";
 
 // Same recording-Proxy idiom as test/renderEffects.test.js's recordingCtx: a no-op canvas stub
 // that also logs every strokeStyle/fillStyle assignment, so a test can tell two draws apart by
@@ -19,6 +20,19 @@ function recordingCtx() {
   });
   return { ctx, colors: () => colors.slice() };
 }
+
+// A ctx that logs every property SET as {set, value} — A8's tests need to count how many times a
+// specific colour was assigned, not just which colours appeared.
+function tracedCtx() {
+  const target = { lineWidth: 1, strokeStyle: "", fillStyle: "" };
+  const calls = [];
+  const ctx = new Proxy(target, {
+    get: (t, p) => (p === "calls" ? calls : (p in t ? t[p] : () => {})),
+    set: (t, p, v) => { t[p] = v; calls.push({ set: p, value: v }); return true; },
+  });
+  return ctx;
+}
+const facingOf = id => facing.get(id) && facing.get(id).angle;
 
 function stateWithOneUnit(unit) {
   const state = createGameState({ planetId: "ferros" });
@@ -104,4 +118,47 @@ test("observerMode bypasses the fog gate — an unrevealed enemy unit draws only
   const revealed = recordingCtx();
   drawUnits(revealed.ctx, state, null, 1, new Set(), true);
   assert.ok(revealed.colors().length > 0, "the same unit draws once observerMode bypasses the fog gate");
+});
+
+/* ---- A8: the shared draw scratch must not leak one unit's optional fields into the next ---- */
+
+test("an unarmed Helium Bomb is not drawn as armed just because an armed one drew first (A8)", () => {
+  // drawUnits filled a module-level scratch with Object.assign, which copies own properties but
+  // never DELETES stale ones. `armed` is optional — makeUnit never sets it — so once any armed bomb
+  // was drawn, every later bomb in the same frame inherited the flag and rendered with the armed
+  // cue: long red spikes and a hot glowing core. That cue is a safety signal; renderUnits' own
+  // comment calls it "unmistakable at a glance, since walking anything (even a friendly) into it is
+  // the whole hazard".
+  const st = createGameState({ planetId: "ferros", seed: 12 });
+  st.units.clear();
+  const armed = makeUnit("heliumbomb", "player", 700, 500);
+  armed.armed = true;
+  const inert = makeUnit("heliumbomb", "player", 760, 500);
+  assert.ok(!("armed" in inert), "fixture sanity: an inert bomb has no `armed` key at all");
+  st.units.set(armed.id, armed);
+  st.units.set(inert.id, inert);
+
+  const ctx = tracedCtx();
+  drawUnits(ctx, st, null, 1, new Set(), true);
+  const hotCore = ctx.calls.filter(c => c.set === "fillStyle" && c.value === "#ff8a3d").length;
+  assert.equal(hotCore, 1, "exactly one bomb should be drawn with the armed core, not both");
+});
+
+test("a unit with no explicit facing keeps its own orientation when a commanded unit drew first (A8)", () => {
+  // Same leak, different field: `facing` is set only by an explicit click-and-drag heading
+  // (engine/commands.js applyFacing). An idle unit drawn after a commanded one inherited the
+  // commanded heading, defeating the explicit-facing feature entirely.
+  resetFacing();
+  const st = createGameState({ planetId: "ferros", seed: 13 });
+  st.units.clear();
+  const commanded = makeUnit("skiff", "player", 700, 500);
+  commanded.facing = Math.PI;
+  const idle = makeUnit("skiff", "player", 760, 500);
+  assert.ok(!("facing" in idle), "fixture sanity: an idle unit has no `facing` key at all");
+  st.units.set(commanded.id, commanded);
+  st.units.set(idle.id, idle);
+
+  drawUnits(tracedCtx(), st, null, 1, new Set(), true);
+  assert.notEqual(facingOf(idle.id), Math.PI,
+    "an idle unit must not inherit another unit's commanded heading through the shared scratch");
 });

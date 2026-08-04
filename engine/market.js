@@ -40,7 +40,12 @@ const SPREAD = 1.15;              // a buy costs 15% more than the matching sell
 const RAW_SPREAD = 1.5;
 const RAW = new Set(TRADEABLE.filter(c => COM[c].tier === "Raw"));   // the deposited/gathered commodities (data.js COM.tier)
 const SLIP_PER_LOT = 0.05;        // each lot traded moves the (fast) price pressure this much
-const PRESSURE_FLOOR = -0.6, PRESSURE_CEIL = 0.6;   // price swings within 40%..160% of equilibrium
+// Exported so the LOAD path (engine/persist.js) clamps a saved price book into exactly the band
+// applySlippage keeps it in at runtime. They used to be private, and the load path enforced
+// nothing at all — a tampered pressure of 1e6 gave a 5,000,005-credit sale price, a negative one
+// made selling LOSE credits, and a string made galaxy.credits permanently NaN (updateMarket is a
+// multiplicative relaxation, so it never self-heals).
+export const PRESSURE_FLOOR = -0.6, PRESSURE_CEIL = 0.6;   // price swings within 40%..160% of equilibrium
 const RECOVERY = 0.06;            // pressure relaxes toward equilibrium at this rate per second (~17s constant)
 // A SLOW, deep saturation term on FACTORY OUTPUT only: dumping produced goods on one
 // world builds a cumulative glut that decays over minutes, not the ~17s of pressure. So
@@ -48,7 +53,7 @@ const RECOVERY = 0.06;            // pressure relaxes toward equilibrium at this
 // make-here / sell-there loop (cargoManifest/freightCapacity exist for exactly this),
 // instead of letting one world absorb unlimited output at a near-flat price.
 const GLUT_PER_LOT = 0.05;        // each lot of produced output sold deepens the local glut this much
-const GLUT_CEIL = 0.85;           // a fully-saturated local market pays as little as 15% of equilibrium
+export const GLUT_CEIL = 0.85;    // a fully-saturated local market pays as little as 15% of equilibrium
 const GLUT_RECOVERY = 1 / 480;    // glut relaxes over ~8 min — far slower than pressure
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -217,9 +222,18 @@ export function updateMarket(state, dt) {
 // Commodities worth showing on this world's market: those it deposits, plus any
 // the player is currently carrying (so you can always offload what you hold).
 export function tradeables(state) {
-  const present = new Set(state.map.nodes.map(n => n.com));
-  const res = state.players.player.resources;
-  return TRADEABLE.filter(c => present.has(c) || (res[c] || 0) > 0);
+  return TRADEABLE.filter(c => commodityAvailable(state, "player", c));
+}
+
+// Can `owner` get hold of `com` on this world at all? A local deposit is one way; already HOLDING
+// some is the other, and on a galaxy world that stock can arrive by freight lane, by freighter, or
+// by purchase. The single definition of that rule, because the HUD used to carry its own copy that
+// had dropped the second half — so shipping gas to a gas-free world let the engine accept a Wraith
+// order while the button was ABSENT from the barracks panel entirely: not greyed, not explained.
+export function commodityAvailable(state, owner, com) {
+  const present = state.map.nodes.some(n => n.com === com);
+  const res = state.players[owner] ? state.players[owner].resources : null;
+  return present || (res ? (res[com] || 0) > 0 : false);
 }
 
 /* ---------- AI barter (Tier 3 of the section-08 economic-dial proposal) ---------- */

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { recycleFrac, recycleValue, canRecycle, beginRecycle, cancelRecycle, updateBuildingRecycle, updateUnitRecycle, RECYCLE_TECH } from "../engine/recycle.js";
-import { issueRecycle, issueCancelRecycle, issueStop } from "../engine/commands.js";
+import { issueRecycle, issueCancelRecycle, issueStop, issueMove } from "../engine/commands.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
 import { serializeGame, deserializeGame } from "../engine/persist.js";
 
@@ -255,4 +255,26 @@ test("save hardening: a tampered recycling block is clamped instead of corruptin
 
   assert.ok(loadedRig.recycling.progress >= 0 && loadedRig.recycling.progress <= 1);
   assert.ok(loadedRig.recycling.time >= 1, "a non-positive time would otherwise divide-toward-nonsense next tick");
+});
+
+test("recycling a formation leader releases its followers instead of stranding them (A1)", () => {
+  // The twin of the colony-ship case: updateUnitRecycle also removes a unit at full hp, so an
+  // hp-only liveness check in keepFollowingLeader leaves the squad chasing a ghost.
+  const st = createGameState({ planetId: "ferros", seed: 8 });
+  const leader = makeUnit("skiff", "player", 700, 500);
+  const a = makeUnit("skiff", "player", 720, 500);
+  const b = makeUnit("skiff", "player", 680, 500);
+  for (const u of [leader, a, b]) st.units.set(u.id, u);
+
+  issueMove([leader, a, b], 900, 500, false, { shape: "wedge" });
+  assert.equal(a.order.type, "follow-leader", "fixture sanity: the squad is following");
+
+  issueRecycle([leader]);
+  for (let i = 0; i < 400 && st.units.has(leader.id); i++) tick(st, 0.1);
+  assert.ok(!st.units.has(leader.id), "fixture sanity: the leader finished recycling and was removed");
+  assert.ok(leader.hp > 0, "fixture sanity: and it was removed ALIVE");
+
+  tick(st, 0.1);
+  assert.equal(a.order, null, "a follower must be released when its leader is recycled away");
+  assert.equal(b.order, null);
 });

@@ -118,7 +118,8 @@ function priorityWeight(b) {
 // tunable tax on the same scarce strategic good the AI Foundry cultivates, not a token cost.
 const AI_UPKEEP_PER_CAPACITY_PER_SEC = 1 / 2500;
 
-/** AI Cores/sec an autonomous freighter burns while actively working a haul/service job. */
+/** AI Cores/sec an autonomous freighter burns while actively working a haul/service job.
+ * @param {Unit} unit @returns {number} */
 export function aiUpkeepRate(unit) {
   return (UNITS[unit.type]?.cargoHold || 0) * AI_UPKEEP_PER_CAPACITY_PER_SEC;
 }
@@ -144,6 +145,24 @@ export function payAIUpkeep(state, unit, dt) {
 // SINGLE-commodity size, so "larger capacity" falls out of the same def field its freight panel
 // already shows, no duplicated number to keep in sync.
 function tripCapacity(def) { return def.cargoCap ?? def.cargoHold ?? 0; }
+// What a building needs hauled IN, as a commodity→"units per batch" map — a real recipe's `in`
+// (every key but "energy", a live Power draw never hauled/stored) for a factory, a synthesized
+// one (each accepted fuel weighted 1) for a fuel-burning power station (def.combust.fuels), or a
+// synthesized one (its single feed commodity weighted by its own perShot cost) for an ammo-fed
+// static defense (def.ammo — the Torpedo Battery): "a batch" there means "one shot's worth", so
+// neededInput's SUPPLY_BATCHES top-up target reads as "keep ~SUPPLY_BATCHES shots banked", the
+// same shape a factory's own per-batch ingredient count already gives it. Null for anything that
+// needs none of the three. The single place that unifies them so neededInput/assignService/
+// updateService don't need their own factory-vs-power-station-vs-battery branch.
+function inputNeedsOf(building) {
+  const recipe = recipeOf(building);
+  if (recipe) return recipe.in;
+  const def = BUILDINGS[building.type];
+  if (def?.combust) return Object.fromEntries(def.combust.fuels.map(f => [f, 1]));
+  if (def?.ammo) return { [def.ammo.com]: def.ammo.perShot };
+  return null;
+}
+
 
 /**
  * Tally, per building, how many workers are hauling from it (`haulers`) or servicing it
@@ -156,11 +175,13 @@ function tripCapacity(def) { return def.cargoCap ?? def.cargoHold ?? 0; }
 export function countLogistics(state) {
   for (const b of state.buildings.values()) {
     if (storeCapOf(b.type) > 0) b.haulers = 0;
-    // A factory (recipeOf) OR a fuel-burning power station (BUILDINGS[type].combust) both take
-    // SERVICE workers — see inputNeedsOf below — so both need this tally reset each tick too, or
-    // a power station's `servers` count would only ever climb, permanently maxing out at
-    // MAX_SERVERS after its first worker and locking out every one after.
-    if (recipeOf(b) || BUILDINGS[b.type]?.combust) b.servers = 0;
+    // Reset from the SINGLE SOURCE OF TRUTH for "does this building take service workers".
+    // This used to re-list the kinds by hand (recipeOf || combust), and when inputNeedsOf grew a
+    // third — an ammo-fed Torpedo Battery — the list wasn't updated, so that one building's
+    // `servers` count could only ever climb: permanently past MAX_SERVERS after its first worker,
+    // locking out every one after, forever. Asking inputNeedsOf covers any future fourth kind
+    // automatically, which is the whole point of it existing.
+    if (inputNeedsOf(b)) b.servers = 0;
   }
   for (const u of state.units.values()) {
     if (UNITS[u.type]?.cargoHold) u.ferriers = 0;
@@ -220,23 +241,6 @@ function loadFrom(store, unit, cargoCap) {
   return true;
 }
 
-// What a building needs hauled IN, as a commodity→"units per batch" map — a real recipe's `in`
-// (every key but "energy", a live Power draw never hauled/stored) for a factory, a synthesized
-// one (each accepted fuel weighted 1) for a fuel-burning power station (def.combust.fuels), or a
-// synthesized one (its single feed commodity weighted by its own perShot cost) for an ammo-fed
-// static defense (def.ammo — the Torpedo Battery): "a batch" there means "one shot's worth", so
-// neededInput's SUPPLY_BATCHES top-up target reads as "keep ~SUPPLY_BATCHES shots banked", the
-// same shape a factory's own per-batch ingredient count already gives it. Null for anything that
-// needs none of the three. The single place that unifies them so neededInput/assignService/
-// updateService don't need their own factory-vs-power-station-vs-battery branch.
-function inputNeedsOf(building) {
-  const recipe = recipeOf(building);
-  if (recipe) return recipe.in;
-  const def = BUILDINGS[building.type];
-  if (def?.combust) return Object.fromEntries(def.combust.fuels.map(f => [f, 1]));
-  if (def?.ammo) return { [def.ammo.com]: def.ammo.perShot };
-  return null;
-}
 
 // The input commodity a building most needs and the treasury can supply: the one with the fewest
 // batches buffered (below the top-up target) that the owner has in stock AND that still has room
@@ -445,6 +449,14 @@ function bankCargo(state, unit) {
 export function updateService(state, unit, dt) {
   const def = UNITS[unit.type];
   const order = unit.order;
+  // Mint the cargo slot here rather than trusting a caller to have done it. makeUnit only gives
+  // `cargo` to role==="worker" (engine/state.js), so an autonomous freighter's slot exists ONLY
+  // because issueSetAILogistics created it — an invariant enforced by one command handler, not by
+  // the loader or by this consumer. cleanEntity nulls a cargo naming a bogus commodity while
+  // leaving aiLogistics:true intact, so a corrupt save used to load "clean" and then throw here on
+  // the fetch leg, inside the rAF loop and past load's try/catch, with no way back into the game.
+  // Every sibling path (loadFrom, updateHaul, depositToFreighter) already guards; this one didn't.
+  const cargo = unit.cargo || (unit.cargo = { com: null, qty: 0 });
   const b = order.buildingId ? state.buildings.get(order.buildingId) : null;
   const res = state.players[unit.owner].resources;
 
@@ -474,7 +486,7 @@ export function updateService(state, unit, dt) {
     if (!cc) { unit.order = null; return; }
     if (reached(unit, cc)) {
       const want = Math.min(tripCapacity(def), res[order.com] || 0, inputRoom(b, order.com));
-      if (want > 0) { res[order.com] -= want; unit.cargo.com = order.com; unit.cargo.qty = want; order.phase = "toBuilding"; }
+      if (want > 0) { res[order.com] -= want; cargo.com = order.com; cargo.qty = want; order.phase = "toBuilding"; }
       else order.phase = "plan";                                              // treasury dried up → re-plan
     } else stepToward(state, unit, cc.x, cc.y, def.speed, dt);
     return;

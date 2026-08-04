@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createGameState } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { UNITS, BUILDINGS } from "../engine/entities.js";
-import { drawBuildGhost, drawEffects, TRACER_STYLE } from "../renderEffects.js";
+import { drawBuildGhost, drawEffects, drawRallyPoint, TRACER_STYLE } from "../renderEffects.js";
 import { addTracer, addUnderAttackPing, addDeathFlash, activeEffects, activePings, resetEffects, DEATH_BASE_RADIUS } from "../effects.js";
 
 // A stub 2D context that no-ops any method the drawing code happens to call, instead of
@@ -380,4 +380,18 @@ test("a building-kind death lingers longer than a same-radius unit-kind one — 
   const { deaths } = activeEffects();
   assert.equal(deaths.length, 1, `expected only the building's death to still be alive, got ${JSON.stringify(deaths)}`);
   assert.equal(deaths[0].kind, "building");
+});
+
+test("drawRallyPoint does not throw for a building with no rally (A7)", () => {
+  // `rally` is optional on a Building and engine/persist.js's cleanEntity never defaults it, so an
+  // older or hand-edited save reaches the renderer with none. Destructuring it unguarded threw a
+  // TypeError from a single entity — which took the whole frame, and (before drawFrame's
+  // try/finally) every frame after it, leaving a live loop drawing on a dead view.
+  const st = createGameState({ planetId: "ferros", seed: 9 });
+  const cc = [...st.buildings.values()].find(b => b.owner === "player" && BUILDINGS[b.type].produces);
+  assert.ok(cc, "fixture sanity: a producing player building exists");
+  delete cc.rally;
+  st.selection = [cc.id];
+  const ctx = new Proxy({}, { get: () => () => undefined, set: () => true });
+  assert.doesNotThrow(() => drawRallyPoint(ctx, st));
 });

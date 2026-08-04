@@ -607,7 +607,7 @@ export function updateFactionWarmth(galaxy) {
 // the pacified floor fight forever — the ceiling reasserts every scan and always wins the raw
 // stance value between updateDiplomacy's slower drift ticks, so razing an ascended neighbour's
 // Command Center would have no visible effect on its stance, which reads as broken in play.
-const RIVAL_ASCENSION_STANCE_CEILING = PEACE_THRESHOLD;
+export const RIVAL_ASCENSION_STANCE_CEILING = PEACE_THRESHOLD;
 
 // The currently-charging AI-owned wonder building on `state`, or null — the same predicate
 // aiIndustry.js's own `hasGate` check uses, just read from the outside.

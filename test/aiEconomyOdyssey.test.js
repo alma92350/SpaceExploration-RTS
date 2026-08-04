@@ -275,3 +275,49 @@ test("a SKIRMISH AI never surplus-expands — it has no colony ships and its exp
   const ccs = [...s.buildings.values()].filter(b => b.owner === "ai" && b.type === "command");
   assert.equal(ccs.length, 1, "…and no second Command Center: the skirmish still expands only on depletion");
 });
+
+/* ---- C14: the ore-surplus army-cap lift (commit ac44339) had NO test at all -------------------
+   Proved by mutation: replacing armySurplusBonus's body with `return 0` — deleting the whole
+   feature — left the entire suite green. The commit itself records "manually probed before/after on
+   five world/strategy combinations" in place of tests. It was invisible because every
+   standingArmyCap test runs in SKIRMISH, and armySurplusBonus short-circuits to 0 outside Odyssey.
+   The skirmish case below is the important half: it pins the gate, not just the arithmetic. */
+
+function cappedEconomist(ore, { endless = true } = {}) {
+  const s = createGameState({ planetId: "ferros", endless, seed: 4242, rng: mulberry32(4242) });
+  clearAiUnits(s);
+  const cc = makeBuilding("command", "ai", 600, 500); s.buildings.set(cc.id, cc);
+  const bar = makeBuilding("barracks", "ai", 690, 410); s.buildings.set(bar.id, bar);
+  for (const [t, x, y] of [["habitat", 530, 590], ["habitat", 530, 410], ["habitat", 470, 500]]) {
+    const b = makeBuilding(t, "ai", x, y); s.buildings.set(b.id, b);
+  }
+  for (let i = 0; i < 8; i++) { const w = makeUnit("worker", "ai", 610 + i * 12, 552); s.units.set(w.id, w); }
+  s.ai.strategy = "economic";
+  for (let i = 0; i < 3; i++) {                       // exactly the Economic cap of standing army
+    const u = makeUnit("skiff", "ai", 600 + i * 14, 540); s.units.set(u.id, u);
+  }
+  s.players.ai.resources = { ore, crystals: 0, radioactives: 0 };
+  return { s, bar };
+}
+const queued = bar => (bar.queue || []).length;
+
+test("an Odyssey AI sitting on a surplus lifts its standing-army cap instead of banking forever (C14)", () => {
+  const { s, bar } = cappedEconomist(8000);
+  for (let i = 0; i < 6; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.ok(queued(bar) > 0,
+    "at the Economic cap with an 8,000-ore bank, the surplus must buy army rather than pile up");
+});
+
+test("an Odyssey AI without a surplus still respects its standing-army cap (C14)", () => {
+  const { s, bar } = cappedEconomist(600);
+  for (let i = 0; i < 6; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.equal(queued(bar), 0, "comfortable but not rich: the cap still holds");
+});
+
+test("the surplus lift is ODYSSEY-ONLY — a skirmish AI at its cap never gets it (C14)", () => {
+  // This is the case that makes the pair meaningful. It is also why the feature was invisible:
+  // every pre-existing standingArmyCap test builds a skirmish state, where the bonus is always 0.
+  const { s, bar } = cappedEconomist(8000, { endless: false });
+  for (let i = 0; i < 6; i++) { s.ai.think = 0; runAI(s, THINK); }
+  assert.equal(queued(bar), 0, "a skirmish must be byte-identical to before the feature shipped");
+});

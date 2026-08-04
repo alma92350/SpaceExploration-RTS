@@ -79,9 +79,17 @@ instead of an untyped bag. **No build step, no runtime dependency** — the ship
 ES modules.
 
 Type checking is **opt-in per file**: a file is checked only if it starts with a `// @ts-check`
-pragma. The core engine data + hot-path modules already opt in (`state.js`, `movement.js`,
-`gather.js`, `grid.js`, `fog.js`, `separation.js`); expand coverage file-by-file by adding the
-pragma and annotating the functions' `state`/`unit`/`building` params with the shared typedefs.
+pragma. Twenty engine files opt in today — the core data and hot-path modules (`state.js`, `movement.js`,
+`gather.js`, `grid.js`, `fog.js`, `separation.js`, `formation.js`, `haul.js`, `recycle.js`,
+`wreckage.js`) plus `supply.js`, `colliders.js`, `scout.js`, `victory.js`, `production.js`,
+`persist.js`, `aiCommon.js`, `aiStrategy.js`, `aiDifficulty.js` and `aiArchetypes.js`. Expand
+coverage file-by-file by adding the pragma **and annotating** the functions'
+`state`/`unit`/`building` params with the shared typedefs.
+
+The annotation half is not optional: `strict` and `noImplicitAny` are off, so an un-annotated
+parameter is `any` and the pragma alone checks nothing. `test/types-contract.test.js` enforces both
+halves — every `// @ts-check` file must annotate its exported functions, and every field a core
+factory constructs must be declared on its `@typedef`.
 This is what catches the silent-`undefined`-field class of bug — a mistyped or renamed field is a
 check-time error, not a wrong result the same-seed determinism test can't see.
 

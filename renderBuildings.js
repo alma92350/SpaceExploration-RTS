@@ -137,6 +137,7 @@ function drawConcernBadge(ctx, state, b) {
     ctx.textBaseline = "middle";
     ctx.fillText(style.glyph, x, y + 0.5);
     ctx.textBaseline = "alphabetic";   // restore the canvas default so later text draws aren't shifted
+    ctx.textAlign = "left";            // …and alignment too — only drawFrame's save/restore hid this
   } else {
     ctx.fillRect(x - 3, y - 2.5, 2, 5);   // paused: two small bars, font-independent
     ctx.fillRect(x + 1, y - 2.5, 2, 5);
@@ -721,6 +722,7 @@ function drawFactory(ctx, state, b, color) {
   ctx.textBaseline = "middle";
   ctx.fillText(ico, b.x, b.y);
   ctx.textBaseline = "alphabetic";   // restore the canvas default so later text draws aren't shifted
+  ctx.textAlign = "left";            // …and alignment too — only drawFrame's save/restore hid this
 }
 
 function drawGenericBuilding(ctx, b, color) {

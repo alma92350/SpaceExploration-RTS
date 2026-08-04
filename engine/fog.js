@@ -51,6 +51,7 @@ export function isVisibleAt(fog, wx, wy) {
   return inBounds(fog, cx, cy) && fog.visible[cy * fog.cols + cx] === 1;
 }
 
+/** @param {Fog} fog @param {number} wx @param {number} wy @returns {boolean} */
 export function isExploredAt(fog, wx, wy) {
   const { cx, cy } = cellOf(fog, wx, wy);
   return inBounds(fog, cx, cy) && fog.explored[cy * fog.cols + cx] === 1;

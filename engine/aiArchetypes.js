@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    AI behavior profiles, tied to which planet is chosen — the map
    picker also picks the opponent's temperament. See engine/ai.js for
@@ -148,6 +149,7 @@ export const ODYSSEY_EXTRA_ARCHETYPE = {
 
 const ALL_ARCHETYPE = { ...PLANET_ARCHETYPE, ...ODYSSEY_EXTRA_ARCHETYPE };
 
+/** @param {string} planetId @returns {Archetype} */
 export function archetypeFor(planetId) {
   return ARCHETYPES[ALL_ARCHETYPE[planetId]] || ARCHETYPES.balanced;
 }

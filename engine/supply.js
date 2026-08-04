@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    Supply accounting: a soft population cap that gates production.
    Every live unit and every queued job costs supply; Command Centers
@@ -23,6 +24,7 @@ import { electrifyBoost } from "./industry.js";
 // Live units + every queued job, per owner. Counting all queue entries
 // (not just index 0) makes the reservation happen at queue time, so a
 // player can't stuff a barracks past the cap.
+/** @param {State} state @param {string} owner @returns {number} */
 export function supplyUsed(state, owner) {
   let used = 0;
   for (const u of state.units.values())
@@ -38,6 +40,7 @@ export function supplyUsed(state, owner) {
 // until it finishes, so you can't produce against supply you haven't
 // built yet. Losing a Habitat can leave a player legally over cap
 // (nothing dies; production simply blocks until they rebuild).
+/** @param {State} state @param {string} owner @returns {number} */
 export function buildingSupplyCap(state, owner) {
   let cap = 0;
   let boost = null;   // the electrify bonus, computed lazily and once — only if a grant building is wired in
@@ -60,6 +63,7 @@ export function buildingSupplyCap(state, owner) {
 // to the match's configured population cap (state.popCap — null/unset means Max, i.e. today's
 // always-uncapped behaviour, byte-identical to before this setting existed). Never the other way
 // round — a LOWER building-derived total than the configured cap is unaffected (Math.min).
+/** @param {State} state @param {string} owner @returns {number} */
 export function supplyCap(state, owner) {
   const raw = buildingSupplyCap(state, owner);
   return (state.popCap != null && state.popCap < raw) ? state.popCap : raw;

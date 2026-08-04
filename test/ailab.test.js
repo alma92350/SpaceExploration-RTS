@@ -939,3 +939,23 @@ test("a Swiss tournament's overrides never leak into what runs next", () => {
   assert.equal(JSON.stringify(STRATEGIES.aggressive), before,
     "STRATEGIES.aggressive must be restored once the Swiss tournament is done, same promise as duel/round-robin/leaderboard");
 });
+
+test("two duel candidates that patch the same table key are rejected, not silently merged (A9)", () => {
+  // runDuel applies BOTH candidates' overrides into the same live STRATEGIES table, and
+  // applyOverrides MERGES rather than replaces. Two variants of the same dial under the same
+  // strategy key — the natural A/B tuning workflow — therefore collapsed into one Frankenstein row
+  // belonging to neither candidate, played by BOTH seats, and reported a perfectly normal-looking
+  // winner that was pure seat/seed noise. Every tuning decision runs through this function, and
+  // `search --tournament-against` scores every dial value through it.
+  const a = { name: "early", strategy: "probe", overrides: { strategies: { probe: { attackTimeoutMult: 0.2 } } } };
+  const b = { name: "late", strategy: "probe", overrides: { strategies: { probe: { attackTimeoutMult: 1.8 } } } };
+  assert.throws(() => runDuel(a, b, { worlds: ["korrath"], seeds: 1, minutes: 2 }),
+    /both candidates override/,
+    "a shared override key must be refused up front, not merged into a mirror match");
+});
+
+test("two duel candidates overriding DIFFERENT keys still run (A9 regression fence)", () => {
+  const a = { name: "x", strategy: "probeA", overrides: { strategies: { probeA: { attackTimeoutMult: 0.5 } } } };
+  const b = { name: "y", strategy: "probeB", overrides: { strategies: { probeB: { attackTimeoutMult: 1.5 } } } };
+  assert.doesNotThrow(() => runDuel(a, b, { worlds: ["korrath"], seeds: 1, minutes: 2 }));
+});

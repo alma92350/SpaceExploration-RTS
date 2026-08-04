@@ -1,3 +1,4 @@
+// @ts-check
 /* ============================================================
    AI — shared primitives used by every decision phase (engine/ai.js and the
    aiEconomy / aiMilitary / aiIndustry phase modules). Kept in one leaf module
@@ -19,6 +20,7 @@ const APM_BURST_FRAC = 1 / 15;   // a busy AI can bank at most ~4 seconds' worth
 // ctx.owner through this instead of ever reaching for state.ai directly, so the two controllers'
 // action budgets, scout ids, wave timers etc. can never collide or leak into one shared object —
 // see the header comment on engine/ai.js's runAI(state, dt, owner) for why that matters.
+/** @param {State} state @param {string} owner @returns {AiState|undefined} */
 export function controllerFor(state, owner) {
   if (owner === "ai") return state.ai;
   if (owner === "player") return state.playerAi;
@@ -28,6 +30,7 @@ export function controllerFor(state, owner) {
 // The other side in a two-owner skirmish/self-play match — the only two owners this engine models
 // today (state.owners). Centralised here so every AI phase module resolves "my opponent" the same
 // way, instead of each hardcoding "ai"/"player" itself.
+/** @param {string} owner @returns {string} */
 export function otherOwner(owner) {
   return owner === "ai" ? "player" : "ai";
 }
@@ -53,6 +56,7 @@ export function otherOwner(owner) {
 // every other reader (display, save/load, the neighbour-profile tests) — and never the attack/
 // defense commit exemption (canAct/spend below), so a background world under attack still always
 // throws whatever it has and the game still always resolves.
+/** @param {State} state @param {number} dt @param {string} [owner] @returns {void} */
 export function accrueActionBudget(state, dt, owner = "ai") {
   const controller = controllerFor(state, owner);
   if (!controller || controller.apm == null) return;
@@ -61,11 +65,13 @@ export function accrueActionBudget(state, dt, owner = "ai") {
   controller.actionBudget = Math.min((controller.actionBudget || 0) + (apm / 60) * dt, cap);
 }
 
+/** @param {State} state @param {string} [owner] @returns {boolean} */
 export function canAct(state, owner = "ai") {
   const controller = controllerFor(state, owner);
   return !controller || controller.apm == null || (controller.actionBudget || 0) >= 1;
 }
 
+/** @param {State} state @param {string} [owner] @returns {void} */
 export function spend(state, owner = "ai") {
   const controller = controllerFor(state, owner);
   if (controller && controller.apm != null) controller.actionBudget -= 1;
@@ -74,6 +80,7 @@ export function spend(state, owner = "ai") {
 // canAfford, but treating `oreReserve` ore as untouchable — used to bank for
 // an expansion Command Center without letting the unit mix or a second
 // barracks spend the ore out from under it.
+/** @param {Resources} resources @param {Resources} cost @param {number} oreReserve @returns {boolean} */
 export function canAffordKeeping(resources, cost, oreReserve) {
   return Object.entries(cost).every(([com, qty]) =>
     (resources[com] || 0) - (com === "ore" ? oreReserve : 0) >= qty);
@@ -84,6 +91,7 @@ export function canAffordKeeping(resources, cost, oreReserve) {
 // factory to lay a foundation would thrash the industry it's trying to grow. Prefers a gatherer/idle
 // worker; falls back to workers[0] only if every worker is busy building or hauling — buildings
 // self-construct at rate 1 even with nobody on-site, so a slightly-worse pick is never a stall.
+/** @param {Unit[]} workers @param {number} x @param {number} y @returns {Unit|null} */
 export function pickBuilder(workers, x, y) {
   let best = null, bestD = Infinity;
   for (const w of workers) {
