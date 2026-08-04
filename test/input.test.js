@@ -1031,3 +1031,97 @@ test("the wheel, while observing, zooms the OBSERVER camera instead of the real 
 
   exitObserving();
 });
+
+/* ---- T2: commandAt's precedence ladder -------------------------------------------------------
+   The right-click ladder is the most-exercised interaction in the game, and it is GAME POLICY that
+   the engine does not re-check: issueServiceBuilding dispatches a service order to whatever id it
+   is handed, with no validation that the building is serviceable. Five of its ten branches had zero
+   occurrences anywhere in this file, and NO test pinned which branch wins when two match — even
+   though input.js's own comment records that exactly this class of bug already shipped (a Reactor
+   matched no branch, so right-clicking a Worker onto it silently walked it there). */
+
+function rightClickOn(env, target) {
+  const { clientX, clientY } = clientFor(env.controller, target.x, target.y);
+  rightClick(env.canvas, window, clientX, clientY);
+}
+
+test("a damaged serviceable factory takes SERVICE, not repair (T2 precedence)", () => {
+  const env = setup();
+  const { state } = env;
+  const smelter = makeBuilding("smelter", "player", 1200, 1200);
+  smelter.constructing = false;
+  smelter.hp = Math.round(smelter.maxHp * 0.4);
+  state.buildings.set(smelter.id, smelter);
+  const worker = makeUnit("worker", "player", 1100, 1200);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+
+  rightClickOn(env, smelter);
+  assert.equal(worker.order?.type, "service",
+    "the service branch precedes the repair branch — a factory that needs inputs is serviced first");
+});
+
+test("a damaged Command Center takes REPAIR, not set-home-base (T2 precedence)", () => {
+  const env = setup();
+  const { state } = env;
+  const cc = makeBuilding("command", "player", 1200, 1200);
+  cc.constructing = false;
+  cc.hp = Math.round(cc.maxHp * 0.4);
+  state.buildings.set(cc.id, cc);
+  const worker = makeUnit("worker", "player", 1100, 1200);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+
+  rightClickOn(env, cc);
+  assert.equal(worker.order?.type, "repair", "repair precedes the passive set-home-base branch");
+});
+
+test("a HEALTHY Command Center assigns a home base and leaves the order alone (T2 precedence)", () => {
+  const env = setup();
+  const { state } = env;
+  const cc = makeBuilding("command", "player", 1200, 1200);
+  cc.constructing = false;
+  state.buildings.set(cc.id, cc);
+  const worker = makeUnit("worker", "player", 1100, 1200);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+
+  rightClickOn(env, cc);
+  assert.equal(worker.homeCC, cc.id, "the home base is pinned");
+  assert.equal(worker.order, null, "and the branch is passive — it issues no movement order");
+});
+
+test("a friendly freighter takes FERRY from a worker but ESCORT from a combat unit (T2 precedence)", () => {
+  const env = setup();
+  const { state } = env;
+  const freighter = makeUnit("hauler", "player", 1200, 1200);
+  state.units.set(freighter.id, freighter);
+  const worker = makeUnit("worker", "player", 1100, 1200);
+  const skiff = makeUnit("skiff", "player", 1150, 1200);
+  state.units.set(worker.id, worker);
+  state.units.set(skiff.id, skiff);
+
+  state.selection = [worker.id];
+  rightClickOn(env, freighter);
+  assert.equal(worker.order?.type, "ferry", "a worker ferries it");
+
+  state.selection = [skiff.id];
+  rightClickOn(env, freighter);
+  assert.equal(skiff.order?.type, "escort",
+    "a combat unit falls past the ferry branch (its worker filter is empty) to escort");
+});
+
+test("a constructing friendly building takes ASSIST-BUILD, not service (T2 precedence)", () => {
+  const env = setup();
+  const { state } = env;
+  const site = makeBuilding("smelter", "player", 1200, 1200);
+  site.constructing = true;
+  site.buildProgress = 0.2;
+  state.buildings.set(site.id, site);
+  const worker = makeUnit("worker", "player", 1100, 1200);
+  state.units.set(worker.id, worker);
+  state.selection = [worker.id];
+
+  rightClickOn(env, site);
+  assert.equal(worker.order?.type, "build", "assist-build precedes every other building branch");
+});

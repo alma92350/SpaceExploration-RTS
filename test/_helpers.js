@@ -116,6 +116,29 @@ export function galaxySnapshot(galaxy) {
   });
 }
 
+// Every unit of matter `owner` holds anywhere on this world: the treasury, plus every buffer the
+// domain can park goods in — a factory's input larder and output backlog, a freighter's freight
+// hold, a worker's carried cargo. The economy's defining property is that matter MOVES between
+// these; it isn't created or destroyed except where a rule says so. Nothing asserted that anywhere
+// (no test summed holdings at all), which is why a wonder that kept eating a finished Gate's feed
+// and a deposit that overfilled a hold both lived inside green suites.
+export function totalHoldings(state, owner) {
+  const out = {};
+  const add = bag => { if (bag) for (const com in bag) out[com] = (out[com] || 0) + (bag[com] || 0); };
+  add(state.players[owner].resources);
+  for (const b of state.buildings.values()) {
+    if (b.owner !== owner) continue;
+    add(b.store);
+    add(b.input);
+  }
+  for (const u of state.units.values()) {
+    if (u.owner !== owner) continue;
+    add(u.freight);
+    if (u.cargo && u.cargo.com && u.cargo.qty > 0) add({ [u.cargo.com]: u.cargo.qty });
+  }
+  return out;
+}
+
 // A galaxy poised to launch an interplanetary jump FROM the start world: its colony ships
 // deployed into Command Centers (a real settled base), a finished Spaceport next to the
 // capital, a colony ship staged on the pad, and enough credits to fund the hop. The staple

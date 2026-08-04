@@ -1207,3 +1207,29 @@ test("a specialty unit stays offered once its commodity is in the treasury, even
   assert.ok(findButton(`Produce ${UNITS[gasUnit].name}`),
     "holding the commodity must offer the unit — the engine would accept the order");
 });
+
+/* ---- T2: a completeness meta-test over every interactive panel ------------------------------
+   A6 patched the two panels that were provably dead. This is the general net: a panel whose own
+   state contributes NO term to the rebuild signature never redraws, and the failure is silent —
+   the control reads as a no-op and a second click undoes the first. Table-driven so a new panel
+   family is one row, not a rediscovery. */
+
+const PANEL_MUTATIONS = [
+  ["lane commodities", g => { const l = g.lanes[0] || createLane(g, g.activeId, g.worlds.find(w => w !== g.activeId), ["ore"]); l.commodities.push("metals"); }],
+  ["lane membership", g => { const l = g.lanes[0] || createLane(g, g.activeId, g.worlds.find(w => w !== g.activeId), ["ore"]); l.shipIds.push("u-not-real"); }],
+  ["new lane", g => createLane(g, g.activeId, g.worlds.find(w => w !== g.activeId), [])],
+  ["colony auto-sell", (g, st) => setColonyPolicy(g, st.planetId, { autoSell: { enabled: true, floors: {} }, workerTarget: 2 })],
+  ["colony worker target", (g, st) => setColonyPolicy(g, st.planetId, { autoSell: { enabled: false, floors: {} }, workerTarget: 5 })],
+];
+
+for (const [name, mutate] of PANEL_MUTATIONS) {
+  test(`the panel rebuilds when ${name} changes (T2 completeness)`, () => {
+    const { g, state } = setupOdyssey(70);
+    renderSelectionPanel();
+    const before = [...panelEl.children];
+    mutate(g, state);
+    renderSelectionPanel();
+    assert.ok(!sameNodes([...panelEl.children], before),
+      `${name} changed the simulation but the panel didn't redraw — its controls read as no-ops`);
+  });
+}

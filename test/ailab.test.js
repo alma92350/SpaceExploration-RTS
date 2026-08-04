@@ -26,7 +26,7 @@ import { join } from "node:path";
 import {
   run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard,
   runDuel, runRoundRobin, pinnedDuelDials, runSwappedDuel, runDuelBrackets, runRoundRobinSwapped, runSearch,
-  runSwissTournament, pairRound,
+  runSwissTournament, pairRound, snapshotTables, restoreTables,
 } from "../tools/ailab.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
@@ -139,9 +139,20 @@ test("an overrides row reaches the sim — a strategy that never initiates commi
 });
 
 test("applyOverrides merges into an existing row rather than replacing it", () => {
-  applyOverrides({ strategies: { aggressive: { garrisonMult: 0.9 } } });
-  assert.equal(STRATEGIES.aggressive.garrisonMult, 0.9, "the overridden field is applied");
-  assert.equal(STRATEGIES.aggressive.attackTimeoutMult, 0.55, "…and the untouched fields survive");
+  // Restored afterwards. applyOverrides writes straight into the LIVE shipped table with no undo,
+  // and this test had none — so `aggressive.garrisonMult` stayed at 0.9 instead of its shipped 0.4
+  // for the rest of the file, and the 21 later tests that select `strategy: "aggressive"` measured a
+  // variant the game never ships. Worse, the three "overrides never leak into the next run" tests
+  // capture their baseline AFTER this point, so the suite's own leak detector was calibrated
+  // against the leaked state. snapshotTables/restoreTables were already exported and simply unused.
+  const snap = snapshotTables();
+  try {
+    applyOverrides({ strategies: { aggressive: { garrisonMult: 0.9 } } });
+    assert.equal(STRATEGIES.aggressive.garrisonMult, 0.9, "the overridden field is applied");
+    assert.equal(STRATEGIES.aggressive.attackTimeoutMult, 0.55, "…and the untouched fields survive");
+  } finally {
+    restoreTables(snap);
+  }
 });
 
 test("score components stay in 0..1 and the total is their weighted mean", () => {
@@ -958,4 +969,10 @@ test("two duel candidates overriding DIFFERENT keys still run (A9 regression fen
   const a = { name: "x", strategy: "probeA", overrides: { strategies: { probeA: { attackTimeoutMult: 0.5 } } } };
   const b = { name: "y", strategy: "probeB", overrides: { strategies: { probeB: { attackTimeoutMult: 1.5 } } } };
   assert.doesNotThrow(() => runDuel(a, b, { worlds: ["korrath"], seeds: 1, minutes: 2 }));
+});
+
+test("this suite leaves the shipped strategy table exactly as it found it (T2)", () => {
+  // Placed last on purpose: it is a whole-file assertion, not a unit one.
+  assert.equal(STRATEGIES.aggressive.garrisonMult, 0.4, "the shipped garrisonMult, not a test's override");
+  assert.equal(STRATEGIES.aggressive.attackTimeoutMult, 0.55);
 });
