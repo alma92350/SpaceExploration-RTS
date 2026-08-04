@@ -110,7 +110,14 @@ function viewBounds(camera, vw, vh, pad = 0) {
 // bypassed too — a pure render-time flag, never a mutation of state.fog itself.
 export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, buildGhost, alpha = 1, observerMode = false) {
   pruneFacing(state);
+  // try/finally, because engine/loop.js deliberately SWALLOWS a throwing render so a bad entity
+  // can't brick the session. That only works if the frame unwinds: without the finally, a throw
+  // left this save() unmatched, so the camera transform was never popped and every later frame
+  // drew on top of it — including the backdrop fillRect below, which is why the screen stopped
+  // clearing at all. The loop kept running while the view stayed dead, which to a player is a
+  // freeze, and it is exactly the symptom test/renderEffects.test.js already records as shipped.
   ctx.save();
+  try {
   ctx.fillStyle = "#05070f";
   ctx.fillRect(0, 0, viewportW, viewportH);
 
@@ -143,7 +150,9 @@ export function drawFrame(ctx, state, camera, viewportW, viewportH, dragBox, bui
   drawRallyPoint(ctx, state);
   if (dragBox) drawDragBox(ctx, dragBox);
 
-  ctx.restore();
+  } finally {
+    ctx.restore();
+  }
   drawFireworks(ctx, viewportW, viewportH);   // screen-space (post-camera): milestone celebration, always on-screen
 }
 

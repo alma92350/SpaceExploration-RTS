@@ -54,6 +54,7 @@ export function drawNodes(ctx, state, view, observerMode = false) {
       ctx.font = "9px sans-serif";
       ctx.fillStyle = SATURATION_COLOR;
       ctx.fillText(`${n.miners}/${UNITS.worker.minerSoftCap}`, n.x, n.y - r - 9);
+    ctx.textAlign = "left";   // restore the canvas default, like textBaseline elsewhere
     }
   }
 }

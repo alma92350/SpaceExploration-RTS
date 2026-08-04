@@ -60,7 +60,7 @@ function trackedDocument() {
 const doc = trackedDocument();
 globalThis.document = doc;
 
-const { drawFogBase, drawTerrain } = await import("../render.js");
+const { drawFogBase, drawTerrain, drawFrame } = await import("../render.js");
 
 // Reconstructs the ordered (x, y, w, h, color) rects a recorded ctx actually painted, pairing
 // each fillRect with the most recently set fillStyle — the same pairing the real Canvas 2D API
@@ -317,4 +317,47 @@ test("integration: real createFog/updateFog output feeds drawFogBase and washes 
   assert.doesNotThrow(() => drawFogBase(ctx, { fog }, null));
   const fillRectCount = ctx.calls.filter(c => c.fn === "fillRect").length;
   assert.ok(fillRectCount > 0, "the vacated, now-explored-but-not-visible area should get the fog wash");
+});
+
+/* ---- A7: a throwing draw must not permanently corrupt every later frame -------------------- */
+
+// A ctx that tracks save/restore depth and can be told to throw once from inside a draw.
+function depthCtx({ throwOn } = {}) {
+  const state = { depth: 0, max: 0 };
+  const ctx = new Proxy({}, {
+    get(t, prop) {
+      if (prop === "_depth") return state;
+      return (...args) => {
+        if (prop === "save") { state.depth++; state.max = Math.max(state.max, state.depth); }
+        else if (prop === "restore") state.depth--;
+        else if (prop === throwOn) throw new Error("boom in a draw");
+        if (prop === "measureText") return { width: 10 };
+        return undefined;
+      };
+    },
+    set() { return true; },
+  });
+  return ctx;
+}
+
+test("a throwing draw leaves the canvas save-stack balanced (A7)", async () => {
+  // engine/loop.js deliberately swallows a throwing render so the loop survives a bad entity. That
+  // only works if the frame unwinds cleanly: drawFrame's save() had no matching restore() on the
+  // throw path, so the camera transform was never popped. Every LATER frame then drew on top of the
+  // leaked one — including the backdrop fillRect, which is why the screen stopped clearing at all.
+  // The loop keeps running and the view is dead forever, which to a player is a freeze.
+  const { createGameState } = await import("../engine/state.js");
+  const st = createGameState({ planetId: "ferros", seed: 5 });
+  const camera = { x: st.map.width / 2, y: st.map.height / 2, zoom: 1 };
+
+  const ok = depthCtx();
+  drawFrame(ok, st, camera, 800, 600, null, null, 1, true);
+  assert.equal(ok._depth.depth, 0, "a clean frame is balanced");
+  assert.ok(ok._depth.max > 0, "fixture sanity: the frame really did save/restore");
+
+  const bad = depthCtx({ throwOn: "lineTo" });
+  assert.throws(() => drawFrame(bad, st, camera, 800, 600, null, null, 1, true), /boom in a draw/);
+  assert.equal(bad._depth.depth, 0,
+    "a frame that threw must still pop its camera transform — otherwise every later frame is drawn " +
+    "on top of it and the backdrop clear lands in world space");
 });

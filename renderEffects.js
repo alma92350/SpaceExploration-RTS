@@ -576,7 +576,13 @@ export function drawRallyPoint(ctx, state) {
   const building = state.buildings.get(state.selection[0]);
   if (!building || building.owner !== "player" || !BUILDINGS[building.type].produces) return;
 
-  const { x: rx, y: ry } = building.rally;
+  // Guard before destructuring: `rally` is optional on a Building and engine/persist.js's
+  // cleanEntity never defaults it, so an older or hand-edited save reaches here with none. A
+  // TypeError from a single entity used to take the whole frame — and, before drawFrame's
+  // try/finally, every frame after it.
+  const rally = building.rally;
+  if (!rally) return;
+  const { x: rx, y: ry } = rally;
   ctx.save();
   ctx.setLineDash([6, 6]);
   ctx.strokeStyle = "rgba(79, 209, 255, 0.6)";

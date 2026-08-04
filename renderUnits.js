@@ -40,7 +40,15 @@ export function drawUnitShape(ctx, u, def, color) {
   else drawGenericUnit(ctx, u, def, color);   // any future unit still gets a silhouette, never an invisible blank
 }
 
-const _disp = {};   // reused scratch: a shallow view of a unit at its interpolated draw position
+// A shallow view of a unit at its interpolated draw position. This used to be ONE module-level
+// object refilled with Object.assign — which copies own properties but never DELETES stale ones,
+// so any optional field a unit lacks was inherited from whichever unit drew before it. Two visible
+// consequences, both reproduced: an INERT Helium Bomb rendered with the armed cue (long red spikes,
+// hot core — a safety signal) whenever an armed one drew earlier in the same frame, and an idle
+// unit snapped to whatever explicit heading the last click-and-drag had set on some other unit,
+// defeating the explicit-facing feature. A fresh spread per unit costs one small object per unit
+// per pass and cannot carry anything over.
+const dispOf = (u, x, y) => ({ ...u, x, y });
 // `selSet` is the current-selection Set, computed ONCE per frame by the caller (render.js
 // drawFrame) and passed down here rather than allocated fresh on every call.
 // observerMode (default false, so every existing caller/test is unaffected): bypasses the fog
@@ -66,8 +74,7 @@ export function drawUnits(ctx, state, view, alpha = 1, selSet, observerMode = fa
     // Draw the hull at the interpolated position via a shallow scratch copy, so every shape
     // helper (and updateFacing, which it calls) sees the smoothed coordinates without threading
     // them through each one. The scratch is reused — no per-unit alloc.
-    Object.assign(_disp, u); _disp.x = d.x; _disp.y = d.y;
-    drawUnitShape(ctx, _disp, def, color);
+    drawUnitShape(ctx, dispOf(u, d.x, d.y), def, color);
   }
   for (const u of state.units.values()) {
     const d = lerpXY(u, alpha);
