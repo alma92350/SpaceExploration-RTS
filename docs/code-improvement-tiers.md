@@ -5,6 +5,36 @@ proposes changes to the **game**) and [improvement-roadmap.md](./improvement-roa
 them). Nothing here changes a rule, a number, or a mechanic. Every entry is about the code that
 implements them: a defect, a missing guard, a type gap, or a structure that made one of those possible.*
 
+## Status
+
+**Tier 1 is delivered.** All 42 items shipped across seven commits, each fix preceded by a test
+verified red against the real behaviour, and the mutation-proven gaps re-checked by re-introducing
+the exact defect. Suite went from **1,897 → 1,964 tests, still 0 failures**; `npm run typecheck`
+stays clean; `// @ts-check` coverage went from **10 files to 20**.
+
+Three things the work itself turned up, beyond the findings as written:
+
+- The NET round-trip tests rejected a first cut of the save hardening that stamped `pacified: false`
+  and `rally.nodeId: null` unconditionally. They were right: a hardening pass must be the identity on
+  a valid save, byte for byte. Both now adopt only fields the save actually carries.
+- `test/_helpers.js`'s header claims its fingerprints are "immune to Map-iteration / JSON-key order".
+  True of `entitySnapshot`, whose tuples are joined in a fixed field order — but `galaxySnapshot`
+  stringified diplomacy and market pressure raw, so identical values in a different insertion order
+  read as a divergence. Another false comment, found the same way as the six in the table below.
+- Adopting `// @ts-check` on `persist.js` surfaced a real asymmetry: `deserializeGalaxy`'s object
+  literal omitted `lanes` while `createGalaxy`'s includes it, so a `Galaxy` was briefly missing a
+  field its own typedef requires. Three further typedef drifts (`Building.rally.nodeId`,
+  `Building.queue[].alt`, `Building.rivalAscended`) came out of the same pass.
+
+**D5 (`strictNullChecks`) was evaluated and deliberately deferred**, as the item itself proposed:
+turning it on today yields **198 errors** across the 20 checked files. That is a genuine project with
+its own fallout, not a Tier-1 slice — it belongs after the Tier-2 structural work, when fewer of
+those errors are in code that is about to be rewritten anyway.
+
+The **silhouette-collision half of C6** also moves to Tier 2 as the plan intended: the test is cheap,
+but it goes red until the Antimatter Gate and Torpedo Battery get distinct art, and that is an art
+decision, not a code one.
+
 ## How this was produced
 
 Eight reviewers worked the codebase in parallel, one per domain — engine core sim, AI + `tools/ailab.js`,
