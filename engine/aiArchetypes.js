@@ -7,6 +7,21 @@
 
 "use strict";
 
+// ODYSSEY LABOUR (2026-08-04, docs/odyssey-ai-review.md §2.11 and its ledger rows). Every
+// `odyssey.workerTarget` below is deliberately ~1.5x its archetype's skirmish crew, because the
+// bench found the Odyssey worker economy could not BOOTSTRAP itself: aiEconomy.js's target is
+// `archetype.workerTarget × strategy × difficulty + industryCount × 2`, so the only term that ever
+// grows is a reward for industry the AI cannot afford to build until its income grows. On a
+// strategy that also spends freely on units (default/aggressive — half the galaxy, since
+// galaxy.js's neighbourAiProfile picks uniformly among four), the loop never starts: ferros/default
+// sat at development 3 and thirteen workers for a full 40 minutes while ferros/economic, the SAME
+// archetype behind an army cap, reached 27 and thirty-four. Raising the opening crew is what
+// starts the loop — measured, on 176 runs across the full 11-world roster at Medium and Hard:
+// mean score 0.690 -> 0.718, `dev-flatline` 25/176 -> 12/176, `hostile-but-idle` 9/176 -> 3/176,
+// every strategy and both difficulties positive. Odyssey-only by construction (engine/ai.js's
+// `arch` reader only consults this overlay when state.diplomacy exists), so the skirmish game is
+// byte-identical — determinism.test.js covers that.
+//
 // unitMix is a repeating production cycle (see ai.js) — not a random
 // weighting, so a profile's composition is exact and testable.
 export const ARCHETYPES = {
@@ -32,7 +47,11 @@ export const ARCHETYPES = {
     // …and it NURSES the grudge: `forgiveness` halves the rate its stance recovers once you've
     // bled it, and doubles how long it keeps treating you as an active aggressor
     // (engine/diplomacy.js). A Warlord world should be the one that doesn't let it go.
-    odyssey: { graceMult: 0.5, grievanceMult: 2, probeMin: 5, workerTarget: 6,
+    // workerTarget 9 (not the 6 this overlay originally carried) — see the LABOUR note above
+    // ARCHETYPES: 6 was still a rush crew, and a Rusher that never banks past its next Skiff never
+    // reaches the industry its own graduation is supposed to unlock. Lean by roster standards, and
+    // still the smallest economy of the four.
+    odyssey: { graceMult: 0.5, grievanceMult: 2, probeMin: 5, workerTarget: 9,
                expandWhenNodesBelow: 0.3, forgiveness: 0.5 },
   },
   economist: {
@@ -56,7 +75,12 @@ export const ARCHETYPES = {
     // real threat rather than sending the same 3-unit probe forever.
     // …and forgives FAST: a trading world has a business reason to get back to coexistence, so its
     // stance recovers half again as quickly and it forgets a skirmish sooner (engine/diplomacy.js).
-    odyssey: { workerTarget: 11, expandWhenNodesBelow: 0.55, probeMin: 4, forgiveness: 1.5 },
+    // workerTarget 17 (not the 11 this overlay originally carried) — the LABOUR note above, at its
+    // sharpest: ferros/default was the roster's worst development row (dev 3 after 40 minutes,
+    // against dev 27 for the SAME archetype under Economic), purely because 11 miners cannot feed a
+    // Barracks and bank a Smelter at once. The archetype whose whole identity is out-scaling has to
+    // afford the scaling.
+    odyssey: { workerTarget: 17, expandWhenNodesBelow: 0.55, probeMin: 4, forgiveness: 1.5 },
   },
   balanced: {
     name: "Balanced",
@@ -76,6 +100,14 @@ export const ARCHETYPES = {
     doctrine: "assault",   // leans aggressive once its army is up.
     wantsRefinery: true,   // builds a Refinery and researches its doctrine once teched.
     faction: "frontier",   // mobility & vision for even, map-controlling play (factions.js)
+    // ODYSSEY overlay: the LABOUR line only. Balanced had NO overlay at all — it and the
+    // Technologist were the two archetypes that never got one when the Rusher and the Economist
+    // did — so vesper/glacius/pyralis/verdani mined an hours-long Odyssey on a six-worker skirmish
+    // crew. Temperament is deliberately left absent (no graceMult/grievanceMult/forgiveness): an
+    // even-handed neighbour SHOULD drift on the stock diplomacy constants, and that stays true —
+    // every one of those fields is read with a `|| 1`, so adding this block changes labour and
+    // nothing else.
+    odyssey: { workerTarget: 9 },
   },
   // A FOURTH archetype (docs/improvement-proposals.md "A fourth archetype: the Technologist on
   // Kybernet"): eleven Odyssey worlds shared only rusher/economist/balanced, so a full session met
@@ -108,7 +140,11 @@ export const ARCHETYPES = {
     // war — a longer opening peace than the stock 7 minutes (graceMult > 1, patient), and it lets go
     // of a grudge fast (forgiveness higher than even the already-fast-forgiving Economist's 1.5), so
     // a skirmish with it never calcifies into the permanent hostility a Rusher nurses.
-    odyssey: { graceMult: 1.3, forgiveness: 1.75 },
+    // …and workerTarget 11, which this overlay carried no value for at all until the LABOUR note
+    // above: a research capital runs the roster's deepest factory chain, and every factory it
+    // raises needs haulers (aiEconomy.js adds 2 per factory on TOP of this crew) — on 7 miners it
+    // never got far enough up the chain to earn them.
+    odyssey: { graceMult: 1.3, forgiveness: 1.75, workerTarget: 11 },
   },
 };
 

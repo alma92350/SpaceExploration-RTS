@@ -65,6 +65,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Odyssey neighbours now actually grow, because they can finally afford to.** Every archetype
+  gets an Odyssey worker crew about half again as large as its skirmish one (Rusher 6→9, Economist
+  11→17, Technologist 7→11, and Balanced — which had no Odyssey overlay at all — 6→9), which fixes
+  a bootstrap the AI could never start on its own. Its worker target only ever grew by "two haulers
+  per factory you own", a reward for industry it had to already be rich enough to have built; on a
+  strategy that also spends freely on units, unit production took every ore first and the loop
+  never began. A neighbour on Ferros sat on development 3 and thirteen workers for a full forty
+  minutes while the *same* archetype behind an army cap reached development 27. Measured over 176
+  runs across all eleven worlds at Medium and Hard: the `dev-flatline` defect halves (25 → 12) and
+  `hostile-but-idle` drops from 9 to 3. Skirmish matches are byte-identical — this overlay is only
+  read when a world has diplomacy.
+- **The Aggressive strategy now funds its own aggression.** Head-to-head, the four strategies
+  played against *each other* rather than against a scripted bot, it was the worst of the four at
+  Medium — 25W-47L, last place, against the Economic strategy's 51W-21L. Its offense dials weren't
+  the problem (attacking with bigger waves or a fatter home guard barely moved it); it simply had
+  no economy to follow up an early push with. It now carries the same worker investment its
+  toughest rival does, which takes it to 53% at Medium and 54% at Hard — second place in both.
 - **The AI's counter-pick logic is unified and sharper.** It used to go blind the moment your
   army's dominant type fell outside the Skiff/Bastion/Lancer triangle (a massed Breacher,
   Dreadnought, Wraith, Aegis, or Colossus army drew no reaction at all), and it never once

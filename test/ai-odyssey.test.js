@@ -29,6 +29,31 @@ test("the Rusher archetype carries an aggressive Odyssey overlay; the Economist 
   assert.ok(e.workerTarget > ARCHETYPES.economist.workerTarget, "…but out-scales even harder in Odyssey");
 });
 
+/* ODYSSEY LABOUR (docs/odyssey-ai-review.md §2.11). The Odyssey worker target could not bootstrap
+   itself — aiEconomy.js grows it only by `industryCount * 2`, a reward for industry the AI has to
+   already be rich enough to have built — so on a freely-spending strategy the loop never started
+   and half the roster sat on its opening crew for the whole session. Every archetype now carries an
+   Odyssey labour line, ~1.5x its skirmish crew. These pin the INVARIANTS (every archetype has one;
+   it is bigger than the skirmish crew; the ordering that expresses each archetype's identity still
+   holds), not the exact tuned integers, which the bench is expected to keep moving. */
+
+test("every archetype carries an Odyssey labour overlay bigger than its skirmish crew", () => {
+  for (const [key, a] of Object.entries(ARCHETYPES)) {
+    assert.ok(a.odyssey, `${key} has an odyssey overlay`);
+    assert.ok(a.odyssey.workerTarget != null, `${key}'s overlay sets a workerTarget — an hours-long ` +
+      `session cannot be mined on a skirmish crew, and the industryCount term can't start the loop on its own`);
+    assert.ok(a.odyssey.workerTarget > a.workerTarget,
+      `${key} sustains a bigger economy in Odyssey than in a skirmish (${a.odyssey.workerTarget} vs ${a.workerTarget})`);
+  }
+});
+
+test("the Odyssey labour line preserves each archetype's economic identity: Rusher leanest, Economist fattest", () => {
+  const w = k => ARCHETYPES[k].odyssey.workerTarget;
+  assert.ok(w("rusher") <= w("balanced"), "the Rusher stays no fatter than an even-handed neighbour");
+  assert.ok(w("balanced") < w("technologist"), "a research capital staffs more than a generalist — every factory it raises needs haulers");
+  assert.ok(w("technologist") < w("economist"), "…and the out-scaler still out-staffs the tech capital");
+});
+
 test("Odyssey archetypes diverge: a Rusher world turns hostile sooner than a patient Economist at the same time & scarcity", () => {
   const rusher = odysseyWorld("korrath");   // PLANET_ARCHETYPE korrath → rusher (graceMult 0.5)
   const econ = odysseyWorld("ferros");      // ferros → economist (full grace)
@@ -45,9 +70,11 @@ test("Odyssey archetypes diverge: a Rusher world turns hostile sooner than a pat
 });
 
 test("a bare (skirmish) state with no aiArchetype overlay drifts on the stock diplomacy constants", () => {
-  // The overlay is guarded, so a diplomacy state without an archetype (or without an
-  // odyssey overlay) is unaffected — nothing throws and the drift still runs.
-  const s = createGameState({ planetId: "vesper", rng: () => 0.5 });   // balanced: no odyssey overlay
+  // The overlay is guarded, so a diplomacy state without an archetype (or without any of the
+  // TEMPERAMENT fields in one) is unaffected — nothing throws and the drift still runs. Balanced
+  // is the case that proves it: it now carries an odyssey overlay, but a labour-only one, with no
+  // graceMult/grievanceMult/forgiveness — so its diplomacy is still the stock drift.
+  const s = createGameState({ planetId: "vesper", rng: () => 0.5 });   // balanced: labour-only overlay, no temperament fields
   s.diplomacy = createDiplomacy();
   s.time = 500;
   assert.doesNotThrow(() => { for (let i = 0; i < 10; i++) updateDiplomacy(s, 0.5); });

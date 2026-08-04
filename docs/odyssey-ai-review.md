@@ -445,6 +445,68 @@ falling 34/44 → 18/44, but most of that is the *metric* getting fairer rather 
 better: a neighbour that has cooled off — or been killed — no longer counts as "hostile and
 refusing to attack", because it is no longer entitled to attack.
 
+### 2.11 The worker economy cannot bootstrap itself, and a tournament says so twice — *fixed*
+
+Found by running the four shipped strategies against **each other** (`ailab duel --candidates`,
+6 worlds × 2 seeds × both owner slots × Medium and Hard) rather than against a scripted sparring
+bot. The standings were lopsided in a way that named its own cause:
+
+| strategy | Medium | Hard |
+|---|---|---|
+| Economic | **51W-21L (71%)** | **49W-23L (68%)** |
+| Force Parity | 36W-36L (50%) | 22W-50L (31%) |
+| Adaptive | 32W-40L (44%) | 36W-36L (50%) |
+| Aggressive | 25W-47L (35%) | 37W-35L (51%) |
+
+Economic wins both brackets outright, and the solo `sweep` says the same thing from the other
+direction — on the *same* archetype, changing only the strategy:
+
+| ferros (Economist archetype) | development | workers | buildings | waves | score |
+|---|---|---|---|---|---|
+| `default` | **3** | 13 | 15 | 1 | 0.419 |
+| `economic` | **27** | — | — | 0 | 0.780 |
+
+Same world, same archetype, same difficulty. The difference is that Economic *caps its standing
+army*, and everything else follows from the ore that cap frees up.
+
+**The mechanism.** `aiEconomy.js`'s Odyssey worker target is
+
+```
+archetype.workerTarget × strategy.workerTargetMult × difficulty.workerTargetMult + industryCount × 2
+```
+
+The only term that grows during a session is `industryCount × 2` — a *reward for industry the AI
+has to be rich enough to have already built*. On a strategy that also spends freely on units
+(`default`, `aggressive` — and `galaxy.js`'s `neighbourAiProfile` hands one of those to roughly
+half the galaxy) unit production has first claim on every ore, industry never gets funded, the
+worker target never grows, and the loop never starts. A neighbour stays on its opening crew for a
+mode with no end.
+
+That was confirmed by a single-dial probe, not by reading the code: giving `default` nothing but a
+`standingArmyCap` of 12 on ferros moved development 3 → 28, workers 13 → 34, buildings 15 → 64 and
+waves 1 → 11. Capping the army is not the fix — it is the *diagnosis*, because it is the only thing
+that changed.
+
+**Status: fixed, at both layers the tournament pointed at.**
+
+- **Odyssey labour** (`aiArchetypes.js`): every archetype now carries an `odyssey.workerTarget`
+  ~1.5× its skirmish crew — Rusher 6→9, Economist 11→17, Technologist (none)→11, Balanced
+  (no overlay at all)→9. Balanced and the Technologist were the two archetypes that never got an
+  Odyssey overlay when the Rusher and the Economist did, so four of the eleven worlds mined an
+  hours-long session on a six-worker skirmish crew. Balanced's new block is **labour-only** — no
+  temperament fields — so an even-handed neighbour still drifts on the stock diplomacy constants.
+- **Aggressive's economy** (`aiStrategy.js`): `workerTargetMult: 1.25`, the same value the
+  tournament winner carries. Aggressive's own offense dials could not rescue it — a coordinate scan
+  over `armyAttackSizeMult` and `garrisonMult` moved 2W-6L to at best 3W-5L. Attacking sooner with
+  less was never the problem; having nothing to follow up with was.
+
+**And one dial that had to be tuned across difficulties to be tuned at all.** The first value tried
+for Aggressive was 1.4, which wins Medium harder (54%) — and *loses* Hard, 51% → 44%. `aiDifficulty.js`'s
+Hard row already carries `workerTargetMult: 1.25` and the layers compose multiplicatively, so 1.4
+is really 1.75× there. 1.25 keeps almost all of the Medium gain and turns the Hard result positive.
+This is §2.6's "the multiplicative layers have no clamp" showing up as a measurable loss rather
+than a theoretical one; the composed product is now pinned by a test.
+
 ---
 
 ## 3. The proposal — searching for better AI with Claude Code
@@ -630,3 +692,10 @@ re-run.
 | 2026-08-03 | Swiss pairing (closest-standing pairs, rotated byes, `max(3, ⌈log₂n⌉)` rounds) is the right bounded Tier 5 slice — not an ELO ladder (needs cross-invocation persistence this project has no use for yet) or Odyssey multi-owner (needs the refactor generalized past two slots, out of proportion for a scheduling layer) | `runSwissTournament`, reusing `runSwappedDuel` unchanged as the per-pairing primitive | **Correction below (same date) — this row's own "independently verified" claim was false; see the next row.** A scripting accident in the orchestration crashed before Tier 5 got the same independent verify+review every other tier in this table got; it shipped self-graded (1880→1893, 13 new tests, all green) with nobody else checking it first | **partially — see below** |
 | 2026-08-03 | the row above claimed independent verification Tier 5 never actually received — dispatched two fresh, independent agents (a verifier and an adversarial reviewer, same as every other tier) after the fact to check it for real | — | Both found real problems the self-grading missed. **(1) HIGH:** a bye credited `worlds.length × seeds × 2` (a maximum-margin sweep) as pure wins with zero losses — reproduced live tying a candidate that structurally cannot fight (`neverInitiates` + a zero standing-army cap) with a genuine winner, and confirmed that credit exceeded the best real margin observed across every pairing of the project's own 4 named strategies (best real: 7/8; bye credit: 8/8). **(2) MEDIUM:** the pairing algorithm's own comment and CLI text claimed a repeat pairing only happens when "every remaining opponent has already been played" — false: fuzz-tested against a brute-force ground-truth checker, a plain greedy walk (first-fit, no backtracking) produced an *avoidable* repeat in 25-51% of realistic tournaments at n=6..50, and the shipped "rematch avoidance" test only passed because its hardcoded `seedBase` (7) happened to be lucky (6/9/10 reproducibly failed). **(3) low:** the same difficulty-echo bug class fixed elsewhere that day existed twice more, unpatched, in `runSwissBracket`/`runRoundRobinSwapped`'s own bracket-level field | **yes — this is what the row above should have said** |
 | 2026-08-03 | fix all three, properly this time: a bye must be worth nothing, and rematch-avoidance must actually hold, not just usually | Bye: removed the wins credit entirely — a bye now adds only to its own `byes` counter, never `wins`/`losses` (renamed `byePoints`→`byeMatchCount`, kept as informational-only). Pairing: `pairRound` now backtracks (`findMatching`, bounded by `MATCH_ATTEMPT_CAP`) to find a genuine zero-repeat matching whenever one exists, falling back to the old greedy pass (which allows repeats) only when none does. Difficulty echo: both remaining instances now read through `pinnedDuelDials` | Fuzz-verified the pairing fix at the exact scales the review found failing (n=4..50, realistic sequential simulation, 990 rounds total): **0 avoidable repeats**, down from the review's measured 25-51%. The bye fix directly closes the reviewer's own repro (a non-fighting candidate can no longer tie a genuine winner). Full suite 1893→1897 (new: a direct backtracking-vs-greedy regression test reproducing the reviewer's exact stranding scenario, a genuine-impossibility fallback test, the bye-neutrality tests, and a strengthened rematch-avoidance test run across 5 seed bases including the ones that broke the old algorithm) | **yes** |
+| 2026-08-04 | run the four shipped strategies against EACH OTHER (`duel --candidates`, 6 worlds × 2 seeds × both owner slots) rather than against a scripted bot, and see whether the standings name a defect the solo bench had been averaging away | — (measurement only) | They do, and it agrees with `sweep` from the other direction. Medium: Economic 51W-21L (71%), Force Parity 36-36, Adaptive 32-40, **Aggressive 25W-47L (35%), last**. Hard: Economic 49-23 (68%), Aggressive 37-35, Adaptive 36-36, **Force Parity 22W-50L (31%)**. Economic wins both brackets outright — and on the solo sweep the SAME archetype scores dev 3 under `default` and dev 27 under `economic` (ferros). One cause, visible twice | n/a — this is §2.11's diagnosis |
+| 2026-08-04 | the expansion reserve (`ctx.oreReserve`, pinned at a colony ship's cost while units keep spending) is what blocks the industry climb, since `aiIndustry` is gated on it and unit production deliberately isn't | `economist.odyssey.expandWhenNodesBelow: 0` (disable expansion entirely, so the reserve can never pin) | **no — falsified.** ferros/default development moved 3 → 4 and the score went DOWN, 0.419 → 0.360. A plausible mechanism read straight off the code, and wrong; the correlation that suggested it (worse development on the archetypes with greedier `expandWhenNodesBelow`) was confounded | no |
+| 2026-08-04 | it is unit production starving everything else: with no standing-army cap, ore never survives to the economy/industry phases, so `industryCount × 2` — the only growing term in the worker-target formula — can never start | `standingArmyCap: 12` on an otherwise-untouched `default`, as a DIAGNOSTIC (one dial, nothing else) | **confirmed.** ferros/default: development 3 → 28, workers 13 → 34, buildings 15 → 64, waves 1 → 11, score 0.419 → 0.850. Capping the army is not the fix — it changes what `default` *is* — but it isolates the mechanism to one sentence, which is what §2.11 then fixes from the income side instead | no (diagnostic only) |
+| 2026-08-04 | if income is the real constraint, raising the opening worker crew should fix it without capping anything | `odyssey.workerTarget` × {1.5, 2.0, 2.5, 3.0} across all four archetypes | 4-world sweep (32 runs): baseline 0.593 → **1.5× 0.680**, 2.0× 0.688, 2.5× 0.671; 3.0× never finished — the AI gets big enough that the sim itself slows past a 10-minute budget, which is its own argument against the top of the range. Chose 1.5× (dev-flatline 13/32 → 3/32, the best of the four) | **yes — 1.5×** |
+| 2026-08-04 | …and it holds on the full roster, not just the four worlds the search ran on | same 1.5× candidate, 11 worlds × 4 strategies × Medium+Hard × 2 seeds (176 runs) | Mean **0.690 → 0.718**; `dev-flatline` **25/176 → 12/176**, `hostile-but-idle` **9/176 → 3/176**, `hoarding` 9 → 8; `supply-deadlock` 15 → 17 and `production-stall` 63 → 64 (a bigger economy pushes the supply cap harder). 80 configurations improved, 36 unchanged, 60 regressed — every strategy (+0.023 to +0.033) and both difficulties positive on the mean, so not one world carrying it. Note the honest gap: the 4-world subset read +0.088, the full roster +0.028 | **yes** |
+| 2026-08-04 | Aggressive's own offense dials can fix its last-place standing | coordinate scan, `armyAttackSizeMult=0.6:1.6` and `garrisonMult=0.4:1.2`, scored by `--tournament-against` Economic | **no.** Best row moved 2W-6L to 3W-5L, at n=8 — noise. Bigger musters did not help at all (0.85/1.35/1.6 all went 1W-7L). Attacking sooner with less was never why it loses | no |
+| 2026-08-04 | what Aggressive lacks is what the tournament WINNER has — an economy to follow up with | `aggressive.workerTargetMult`, verified by re-running the whole round-robin, not by the search | **yes, at 1.25 — and the first value tried was a trap.** At **1.4**: Medium 25W-47L → 39W-33L (35% → 54%) but Hard **51% → 44%**, because `aiDifficulty.js`'s Hard row already carries `workerTargetMult: 1.25` and the layers compose multiplicatively (1.4 → 1.75× there). At **1.25** (the value Economic itself carries): Medium 35% → **53%**, Hard 51% → **54%** — both brackets positive. §2.6's unclamped multiplicative layers, showing up as a measured 7-point loss rather than a theoretical risk. The composed product is now pinned by a test | **yes — 1.25** |
