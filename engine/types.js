@@ -59,7 +59,8 @@
  * @property {number} [tx]        scout: the current leg's destination (engine/scout.js updateScoutMode) — distinct from x/y, which a scout order doesn't use
  * @property {number} [ty]
  * @property {boolean} [explore]  scout: this leg is heading for genuinely unexplored ground (vs. a patrol circuit leg)
- * @property {number} [patrol]    scout: index into scout.js's PATROL circuit, once nothing is left to discover. NOTE the collision: engine/commands.js issuePatrol stamps `patrol: true` as a boolean "requeue me" flag that engine/sim.js reads off orderQueue. Latent today only because issueScout never queues; see docs/code-improvement-tiers.md
+ * @property {boolean} [patrol]   patrol: requeue-me flag (engine/commands.js issuePatrol), read off orderQueue by engine/sim.js
+ * @property {number} [patrolLeg] scout: index into scout.js's PATROL circuit, once nothing is left to discover. Deliberately NOT named `patrol` — see that field
  */
 
 /**

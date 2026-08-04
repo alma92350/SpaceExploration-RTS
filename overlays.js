@@ -11,7 +11,7 @@
 
 import { seedChipEl, factionChipEl, objectivesEl, helpOverlayEl, helpBtn, gameOverEl, galaxyToastEl, uiHintEl } from "./dom.js";
 import { FACTIONS } from "./engine/factions.js";
-import { UNITS, committedDoctrine } from "./engine/entities.js";
+import { UNITS, committedDoctrine, hasCompletedBuilding } from "./engine/entities.js";
 import { game } from "./session.js";
 import { scoreBreakdown, playerScore } from "./engine/victory.js";
 import { pauseLoop, resumeLoop, togglePause } from "./boot.js";   // runtime-only calls; the boot↔overlays cycle resolves via live bindings
@@ -59,27 +59,23 @@ function countUnits(state, owner, pred) {
   for (const u of state.units.values()) if (u.owner === owner && pred(UNITS[u.type])) n++;
   return n;
 }
-function hasBuilding(state, owner, type) {
-  for (const b of state.buildings.values()) if (b.owner === owner && b.type === type && !b.constructing) return true;
-  return false;
-}
 
 const SKIRMISH_OBJECTIVES = [
   {
     text: state => `Train Workers (${Math.min(countUnits(state, "player", d => d?.role === "worker"), WORKER_TARGET)}/${WORKER_TARGET})`,
     done: state => countUnits(state, "player", d => d?.role === "worker") >= WORKER_TARGET,
   },
-  { text: () => "Build a Barracks", done: state => hasBuilding(state, "player", "barracks") },
+  { text: () => "Build a Barracks", done: state => hasCompletedBuilding(state, "player", "barracks") },
   { text: () => `Field ${COMBAT_TARGET} combat units`, done: state => countUnits(state, "player", d => d?.role === "combat") >= COMBAT_TARGET },
   { text: () => "Pick a doctrine at the Refinery", done: state => !!committedDoctrine(state, "player") },
-  { text: () => "Raise a Habitat before the supply cap", done: state => hasBuilding(state, "player", "habitat") },
+  { text: () => "Raise a Habitat before the supply cap", done: state => hasCompletedBuilding(state, "player", "habitat") },
 ];
 
 const ODYSSEY_OBJECTIVES = [
-  { text: () => "Deploy the colony ship", done: state => hasBuilding(state, "player", "command") },
-  { text: () => "Build a Market", done: state => hasBuilding(state, "player", "market") },
-  { text: () => "Reactor → Smelter", done: state => hasBuilding(state, "player", "reactor") && hasBuilding(state, "player", "smelter") },
-  { text: () => "Build a Datacenter", done: state => hasBuilding(state, "player", "datacenter") },
+  { text: () => "Deploy the colony ship", done: state => hasCompletedBuilding(state, "player", "command") },
+  { text: () => "Build a Market", done: state => hasCompletedBuilding(state, "player", "market") },
+  { text: () => "Reactor → Smelter", done: state => hasCompletedBuilding(state, "player", "reactor") && hasCompletedBuilding(state, "player", "smelter") },
+  { text: () => "Build a Datacenter", done: state => hasCompletedBuilding(state, "player", "datacenter") },
 ];
 
 const SKIRMISH_GOAL = "Objective — destroy every enemy Command Center.";

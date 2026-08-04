@@ -28,7 +28,7 @@
 "use strict";
 
 import { PLANETS } from "../data.js";
-import { canAfford, payCost, prereqsMet, UPGRADES } from "./entities.js";
+import { canAfford, payCost, prereqsMet, UPGRADES, negate } from "./entities.js";
 import { difficultyFor } from "./aiDifficulty.js";
 
 // The tree. `cost` is gathered commodities (paid on start); `time` is seconds to
@@ -212,9 +212,6 @@ export function researchTech(state, buildingId, techId) {
 // cancelProduction uses, duplicated locally rather than imported: techtree.js already sits
 // upstream of production.js in the import graph (production.js -> industry.js -> techtree.js for
 // techMult), so importing back the other way would open a cycle.
-function negate(cost) {
-  return Object.fromEntries(Object.entries(cost).map(([com, qty]) => [com, -qty]));
-}
 
 // Cancel a queued research job (in progress or still waiting, either one — mirrors
 // production.js's cancelProduction: the simplest, most player-friendly convention, and consistent

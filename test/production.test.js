@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { queueProduction, cancelProduction, updateProductionQueue, updateBuildingConstruction, researchUpgrade } from "../engine/production.js";
+import { negate } from "../engine/entities.js";
 import { UNITS, UPGRADES, upgradeMult } from "../engine/entities.js";
 import { updateResearch, researchTimeScale } from "../engine/techtree.js";
 import { tick } from "../engine/sim.js";
@@ -607,4 +608,13 @@ test("the Foundry/Arsenal standing bonus never touches non-military production (
   };
   assert.equal(progressAfterOneTick(true), progressAfterOneTick(false),
     "a Worker's build time is untouched by a standing Foundry/Arsenal — that bonus is for military units, not the economy");
+});
+
+test("a research refund and a unit refund negate costs through the same helper (T2)", () => {
+  // `negate` had byte-identical copies in production.js and techtree.js. It builds the resource
+  // refund delta on BOTH the unit-production path and the research path, so a rounding or
+  // negative-zero fix applied to one and not the other is a silent economy asymmetry that no test
+  // targets — each suite only ever exercises its own module.
+  assert.deepEqual(negate({ ore: 50, crystals: 0 }), { ore: -50, crystals: -0 });
+  assert.deepEqual(negate({}), {});
 });

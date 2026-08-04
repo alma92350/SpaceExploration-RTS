@@ -175,13 +175,17 @@ export function nearestGatherDrop(state, owner, x, y, excludeId) {
     if (b.owner !== owner || b.constructing || !isGatherDropOff(b.type)) continue;
     if (excludeId && b.id === excludeId) continue;
     const d = Math.hypot(b.x - x, b.y - y);
-    if (d < bestD) { bestD = d; best = b; }
+    // Explicit id tie-break, matching haul.js/wreckage.js/colonyPolicy.js/wonder.js. This used to
+    // rely on Map insertion order — correct today, but a different KIND of guarantee from every
+    // neighbouring scan: one resting on a data-structure incident rather than a stated rule. It
+    // matters here because zoneFirst resolves zone membership by IDENTITY against this result.
+    if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
   }
   for (const u of state.units.values()) {
     if (u.owner !== owner || !u.collectPoint || !UNITS[u.type]?.cargoHold) continue;
     if (freightRoom(u) <= 0) continue;
     const d = Math.hypot(u.x - x, u.y - y);
-    if (d < bestD) { bestD = d; best = u; }
+    if (d < bestD || (d === bestD && best && u.id < best.id)) { bestD = d; best = u; }
   }
   return best;
 }
@@ -194,7 +198,7 @@ export function nearestCommandCenter(state, owner, x, y) {
   for (const b of state.buildings.values()) {
     if (b.owner !== owner || b.constructing || !BUILDINGS[b.type].isCommandCenter) continue;
     const d = Math.hypot(b.x - x, b.y - y);
-    if (d < bestD) { bestD = d; best = b; }
+    if (d < bestD || (d === bestD && best && b.id < best.id)) { bestD = d; best = b; }
   }
   return best;
 }

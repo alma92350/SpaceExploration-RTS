@@ -590,3 +590,25 @@ test("buildHelpOverlay links to the full field manual, opening in a new tab", ()
   assert.match(html, /target="_blank"/, "expected it to open in a new tab, not navigate away from the running match");
   assert.match(html, /Full field manual/i);
 });
+
+test("the help overlay and the tech chart agree on whether a building is completed (T2)", async () => {
+  // The same body shipped twice under TWO DIFFERENT NAMES — overlays.js's hasBuilding and
+  // techChart.js's hasCompletedBuilding — which is why nobody noticed the duplication. Both are
+  // prereq checks on UI surfaces that are supposed to agree with each other and with the engine's
+  // own prereqsMet; three independent implementations of "do you have a finished X" is exactly how
+  // the tech chart starts disagreeing with the build menu.
+  const { hasCompletedBuilding } = await import("../engine/entities.js");
+  const { createGameState, makeBuilding } = await import("../engine/state.js");
+  const st = createGameState({ planetId: "ferros", seed: 51 });
+  st.buildings.clear();
+  const done = makeBuilding("refinery", "player", 700, 500);
+  done.constructing = false;
+  const building = makeBuilding("refinery", "ai", 760, 500);
+  building.constructing = true;
+  st.buildings.set(done.id, done);
+  st.buildings.set(building.id, building);
+
+  assert.equal(hasCompletedBuilding(st, "player", "refinery"), true, "a finished one counts");
+  assert.equal(hasCompletedBuilding(st, "ai", "refinery"), false, "one still under construction does not");
+  assert.equal(hasCompletedBuilding(st, "player", "foundry"), false, "an absent type does not");
+});

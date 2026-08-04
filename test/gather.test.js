@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
-import { updateGather } from "../engine/gather.js";
+import { updateGather, nearestCommandCenter } from "../engine/gather.js";
 import { UNITS, storeTotal } from "../engine/entities.js";
 
 function firstNode(state, com) {
@@ -435,4 +435,24 @@ test("Logistics Network (+25% yield) banks more per haul", () => {
   };
   const base = bank(false), boosted = bank(true);
   assert.ok(Math.abs(boosted - base * 1.25) < 1e-6, `+25% yield: ${boosted} vs ${base}`);
+});
+
+test("nearestCommandCenter breaks an exact distance tie by id, not by Map insertion order (T2)", () => {
+  // These two scans were the only "nearest" lookups in the domain with a bare `d < bestD` and no
+  // explicit tie-break, while six siblings (haul.js x3, wreckage.js, colonyPolicy.js, wonder.js)
+  // all pin theirs with `d === bestD && b.id < best.id`. gather.js's own comment leaned on it:
+  // "deterministic Map order breaks ties within each kind". That's correct TODAY but it is a
+  // different KIND of guarantee — one resting on a data-structure incident rather than a stated
+  // rule — and zoneFirst resolves zone membership by IDENTITY against this result, so two
+  // equidistant Command Centers make every zone boundary depend on insertion order.
+  const build = reversed => {
+    const st = createGameState({ planetId: "ferros", seed: 71 });
+    st.buildings.clear();
+    const a = makeBuilding("command", "player", 400, 500);
+    const b = makeBuilding("command", "player", 600, 500);
+    for (const x of reversed ? [b, a] : [a, b]) { x.constructing = false; st.buildings.set(x.id, x); }
+    return nearestCommandCenter(st, "player", 500, 500).id;   // exactly equidistant
+  };
+  assert.equal(build(false), build(true),
+    "the same pick regardless of the order the Map happened to be built in");
 });

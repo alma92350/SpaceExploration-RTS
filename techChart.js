@@ -23,7 +23,7 @@
 
 import { techChartEl, techChartBtn, canvas, isTouchMode } from "./dom.js";
 import { game } from "./session.js";
-import { BUILDINGS, UNITS, UPGRADES, prereqsMet, canAfford, canBuildCategory } from "./engine/entities.js";
+import { BUILDINGS, UNITS, UPGRADES, prereqsMet, canAfford, canBuildCategory, hasCompletedBuilding } from "./engine/entities.js";
 import { TECHS } from "./engine/techtree.js";
 import { RECIPES, COM } from "./data.js";
 import { spriteIcon } from "./render.js";
@@ -134,10 +134,6 @@ function ancestorsOf(node, index) {
 
 /* ---------- live state: built / affordable-now / locked ---------- */
 
-function hasCompletedBuilding(state, owner, type) {
-  for (const b of state.buildings.values()) if (b.owner === owner && b.type === type && !b.constructing) return true;
-  return false;
-}
 function isResearched(state, owner, id) {
   return !!(state.players[owner].upgrades && state.players[owner].upgrades[id]);
 }

@@ -5,6 +5,7 @@ import { updateScoutMode } from "../engine/scout.js";
 import { issueScout, issueHoldFormation } from "../engine/commands.js";
 import { UNITS } from "../engine/entities.js";
 import { nearestUnexploredPoint, isExploredAt, FOG_CELL_SIZE } from "../engine/fog.js";
+import { tick } from "../engine/sim.js";
 
 function playerRanger(state) {
   const r = makeUnit("ranger", "player", state.map.bases.player.x, state.map.bases.player.y);
@@ -143,4 +144,35 @@ test("a solo Ranger (nobody to lead) still scouts at its own full speed", () => 
   const traveled = Math.hypot(ranger.x - x0, ranger.y - y0);
   assert.ok(traveled > UNITS.worker.speed,
     `the Ranger (${traveled.toFixed(0)} travelled) is not held to any group pace when it isn't leading one`);
+});
+
+test("a scout order's patrol circuit index never doubles as sim.js's requeue flag (T2)", () => {
+  // `order.patrol` carries TWO incompatible meanings: engine/commands.js issuePatrol stamps
+  // `patrol: true` as a boolean "requeue me" flag that engine/sim.js reads off orderQueue, while
+  // engine/scout.js uses the same field name as a numeric circuit index. Latent only because
+  // issueScout writes u.order directly and clears orderQueue — but the failure would be
+  // shape-dependent: index 0 is falsy (no requeue), 1-3 are truthy (infinite requeue of the same
+  // object). Both commands are gated to role === "scout", so the Ranger is the one unit that can
+  // hold either, i.e. exactly where "queue a scout leg behind a patrol leg" is most natural.
+  const st = createGameState({ planetId: "ferros", seed: 81 });
+  const scout = [...st.units.values()].find(u => UNITS[u.type].role === "scout")
+    || (() => { const u = makeUnit("ranger", "player", 700, 500); st.units.set(u.id, u); return u; })();
+
+  // Fully explore the fog so nearestUnexploredPoint returns null and the patrol branch runs.
+  st.fog.explored.fill(1);
+  scout.order = { type: "scout" };
+  for (let i = 0; i < 8 && !(scout.order.patrolLeg >= 1); i++) {
+    scout.order.tx = scout.x; scout.order.ty = scout.y;   // "arrived", so it re-picks a leg
+    updateScoutMode(st, scout, 0.1);
+  }
+  assert.ok(scout.order.patrolLeg >= 1, "fixture sanity: the scout reached its patrol circuit");
+  assert.equal(scout.order.patrol, undefined,
+    "the circuit index must NOT be stored on `patrol` — sim.js reads that field as a requeue flag");
+
+  const queuedOrder = { ...scout.order };
+  scout.orderQueue = [queuedOrder];
+  scout.order = null;
+  tick(st, 0.1);
+  assert.equal(scout.orderQueue.length, 0,
+    "pulling that order off the queue must not re-push it forever");
 });

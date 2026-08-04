@@ -247,3 +247,75 @@ test("every shipped UI module imports cleanly under Node with no DOM (C10)", () 
     "UI module(s) that throw when imported without a DOM — guard the top-level element access the way " +
     "dom.js does:\n" + broken.join("\n"));
 });
+
+test("no helper is defined more than once under engine/ (T2)", () => {
+  // Five byte-identical function bodies used to span module boundaries. The two that actually bit
+  // are fixed and shared now (clamp, negate); this keeps them from re-forking. costText and
+  // parseArgs are deliberately left alone — a one-line UI formatter, and two standalone CLI tools
+  // where independence is a feature.
+  const dupes = [];
+  for (const name of ["clamp", "negate", "radiusOf", "hasCompletedBuilding"]) {
+    const sites = walkJs(join(root, "engine"))
+      .filter(f => new RegExp(`^(export )?function ${name}\\(`, "m").test(readFileSync(f, "utf8")))
+      .map(f => relative(root, f));
+    if (sites.length > 1) dupes.push(`${name}: ${sites.join(", ")}`);
+  }
+  assert.deepEqual(dupes, [], "helper(s) defined in more than one engine module:\n" + dupes.join("\n"));
+});
+
+test("the shipped module graph has no import cycle outside the known UI cluster (T2)", () => {
+  // Tarjan over the real import graph. The one cycle is benign TODAY only because every back-edge
+  // is called at runtime rather than at module-evaluation time — an invariant documented in exactly
+  // one inline comment (overlays.js) and enforced nowhere. Adding a top-level
+  // `const X = someImportedFn()` to any member throws a TDZ ReferenceError during evaluation, which
+  // in a no-build-step ES-module page is a blank white screen. Node's test import order differs from
+  // the browser's, so the existing suites protect against that only by coincidence. This freezes the
+  // cycle at its current membership: a seventh member, or any NEW cycle (especially inside engine/),
+  // fails the suite.
+  const files = browserJs();
+  const idx = new Map(files.map((f, i) => [f, i]));
+  const adj = files.map(f => {
+    const out = [];
+    for (const m of readFileSync(f, "utf8").matchAll(IMPORT_SPEC)) {
+      const p = specPath(m);
+      if (!p || !p.startsWith(".")) continue;
+      const abs = resolve(dirname(f), p);
+      if (idx.has(abs)) out.push(idx.get(abs));
+    }
+    return out;
+  });
+
+  // Iterative Tarjan (the graph is small, but recursion depth is not worth risking).
+  const N = files.length;
+  const index = new Array(N).fill(-1), low = new Array(N).fill(0), onStack = new Array(N).fill(false);
+  const stack = [], sccs = [];
+  let counter = 0;
+  for (let s0 = 0; s0 < N; s0++) {
+    if (index[s0] !== -1) continue;
+    const work = [[s0, 0]];
+    while (work.length) {
+      const frame = work[work.length - 1];
+      const [v, pi] = frame;
+      if (pi === 0) { index[v] = low[v] = counter++; stack.push(v); onStack[v] = true; }
+      let recursed = false;
+      for (let i = pi; i < adj[v].length; i++) {
+        const w = adj[v][i];
+        if (index[w] === -1) { frame[1] = i + 1; work.push([w, 0]); recursed = true; break; }
+        if (onStack[w]) low[v] = Math.min(low[v], index[w]);
+      }
+      if (recursed) continue;
+      if (low[v] === index[v]) {
+        const comp = [];
+        for (;;) { const w = stack.pop(); onStack[w] = false; comp.push(relative(root, files[w])); if (w === v) break; }
+        if (comp.length > 1) sccs.push(comp.sort());
+      }
+      work.pop();
+      if (work.length) { const p = work[work.length - 1][0]; low[p] = Math.min(low[p], low[v]); }
+    }
+  }
+
+  const KNOWN = ["boot.js", "hud.js", "hudSelection.js", "overlays.js", "saveload.js", "setup.js"];
+  assert.deepEqual(sccs.map(c => c.join(" ")), [KNOWN.join(" ")],
+    "import cycle(s) other than the documented UI cluster (see overlays.js's note on live bindings):\n" +
+    sccs.map(c => c.join(", ")).join("\n"));
+});

@@ -18,7 +18,7 @@
 "use strict";
 
 import { COM, PLANETS } from "../data.js";
-import { UNITS, BUILDINGS, UPGRADES, SPENDABLE } from "./entities.js";
+import { UNITS, BUILDINGS, UPGRADES, SPENDABLE, clamp } from "./entities.js";
 
 // EVERY commodity is tradeable — the whole catalog (data.js COM), so nothing you can hold is a
 // dead counter. Equilibrium base prices come straight from the commodity table (COM.base), the
@@ -56,7 +56,6 @@ const GLUT_PER_LOT = 0.05;        // each lot of produced output sold deepens th
 export const GLUT_CEIL = 0.85;    // a fully-saturated local market pays as little as 15% of equilibrium
 const GLUT_RECOVERY = 1 / 480;    // glut relaxes over ~8 min — far slower than pressure
 
-function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 function buySpread(com) { return RAW.has(com) ? RAW_SPREAD : SPREAD; }
 
 // ALLIED TRADE DISCOUNT (Gifts and favor requests: an actual road to Allied, engine/diplomacy.js):

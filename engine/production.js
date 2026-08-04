@@ -5,7 +5,7 @@
 
 "use strict";
 
-import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult, structureMult, isElectrifiable, canGatherType } from "./entities.js";
+import { BUILDINGS, UNITS, UPGRADES, canAfford, payCost, prereqsMet, committedDoctrine, upgradeMult, structureMult, isElectrifiable, canGatherType, negate } from "./entities.js";
 import { makeUnit } from "./state.js";
 import { supplyUsed, supplyCap } from "./supply.js";
 import { electrifyBoost } from "./industry.js";
@@ -174,9 +174,6 @@ export function cancelProduction(state, buildingId, queueIndex) {
   return true;
 }
 
-function negate(cost) {
-  return Object.fromEntries(Object.entries(cost).map(([com, qty]) => [com, -qty]));
-}
 
 // A Refinery's player-wide doctrine research — see UPGRADES in entities.js for
 // what each one does. Queued and TIMED, exactly like the Datacenter's tech tree:
