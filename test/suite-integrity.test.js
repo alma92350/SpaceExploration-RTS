@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { walkJs } from "./_helpers.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -35,4 +36,36 @@ test("npm test discovers its files explicitly, not by implicit globbing", () => 
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   assert.match(pkg.scripts.test, /(^|\s)test\//,
     `package.json's test script should name the test files explicitly, got: ${pkg.scripts.test}`);
+});
+
+test("the DOM test double lives in exactly one place", () => {
+  // Eight test files each grew their own `class FakeElement extends EventTarget`, and the parts
+  // that differed between them were not considered differences — they were whichever subset of
+  // the DOM the file that copied it happened to need. So overlays' copy tracked parents and
+  // hudSelection's did not; hud's querySelector walked the tree and update's was hardcoded to
+  // null; observer's getBoundingClientRect returned a real 800x600 box and saveload's returned
+  // zeros. A test written against a weak copy silently asserts less than the identical test
+  // written against a strong one, and nothing in the suite told you which one you had landed on.
+  // test/_dom.js is now the single source; this stops the copies growing back.
+  //
+  // Deliberately NOT flagged: a RECORDING context (test/render.test.js, test/render-roster.test.js,
+  // test/landing.test.js) is a different tool — it exists to assert on the draw calls, not to
+  // stand in for a browser — so those keep their own.
+  const files = walkJs(join(root, "test")).filter(f => f.endsWith(".test.js") && !f.endsWith("suite-integrity.test.js"));
+  const offenders = [];
+  for (const f of files) {
+    // Comments stripped first: several files legitimately QUOTE the idiom while explaining how
+    // their own recording variant differs from it (test/render-roster.test.js), and a guard that
+    // cannot tell a citation from a declaration would force those explanations out of the code.
+    const src = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+    const rel = "test/" + f.slice(join(root, "test").length + 1);
+    if (/class\s+FakeElement\b/.test(src)) offenders.push(`${rel}: declares its own FakeElement`);
+    // The no-op-Proxy 2D context, verbatim. A recording proxy pushes onto a log inside the
+    // handler and so never matches this.
+    if (/new Proxy\(\{\},\s*\{\s*get:\s*\(t,\s*p\)\s*=>\s*\(p in t \? t\[p\] : \(\) => \{\}\)\s*\}\)/.test(src)) {
+      offenders.push(`${rel}: declares its own no-op fakeCtx`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `import FakeElement / fakeCtx from test/_dom.js instead:\n  ${offenders.join("\n  ")}`);
 });

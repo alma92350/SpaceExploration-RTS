@@ -6,13 +6,14 @@ import * as sound from "../sound.js";
 // before the document/window stubs below even exist.
 import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
+import { installFakeDom, fakeCtx } from "./_dom.js";
 
 /* ============================================================
    techChart.js has no natural test-file home (it's a new leaf UI module, like starmap.js), so this
-   mirrors test/starmap.test.js's FakeElement/fakeDocument harness — the established idiom for a
-   toggleable full-screen overlay module in this codebase — plus test/hudSelection.test.js's
-   fakeCtx() trick (below), needed here because, unlike starmap.js, techChart.js DOES call
-   render.js's spriteIcon for its building/unit node icons.
+   uses the shared DOM harness in test/_dom.js — the established idiom for a toggleable full-screen
+   overlay module in this codebase — installed with `context: fakeCtx`, needed here because, unlike
+   starmap.js, techChart.js DOES call render.js's spriteIcon for its building/unit node icons and
+   that path needs a live 2D context and a toDataURL to come back.
 
    --- import order --------------------------------------------------------------------------
    techChart.js imports boot.js (for pauseLoop/resumeLoop, the same way starmap.js does — "no
@@ -35,48 +36,6 @@ import { mulberry32 } from "../engine/rng.js";
    inside a focused button/input/etc." without needing a whole fake focused element.
    ============================================================ */
 
-class FakeElement extends EventTarget {
-  constructor(tag = "div") {
-    super();
-    this.tagName = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this._classes = new Set();
-    this.classList = {
-      add: (...c) => c.forEach(x => this._classes.add(x)),
-      remove: (...c) => c.forEach(x => this._classes.delete(x)),
-      toggle: (c, f) => { f === undefined ? (this._classes.has(c) ? this._classes.delete(c) : this._classes.add(c)) : (f ? this._classes.add(c) : this._classes.delete(c)); },
-      contains: c => this._classes.has(c),
-    };
-  }
-  get className() { return [...this._classes].join(" "); }
-  set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  appendChild(c) { this.children.push(c); return c; }
-  append(...cs) { this.children.push(...cs); }
-  set innerHTML(v) { if (v === "") this.children = []; }   // the only value renderTechChart ever assigns it
-  get innerHTML() { return ""; }
-  // render.js's spriteIcon draws into a real 2D context and reads canvas.toDataURL() back — both
-  // have to succeed or its own catch fires a console.error on EVERY building/unit node, on every
-  // render, in every test below (see test/hudSelection.test.js's identical fakeCtx() comment).
-  getContext() { return fakeCtx(); }
-  toDataURL() { return "data:image/fake,"; }
-  click() { this.dispatchEvent(new Event("click")); }
-}
-function fakeCtx() {
-  return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
-}
-
-function fakeDocument() {
-  const byId = new Map();
-  const body = new FakeElement("body");
-  return {
-    getElementById(id) { if (!byId.has(id)) byId.set(id, new FakeElement("div")); return byId.get(id); },
-    createElement(tag) { return new FakeElement(tag); },
-    body,
-  };
-}
-
 // Ditto for `window` — a real EventTarget so techChart.js's own module-scope
 // `window.addEventListener("keydown", …)` really registers and really fires (see the header
 // comment). Installed only AFTER the boot.js pre-warm below, same as starmap.test.js's stub.
@@ -88,7 +47,7 @@ function ev(type, props = {}) {
   return e;
 }
 
-globalThis.document = fakeDocument();
+installFakeDom({ context: fakeCtx });
 
 sound.setMuted(true);
 
@@ -104,8 +63,8 @@ const { techChartEl, techChartBtn } = await import("../dom.js");
 
 // One node card's element, found by the `data-node-id`/`data-kind` techChart.js stamps on every
 // card it builds — a depth-first walk since node cards nest inside per-tier columns inside the
-// body, and this test file's FakeElement only implements class-selector querying (starmap.test.js's
-// own `_queryAll` shape), not attribute selectors.
+// body, and the shared FakeElement (test/_dom.js) only implements class-selector querying, not
+// attribute selectors.
 function findNode(id) {
   function walk(el) {
     if (el.dataset && el.dataset.nodeId === id) return el;

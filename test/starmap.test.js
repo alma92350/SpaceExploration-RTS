@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { installFakeDom } from "./_dom.js";
 
 /* ============================================================
    starmap.js has no existing test file — it's a leaf UI module ("self-wires the galaxy-map
    button + M key", only main.js imports it), so no other test file's DOM stub happens to cover
-   it either. Same FakeElement/fakeDocument idiom as test/hudSelection.test.js (dom.js resolves
+   it either. Uses the shared DOM harness in test/_dom.js (dom.js resolves
    getElementById ONCE at import time — dom.js:16-17 — so the stub must exist BEFORE the dynamic
    import, and every later getElementById(sameId) must keep returning the SAME object, or the
    exported starmapEl this file imports below would diverge from what renderStarmap actually
@@ -30,60 +31,7 @@ import assert from "node:assert/strict";
    is already cached and won't re-execute.
    ============================================================ */
 
-class FakeElement extends EventTarget {
-  constructor(tag = "div") {
-    super();
-    this.tagName = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this._classes = new Set();
-    this.classList = {
-      add: (...c) => c.forEach(x => this._classes.add(x)),
-      remove: (...c) => c.forEach(x => this._classes.delete(x)),
-      toggle: (c, f) => { f === undefined ? (this._classes.has(c) ? this._classes.delete(c) : this._classes.add(c)) : (f ? this._classes.add(c) : this._classes.delete(c)); },
-      contains: c => this._classes.has(c),
-    };
-  }
-  get className() { return [...this._classes].join(" "); }
-  set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  appendChild(c) { this.children.push(c); return c; }
-  append(...cs) { this.children.push(...cs); }
-  // overlays.js's showGalaxyToast schedules a real setTimeout that calls el.remove() on itself —
-  // harmless to no-op (no test asserts on toast cleanup), but without it that timer firing later
-  // throws an uncaught TypeError and fails whichever test happens to still be running.
-  remove() {}
-  set innerHTML(v) { if (v === "") this.children = []; }   // the only value renderStarmap ever assigns it
-  get innerHTML() { return ""; }
-  _queryAll(selector) {
-    const cls = selector.slice(1);
-    const out = [];
-    const walk = kids => { for (const c of kids) { if (c._classes?.has(cls)) out.push(c); if (c.children) walk(c.children); } };
-    walk(this.children);
-    return out;
-  }
-  querySelector(selector) { return this._queryAll(selector)[0] || null; }
-  querySelectorAll(selector) { return this._queryAll(selector); }
-  // dom.js unconditionally calls .getContext("2d") on the canvas/minimap handles at module
-  // scope (dom.js:21,23) even though starmap.js itself never touches a canvas — null is enough.
-  getContext() { return null; }
-  click() { this.dispatchEvent(new Event("click")); }
-}
-
-function fakeDocument() {
-  const byId = new Map();
-  const body = new FakeElement("body");
-  return {
-    // Real per-id identity: dom.js resolves each handle exactly ONCE at import time, and every
-    // later doc.getElementById(sameId) here must keep returning that SAME object, or the
-    // exported starmapEl/starmapBtn would silently diverge from what renderStarmap appends to.
-    getElementById(id) { if (!byId.has(id)) byId.set(id, new FakeElement("div")); return byId.get(id); },
-    createElement(tag) { return new FakeElement(tag); },
-    body,
-  };
-}
-
-globalThis.document = fakeDocument();
+installFakeDom();
 
 // Pre-warm starmap.js's boot.js graph (which includes saveload.js) while `window` is still
 // undefined, so saveload.js's guarded autosave `setInterval` never gets scheduled — see the

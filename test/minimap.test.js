@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
+import { fakeCtx } from "./_dom.js";
 
 /* ============================================================
    Attack pings on the minimap (docs/improvement-proposals.md "Attack pings on the minimap plus a
@@ -21,9 +22,6 @@ import { mulberry32 } from "../engine/rng.js";
 
 function fakeCanvas() {
   return { width: 0, height: 0, getContext() { return fakeCtx(); } };
-}
-function fakeCtx() {
-  return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
 }
 globalThis.document = { createElement: () => fakeCanvas() };
 

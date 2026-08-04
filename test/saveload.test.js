@@ -10,6 +10,7 @@ import { createGameState } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { createGalaxy } from "../engine/galaxy.js";
 import { serializeGame, serializeGalaxy } from "../engine/persist.js";
+import { installFakeDom } from "./_dom.js";
 
 // saveload.js's bottom comment says the `typeof window !== "undefined"` guard around its
 // autosave-timer/listener wiring exists "so importing this module under Node (to unit-test its
@@ -44,35 +45,7 @@ import { serializeGame, serializeGalaxy } from "../engine/persist.js";
 // hud.js's topbar rebuild and hudSelection.js's selection-panel rebuild — genuine DOM building,
 // even though nothing below asserts on any of it. Kept as one class (not per-purpose stubs) so
 // every handle dom.js resolves — loadBtn included — is equally capable.
-class FakeElement extends EventTarget {
-  constructor() {
-    super();
-    this.classList = {
-      _set: new Set(),
-      add: (...c) => c.forEach(x => this.classList._set.add(x)),
-      remove: (...c) => c.forEach(x => this.classList._set.delete(x)),
-      toggle: (c, force) => {
-        const on = force === undefined ? !this.classList._set.has(c) : force;
-        this.classList[on ? "add" : "remove"](c);
-        return on;
-      },
-      contains: c => this.classList._set.has(c),
-    };
-    this.style = {};
-    this.dataset = {};
-  }
-  appendChild(c) { return c; }
-  append() {}
-  removeChild(c) { return c; }
-  remove() {}
-  querySelector() { return null; }
-  querySelectorAll() { return []; }
-  closest() { return null; }
-  getContext() { return null; }
-  getBoundingClientRect() { return { left: 0, top: 0, width: 0, height: 0 }; }
-  click() {}
-}
-const stubEl = () => new FakeElement();
+const doc = installFakeDom();
 // loadFromFile() (saveload.js, ~line 131) creates a real <input type=file> as a LOCAL variable —
 // there's no other way for a test to reach the exact instance it wires its "change" listener onto.
 // Stash whichever one createElement most recently made, so the "drive the real Load path" tests
@@ -81,17 +54,16 @@ const stubEl = () => new FakeElement();
 // call site in the whole codebase, and setup.js is never invoked here), so "most recent" is
 // unambiguous.
 let lastFileInput = null;
-globalThis.document = {
-  getElementById() { return stubEl(); },
-  body: stubEl(),
-  createElement(tag) {
-    const el = stubEl();
-    if (tag === "input") lastFileInput = el;
-    return el;
-  },
-  addEventListener() {},
-  removeEventListener() {},
+const createElement = doc.createElement.bind(doc);
+doc.createElement = tag => {
+  const el = createElement(tag);
+  if (tag === "input") lastFileInput = el;
+  return el;
 };
+// boot.js/input.js wire a couple of listeners onto the document itself; the shared harness models
+// elements, not the document node, so these two stay local no-ops.
+doc.addEventListener = () => {};
+doc.removeEventListener = () => {};
 
 const { hasSave, hasOdysseySave, storedSaveVersions, autoSave, loadGame, loadOdyssey, recordAutoSaveOutcome } = await import("../saveload.js");
 

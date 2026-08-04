@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as sound from "../sound.js";
+import { installFakeDom, fakeCtx } from "./_dom.js";
 
 /* ============================================================
    hudSelection.js builds the whole selection panel with direct DOM calls
@@ -27,83 +28,16 @@ import * as sound from "../sound.js";
    object for every id and hardcodes classList.contains to false. Useless
    here: TARGET 1 needs to read back one SPECIFIC button's real classList,
    and TARGET 2 needs to compare SPECIFIC node references across two renders.
-   FakeElement below tracks real per-instance class state and a real children
-   array instead, and — being a real EventTarget — supports the same
-   .addEventListener calls stubEl's no-ops were standing in for.
+   The shared harness in test/_dom.js tracks real per-instance class state and
+   a real children array instead, and — being a real EventTarget — supports the
+   same .addEventListener calls stubEl's no-ops were standing in for. It is
+   installed with `context: fakeCtx` because makeButton's sprite icons drive
+   render.js's spriteIcon, which draws into a real 2D context and reads
+   canvas.toDataURL() back; with a null context its own catch fires a
+   console.error on EVERY icon button, of every render, in every test here.
    ============================================================ */
 
-class FakeElement extends EventTarget {
-  constructor(tag = "div") {
-    super();
-    this.tagName = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this._classes = new Set();
-    this.classList = {
-      add: (...c) => c.forEach(x => this._classes.add(x)),
-      remove: (...c) => c.forEach(x => this._classes.delete(x)),
-      toggle: (c, f) => { f === undefined ? (this._classes.has(c) ? this._classes.delete(c) : this._classes.add(c)) : (f ? this._classes.add(c) : this._classes.delete(c)); },
-      contains: c => this._classes.has(c),
-    };
-  }
-  get className() { return [...this._classes].join(" "); }
-  set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  appendChild(c) { this.children.push(c); return c; }
-  append(...cs) { this.children.push(...cs); }
-  set innerHTML(v) { if (v === "") this.children = []; }   // the only value rebuildSelectionPanel ever assigns it
-  get innerHTML() { return ""; }
-  // A minimal REAL selector: every call site in hudSelection.js queries a single class name
-  // (".market-row", ".queue-label", ".recycle-progress", …) — never a combinator or attribute
-  // selector — so a depth-first walk matching one class per node is enough. This used to return
-  // null/[] unconditionally, which every live-patch call site tolerates (`if (row) …` / `rows[i]
-  // &&`) — fine for TARGETs 1-4 above, none of which ever reach a patch branch with a populated
-  // queue/research/recycle/market row to find. TARGET 5 below needs the opposite: proof that a
-  // SPECIFIC node's text/class really changed in place, which requires a real match, not a
-  // guaranteed miss.
-  _queryAll(selector) {
-    const cls = selector.slice(1);
-    const out = [];
-    const walk = kids => { for (const c of kids) { if (c._classes?.has(cls)) out.push(c); if (c.children) walk(c.children); } };
-    walk(this.children);
-    return out;
-  }
-  querySelector(selector) { return this._queryAll(selector)[0] || null; }
-  querySelectorAll(selector) { return this._queryAll(selector); }
-  // makeButton's {kind,type} icon path (render.js spriteIcon, called for every produce/build
-  // button) draws into a real 2D context and reads canvas.toDataURL() back. Both have to
-  // succeed, or spriteIcon's own catch fires a console.error on EVERY icon button, on every
-  // single render, in every test below — see fakeCtx() just below for why a Proxy is enough.
-  getContext() { return fakeCtx(); }
-  toDataURL() { return "data:image/fake,"; }
-  click() { this.dispatchEvent(new Event("click")); }   // mirrors real HTMLElement#click(); hudSelection.js's own prodButton (line 694) calls this itself for hotkey replay
-}
-
-// Same no-op-Proxy idiom as test/renderBuildings.test.js's fakeCtx(): any method call is a silent
-// no-op, any property read/write round-trips through a plain backing object — so it tolerates
-// whatever drawUnitShape/drawBuildingShape happen to call (scale/translate/fillStyle/strokeStyle/
-// gradients/…) without hand-enumerating the 2D canvas API, and stays robust to unrelated changes
-// in those drawing functions.
-function fakeCtx() {
-  return new Proxy({}, { get: (t, p) => (p in t ? t[p] : () => {}) });
-}
-
-function fakeDocument() {
-  const byId = new Map();
-  const body = new FakeElement("body");
-  return {
-    // Real per-id identity — unlike saveload.test.js's stubEl(), which hands back an unrelated
-    // fresh object on every single call, dom.js resolves each handle exactly ONCE at import time
-    // (dom.js:20-52) and every later doc.getElementById(sameId) here must keep returning that
-    // SAME object, or dom.js's exported `panelEl` would silently diverge from what hud.js/
-    // hudSelection.js are actually appending to.
-    getElementById(id) { if (!byId.has(id)) byId.set(id, new FakeElement("div")); return byId.get(id); },
-    createElement(tag) { return new FakeElement(tag); },
-    body,
-  };
-}
-
-globalThis.document = fakeDocument();
+installFakeDom({ context: fakeCtx });
 
 // sound.js's tone() unconditionally reaches for window.AudioContext when unmuted; nothing here
 // stubs one, so mute up front — same reasoning as test/input.test.js. A DISABLED button's click

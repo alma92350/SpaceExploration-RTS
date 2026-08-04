@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { installFakeDom } from "./_dom.js";
 
 /* ============================================================
    update.js is imported by ZERO tests anywhere in the suite before this file. Read in full
@@ -32,10 +33,9 @@ import assert from "node:assert/strict";
    hudSelection.js, setup.js, input.js, engine/*, landingPicker.js, data.js, sound.js, …) — the
    identical unguarded module-scope DOM calls (hud.js's repairBtn/departBtn, boot.js's
    underAttackEl, saveload.js's own saveBtn/loadBtn/homeBtn) that test/saveload.test.js's own
-   header comment traces and fixes with a fake `document`. The FakeElement/fakeDocument below is
-   modelled on that same shape, extended with real children-tracking + prepend() + parent-based
-   remove() (test/hudSelection.test.js's own FakeElement idiom, adapted the same way
-   test/overlays.test.js's copy is) — needed to actually walk into the DOM tree showBanner builds
+   header comment traces and fixes with a fake `document`. The shared harness in test/_dom.js
+   covers it, including the real children-tracking + prepend() + parent-based remove() this file
+   needs — to actually walk into the DOM tree showBanner builds
    and read back which of its three compat-message branches rendered, and to simulate a real
    click on its "Later" button (checkForUpdate's dismissal test below). `window` is deliberately
    left undefined throughout — every `typeof window !== "undefined"` guard anywhere in the whole
@@ -44,53 +44,7 @@ import assert from "node:assert/strict";
    listener or timer.
    ============================================================ */
 
-class FakeElement extends EventTarget {
-  constructor(tag = "div") {
-    super();
-    this.tagName = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this._classes = new Set();
-    this.classList = {
-      add: (...c) => c.forEach(x => this._classes.add(x)),
-      remove: (...c) => c.forEach(x => this._classes.delete(x)),
-      toggle: (c, f) => { f === undefined ? (this._classes.has(c) ? this._classes.delete(c) : this._classes.add(c)) : (f ? this._classes.add(c) : this._classes.delete(c)); },
-      contains: c => this._classes.has(c),
-    };
-  }
-  get className() { return [...this._classes].join(" "); }
-  set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  // Real per-instance parent tracking, same reasoning/shape as test/overlays.test.js's copy:
-  // showBanner's own "replace any prior banner" line calls `.remove()` directly on an element,
-  // and this file's dismissal test below needs a genuine `.prepend()` (banner.prepend into #app)
-  // to actually land the built banner somewhere this test can walk back into.
-  appendChild(c) { c._parent = this; this.children.push(c); return c; }
-  append(...cs) { cs.forEach(c => { c._parent = this; this.children.push(c); }); }
-  prepend(c) { c._parent = this; this.children.unshift(c); return c; }
-  remove() {
-    if (!this._parent) return;
-    const i = this._parent.children.indexOf(this);
-    if (i !== -1) this._parent.children.splice(i, 1);
-    this._parent = null;
-  }
-  querySelector() { return null; }
-  querySelectorAll() { return []; }
-  getContext() { return null; }
-  click() { this.dispatchEvent(new Event("click")); }
-}
-
-function fakeDocument() {
-  const byId = new Map();
-  const body = new FakeElement("body");
-  return {
-    getElementById(id) { if (!byId.has(id)) byId.set(id, new FakeElement("div")); return byId.get(id); },
-    createElement(tag) { return new FakeElement(tag); },
-    body,
-  };
-}
-
-globalThis.document = fakeDocument();
+installFakeDom();
 
 // A minimal in-memory localStorage — Node has no such global by default under plain `node --test`
 // (test/saveload.test.js's own header comment confirms this empirically: bare `localStorage`
