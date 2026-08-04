@@ -676,3 +676,39 @@ test("a follow-leader order (and squadLeader/squadFollowers) never survives save
   assert.equal(rLeader.squadFollowers, undefined);
   assert.equal(rFollower.squadLeader, undefined);
 });
+
+test("range-layered ranks stay INSIDE each nested cluster (T3)", () => {
+  // formationSlots deliberately gives each spatial cluster its own sub-formation — "spaced by each
+  // cluster's own footprint so sub-formations can't overlap" — and clusterUnits promises it
+  // "preserves each unit's relative position". rankSlotsByRange then re-paired GLOBALLY: it sorted
+  // ALL followers by weapon range against ALL slots by forwardness, with no cluster awareness in
+  // either half, so two armies far apart cross-swapped sub-formations and each walked the extra
+  // distance to the other's slots. The shape was still right; the units marched through each other
+  // to reach it, which reads as pathing jank rather than as two features disagreeing.
+  //
+  // DECISION: rank PER CLUSTER. The invariant that expresses it exactly — ranking may PERMUTE the
+  // slots within a cluster (that is its job) but must never move a unit into another cluster's set.
+  const a1 = fakePlayerUnit("a1", "skiff", 100, 100);        // cluster A
+  const a2 = fakePlayerUnit("a2", "breacher", 130, 100);
+  const b1 = fakePlayerUnit("b1", "skiff", 900, 100);        // cluster B, well past CLUSTER_RADIUS
+  const b2 = fakePlayerUnit("b2", "bastion", 930, 100);
+  const units = [a1, a2, b1, b2];
+
+  // The unranked layout, straight from formationSlots — this is what the clustering intends.
+  const baseSlots = formationSlots(units, 500, 900, { shape: "wedge" });
+  const key = p => `${Math.round(p.x)},${Math.round(p.y)}`;
+  const clusterA = new Set([key(baseSlots[0]), key(baseSlots[1])]);
+  const clusterB = new Set([key(baseSlots[2]), key(baseSlots[3])]);
+  assert.equal(clusterA.size + clusterB.size, 4, "fixture sanity: four distinct slots");
+
+  issueMove(units, 500, 900, false, { shape: "wedge" });
+  const dest = u => (u.order.type === "follow-leader"
+    ? { x: a1.order.x + u.order.offsetX, y: a1.order.y + u.order.offsetY }
+    : { x: u.order.x, y: u.order.y });
+
+  for (const [u, own, otherName] of [[a2, clusterA, "B"], [b1, clusterB, "A"], [b2, clusterB, "A"]]) {
+    assert.ok(own.has(key(dest(u))),
+      `${u.id} was ranked into cluster ${otherName}'s sub-formation — ranking may reorder slots ` +
+      `within a cluster, never move a unit across one`);
+  }
+});
