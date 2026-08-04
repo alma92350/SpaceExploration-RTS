@@ -16,7 +16,7 @@ import { powerEfficiency } from "./engine/industry.js";
 import { rigSurvey, SURVEY_RADIUS } from "./engine/rig.js";
 import { canPlaceBuilding } from "./engine/colliders.js";
 import { activeEffects, DEATH_BASE_RADIUS } from "./effects.js";
-import { hexA, lerpXY, shade, pathPoints, polygonPoints } from "./renderShared.js";
+import { hexA, lerpXY, shade, pathPoints, polygonPoints, drawLabelChip } from "./renderShared.js";
 import { POWER_TIER_COLOR, drawReactorBands } from "./renderBuildings.js";
 
 // Cached once: whether the viewer asked the OS to reduce motion. Used to swap
@@ -443,15 +443,8 @@ function drawGhostPowerCue(ctx, state, ghost, def) {
   const label = nearest
     ? `${tier.label} · draw ×${tier.mult.toFixed(1)}`
     : "No Reactor — power it first";
-  ctx.font = "bold 13px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "bottom";
   const ly = ghost.y - def.radius - 12;
-  const w = ctx.measureText(label).width;
-  ctx.fillStyle = "rgba(5, 7, 15, 0.78)";
-  ctx.fillRect(ghost.x - w / 2 - 5, ly - 15, w + 10, 17);
-  ctx.fillStyle = nearest ? col : "#f87171";
-  ctx.fillText(label, ghost.x, ly);
+  drawLabelChip(ctx, label, ghost.x, ly, nearest ? col : "#f87171");
   ctx.restore();
 }
 
@@ -491,15 +484,8 @@ function drawRigSurveyCue(ctx, state, ghost, def) {
     : "⛏ blind spot — no surface to read (a gamble)";
 
   ctx.save();
-  ctx.font = "bold 13px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "bottom";
   const ly = ghost.y - def.radius - 34;   // sits above the grid-efficiency label (at radius+12)
-  const w = ctx.measureText(label).width;
-  ctx.fillStyle = "rgba(5, 7, 15, 0.8)";
-  ctx.fillRect(ghost.x - w / 2 - 5, ly - 15, w + 10, 17);
-  ctx.fillStyle = survey.likelyVein ? "#c4b5fd" : "#f0a0a0";
-  ctx.fillText(label, ghost.x, ly);
+  drawLabelChip(ctx, label, ghost.x, ly, survey.likelyVein ? "#c4b5fd" : "#f0a0a0", "rgba(5, 7, 15, 0.8)");
   ctx.restore();
 }
 

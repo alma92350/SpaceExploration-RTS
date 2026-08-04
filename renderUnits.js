@@ -11,9 +11,8 @@
 "use strict";
 
 import { UNITS, rankMults } from "./engine/entities.js";
-import { isVisibleAt } from "./engine/fog.js";
 import { DETAIL, facing, updateFacing, lerpXY, inView, drawHealthBar,
-         shade, polygonPoints, pathPoints, toWorld, pathOriented } from "./renderShared.js";
+         shade, polygonPoints, pathPoints, toWorld, pathOriented, hiddenByFog } from "./renderShared.js";
 
 /* ---------- units ---------- */
 
@@ -62,7 +61,7 @@ export function drawUnits(ctx, state, view, alpha = 1, selSet, observerMode = fa
   for (const u of state.units.values()) {
     const d = lerpXY(u, alpha);   // interpolated {x,y} (or the live unit when there's no baseline / a teleport)
     if (view && !inView(view, d.x, d.y, 16)) continue;   // off-screen unit
-    if (u.owner !== "player" && !observerMode && !isVisibleAt(state.fog, d.x, d.y)) continue;
+    if (hiddenByFog(state, u, d.x, d.y, observerMode)) continue;
     const def = UNITS[u.type];
     const color = state.players[u.owner].color;
     ctx.fillStyle = color;
@@ -79,7 +78,7 @@ export function drawUnits(ctx, state, view, alpha = 1, selSet, observerMode = fa
   for (const u of state.units.values()) {
     const d = lerpXY(u, alpha);
     if (view && !inView(view, d.x, d.y, 16)) continue;
-    if (u.owner !== "player" && !observerMode && !isVisibleAt(state.fog, d.x, d.y)) continue;
+    if (hiddenByFog(state, u, d.x, d.y, observerMode)) continue;
     const def = UNITS[u.type];
     if (u.cargo && u.cargo.qty > 0) {
       ctx.beginPath();

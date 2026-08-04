@@ -11,11 +11,10 @@
 
 import { COM, RECIPES } from "./data.js";
 import { BUILDINGS, storeCapOf, storeTotal } from "./engine/entities.js";
-import { isVisibleAt } from "./engine/fog.js";
 import { JUMP_LOAD_RADIUS } from "./engine/galaxy.js";
 import { POWER_TIERS, powerThrottle, buildingConcern, recipeOf } from "./engine/industry.js";
 import { hashStr } from "./engine/rng.js";
-import { DETAIL, facing, shade, hexA, polygonPoints, pathPoints, inView, drawHealthBar } from "./renderShared.js";
+import { DETAIL, facing, shade, hexA, polygonPoints, pathPoints, inView, drawHealthBar, centeredText, hiddenByFog } from "./renderShared.js";
 import { drawEnemyPip } from "./renderUnits.js";
 
 /* ---------- buildings ---------- */
@@ -72,7 +71,7 @@ function electrifiedLight(ctx, state, b, x, y, r) {
 export function drawBuildings(ctx, state, view, observerMode = false) {
   for (const b of state.buildings.values()) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;   // off-screen (pad for the hp bar above it)
-    if (b.owner !== "player" && !observerMode && !isVisibleAt(state.fog, b.x, b.y)) continue;
+    if (hiddenByFog(state, b, b.x, b.y, observerMode)) continue;
     const color = state.players[b.owner].color;
     ctx.globalAlpha = b.constructing ? 0.5 : b.recycling ? 0.65 : 1;   // ghosted while going up OR coming down
 
@@ -94,7 +93,7 @@ export function drawBuildings(ctx, state, view, observerMode = false) {
 export function drawBuildingBars(ctx, state, view, selSet, observerMode = false) {
   for (const b of state.buildings.values()) {
     if (view && !inView(view, b.x, b.y, b.radius + 12)) continue;
-    if (b.owner !== "player" && !observerMode && !isVisibleAt(state.fog, b.x, b.y)) continue;
+    if (hiddenByFog(state, b, b.x, b.y, observerMode)) continue;
     drawHealthBar(ctx, b.x, b.y - b.radius - 8, b.radius * 2, b.hp, b.maxHp, selSet.has(b.id));
     drawStoreBar(ctx, b);   // a producer's output-buffer gauge, under the hull
     drawConcernBadge(ctx, state, b);   // paused / stalled / throttled flag, own producers only
@@ -132,12 +131,7 @@ function drawConcernBadge(ctx, state, b) {
   ctx.stroke();
   ctx.fillStyle = style.fg;
   if (style.glyph) {
-    ctx.font = "bold 9px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(style.glyph, x, y + 0.5);
-    ctx.textBaseline = "alphabetic";   // restore the canvas default so later text draws aren't shifted
-    ctx.textAlign = "left";            // …and alignment too — only drawFrame's save/restore hid this
+    centeredText(ctx, style.glyph, x, y + 0.5, "bold 9px sans-serif");
   } else {
     ctx.fillRect(x - 3, y - 2.5, 2, 5);   // paused: two small bars, font-independent
     ctx.fillRect(x + 1, y - 2.5, 2, 5);
@@ -724,12 +718,7 @@ function drawFactory(ctx, state, b, color) {
   ctx.beginPath();
   ctx.arc(b.x, b.y, r * 0.6, 0, Math.PI * 2);
   ctx.fillStyle = "rgba(5,7,15,0.74)"; ctx.fill();
-  ctx.font = `${Math.round(r * 0.95)}px sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(ico, b.x, b.y);
-  ctx.textBaseline = "alphabetic";   // restore the canvas default so later text draws aren't shifted
-  ctx.textAlign = "left";            // …and alignment too — only drawFrame's save/restore hid this
+  centeredText(ctx, ico, b.x, b.y, `${Math.round(r * 0.95)}px sans-serif`);
 }
 
 function drawGenericBuilding(ctx, b, color) {

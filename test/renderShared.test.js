@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import {
   hashStr, seededRng, shade, hexA, polygonPoints, toWorld, inView,
   facing, snapshotPositions, lerpXY, updateFacing, pruneFacing, resetFacing,
+  centeredText, drawLabelChip, hiddenByFog,
 } from "../renderShared.js";
+// Pure engine modules — no DOM anywhere in their import graph, safe to import statically here.
+import { createGameState } from "../engine/state.js";
+import { updateFog } from "../engine/fog.js";
 
 const closeTo = (actual, expected, eps = 1e-9) =>
   assert.ok(Math.abs(actual - expected) < eps, `expected ${actual} to be within ${eps} of ${expected}`);
@@ -262,4 +266,118 @@ test("shade and hexA return identical strings for repeated (hex, arg) pairs (T2)
   assert.equal(shade("#ffffff", 50), "#ffffff", "and at white");
   for (const a of [0, 0.5, 1]) assert.equal(hexA("#5ec8ff", a), hexA("#5ec8ff", a));
   assert.equal(hexA("#5ec8ff", 0.5), "rgba(94, 200, 255, 0.5)");
+});
+
+/* ---------- centeredText: the restore is the point ---------- */
+
+// A recording ctx: textAlign/textBaseline/font/fillStyle round-trip as real properties, every
+// method is captured. Not the shared no-op double (test/_dom.js) — this suite has to read the
+// canvas STATE back after the call, which a no-op proxy cannot report.
+function recCtx() {
+  const calls = [];
+  const state = { textAlign: "left", textBaseline: "alphabetic", font: "10px sans-serif", fillStyle: "#000" };
+  return {
+    calls, state,
+    get textAlign() { return state.textAlign; }, set textAlign(v) { state.textAlign = v; },
+    get textBaseline() { return state.textBaseline; }, set textBaseline(v) { state.textBaseline = v; },
+    get font() { return state.font; }, set font(v) { state.font = v; },
+    get fillStyle() { return state.fillStyle; }, set fillStyle(v) { state.fillStyle = v; },
+    fillText(...a) { calls.push(["fillText", a, { ...state }]); },
+    fillRect(...a) { calls.push(["fillRect", a, { ...state }]); },
+    measureText(t) { return { width: t.length * 6 }; },
+  };
+}
+
+test("centeredText draws centered and then puts the canvas text state back", () => {
+  // textAlign/textBaseline are canvas-WIDE state, not per-call arguments, so a helper that
+  // centers text and walks away shifts every later draw in the frame — in a different file,
+  // where nobody would look. Two sites shipped exactly that bug, invisible only because
+  // drawFrame's outer save/restore swallowed it once per frame.
+  const ctx = recCtx();
+  centeredText(ctx, "⚙", 40, 25, "bold 9px sans-serif");
+
+  const [name, args, at] = ctx.calls[0];
+  assert.equal(name, "fillText");
+  assert.deepEqual(args, ["⚙", 40, 25]);
+  assert.equal(at.textAlign, "center", "centered AT THE MOMENT OF THE DRAW, not merely at some point");
+  assert.equal(at.textBaseline, "middle");
+  assert.equal(at.font, "bold 9px sans-serif");
+
+  assert.equal(ctx.textAlign, "left", "and the canvas default is restored afterwards");
+  assert.equal(ctx.textBaseline, "alphabetic");
+});
+
+test("centeredText honours a caller-chosen baseline and still restores the default", () => {
+  // renderNodes' commodity glyph sits on a hand-tuned +3 offset rather than being vertically
+  // centered, so it passes "alphabetic" — the restore must not be confused by that.
+  const ctx = recCtx();
+  centeredText(ctx, "◆", 10, 13, "10px sans-serif", "alphabetic");
+  assert.equal(ctx.calls[0][2].textBaseline, "alphabetic");
+  assert.equal(ctx.textBaseline, "alphabetic");
+  assert.equal(ctx.textAlign, "left");
+});
+
+/* ---------- drawLabelChip ---------- */
+
+test("drawLabelChip sizes its plate from the measured text, and paints it BEFORE the label", () => {
+  // The plate has to be measured, not constant: the two call sites feed it labels that range
+  // from "⛏ blind spot — no surface to read (a gamble)" to "Tier 2 · draw ×1.4", and a plate
+  // sized by a stale constant is a legible label on an illegible background.
+  const ctx = recCtx();
+  const label = "Tier 2 · draw ×1.4";
+  drawLabelChip(ctx, label, 100, 60, "#5ec8ff");
+
+  const [rect, text] = ctx.calls;
+  assert.equal(rect[0], "fillRect", "the plate is painted first, or it would cover the label");
+  assert.equal(text[0], "fillText");
+
+  const w = ctx.measureText(label).width;
+  assert.deepEqual(rect[1], [100 - w / 2 - 5, 60 - 15, w + 10, 17], "plate wraps the measured width");
+  assert.equal(rect[2].fillStyle, "rgba(5, 7, 15, 0.78)", "default plate colour");
+  assert.equal(text[2].fillStyle, "#5ec8ff", "the label takes the caller's colour, not the plate's");
+  assert.deepEqual(text[1], [label, 100, 60]);
+});
+
+test("drawLabelChip's plate grows with a longer label", () => {
+  const short = recCtx(), long = recCtx();
+  drawLabelChip(short, "abc", 0, 0, "#fff");
+  drawLabelChip(long, "abcdefghijkl", 0, 0, "#fff");
+  assert.ok(long.calls[0][1][2] > short.calls[0][1][2], "a longer label gets a wider plate");
+});
+
+/* ---------- hiddenByFog ---------- */
+
+// Four draw passes carried their own copy of this rule. Every clause is easy to get backwards
+// and the failure is silent in the direction that matters: an inverted or dropped test doesn't
+// crash or look wrong, it quietly paints the enemy's army through the fog.
+test("hiddenByFog never hides the player's own entities, fog or no fog", () => {
+  // The player always sees their own units — including ones standing in unexplored territory,
+  // which is the normal case for a scout the instant it moves.
+  const dark = { fog: { w: 1, h: 1, vis: new Uint8Array(1) } };
+  assert.equal(hiddenByFog(dark, { owner: "player" }, 0, 0), false);
+});
+
+test("hiddenByFog hides an enemy standing outside vision, and reveals one inside it", () => {
+  const state = createGameState({ planetId: "ferros", seed: 77 });
+  updateFog(state, state.fog, "player");
+  const cc = [...state.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const far = { x: state.map.width - 1, y: state.map.height - 1 };
+
+  assert.equal(hiddenByFog(state, { owner: "ai" }, cc.x, cc.y), false,
+    "an enemy standing on the player's own Command Center is plainly in vision");
+  assert.equal(hiddenByFog(state, { owner: "ai" }, far.x, far.y), true,
+    "and one in the far corner, outside every sight radius, is not drawn");
+});
+
+test("hiddenByFog's observer mode reveals everything without touching the fog it bypasses", () => {
+  // observerMode is the self-play/replay camera. It must bypass the gate rather than mutate
+  // state.fog — a camera that reveals by writing to the fog would corrupt the very state the
+  // player's own rendering reads (see observer.js's header).
+  const state = createGameState({ planetId: "ferros", seed: 78 });
+  updateFog(state, state.fog, "player");
+  const far = { x: state.map.width - 1, y: state.map.height - 1 };
+  const before = JSON.stringify(state.fog);
+
+  assert.equal(hiddenByFog(state, { owner: "ai" }, far.x, far.y, true), false, "observer sees it");
+  assert.equal(JSON.stringify(state.fog), before, "and the fog itself is untouched by the look");
 });
