@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, relative, sep } from "node:path";
+import { walkJs } from "./_helpers.js";
 
 // This project has NO build step — the files in the repo are the files the browser loads. So a
 // syntax slip, a mistyped element id, or an import pointing at a moved file isn't caught by a
@@ -12,14 +13,27 @@ import { dirname, join, resolve } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Every JS file the app ships: the root modules + the engine. (test/ is excluded — `node --test`
-// already parses and runs it.)
+// Every JS file the app ships, at any depth: the root modules, the engine, and tools/. This used
+// to list exactly two directories non-recursively, so anything in a subdirectory escaped the
+// parse check and the import check together. (test/ is excluded — `node --test` already parses
+// and runs it. docs/ and dot-directories carry no shipped code.)
 function shippedJs() {
-  const files = readdirSync(root).filter(f => f.endsWith(".js")).map(f => join(root, f));
-  for (const f of readdirSync(join(root, "engine")))
-    if (f.endsWith(".js")) files.push(join(root, "engine", f));
-  return files;
+  return walkJs(root).filter(f => !relative(root, f).startsWith("test" + sep));
 }
+
+// The subset the BROWSER loads: shipped code minus tools/, which are Node CLI benches
+// (tools/ailab.js, tools/selfplay.js, tools/serve.js) that index.html never reaches.
+function browserJs() {
+  return shippedJs().filter(f => !relative(root, f).startsWith("tools" + sep));
+}
+
+// Every way a module can name another module: `... from "x"`, `import("x")`, and the bare
+// SIDE-EFFECT form `import "x"`. That last alternative is load-bearing and was missing: main.js
+// reaches starmap.js, techChart.js and update.js only through side-effect imports (they self-wire
+// their buttons and hotkeys at module-load time), so a regex without it both misreports them as
+// unreachable and would miss a side-effect import left pointing at a deleted file.
+const IMPORT_SPEC = /(?:import|export)[^"'`]*?from\s*["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|import\s+["']([^"']+)["']/g;
+const specPath = m => m[1] || m[2] || m[3];
 
 test("every shipped .js file parses (no syntax errors reach the browser)", () => {
   const broken = [];
@@ -31,6 +45,69 @@ test("every shipped .js file parses (no syntax errors reach the browser)", () =>
     }
   }
   assert.deepEqual(broken, [], "syntax error(s) in shipped JS:\n" + broken.join("\n"));
+});
+
+// Assets index.html points at, as (attr, path) pairs. Kept as a function over a STRING rather
+// than over the file so the test below can prove it actually reports a miss — pointing a
+// resolver at a known-good tree only ever proves it stays quiet.
+function htmlAssetRefs(html) {
+  return [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
+    .map(m => m[1])
+    .filter(p => p && !/^(https?:)?\/\//.test(p) && !p.startsWith("data:") && !p.startsWith("#") && !p.startsWith("/"));
+}
+
+test("every asset index.html references exists on disk", () => {
+  // index.html IS the entry point — there is no build step and no bundler to catch a rename.
+  // Verified: changing `src="main.js"` to `src="mian.js"` used to survive the entire suite on
+  // both Node versions plus the typecheck, and ship a blank white screen.
+  const html = readFileSync(join(root, "index.html"), "utf8");
+  const refs = htmlAssetRefs(html);
+  assert.ok(refs.includes("main.js") && refs.includes("style.css"),
+    "sanity: the resolver should see index.html's own script and stylesheet");
+  assert.deepEqual(refs.filter(p => !existsSync(resolve(root, p))), [],
+    "index.html references file(s) that don't exist — the page would load broken or blank");
+
+  // And prove the resolver bites, so this test can never quietly become a no-op.
+  const typo = htmlAssetRefs('<script type="module" src="mian.js"></script>');
+  assert.deepEqual(typo.filter(p => !existsSync(resolve(root, p))), ["mian.js"],
+    "the resolver must report a missing asset, not silently skip it");
+});
+
+test("every shipped browser module is reachable from index.html's entry point", () => {
+  // With no build step, a module nobody imports is not a link error — it's a feature that
+  // silently does nothing. This shipped: commit 2a07a69 fixed "Tech & Industry Chart never
+  // opening: main.js never imported it", where the 📊 button and the T hotkey did nothing at all
+  // and it was found by a human clicking. main.js still carries three side-effect-only imports
+  // (starmap, techChart, update) whose whole purpose is reachability, and seven modules attach
+  // their listeners at module-load time.
+  const html = readFileSync(join(root, "index.html"), "utf8");
+  const entries = [...html.matchAll(/<script[^>]*type="module"[^>]*src="([^"]+)"/g)].map(m => resolve(root, m[1]));
+  assert.ok(entries.length >= 1, "index.html must declare at least one module entry point");
+
+  const reached = new Set(entries);
+  const queue = [...entries];
+  while (queue.length) {
+    const file = queue.pop();
+    if (!existsSync(file)) continue;                       // the test above owns missing-file reporting
+    for (const m of readFileSync(file, "utf8").matchAll(IMPORT_SPEC)) {
+      const path = specPath(m);
+      if (!path || !path.startsWith(".")) continue;
+      const abs = resolve(dirname(file), path);
+      if (reached.has(abs)) continue;
+      reached.add(abs);
+      queue.push(abs);
+    }
+  }
+
+  // engine/types.js is JSDoc typedefs with no runtime code; it says so itself and is never
+  // imported by design. tools/ are Node CLI benches, not browser code.
+  const EXEMPT = new Set(["engine/types.js"]);
+  const orphans = browserJs()
+    .map(f => relative(root, f))
+    .filter(f => !EXEMPT.has(f) && !reached.has(join(root, f)));
+  assert.deepEqual(orphans, [],
+    "shipped module(s) no import chain reaches from index.html — their code never runs in the browser:\n" +
+    orphans.join("\n"));
 });
 
 test("every getElementById reference resolves to a real element id", () => {
@@ -59,12 +136,11 @@ test("every getElementById reference resolves to a real element id", () => {
 
 test("every relative import points at a file that exists", () => {
   const missing = [];
-  const spec = /(?:import|export)[^"'`]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
   for (const f of shippedJs()) {
     const src = readFileSync(f, "utf8");
     const dir = dirname(f);
-    for (const m of src.matchAll(spec)) {
-      const path = m[1] || m[2];
+    for (const m of src.matchAll(IMPORT_SPEC)) {
+      const path = specPath(m);
       if (!path || !path.startsWith(".")) continue;    // bare/absolute specifiers aren't ours to resolve
       if (!existsSync(resolve(dir, path)))
         missing.push(`${f.replace(root + "/", "")} → ${path}`);

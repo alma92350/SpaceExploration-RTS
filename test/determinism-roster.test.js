@@ -16,14 +16,38 @@ import { mulberry32, entitySnapshot, galaxySnapshot } from "./_helpers.js";
 test("same-seed replays are byte-identical on every Odyssey world (full roster sweep)", () => {
   assert.ok(ODYSSEY_WORLDS.length >= 11, "sanity: the roster is the nine skirmish worlds + Odyssey extras");
   for (const planetId of ODYSSEY_WORLDS) {
+    // The sweep is only as good as the fixture it replays, and for a long time this one only
+    // replayed the OPENING: 400 ticks (40 sim-seconds) produced measurably ZERO combat orders on
+    // all eleven worlds, <=8 units and <=3 buildings — so it could not see a nondeterminism bug
+    // in combat, veterancy, wreckage, or separation under real pressure. Simply running longer
+    // doesn't fix it: the player side is inert in a bare createGameState, so fighting only
+    // happens if the AI happens to walk over. At 3000 ticks Vesper still never fought.
+    //
+    // So the fixture seeds both sides a small symmetric army pointed at the other's base. That
+    // reaches real combat on every world in ~1200 ticks, and `sawCombat` below FAILS the sweep if
+    // a future change ever makes it stop doing so.
     const run = () => {
       const s = createGameState({ planetId, seed: 24680, rng: mulberry32(24680), endless: true });
-      for (let i = 0; i < 400 && !s.over; i++) tick(s, 0.1);
-      return s;
+      const bases = s.map.bases;
+      for (let k = 0; k < 6; k++) {
+        for (const [owner, home, foe] of [["player", bases.player, bases.ai], ["ai", bases.ai, bases.player]]) {
+          const u = makeUnit(["skiff", "bastion", "lancer"][k % 3], owner, home.x + (k % 3) * 18, home.y + Math.floor(k / 3) * 18);
+          u.order = { type: "attack-move", x: foe.x, y: foe.y };
+          s.units.set(u.id, u);
+        }
+      }
+      let sawCombat = false;
+      let i = 0;
+      for (; i < 1200 && !s.over; i++) {
+        tick(s, 0.1);
+        if (!sawCombat) sawCombat = [...s.units.values()].some(u => u.order && /^attack/.test(u.order.type));
+      }
+      return { s, sawCombat, ticks: i };
     };
     const a = run(), b = run();
-    assert.equal(entitySnapshot(a), entitySnapshot(b), `${planetId}: same seed must replay identically`);
-    assert.ok(a.tick >= 400, `${planetId}: the run must actually have progressed`);
+    assert.equal(entitySnapshot(a.s), entitySnapshot(b.s), `${planetId}: same seed must replay identically`);
+    assert.ok(a.ticks >= 400, `${planetId}: the run must actually have progressed`);
+    assert.ok(a.sawCombat, `${planetId}: the sweep must actually reach combat, or it only replays the opening`);
   }
 });
 

@@ -13,9 +13,28 @@
      colony ship staged on the pad, credits to pay the fuel.
    ============================================================ */
 
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { createGalaxy, activeState } from "../engine/galaxy.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
+
+// Every .js file under `dir`, at ANY depth. The static guards (engine-purity, static-integrity)
+// used a bare readdirSync, which is not recursive — so a file in an engine/ subdirectory escaped
+// the determinism scan, the DOM scan, the parse check AND the import check all at once. Since
+// engine-purity.test.js's own rationale is that the engine "could one day run server-side
+// (netcode, replays)", the first thing that growth produces — engine/net/ — was exactly the
+// blind spot. Both guards share this walker now so they can't drift apart again.
+export function walkJs(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkJs(path));
+    else if (entry.name.endsWith(".js")) out.push(path);
+  }
+  return out;
+}
 
 // mulberry32, kept local (identical to engine/rng.js): a test driving createGameState
 // wants a varying-but-reproducible sequence without reaching into engine internals.
