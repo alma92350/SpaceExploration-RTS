@@ -1109,6 +1109,30 @@ export function canAfford(resources, cost) {
   return Object.entries(cost).every(([com, qty]) => (resources[com] || 0) >= qty);
 }
 
+// Clamp to a range. Byte-identical private copies lived in diplomacy.js and market.js, both on
+// determinism-sensitive paths (stance drift and price math), so one being "fixed" without the other
+// is a divergence no single-module suite would see.
+/** @param {number} v @param {number} lo @param {number} hi @returns {number} */
+export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// The refund delta for a cost bag. Lives here, beside payCost, because BOTH refund paths need it:
+// engine/production.js (a cancelled unit) and engine/techtree.js (a cancelled research) each used to
+// carry a byte-identical private copy, so a rounding or negative-zero fix applied to one and not the
+// other would be a silent economy asymmetry no single-module suite could see.
+/** @param {Resources} cost @returns {Resources} */
+export function negate(cost) {
+  return Object.fromEntries(Object.entries(cost).map(([com, qty]) => [com, -qty]));
+}
+
+// Does `owner` have a FINISHED building of this type? The prereq question both UI surfaces ask —
+// overlays.js's help panel and techChart.js's ladder — which used to carry the same body under two
+// different names (hasBuilding / hasCompletedBuilding), which is why the duplication went unnoticed.
+/** @param {State} state @param {string} owner @param {string} type @returns {boolean} */
+export function hasCompletedBuilding(state, owner, type) {
+  for (const b of state.buildings.values()) if (b.owner === owner && b.type === type && !b.constructing) return true;
+  return false;
+}
+
 export function payCost(resources, cost) {
   Object.entries(cost).forEach(([com, qty]) => { resources[com] = (resources[com] || 0) - qty; });
 }

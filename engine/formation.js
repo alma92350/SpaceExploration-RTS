@@ -54,6 +54,7 @@
 
 "use strict";
 
+import { radiusOf } from "./colliders.js";
 import { UNITS } from "./entities.js";
 
 export const FORMATION_SHAPES = ["grid", "line", "wedge", "circle"];
@@ -65,10 +66,6 @@ const SPACING_PAD = 8;          // clearance beyond 2x the largest hull's radius
 const CLUSTER_RADIUS = 150;     // units within this of each other (transitively) count as one army
 const NEST_GAP_MULT = 2.4;      // outer (formation-of-formations) spacing, as a multiple of a cluster's own footprint
 
-/** @param {Unit} u @returns {number} */
-function radiusOf(u) {
-  return UNITS[u.type] ? UNITS[u.type].radius : 9;
-}
 
 /** @param {{x?:number, y?:number}} u @returns {{x:number, y:number}} */
 function pos(u) {

@@ -53,8 +53,14 @@ export function updateScoutMode(state, unit, dt) {
       order.tx = spot.x; order.ty = spot.y; order.explore = true;
     } else {
       // Nothing left to discover — walk a patrol circuit to keep vision fresh.
-      order.patrol = ((order.patrol ?? -1) + 1) % PATROL.length;
-      const [fx, fy] = PATROL[order.patrol];
+      // `patrolLeg`, NOT `patrol`: engine/commands.js issuePatrol stamps `patrol: true` as a boolean
+      // "requeue me" flag that engine/sim.js reads off orderQueue, so storing a circuit INDEX under
+      // the same name is a shape-dependent collision — leg 0 is falsy (no requeue), legs 1-3 are
+      // truthy (infinite requeue of the same order object). Latent only because issueScout writes
+      // u.order directly and clears orderQueue; both commands are gated to role === "scout", so the
+      // Ranger is the one unit that can hold either kind of order.
+      order.patrolLeg = ((order.patrolLeg ?? -1) + 1) % PATROL.length;
+      const [fx, fy] = PATROL[order.patrolLeg];
       order.tx = (state.map?.width || 0) * fx;
       order.ty = (state.map?.height || 0) * fy;
       order.explore = false;

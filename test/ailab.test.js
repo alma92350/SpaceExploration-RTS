@@ -26,7 +26,7 @@ import { join } from "node:path";
 import {
   run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard,
   runDuel, runRoundRobin, pinnedDuelDials, runSwappedDuel, runDuelBrackets, runRoundRobinSwapped, runSearch,
-  runSwissTournament, pairRound,
+  runSwissTournament, pairRound, rankStandings, buildSwissBracket, snapshotTables, restoreTables,
 } from "../tools/ailab.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
@@ -139,9 +139,20 @@ test("an overrides row reaches the sim — a strategy that never initiates commi
 });
 
 test("applyOverrides merges into an existing row rather than replacing it", () => {
-  applyOverrides({ strategies: { aggressive: { garrisonMult: 0.9 } } });
-  assert.equal(STRATEGIES.aggressive.garrisonMult, 0.9, "the overridden field is applied");
-  assert.equal(STRATEGIES.aggressive.attackTimeoutMult, 0.55, "…and the untouched fields survive");
+  // Restored afterwards. applyOverrides writes straight into the LIVE shipped table with no undo,
+  // and this test had none — so `aggressive.garrisonMult` stayed at 0.9 instead of its shipped 0.4
+  // for the rest of the file, and the 21 later tests that select `strategy: "aggressive"` measured a
+  // variant the game never ships. Worse, the three "overrides never leak into the next run" tests
+  // capture their baseline AFTER this point, so the suite's own leak detector was calibrated
+  // against the leaked state. snapshotTables/restoreTables were already exported and simply unused.
+  const snap = snapshotTables();
+  try {
+    applyOverrides({ strategies: { aggressive: { garrisonMult: 0.9 } } });
+    assert.equal(STRATEGIES.aggressive.garrisonMult, 0.9, "the overridden field is applied");
+    assert.equal(STRATEGIES.aggressive.attackTimeoutMult, 0.55, "…and the untouched fields survive");
+  } finally {
+    restoreTables(snap);
+  }
 });
 
 test("score components stay in 0..1 and the total is their weighted mean", () => {
@@ -738,9 +749,29 @@ test("Swiss needs at least 2 candidates, and rejects duplicate names up front (r
   assert.throws(() => runSwissTournament(dup, shortSwiss()), /duplicate candidate name/);
 });
 
+/* ---- Swiss SCHEDULE tests, on synthetic results ---------------------------------------------
+   These four used to drive real 15-40 sim-minute matches to assert pure combinatorics — round
+   count, pairings per round, bye rotation, rematch avoidance — roughly 50 s of the suite's wall
+   clock spent proving arithmetic. tools/ailab.js now exposes buildSwissBracket with the match
+   runner injected, so they run on a stub in milliseconds. This is the idiom pairRound's own test
+   already used, and explained: "isolates the pairing algorithm from match simulation entirely."
+   The genuinely end-to-end tests (a strong candidate beating a crippled one, determinism,
+   override isolation) still run real matches. */
+
+// A deterministic stand-in for runSwappedDuel: alphabetically-earlier name wins, so standings move
+// in a predictable way without simulating anything.
+const fakePair = (a, b) => ({
+  aName: a.name, bName: b.name, n: 2, draws: 0,
+  aWins: a.name < b.name ? 2 : 0,
+  bWins: a.name < b.name ? 0 : 2,
+  avgMargin: 0, rows: [],
+});
+const field = n => Array.from({ length: n }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+const swissRounds = n => Math.max(3, Math.ceil(Math.log2(n)));
+
 test("default rounds follow ceil(log2(n)), and every round pairs at most floor(n/2) matches", () => {
-  const candidates = Array.from({ length: 8 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
-  const [bracket] = runSwissTournament(candidates, shortSwiss());
+  const candidates = field(8);
+  const bracket = buildSwissBracket(candidates, swissRounds(8), { worlds: ["korrath"], seeds: 1 }, fakePair);
   assert.equal(bracket.rounds, 3, "ceil(log2(8)) = 3, at least the floor of 3");
   assert.equal(bracket.roundsLog.length, 3);
   for (const { byeName, matches } of bracket.roundsLog) {
@@ -751,8 +782,8 @@ test("default rounds follow ceil(log2(n)), and every round pairs at most floor(n
 
 test("Swiss runs strictly fewer pairings than full round-robin for a pool large enough for it to matter", () => {
   const n = 10;
-  const candidates = Array.from({ length: n }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
-  const [bracket] = runSwissTournament(candidates, shortSwiss());
+  const candidates = field(n);
+  const bracket = buildSwissBracket(candidates, swissRounds(n), { worlds: ["korrath"], seeds: 1 }, fakePair);
   const swissPairings = bracket.roundsLog.reduce((a, r) => a + r.matches.length, 0);
   const roundRobinPairings = (n * (n - 1)) / 2;
   assert.ok(swissPairings < roundRobinPairings,
@@ -762,8 +793,8 @@ test("Swiss runs strictly fewer pairings than full round-robin for a pool large 
 test("byes rotate: nobody gets a second bye while another candidate hasn't had one yet", () => {
   // 5 candidates (odd) over enough rounds that everyone gets exactly one bye before anyone gets a
   // second — 5 rounds guarantees every candidate has been the odd one out exactly once.
-  const candidates = Array.from({ length: 5 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
-  const [bracket] = runSwissTournament(candidates, shortSwiss({ rounds: 5 }));
+  const candidates = field(5);
+  const bracket = buildSwissBracket(candidates, 5, { worlds: ["korrath"], seeds: 1 }, fakePair);
   const byes = bracket.roundsLog.map(r => r.byeName);
   assert.equal(new Set(byes).size, 5, `every candidate should get exactly one bye across 5 rounds of 5, got: ${byes.join(", ")}`);
 });
@@ -772,9 +803,9 @@ test("a bye is scorable-neutral: it adds to nobody's wins or losses, only its ow
   // A bye is a candidate the schedule couldn't pair, not a match anyone won — crediting it as a
   // win (at ANY size) lets a candidate that never fights outrank one that actually won something.
   // The only thing a bye should move is `byes` (bookkeeping/reporting), never `wins`/`losses`.
-  const candidates = Array.from({ length: 3 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
-  const opts = shortSwiss({ worlds: ["ferros", "vesper"], seeds: 2 });
-  const [bracket] = runSwissTournament(candidates, opts);
+  // Pure bookkeeping — no match needs simulating to prove a bye moves only `byes`.
+  const opts = { worlds: ["ferros", "vesper"], seeds: 2 };
+  const bracket = buildSwissBracket(field(3), swissRounds(3), opts, fakePair);
   const round = bracket.roundsLog.find(r => r.byeName);
   assert.ok(round, "fixture: an odd pool must produce a bye somewhere");
   // byeMatchCount is purely informational — "how big a real pairing this round would have been" —
@@ -789,20 +820,22 @@ test("a bye never lets a candidate that structurally cannot fight tie or beat on
   // neverInitiates + a zero standing-army cap (cannot ever field a fight in skirmish) draws a bye,
   // and a genuine winner must still rank strictly above it — a bye must never be worth what a real
   // win is worth.
-  const normal = { name: "normal", strategy: "default" };
-  const crippled = (i) => ({
-    name: `crippled${i}`, strategy: `labByeCrippled${i}`,
-    overrides: { strategies: { [`labByeCrippled${i}`]: { neverInitiates: true, standingArmyCap: 0 } } },
+  // Names chosen so the bye lands on a CRIPPLED candidate: pairRound tie-breaks an all-zero round-1
+  // standing by name (it used to take whichever was listed last, which made the bye depend on CLI
+  // argument order), and the recipient is the last such name. So "zz-crippled" draws it, leaving
+  // "a-normal" to actually fight — which is what gives this test something to compare.
+  const normal = { name: "a-normal", strategy: "default" };
+  const crippled = (name) => ({
+    name, strategy: `labByeCrippled_${name}`,
+    overrides: { strategies: { [`labByeCrippled_${name}`]: { neverInitiates: true, standingArmyCap: 0 } } },
   });
-  // 3 candidates (odd): normal beats one crippled candidate in a real match, the OTHER crippled
-  // candidate draws the round's bye and therefore never fights anyone at all.
-  const candidates = [normal, crippled(1), crippled(2)];
+  const candidates = [normal, crippled("m-crippled"), crippled("zz-crippled")];
   const opts = shortSwiss({ worlds: ["korrath"], minutes: 15, seeds: 1, rounds: 1 });
   const [bracket] = runSwissTournament(candidates, opts);
   const byeRecipient = bracket.roundsLog[0].byeName;
   assert.ok(byeRecipient, "fixture: 3 candidates is odd, a bye must fire");
   const byeRow = bracket.standings.find(s => s.name === byeRecipient);
-  const normalRow = bracket.standings.find(s => s.name === "normal");
+  const normalRow = bracket.standings.find(s => s.name === "a-normal");
   assert.equal(byeRow.wins, 0, "a candidate that never fought must have zero wins, bye or not");
   assert.ok(normalRow.wins > byeRow.wins,
     `the genuine winner (${normalRow.wins} wins) must rank strictly above a bye recipient that never fought (${byeRow.wins} wins)`);
@@ -816,9 +849,9 @@ test("rematch avoidance: with enough candidates relative to rounds, no pairing r
   // with the old algorithm). pairRound now backtracks to find a zero-repeat matching whenever one
   // exists, so this checks across several seed bases — including the ones independently confirmed
   // to break the old algorithm — rather than trusting a single roll.
-  const candidates = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
+  const candidates = field(6);
   for (const seedBase of [1, 6, 7, 9, 10]) {
-    const [bracket] = runSwissTournament(candidates, shortSwiss({ rounds: 3, seedBase }));
+    const bracket = buildSwissBracket(candidates, 3, { worlds: ["korrath"], seeds: 1, seedBase }, fakePair);
     const seen = new Set();
     for (const { matches } of bracket.roundsLog) {
       for (const res of matches) {
@@ -872,12 +905,15 @@ test("Swiss standings: total wins equal total losses — a bye contributes to ne
   assert.equal(totalWins, totalLosses, "every win must have a matching loss somewhere — a bye must add to neither");
 });
 
-test("standings are sorted most-wins-first (ties broken by fewer losses)", () => {
-  const candidates = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, strategy: "default" }));
-  const [bracket] = runSwissTournament(candidates, shortSwiss());
+test("standings are sorted by win RATE, with raw wins as the tie-break", () => {
+  // Updated, not deleted: this used to assert most-wins-first, which ranked "everyone who avoided a
+  // bye, then everyone who didn't" — a bye recipient plays one fewer pairing and so has strictly
+  // fewer chances to earn a win. Rate is the contract now; wins break a rate tie.
+  const bracket = buildSwissBracket(field(6), swissRounds(6), { worlds: ["korrath"], seeds: 1 }, fakePair);
+  const rate = r => { const n = r.wins + r.losses + r.draws; return n > 0 ? r.wins / n : 0; };
   for (let i = 1; i < bracket.standings.length; i++) {
     const prev = bracket.standings[i - 1], cur = bracket.standings[i];
-    assert.ok(prev.wins > cur.wins || (prev.wins === cur.wins && prev.losses <= cur.losses),
+    assert.ok(rate(prev) > rate(cur) || (rate(prev) === rate(cur) && prev.wins >= cur.wins),
       `standings order violated at index ${i}: ${JSON.stringify(prev)} before ${JSON.stringify(cur)}`);
   }
 });
@@ -958,4 +994,59 @@ test("two duel candidates overriding DIFFERENT keys still run (A9 regression fen
   const a = { name: "x", strategy: "probeA", overrides: { strategies: { probeA: { attackTimeoutMult: 0.5 } } } };
   const b = { name: "y", strategy: "probeB", overrides: { strategies: { probeB: { attackTimeoutMult: 1.5 } } } };
   assert.doesNotThrow(() => runDuel(a, b, { worlds: ["korrath"], seeds: 1, minutes: 2 }));
+});
+
+test("this suite leaves the shipped strategy table exactly as it found it (T2)", () => {
+  // Placed last on purpose: it is a whole-file assertion, not a unit one.
+  assert.equal(STRATEGIES.aggressive.garrisonMult, 0.4, "the shipped garrisonMult, not a test's override");
+  assert.equal(STRATEGIES.aggressive.attackTimeoutMult, 0.55);
+});
+
+test("the side-swap is a PAIRED comparison: both directions play the same maps (T2)", () => {
+  // runSwappedDuel's own header says the swap exists so "a side-symmetry bug would show up as those
+  // two disagreeing". It could not: duelSeed hashes the candidate names in ORDER, and the two
+  // directions call runDuel(a,b) then runDuel(b,a), so the halves differed in seat AND MAP.
+  // A disagreement was therefore confounded with ordinary seed variance and carried no information
+  // about seat symmetry — while the seat asymmetry it was meant to catch is real and measurable.
+  // swapAsym, the map-side control, was already paired correctly by replicate parity; this makes
+  // the seat-side control match.
+  const res = runSwappedDuel({ name: "alpha" }, { name: "beta" },
+    { worlds: ["korrath"], seeds: 2, minutes: 2 });
+  const fixture = rows => rows.map(r => [r.world, r.seed, r.swapAsym]);
+  assert.deepEqual(fixture(res.bAsAi.rows), fixture(res.aAsAi.rows),
+    "both directions must play the SAME world/seed/asym fixtures — only the seat differs");
+});
+
+test("the round-1 bye doesn't depend on the order candidates were listed in (T2)", () => {
+  // pairRound sorts on wins alone, and in round 1 every standing is 0-0. V8's sort is stable, so
+  // the order is preserved and the loop takes the LAST element — i.e. `--candidates a,…,e`
+  // structurally penalised whichever file was listed last. Nothing to do with merit.
+  const names = ["A", "B", "C", "D", "E"];
+  const rows = order => order.map(n => ({ name: n, wins: 0, losses: 0, draws: 0, byes: 0 }));
+  const byeFor = order => pairRound(rows(order), new Set(), new Set()).byeName;
+  const a = byeFor(names);
+  const b = byeFor([...names].reverse());
+  const c = byeFor(["C", "A", "E", "B", "D"]);
+  assert.equal(a, b, `listing the same field in reverse changed the bye (${a} vs ${b})`);
+  assert.equal(a, c, `listing the same field shuffled changed the bye (${a} vs ${c})`);
+});
+
+test("standings rank by RESULT, not by how many pairings the schedule handed out (T2)", () => {
+  // A bye is scorable-neutral (the e9ad1d0 fix) — but the standings still sorted on absolute win
+  // totals, and a bye recipient simply plays one fewer pairing, i.e. worlds x seeds x 2 fewer
+  // chances to earn a win (16 under the swiss CLI defaults). So the ranking was literally "everyone
+  // who avoided a bye, then everyone who didn't": a 2W-2L candidate at 50% ranked below a 3W-3L
+  // candidate at 50% purely for having played more. This is the mirror image of the bug e9ad1d0
+  // just fixed, in the one place the tool is supposed to be trustworthy.
+  const played = { name: "played-more", wins: 3, losses: 3, draws: 0, byes: 0 };
+  const byed = { name: "took-a-bye", wins: 2, losses: 2, draws: 0, byes: 1 };
+  const ranked = rankStandings([played, byed]);
+  assert.equal(ranked[0].name, ranked[1].name === "played-more" ? "took-a-bye" : "played-more",
+    "sanity: the two are distinct rows");
+  assert.deepEqual(ranked.map(r => r.name).sort(), ["played-more", "took-a-bye"]);
+  assert.equal(rankStandings([played, byed])[0].wins / 6, 0.5, "both are at 50% — this is a genuine tie");
+  // The real assertion: equal rates must not be broken in favour of the bigger denominator.
+  const strictlyBetter = { name: "better", wins: 3, losses: 1, draws: 0, byes: 1 };
+  assert.equal(rankStandings([played, strictlyBetter])[0].name, "better",
+    "a 75% record must outrank a 50% one even though it played fewer pairings");
 });

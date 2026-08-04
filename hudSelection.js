@@ -186,22 +186,16 @@ function factorySignature(sel) {
     + ":" + Math.round(inputTotal(f) / 4) + ":" + Math.round(storeTotal(f) / 4) + ":" + (iceCoolantMult(state, f.owner) < 1)
     + ":" + (f.logiPriority || "normal");
 }
-
-export function renderSelectionPanel() {
-  const { state, input } = game;
-  const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
-  const aggregated = sel.length > 1 && sel.every(e => e.kind === "unit");
-
-  // Only rebuild the panel's DOM when the set of buttons/rows it should
-  // show would actually change (selection, build-placement mode,
-  // upgrades researched, or the production queue's composition).
-  // Rebuilding on every HUD tick — even though hp/progress numbers
-  // change constantly — replaced the exact button the player was
-  // mid-click on with a fresh DOM node, and a mouseup landing after that
-  // swap could drop the click entirely: felt like only a sliver of the
-  // button was clickable, when really it was a timing race, not a
-  // sizing one.
-  const signature = sel.map(e => `${e.id}:${e.kind === "building" ? e.constructing : ""}`).join(",")
+// The panel's entire reactivity model, in one named place. It decides whether renderSelectionPanel
+// rebuilds at all, so a panel whose own state contributes no term here silently never redraws — the
+// class of bug that left the Freight Lane and Colony Policy controls inert. Extracted out of
+// renderSelectionPanel so it can be read, tested and moved as a unit; the long-term fix is to
+// co-locate each panel's term with the panel that draws it (a registry of
+// { match, signature, render } — docs/code-improvement-tiers.md, Tier 3), and this is the seam that
+// makes that a move rather than a rewrite. test/hudSelection.test.js drives a completeness table
+// over every interactive panel family so a missing term fails loudly instead of shipping dead.
+function panelSignature(sel, state, input, aggregated) {
+  return sel.map(e => `${e.id}:${e.kind === "building" ? e.constructing : ""}`).join(",")
     + "|" + (input.building ? input.building.buildingType : "")
     + "|" + Object.keys(state.players.player.upgrades).sort().join(",")
     + "|" + aggregated
@@ -359,6 +353,24 @@ export function renderSelectionPanel() {
         if (!game.galaxy) return "";
         return JSON.stringify(getColonyPolicy(game.galaxy, state.planetId) || null);
       })();
+}
+
+
+export function renderSelectionPanel() {
+  const { state, input } = game;
+  const sel = state.selection.map(id => state.units.get(id) || state.buildings.get(id)).filter(Boolean);
+  const aggregated = sel.length > 1 && sel.every(e => e.kind === "unit");
+
+  // Only rebuild the panel's DOM when the set of buttons/rows it should
+  // show would actually change (selection, build-placement mode,
+  // upgrades researched, or the production queue's composition).
+  // Rebuilding on every HUD tick — even though hp/progress numbers
+  // change constantly — replaced the exact button the player was
+  // mid-click on with a fresh DOM node, and a mouseup landing after that
+  // swap could drop the click entirely: felt like only a sliver of the
+  // button was clickable, when really it was a timing race, not a
+  // sizing one.
+  const signature = panelSignature(sel, state, input, aggregated);
 
   if (signature !== lastPanelSignature) {
     lastPanelSignature = signature;
@@ -1259,6 +1271,21 @@ function sectionToggle(key, label, count) {
 }
 
 function rebuildSelectionPanel(sel) {
+  // The units a building's panel should offer: the ENGINE's own roster, filtered by the ENGINE's own
+  // two gates. This used to be three hand-maintained copies of entities.js's `produces` lists — two
+  // identical literals plus a pair of unrolled blocks — so adding a unit to a roster made it
+  // buildable by the engine and by the AI while staying invisible in the UI, with nothing failing.
+  // The Odyssey gate was duplicated differently as well: queueProduction gates per-unit on
+  // `def.odysseyOnly && !state.endless`, while the HUD hand-split the array on game.galaxy.
+  const producibleAt = type => (BUILDINGS[type].produces || []).filter(t => {
+    const def = UNITS[t];
+    if (!def) return false;
+    if (def.odysseyOnly && !state.endless && !game.galaxy) return false;
+    // A specialty unit whose cost commodity this world can neither mine nor stock is hidden rather
+    // than shown forever-greyed — the engine's own availability rule (engine/market.js).
+    return Object.keys(def.cost).every(c => commodityAvailable(state, "player", c));
+  });
+
   const { state, input } = game;
   panelEl.innerHTML = "";
   panelActions = [];
@@ -1375,9 +1402,7 @@ function rebuildSelectionPanel(sel) {
     // Odyssey CC panels below, so a skirmish CC shows only Worker/Ranger.
     // Odyssey adds the Colony Ship (found a base) and the three cargo ships (haul goods on a jump —
     // gated behind the Spaceport, so they surface once you've built the jump pad).
-    const ccUnits = game.galaxy
-      ? ["worker", "ranger", "colonyship", "hauler", "heavyhauler", "bulkfreighter"]
-      : ["worker", "ranger"];
+    const ccUnits = producibleAt("command");
     // Collapsible: 7-11 produce buttons (base + altCost variants) is the biggest cluster on the
     // CC panel — count matches what a player thinks of as "the list" (one entry per unit type),
     // not the raw altCost-doubled button count.
@@ -1419,11 +1444,7 @@ function rebuildSelectionPanel(sel) {
     // Only offer a unit this world can actually pay for — a specialty unit
     // (Wraith/gas, Aegis/ice, Colossus/relics) is hidden entirely on a map that
     // deposits none of its commodity, instead of showing a forever-greyed button.
-    // Ask the ENGINE's own predicate, not a local copy. The copy here checked only "a local node
-    // deposits it", which is a rule the engine does not have — commodityAvailable also counts stock
-    // already in the treasury, which on a galaxy world arrives by lane, freighter or purchase.
-    const buildable = t => Object.keys(UNITS[t].cost).every(c => commodityAvailable(state, "player", c));
-    const trainable = ["skiff", "bastion", "lancer", "breacher", "dreadnought", "mender", "wraith", "aegis", "colossus"].filter(buildable);
+    const trainable = producibleAt("barracks");
     if (sectionToggle("barracks:produce", "Produce", trainable.length)) {
       for (const t of trainable) {
         const def = UNITS[t];
@@ -1514,19 +1535,20 @@ function rebuildSelectionPanel(sel) {
   // so the Barracks' on-map-cost filter would hide it.
   const stardock = sel.find(e => e.kind === "building" && e.type === "stardock" && !e.constructing);
   if (stardock) {
-    const def = UNITS.leviathan;
-    const locked = !prereqsMet(state, "player", def);
-    panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
-      () => queueProduction(state, stardock.id, "leviathan"),
-      { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: "leviathan" } }));
-    // The doomsday device beside it — same strategic-goods gate, built unarmed (see
-    // engine/bomb.js; arming is a separate step once it's out on the field).
-    const bombDef = UNITS.heliumbomb;
-    const bombLocked = !prereqsMet(state, "player", bombDef);
-    panelEl.appendChild(prodButton(`Produce ${bombDef.name} (${costText(bombDef.cost)})`,
-      () => queueProduction(state, stardock.id, "heliumbomb"),
-      { cost: bombDef.cost, tip: `${unitTip(bombDef)} · ${BOMB_BLAST_RADIUS}-radius blast, ${BOMB_FUSE_DELAY}s fuse once triggered — damage falls off with distance from ground zero`,
-        locked: bombLocked, lockTip: bombLocked ? lockTipFor(bombDef) : null, icon: { kind: "unit", type: "heliumbomb" } }));
+    // Driven off BUILDINGS.stardock.produces like the CC and Barracks panels, rather than two
+    // hand-unrolled blocks — the third shape this same roster used to be written in.
+    for (const t of producibleAt("stardock")) {
+      const def = UNITS[t];
+      const locked = !prereqsMet(state, "player", def);
+      // The doomsday device gets an extra line about its blast (engine/bomb.js; it is built unarmed,
+      // and arming is a separate step once it's out on the field).
+      const tip = t === "heliumbomb"
+        ? `${unitTip(def)} · ${BOMB_BLAST_RADIUS}-radius blast, ${BOMB_FUSE_DELAY}s fuse once triggered — damage falls off with distance from ground zero`
+        : unitTip(def);
+      panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
+        () => queueProduction(state, stardock.id, t),
+        { cost: def.cost, tip, locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+    }
     if (stardock.queue.length) renderQueueRows(stardock);
   }
 

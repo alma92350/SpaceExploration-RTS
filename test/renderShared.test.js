@@ -247,3 +247,19 @@ test("resetFacing clears both the facing map and the interpolation baselines", (
 // meaningfully needs a ctx stub recording calls, which is more "mock a canvas" than "open a
 // crack" in this pure-helpers file. Skipped by design; the geometry they're built on
 // (toWorld/polygonPoints) is covered above.
+
+test("shade and hexA return identical strings for repeated (hex, arg) pairs (T2)", async () => {
+  // Behavioural invariance for the memo below. Both are called from inside the per-frame draw loop
+  // and each builds three or four short-lived strings per call (slice, toString(16), padStart, a
+  // template) — measured at ~0.9 MB/s of garbage across a full frame at 306 units. Only two owner
+  // colours and about a dozen fixed percentages ever occur, so the hit rate is effectively 100%.
+  const { shade, hexA } = await import("../renderShared.js");
+  for (const [hex, pct] of [["#5ec8ff", -25], ["#5ec8ff", 20], ["#ff5e3d", -25], ["#000000", 0], ["#ffffff", 99]]) {
+    assert.equal(shade(hex, pct), shade(hex, pct), `shade(${hex}, ${pct}) must be stable`);
+    assert.match(shade(hex, pct), /^#[0-9a-f]{6}$/, "and still a six-digit hex");
+  }
+  assert.equal(shade("#000000", -50), "#000000", "clamps at black");
+  assert.equal(shade("#ffffff", 50), "#ffffff", "and at white");
+  for (const a of [0, 0.5, 1]) assert.equal(hexA("#5ec8ff", a), hexA("#5ec8ff", a));
+  assert.equal(hexA("#5ec8ff", 0.5), "rgba(94, 200, 255, 0.5)");
+});

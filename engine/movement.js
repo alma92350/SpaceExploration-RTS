@@ -17,6 +17,7 @@
 
 "use strict";
 
+import { radiusOf } from "./colliders.js";
 import { UNITS } from "./entities.js";
 import { queryNeighbors } from "./grid.js";
 import { sampleTerrain, sideMod } from "./map.js";
@@ -32,10 +33,6 @@ const AVOID_WEIGHT = 1.6;   // how strongly a sensed neighbor bends the seek dir
 // exact-distance check still filters identically, so replays stay byte-identical.
 export const MAX_UNIT_RADIUS = Math.max(...Object.values(UNITS).map(u => u.radius || 0));
 
-/** @param {Unit|Building} entity @returns {number} */
-function radiusOf(entity) {
-  return UNITS[entity.type] ? UNITS[entity.type].radius : 9;
-}
 
 // The formation slot for an escorting unit — a point on a protective ring around the friendly
 // ship it's guarding (order {type:"escort", targetId, slot, slots}). The ring expands if the

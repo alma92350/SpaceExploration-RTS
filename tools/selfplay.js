@@ -78,11 +78,28 @@ export function createSelfPlayState({
 }
 
 /**
- * Advance a self-play state by one fixed step. Both controllers think on the IDENTICAL pre-tick
- * snapshot — owner "player" is driven explicitly, right here, BEFORE tick(state, dt) runs its own
- * hardcoded runAI(state, dt) call for owner "ai" (engine/sim.js) — so neither side ever gets to
- * react to information the other's think cycle already changed this frame (a hidden one-tick
- * information edge would itself be a fairness bug, the same class constraint 2 exists to prevent).
+ * Advance a self-play state by one fixed step: owner "player" is driven explicitly here, then
+ * tick(state, dt) runs its own hardcoded runAI(state, dt) for owner "ai" (engine/sim.js).
+ *
+ * ORDERING, STATED HONESTLY. This comment used to claim both controllers think on the IDENTICAL
+ * pre-tick snapshot. They do not. runAI(…, "player") is not a read: issueBuild inserts into
+ * state.buildings immediately, queueProduction mutates queues, payCost mutates resources. Both
+ * controllers share THINK_INTERVAL and start their countdowns together, so the "ai" seat reads
+ * state the "player" seat has already changed that frame. Measured over 400 player think-cycles in
+ * a 10-sim-minute korrath match: orders differed on 13% of cycles, queues and resources on 6%, and
+ * buildings on 1%.
+ *
+ * The channel that actually feeds decisions is `buildings` — chooseAttackTarget's seenBuildings
+ * scan and counterToPlayerArmy's static-defense scan both walk state.buildings.values() — so a
+ * turret the player controller founded microseconds earlier is answerable one think cycle (1.5 s)
+ * sooner than the mirror case ever could be. Small, but FIXED IN DIRECTION: it always favours the
+ * "ai" seat, every cycle, in every duel and Swiss match.
+ *
+ * Why it isn't simply fixed here: making the claim true means either a genuinely frozen pre-tick
+ * read, or moving the "ai" call out of sim.js's hardcoded pipeline so the two can alternate. Both
+ * restructure engine/sim.js's tick contract, which is a larger change than this seam. The bound is
+ * pinned by a characterisation test in test/ai-selfplay.test.js instead, so the edge cannot grow
+ * unnoticed while the real fix is scheduled (docs/code-improvement-tiers.md, Tier 3).
  * @param {State} state @param {number} [dt]
  */
 export function tickSelfPlay(state, dt = DT) {

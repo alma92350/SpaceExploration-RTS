@@ -791,3 +791,46 @@ test("an AI-logistics freighter whose cargo slot was nulled by load coercion nev
   assert.ok(f.cargo && f.cargo.com === "ore" && f.cargo.qty > 0,
     "and it must actually load the input it went to fetch");
 });
+
+test("pacified/reached/discovered/wonBy are filtered to real ids on load (T2)", () => {
+  // These sat unfiltered while their siblings three lines away — claims, colonyPolicies, worlds —
+  // were carefully filtered against the known roster. galaxy.pacified.size is a RAW size check
+  // against DOMINATION_TARGET and feeds PACIFIED_INCOME, and galaxyStatus surfaces both
+  // pacified.size and discovered.size to the starmap, so junk ids bought free conquest progress and
+  // an inflated "worlds visited" readout.
+  const save = freshGalaxySave(50);
+  save.pacified = ["not-a-world", "also-fake", "third", "fourth", "fifth"];
+  save.discovered = ["<img src=x onerror=alert(1)>"];
+  save.reached = ["capital", "world:2", "☠not-a-milestone"];
+  save.wonBy = { not: "a string" };
+
+  const g = deserializeGalaxy(save);
+  assert.equal(g.pacified.size, 0, "no junk world id may count toward domination");
+  assert.equal(g.discovered.size, 0, "nor toward the explored count the starmap shows");
+  assert.ok(g.wonBy === null || typeof g.wonBy === "string", `wonBy must be a string or null, got ${typeof g.wonBy}`);
+  assert.deepEqual([...g.reached].sort(), ["capital", "world:2"],
+    "real milestones survive; a bogus id does not — filtering these against the WORLD roster " +
+    "instead would drop every genuine milestone and replay its fireworks on the next load");
+});
+
+test("a tampered galaxy settings block can't build a NaN-sized world on a later jump (T2)", () => {
+  // The galaxy twin of the skirmish hardening already in this file: settings flows into addPlanet,
+  // which passes sizeMult/resourceMult straight to createGameState. A NaN-sized map then defeats
+  // every coordinate clamp cleanEntity performs, since those clamp against map.width/height.
+  const save = freshGalaxySave(51);
+  save.settings = { sizeMult: "haxx", resourceMult: null, difficulty: "nope", popCap: -5 };
+  const g = deserializeGalaxy(save);
+  const s = g.settings;
+  assert.ok(Number.isFinite(s.sizeMult) && s.sizeMult > 0, `sizeMult must be a positive number, got ${s.sizeMult}`);
+  assert.ok(Number.isFinite(s.resourceMult) && s.resourceMult > 0, `resourceMult must be positive, got ${s.resourceMult}`);
+  const st = [...g.planets.values()][0];
+  assert.ok(Number.isFinite(st.map.width) && st.map.width > 0, "and a world built from it has a real map");
+});
+
+test("a missing settings object loads with defaults rather than throwing later (T2)", () => {
+  const save = freshGalaxySave(52);
+  delete save.settings;
+  const g = deserializeGalaxy(save);
+  assert.ok(g.settings && typeof g.settings === "object", "settings must always exist after load");
+  assert.ok(Number.isFinite(g.settings.sizeMult), "with usable numbers in it");
+});

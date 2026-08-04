@@ -256,8 +256,9 @@ function drawCommandCenter(ctx, state, b, color) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
+  // Loop-invariant: the same colour for all four struts, so set it once instead of per iteration.
+  ctx.fillStyle = shade(color, -25);
   for (const [x, y] of polygonPoints(cx, cy, r * 0.92, 4, Math.PI / 4)) {
-    ctx.fillStyle = shade(color, -25);
     ctx.fillRect(x - 2.5, y - 2.5, 5, 5);
   }
 
@@ -651,9 +652,15 @@ const RECIPE_OUT = Object.fromEntries(RECIPES.map(r => [r.id, r.out]));
 // Generator / Biomass Reactor are the grid itself, not a recipe factory sharing this hex — they
 // get their own bespoke hulls (drawReactor/drawCombustor/drawBiomassReactor above), dispatched in
 // drawBuildingShape before this glyph fallback ever sees them.
+// A glyph must not collide with the COMMODITY icon a factory producing that good already draws
+// (factoryGlyph below falls back to COM[recipe.out].ico). Two did, and the result was two pairs of
+// buildings rendered byte-identically in hull, glyph and colour, differing only in radius:
+// the Antimatter Gate — the Odyssey WONDER, a victory condition — was a slightly larger Antimatter
+// Forge, and the Torpedo Battery, a gun that shoots back, was a smaller Torpedo Works. Guarded now
+// by a pairwise silhouette test (test/render-roster.test.js), so a future glyph can't re-collide.
 const BUILDING_GLYPH = {
-  datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌀", plasmarig: "⛏️", substation: "🔌",
-  bastille: "🏰", aegisbastion: "🔰", torpedobattery: "💥",
+  datacenter: "🔬", stardock: "🛰️", antimatter_gate: "🌌", plasmarig: "⛏️", substation: "🔌",
+  bastille: "🏰", aegisbastion: "🔰", torpedobattery: "🎯",
 };
 function factoryGlyph(type) {
   const def = BUILDINGS[type];

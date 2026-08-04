@@ -142,3 +142,66 @@ test("every BUILDINGS type survives every render-visible state through the real 
     }
   }
 });
+
+test("no two building types share a silhouette at the same radius (T2)", async () => {
+  // The existing roster guard compares each type against the GENERIC fallback only, so it catches
+  // "drawn as a featureless blob" but not "drawn as another real type" — the same bug with a better
+  // disguise, since the player sees a silhouette either way, just the wrong one. Traced pairwise at
+  // a normalized radius (so size alone can't be the distinguisher), two pairs came out byte-
+  // identical in hull, glyph and colour: antimatterforge/antimatter_gate — and the Gate is the
+  // Odyssey WONDER, a victory condition, rendering as a slightly larger Forge — and
+  // torpedoworks/torpedobattery, where the battery is a gun that shoots back.
+  const { createGameState, makeBuilding } = await import("../engine/state.js");
+  const { drawBuildingShape } = await import("../renderBuildings.js");
+  const st = createGameState({ planetId: "ferros", seed: 1 });
+
+  const trace = type => {
+    const calls = [];
+    const ctx = new Proxy({}, {
+      get: (t, p) => (...a) => { calls.push(`${String(p)}:${a.map(round).join(",")}`); return p === "measureText" ? { width: 10 } : undefined; },
+      set: (t, p, v) => { calls.push(`set:${String(p)}=${v}`); return true; },
+    });
+    const b = makeBuilding(type, "player", 0, 0);
+    b.radius = 12;                       // normalize: two types must differ by more than their size
+    b.constructing = false;
+    drawBuildingShape(ctx, st, b, "#5ec8ff");
+    return calls.join("|");
+  };
+
+  const groups = new Map();
+  for (const type of Object.keys(BUILDINGS)) {
+    const key = trace(type);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(type);
+  }
+  const collisions = [...groups.values()].filter(g => g.length > 1).map(g => g.join(" ≡ "));
+  assert.deepEqual(collisions, [],
+    "building type(s) drawn identically to another real type:\n" + collisions.join("\n"));
+});
+
+test("the freighter family deliberately shares one hull, and that is the ONLY unit-art sharing (T2)", async () => {
+  const { createGameState, makeUnit } = await import("../engine/state.js");
+  const { drawUnitShape } = await import("../renderUnits.js");
+  const st = createGameState({ planetId: "ferros", seed: 1 });
+  const trace = type => {
+    const calls = [];
+    const ctx = new Proxy({}, {
+      get: (t, p) => (...a) => { calls.push(`${String(p)}:${a.map(round).join(",")}`); return p === "measureText" ? { width: 10 } : undefined; },
+      set: (t, p, v) => { calls.push(`set:${String(p)}=${v}`); return true; },
+    });
+    const u = makeUnit(type, "player", 0, 0);
+    drawUnitShape(ctx, u, { ...UNITS[type], radius: 12 }, "#5ec8ff");
+    return calls.join("|");
+  };
+  const groups = new Map();
+  for (const type of Object.keys(UNITS)) {
+    const key = trace(type);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(type);
+  }
+  // Deliberate: the cargo family is one silhouette by design, distinguished by size in play.
+  const SHARED_HULLS = [["bulkfreighter", "freighter", "hauler", "heavyhauler"]];
+  const shared = [...groups.values()].filter(g => g.length > 1).map(g => g.slice().sort());
+  assert.deepEqual(shared, SHARED_HULLS,
+    "unit-art sharing other than the allow-listed freighter family:\n" + shared.map(g => g.join(" ≡ ")).join("\n"));
+});

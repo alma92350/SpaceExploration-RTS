@@ -621,8 +621,14 @@ export function pinnedDuelDials(difficulty) {
 // Every duel match's seed is derived from (base seed, world, difficulty, BOTH candidate
 // names, replicate) — reproducible on its own, same discipline as runSeed() above, just
 // keyed on the pair rather than a single strategy since a duel row always involves two.
+// The pair's names are SORTED into the hash, so runDuel(a,b) and runDuel(b,a) draw the identical
+// map. runSwappedDuel exists to isolate seat asymmetry — its header says "a side-symmetry bug would
+// show up as those two disagreeing" — and with an order-dependent seed the two halves differed in
+// seat AND map, so a disagreement was confounded with ordinary seed variance and carried no
+// information at all. (swapAsym, the map-side control, was already paired correctly by replicate
+// parity; this makes the seat-side control match it.)
 const duelSeed = (base, world, difficulty, aName, bName, rep) =>
-  hashStr(`${base}:duel:${world}:${difficulty}:${aName}:${bName}:${rep}`);
+  hashStr(`${base}:duel:${world}:${difficulty}:${[aName, bName].sort().join("|")}:${rep}`);
 
 // Run ONE match: candidate A as owner "player", candidate B as owner "ai", both spending
 // from the SAME `dials` object (see pinnedDuelDials/FAIRNESS above). `swapAsym` exchanges
@@ -985,8 +991,29 @@ function greedyMatching(pool, played) {
 // this function stays pure and easy to test on plain data. Exported for direct, fast unit tests
 // against synthetic standings/played-sets — the pairing algorithm's own correctness doesn't
 // depend on running real matches.
+// Rank a Swiss field. Win RATE, with raw wins as the tie-break — not absolute wins, which is what
+// this used to sort on. A bye is scorable-neutral (nothing added to wins or losses), but its
+// recipient simply plays one fewer pairing, i.e. worlds x seeds x 2 fewer chances to earn a win —
+// 16 under the swiss CLI defaults. Sorting on totals therefore ranked "everyone who avoided a bye,
+// then everyone who didn't": a 2W-2L candidate at 50% finished below a 3W-3L candidate at 50%
+// purely for having played more. That is the mirror image of the bug e9ad1d0 fixed, in the one
+// place the tool is meant to be trustworthy. Ties fall back to name so the order is total.
+export function rankStandings(rows) {
+  const rate = r => {
+    const n = (r.wins || 0) + (r.losses || 0) + (r.draws || 0);
+    return n > 0 ? (r.wins || 0) / n : 0;
+  };
+  return [...rows].sort((x, y) =>
+    rate(y) - rate(x) || (y.wins || 0) - (x.wins || 0) || (x.losses || 0) - (y.losses || 0)
+    || (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+}
+
 export function pairRound(standingsRows, played, hadBye) {
-  const order = [...standingsRows].sort((a, b) => b.wins - a.wins);
+  // Tie-break the pairing order by NAME, not by list position. Every standing is 0-0 in round 1, and
+  // a stable sort preserved input order, so the loop below always took the last-LISTED candidate:
+  // `--candidates a.json,…,e.json` structurally penalised e.json for nothing but its position.
+  const order = [...standingsRows].sort((a, b) =>
+    b.wins - a.wins || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   let byeName = null;
   if (order.length % 2 === 1) {
     let idx = -1;
@@ -1003,7 +1030,13 @@ export function pairRound(standingsRows, played, hadBye) {
 // fairness. Standings accumulate match wins/losses/draws round over round, same tallying
 // runRoundRobinSwapped already does per pairing; a bye adds only to `byes`, never `wins`/
 // `losses` — see the header comment above.
-function runSwissBracket(candidates, numRounds, opts) {
+// The Swiss SCHEDULE, with the match runner injected. Extracted so the combinatorics — round count,
+// pairings per round, bye rotation, rematch avoidance, standings order — can be tested on synthetic
+// results in milliseconds instead of by simulating real 15-40 sim-minute matches. Those schedule
+// tests were roughly 50 s of the suite's wall clock, all of it spent proving arithmetic. (The file
+// already demonstrated the fast idiom once, in pairRound's own test, and said why it was better.)
+// runSwissBracket below is now a thin wrapper that injects the real runSwappedDuel.
+export function buildSwissBracket(candidates, numRounds, opts, runPair) {
   const worlds = opts.worlds || ["korrath", "ferros", "vesper", "kybernet"];
   const seeds = opts.seeds ?? 2;
   const byeMatchCount = worlds.length * seeds * 2;   // informational only — == a real pairing's runSwappedDuel `n`
@@ -1025,7 +1058,7 @@ function runSwissBracket(candidates, numRounds, opts) {
       const a = candidates.find(c => c.name === aRow.name);
       const b = candidates.find(c => c.name === bRow.name);
       played.add(pairKey(a.name, b.name));
-      const res = runSwappedDuel(a, b, { ...opts, seedBase: roundSeedBase });
+      const res = runPair(a, b, { ...opts, seedBase: roundSeedBase });
       const A = standings.get(a.name), B = standings.get(b.name);
       A.wins += res.aWins; A.losses += res.bWins; A.draws += res.draws;
       B.wins += res.bWins; B.losses += res.aWins; B.draws += res.draws;
@@ -1033,10 +1066,16 @@ function runSwissBracket(candidates, numRounds, opts) {
     }
     rounds.push({ round, byeName, byeMatchCount: byeName ? byeMatchCount : null, matches });
   }
-  const standingsList = [...standings.values()].sort((x, y) => y.wins - x.wins || x.losses - y.losses);
+  return {
+    rounds: numRounds, byeMatchCount, roundsLog: rounds,
+    standings: rankStandings([...standings.values()]),
+  };
+}
+
+function runSwissBracket(candidates, numRounds, opts) {
   return {
     difficulty: pinnedDuelDials(opts.difficulty).difficulty,   // normalized — see pinnedDuelDials' own comment
-    rounds: numRounds, byeMatchCount, roundsLog: rounds, standings: standingsList,
+    ...buildSwissBracket(candidates, numRounds, opts, runSwappedDuel),
   };
 }
 

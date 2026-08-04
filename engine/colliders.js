@@ -14,7 +14,7 @@
 
 "use strict";
 
-import { BUILDINGS } from "./entities.js";
+import { BUILDINGS, UNITS } from "./entities.js";
 import { NODE_RADIUS, sampleTerrain } from "./map.js";
 
 const PLACEMENT_GAP = 8;
@@ -60,4 +60,24 @@ export function findPlacement(state, buildingType, x, y, maxRadius = MAX_SEARCH_
     }
   }
   return null;
+}
+
+// The collision radius of ANY entity. Three private copies of this used to live in movement.js,
+// formation.js and bomb.js, and bomb.js's comment asserted they were "the same" — they were not.
+// Only bomb.js's handled a building, by reading the instance's own `radius` (engine/state.js stamps
+// it at construction from BUILDINGS); the other two returned the magic constant 9 for any building,
+// while movement.js's `// @ts-check`ed JSDoc advertised `@param {Unit|Building}`. So the type layer
+// told callers a Building was supported on a path that silently under-sized it — the exact class of
+// bug MAX_UNIT_RADIUS (engine/movement.js) exists to prevent, and which no determinism test can see
+// because it is wrong-but-stable on every seed.
+// Resolve by TYPE first rather than by `kind`: formation.js's callers are frequently unit-shaped
+// literals that carry no `kind` field at all (see test/formation.test.js's fakeUnit), and keying on
+// kind alone silently returned 0 for them.
+/** @param {Unit|Building} e @returns {number} */
+export function radiusOf(e) {
+  if (e.kind !== "building" && UNITS[e.type]) return UNITS[e.type].radius;
+  // `radius` is a Building-only instance field (state.js stamps it at construction); the cast is
+  // the narrowing TypeScript can't do here, since `kind` is typed as a plain string.
+  const b = /** @type {{radius?: number, type: string}} */ (e);
+  return b.radius || BUILDINGS[b.type]?.radius || 0;
 }

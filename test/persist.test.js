@@ -4,7 +4,8 @@ import { createGameState, makeUnit } from "../engine/state.js";
 import { mulberry32 } from "../engine/rng.js";
 import { tick } from "../engine/sim.js";
 import { issuePatrol } from "../engine/commands.js";
-import { serializeGame, deserializeGame } from "../engine/persist.js";
+import { serializeGame, deserializeGame, serializeGalaxy } from "../engine/persist.js";
+import { createGalaxy, stepGalaxy } from "../engine/galaxy.js";
 import { sideMod, PLANET_MODIFIERS } from "../engine/map.js";
 
 // The sim-owned facts, sorted by id so Map order can't matter — plus node
@@ -223,4 +224,52 @@ test("every AI-controller bookkeeping field survives a save/load round trip (C9)
   for (const f of ["think", "colonyTarget", "apm", "micro", "strategy", "difficulty", "lastThreatAt",
                    "actionBudget", "attackForce", "attackDesperate", "nextAttackAt", "unitsBuilt", "waveCount"])
     assert.deepEqual(st.ai[f], st0.ai[f], `state.ai.${f} must round-trip`);
+});
+
+/* ---- T2: the round-trip tests are structurally blind to a FORGOTTEN field --------------------
+   The two NET tests compare serialize→load→serialize. A field serPlanet never writes is absent from
+   both sides, so the comparison passes — which is exactly how galaxy.rivalAscended shipped
+   unpersisted. A denylist over the live shape can express "forgotten"; a round-trip cannot. */
+
+const TRANSIENT_STATE = new Set([
+  "map",        // regenerated from the seed — that's the whole point of a seed-driven save
+  "owners",     // derived from the world's own roster
+  "fogs",       // per-owner alias block; the two fogs themselves ARE persisted
+  "fog", "fogAI",
+  "selection",  // a UI concern, deliberately not restored
+  "events",     // per-tick outbox, drained by the view
+  "unitGrid",   // broad-phase index, rebuilt every tick (engine/grid.js)
+  "anvils",     // per-tick Aegis index (engine/sim.js collectAnvils)
+]);
+
+test("every field on a live State is either persisted or on the documented transient denylist (T2)", () => {
+  const st = createGameState({ planetId: "ferros", seed: 61, rng: mulberry32(61) });
+  for (let i = 0; i < 300; i++) tick(st, 0.1);       // let the lazily-attached fields appear
+  const payload = serializeGame(st);
+  const missing = Object.keys(st).filter(k => !(k in payload) && !TRANSIENT_STATE.has(k));
+  assert.deepEqual(missing, [],
+    "State field(s) neither saved nor declared transient — add them to the payload, or to " +
+    "TRANSIENT_STATE above with a one-line reason:\n" + missing.join("\n"));
+});
+
+const TRANSIENT_GALAXY = new Set([
+  "planets",          // serialized separately, per world
+  "colonyNotes", "pacifyNotes", "milestones", "expansionNotes", "rivalGateNotes",   // transient UI queues
+  "rivalGate",        // the world currently being TRACKED; re-derived by checkRivalGate on the next scan
+  "surrendered",      // set only at the moment a run is abandoned
+]);
+
+test("every field on a live Galaxy is either persisted or on the documented transient denylist (T2)", () => {
+  // This is the general net that would have caught rivalAscended. Verified: removing it from
+  // galaxyPayload makes this fail by name.
+  const g = createGalaxy({ seed: 62 });
+  for (let i = 0; i < 200; i++) stepGalaxy(g, 0.1);
+  // A couple of fields ship under a different WIRE key than their live name, so the payload is
+  // checked through that alias rather than by pretending they're transient.
+  const WIRE_ALIAS = { tick: "galaxyTick", time: "galaxyTime" };
+  const payload = serializeGalaxy(g);
+  const missing = Object.keys(g)
+    .filter(k => !((WIRE_ALIAS[k] || k) in payload) && !TRANSIENT_GALAXY.has(k));
+  assert.deepEqual(missing, [],
+    "Galaxy field(s) neither saved nor declared transient:\n" + missing.join("\n"));
 });

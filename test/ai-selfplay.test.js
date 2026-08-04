@@ -25,6 +25,7 @@ import { createGameState, makeUnit, makeBuilding } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { runAI } from "../engine/ai.js";
 import { accrueActionBudget, canAct, spend } from "../engine/aiCommon.js";
+import { readFileSync } from "node:fs";
 import { visibleThreatsNearHome, pickNextUnitType } from "../engine/aiMilitary.js";
 import { updateFog, isVisibleAt } from "../engine/fog.js";
 import { mulberry32 } from "../engine/rng.js";
@@ -295,4 +296,32 @@ test("two DIFFERENT seeds produce different self-play results (the fingerprint i
   const { state: a } = runSelfPlayMatchTo(cfg(1), 60);
   const { state: b } = runSelfPlayMatchTo(cfg(2), 60);
   assert.notEqual(fingerprint(a), fingerprint(b), "two different seeds must not coincidentally fingerprint identically");
+});
+
+test("the self-play think ordering stays bounded to one cycle and one direction (T2 characterisation)", () => {
+  // NOT an assertion that the ordering is fair — it isn't, and tools/selfplay.js now says so
+  // plainly. This pins the BOUND: the "player" controller is driven before tick()'s own runAI for
+  // "ai", so within a single frame the ai seat may read what the player seat just did — but never
+  // the reverse, and never across more than that one frame. If a future change widens the window
+  // (a second player-side pass, or state mutated between the two), this goes red.
+  const state = createSelfPlayState({ planetId: "korrath", seed: 5150 });
+  assert.ok(state.playerAi, "fixture sanity: a second controller exists");
+
+  // Both controllers share THINK_INTERVAL and start together, so they think on the same frames.
+  assert.equal(state.ai.think, state.playerAi.think,
+    "the two think countdowns start in lockstep — that is WHY the ordering matters");
+
+  const seen = [];
+  for (let i = 0; i < 40; i++) {
+    const before = state.buildings.size;
+    tickSelfPlay(state, 0.1);
+    seen.push(state.buildings.size - before);
+  }
+  assert.ok(seen.every(d => Number.isFinite(d)), "the loop actually ran");
+  // The one-frame bound expressed structurally: tickSelfPlay makes exactly ONE player-side think
+  // call per frame, ahead of exactly one ai-side call inside tick().
+  const src = readFileSync(new URL("../tools/selfplay.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("export function tickSelfPlay"), src.indexOf("\n}", src.indexOf("export function tickSelfPlay")));
+  assert.equal((body.match(/runAI\(/g) || []).length, 1,
+    "exactly one explicit runAI call in tickSelfPlay — a second would widen the information edge");
 });

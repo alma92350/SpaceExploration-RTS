@@ -7,7 +7,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGalaxy, activeState, sweepColonies, addPlanet, COLONY_INCOME_PER_BUILDING, COLONY_INCOME_CAP } from "../engine/galaxy.js";
 import { createMarket, sell, buy, unitPrice, updateMarket, TRADE_LOT } from "../engine/market.js";
-import { makeBuilding } from "../engine/state.js";
+import { makeBuilding, createGameState } from "../engine/state.js";
+import { tick } from "../engine/sim.js";
+import { updateWonder } from "../engine/wonder.js";
+import { BUILDINGS } from "../engine/entities.js";
+import { totalHoldings } from "./_helpers.js";
 
 function marketState(planetId = "vesper", nodes = [{ com: "ore", max: 400 }]) {
   const s = { planetId, map: { nodes }, players: { player: { resources: {} } } };
@@ -103,4 +107,49 @@ test("turret walls don't pay income (only economy buildings do)", () => {
   g.credits = 0;
   sweepColonies(g, 1);
   assert.equal(g.credits, 0, "a turret-only colony earns nothing — turrets aren't an economy");
+});
+
+/* ---- T2: conservation of matter -------------------------------------------------------------
+   The domain's defining property, asserted nowhere until now: matter moves between the treasury,
+   a factory's larder and backlog, a freighter's hold and a worker's cargo — it is not created or
+   destroyed except where a rule says so. Every economy test asserted a specific number at a
+   specific site instead, which is how a completed wonder that kept eating its feed, and a deposit
+   that overfilled a hold, both lived inside green suites. */
+
+test("a full producer -> worker -> treasury haul cycle conserves matter (T2)", () => {
+  const st = createGameState({ planetId: "ferros", seed: 101 });
+  // No gathering: a miner pulls NEW matter out of a node, which is a rule-sanctioned creation and
+  // would swamp the property. Isolate the transport half.
+  for (const n of st.map.nodes) n.amount = 0;
+  const cc = [...st.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const rig = makeBuilding("plasmarig", "player", cc.x + 80, cc.y);
+  rig.constructing = false;
+  rig.store = { plasmatorp: 40 };
+  st.buildings.set(rig.id, rig);
+
+  const before = totalHoldings(st, "player");
+  for (let i = 0; i < 3000; i++) tick(st, 0.1);
+  const after = totalHoldings(st, "player");
+
+  for (const com of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const delta = (after[com] || 0) - (before[com] || 0);
+    assert.ok(Math.abs(delta) < 1e-6,
+      `${com} changed by ${delta} with nothing to mine and nothing to spend — hauling must only MOVE matter`);
+  }
+});
+
+test("a completed wonder stops drawing from the treasury (T2)", () => {
+  // The property test for the A4 bug, expressed as conservation rather than as a specific number.
+  const st = createGameState({ planetId: "ferros", endless: true, seed: 102 });
+  const gate = makeBuilding("antimatter_gate", "player", 700, 500);
+  gate.constructing = false;
+  gate.charge = 1;
+  st.buildings.set(gate.id, gate);
+  for (const com in BUILDINGS.antimatter_gate.feed) st.players.player.resources[com] = 500;
+
+  const before = totalHoldings(st, "player");
+  for (let i = 0; i < 200; i++) updateWonder(st, gate, 0.1);
+  const after = totalHoldings(st, "player");
+  for (const com in BUILDINGS.antimatter_gate.feed)
+    assert.equal(after[com], before[com], `a finished Gate must not keep consuming ${com}`);
 });

@@ -67,6 +67,7 @@
 
 "use strict";
 
+import { radiusOf } from "./colliders.js";
 import { UNITS } from "./entities.js";
 import { POWER_TIERS } from "./industry.js";
 import { removeEntity } from "./state.js";
@@ -135,13 +136,6 @@ function isBomb(e) {
 }
 
 // `e`'s own radius — a building carries it directly on the instance (state.js's makeBuilding
-// copies it off BUILDINGS at creation); a unit doesn't (makeUnit never does), so it's looked up
-// off its UNITS definition instead. Local to this module, same as movement.js/formation.js's own
-// (independently duplicated) radiusOf — not worth a shared export for a one-line lookup two other
-// files already have their own copy of.
-function radiusOf(e) {
-  return e.kind === "unit" ? (UNITS[e.type]?.radius || 0) : (e.radius || 0);
-}
 
 // Distance from the bomb's center to `e`'s RIM, not its center — max(0, ...) so an entity whose
 // footprint already overlaps the bomb (or contains it) reads as point-blank, never negative. This

@@ -637,7 +637,17 @@ export function assignShuttle(state, unit) {
   const used = freightUsed(unit);
   if (used <= 0) return;                                            // empty — nothing to deliver yet
   const full = freightRoom(unit) <= 1e-6;
-  if (!full && nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0)) return;   // more still worth waiting for
+  // Wait only on producers in THIS ship's own zone. Passing no home id fell through zoneFirst's
+  // unbounded GLOBAL second pass, so a partly-loaded ship sat on its anchor while some producer on
+  // the far side of the empire was backed up — one it could never serve, since assignFerry is
+  // zone-first. That is the very stall the header below says this case exists to prevent ("a
+  // freighter fed by a small producer would sit there holding SOMETHING forever… never actually
+  // delivering it"), reintroduced by the multi-base case. It was also the only zone-aware scan here
+  // that didn't forward unit.homeCC, so pinning the ship's home base didn't help either.
+  // Single-CC games are unaffected by construction: with one zone, zoneFirst's two passes are
+  // identical, so every skirmish and pre-expansion Odyssey replay is byte-identical.
+  const homeId = unit.homeCC || nearestCommandCenter(state, unit.owner, unit.x, unit.y)?.id;
+  if (!full && nearestBacklogProducer(state, unit.owner, unit.x, unit.y, 0, homeId)) return;
   if (!unit.anchor) unit.anchor = { x: unit.x, y: unit.y };   // defensive fallback — issueSetCollectPoint normally sets this
   unit.order = { type: "shuttle", phase: "toCC" };
 }

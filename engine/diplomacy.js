@@ -24,7 +24,7 @@
 "use strict";
 
 import { chargingPlayerWonder } from "./wonder.js";
-import { BUILDINGS, UNITS } from "./entities.js";
+import { BUILDINGS, UNITS, clamp } from "./entities.js";
 import { TECHS } from "./techtree.js";
 import { strategyFor } from "./aiStrategy.js";
 import { difficultyFor } from "./aiDifficulty.js";
@@ -188,7 +188,6 @@ export const FACTION_ECHO_FORGIVE_MULT = 0.8;     // forgiveness composes at thi
 export const ALLY_ECHO_PER = 0.05;
 export const ALLY_ECHO_CAP = 0.15;
 
-function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 // The composed-and-bounded grace/grievance multipliers for this world. Exported so the bounds are
 // testable directly rather than only through 40 minutes of drift.
