@@ -1094,7 +1094,14 @@ function renderTournamentScreen(container) {
 
 function renderFieldBuilder(container) {
   const roster = ensureLedger().roster;
-  container.appendChild(mk("span", "setup-label", "Field"));
+  // The label goes in its own .setup-row, like every other labelled row on this screen (Format,
+  // Difficulty, Swiss rounds, Seeds/world). .setup-label is styled for life INSIDE a .setup-row —
+  // appended straight into .comp-screen it picked up the wrong layout and sat misaligned against
+  // its siblings. The field list and its actions stay OUTSIDE the row: they're a full-width block,
+  // not a label-plus-control pair like the others.
+  const labelRow = mk("div", "setup-row");
+  labelRow.appendChild(mk("span", "setup-label", "Field"));
+  container.appendChild(labelRow);
 
   if (roster.length < 2) {
     container.appendChild(mk("p", "setup-hint",

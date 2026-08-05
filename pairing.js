@@ -332,8 +332,13 @@ export function roundRobinPairs(entrants) {
    either way) and diverge at, say, n = 11, where n - p = 3 byes would leave a 7-entrant round 2 and
    the bye-peeling would have to repeat every round — handing the top seed four byes and a walkover
    into the final. `target - n` byes is the standard reduction, keeps the stated invariant for every
-   n, and preserves the quantity the brief actually names: `n - p` is exactly the number of
-   FIRST-ROUND MATCHES here.)
+   n, and preserves the quantity the brief actually names: `n - p` is the number of FIRST-ROUND
+   MATCHES here whenever n is NOT itself a power of two. When n IS a power of two the two formulas
+   simply agree on the thing that matters — zero byes — and `n - p` is 0 while round 1 plays n/2
+   matches, so the correspondence is a coincidence of the non-power-of-two case rather than an
+   identity. Stated precisely because a comment asserting an invariant the code does not hold is a
+   named defect class in this repo: docs/code-improvement-tiers.md, "Comments assert invariants the
+   code does not hold".)
 
    A loss eliminates; the last entrant standing is the champion. Total non-bye matches is therefore
    always exactly n - 1 whatever n is and however many byes round 1 handed out — every match
