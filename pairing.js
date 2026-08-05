@@ -161,6 +161,32 @@ export function rankStandings(rows) {
 }
 
 /**
+ * Tally a list of FINISHED pairings into standings rows, ranked by rankStandings above. The same
+ * arithmetic buildSwissBracket does incrementally as it runs (a pairing's `aWins` are A's wins and
+ * B's losses; a bye touches only its own counter, never wins/losses — see the BYES paragraph in
+ * this file's header), but computed from a flat list after the fact, which is what a caller holding
+ * only "the pairings finished so far" has: competitionWorker.js's round-robin result, and the
+ * in-game tournament screen's LIVE standings as each pairing lands. Every name in `names` gets a
+ * row even if it hasn't played yet, so a field never appears to shrink mid-tournament.
+ * @param {string[]} names        the whole field, so an unplayed entrant still gets a 0-0-0 row.
+ * @param {{ aName: string, bName: string, aWins?: number, bWins?: number, draws?: number }[]} pairings
+ * @param {string[]} [byeNames]   one entry per bye awarded (the same name may appear more than once).
+ * @returns {StandingsRow[]} ranked best-first; the inputs are left untouched.
+ */
+export function tallyStandings(names, pairings, byeNames = []) {
+  const rows = new Map(names.map(name => [name, { name, wins: 0, losses: 0, draws: 0, byes: 0 }]));
+  const rowFor = name => rows.get(name) || (rows.set(name, { name, wins: 0, losses: 0, draws: 0, byes: 0 }), rows.get(name));
+  for (const p of pairings || []) {
+    const a = rowFor(p.aName), b = rowFor(p.bName);
+    const aWins = p.aWins || 0, bWins = p.bWins || 0, draws = p.draws || 0;
+    a.wins += aWins; a.losses += bWins; a.draws += draws;
+    b.wins += bWins; b.losses += aWins; b.draws += draws;
+  }
+  for (const name of byeNames || []) rowFor(name).byes += 1;   // NOT a win — see header
+  return rankStandings([...rows.values()]);
+}
+
+/**
  * @param {StandingsRow[]} standingsRows
  * @param {Set<string>} played   pairKey()s already run in an earlier round of this bracket.
  * @param {Set<string>} hadBye   names already given a bye in this bracket.
@@ -181,6 +207,22 @@ export function pairRound(standingsRows, played, hadBye) {
   }
   const pairs = findMatching(order, played, { n: MATCH_ATTEMPT_CAP }) || greedyMatching(order, played);
   return { pairs, byeName };
+}
+
+/**
+ * How many rounds a Swiss bracket over `n` entrants runs by default: `max(3, ceil(log2 n))` — the
+ * textbook rule of thumb for how many rounds separate a field of that size, and the exact default
+ * tools/ailab.js's runSwissTournament has always applied to `--rounds` (it calls this now, so the
+ * CLI and the in-game screen can never drift apart on it). Exported because BOTH the in-game
+ * tournament screen (which prices a run before starting it, and shows the number it will use) and
+ * competitionWorker.js (which defaults the job's own optional `rounds`) need the identical answer.
+ * @param {number} n
+ * @returns {number}
+ * @throws {Error} if n < 2, the same floor buildSwissBracket's own callers enforce.
+ */
+export function swissRoundCount(n) {
+  if (!(n >= 2)) throw new Error(`a Swiss bracket needs at least 2 entrants, got ${n}`);
+  return Math.max(3, Math.ceil(Math.log2(n)));
 }
 
 // One difficulty bracket's whole Swiss schedule: `numRounds` rounds of pairRound, each pairing
@@ -413,4 +455,59 @@ export function buildKnockoutBracket(seededEntrants, opts, runPair) {
     field = matches.map(m => m.winner);
   }
   return { entrants, rounds, matchCount, champion: field[0] };
+}
+
+/* ============================================================
+   SCHEDULE SHAPE — how many PAIRINGS each format schedules, and in how many rounds, WITHOUT
+   running anything. Two callers need exactly this, for two different reasons:
+
+     • the in-game tournament screen, to price a run before the player commits to it
+       (docs/competitions-and-elo.md Phase 3: "a user who picks 16 entrants x 4 worlds x 3 seeds
+       deserves to be told it's a long run before it starts, not after");
+     • competitionWorker.js, to turn a flat "this is pairing number k" counter into the
+       "round 2 of 4, pairing 3 of 8" coordinates a progress readout needs — neither
+       buildSwissBracket nor buildKnockoutBracket tells its injected runPair where in the schedule
+       it currently is, and neither should have to.
+
+   It lives HERE, next to the schedules it describes, because a second copy of this arithmetic that
+   disagreed with what actually runs is precisely the kind of drift this module exists to prevent —
+   test/pairing.test.js checks every plan against a real bracket, round for round, rather than
+   against a restatement of the formula.
+   ============================================================ */
+
+/**
+ * @param {"round-robin"|"swiss"|"knockout"} format
+ * @param {number} n         the field size.
+ * @param {number} [rounds]  Swiss only: an explicit round count overriding swissRoundCount(n).
+ *   Ignored by the other two formats, which have no round count to override.
+ * @returns {{ round: number, pairings: number }[]} one entry per round, in order.
+ * @throws {Error} on an unknown format or a field too small to schedule.
+ */
+export function tournamentRoundPlan(format, n, rounds) {
+  if (!(n >= 2)) throw new Error(`a tournament needs at least 2 entrants, got ${n}`);
+  // Round-robin is deliberately ONE flat round of every pair, matching roundRobinPairs above (see
+  // its own comment on why this isn't circle-method round scheduling).
+  if (format === "round-robin") return [{ round: 1, pairings: (n * (n - 1)) / 2 }];
+  if (format === "swiss") {
+    const count = rounds > 0 ? Math.floor(rounds) : swissRoundCount(n);
+    // floor(n/2), not ceil: an odd field's leftover entrant takes a BYE, which is not a pairing and
+    // costs no matches — pairRound's own rule.
+    return Array.from({ length: count }, (_, i) => ({ round: i + 1, pairings: Math.floor(n / 2) }));
+  }
+  if (format === "knockout") {
+    // Walk the same reduction buildKnockoutBracket performs: round 1 byes the top
+    // `nextPowerOfTwo(size) - size` seeds and pairs the rest consecutively, leaving a power of two;
+    // every later round halves it. The pairings sum to n - 1 for every n (knockoutMatchCount's own
+    // fact), byes or no byes.
+    const plan = [];
+    let size = n;
+    for (let round = 1; size > 1; round++) {
+      const byes = nextPowerOfTwo(size) - size;
+      const pairings = (size - byes) / 2;
+      plan.push({ round, pairings });
+      size = byes + pairings;
+    }
+    return plan;
+  }
+  throw new Error(`unknown tournament format "${format}"`);
 }

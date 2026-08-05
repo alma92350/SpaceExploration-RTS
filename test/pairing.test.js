@@ -28,6 +28,7 @@ import { readFileSync } from "node:fs";
 import {
   rankStandings, pairRound, buildSwissBracket,
   roundRobinPairs, buildKnockoutBracket, knockoutMatchCount,
+  swissRoundCount, tournamentRoundPlan, tallyStandings,
 } from "../pairing.js";
 import { mulberry32, hashStr } from "../engine/rng.js";
 
@@ -381,6 +382,90 @@ test("buildSwissBracket runs the whole schedule through the injected runPair, de
       assert.ok(!seen.has(key(m.aName, m.bName)), `pairing ${m.aName}/${m.bName} repeated across rounds`);
       seen.add(key(m.aName, m.bName));
     }
+});
+
+/* ============================================================
+   THE SCHEDULE'S OWN SHAPE — swissRoundCount / tournamentRoundPlan. What the in-game tournament
+   screen prices a run with BEFORE it starts, and what the Worker derives its "round 2 of 4, pairing
+   3 of 8" progress coordinates from while it runs. Both have to agree, exactly, with what the
+   build* functions above actually schedule — so every test below checks the plan against a real
+   bracket rather than against a restatement of its own formula.
+   ============================================================ */
+
+test("swissRoundCount is the textbook max(3, ceil(log2 n)) default tools/ailab.js already used", () => {
+  assert.equal(swissRoundCount(2), 3, "the floor of 3 holds for a tiny field");
+  assert.equal(swissRoundCount(4), 3);
+  assert.equal(swissRoundCount(8), 3, "ceil(log2 8) = 3, which is also the floor");
+  assert.equal(swissRoundCount(9), 4);
+  assert.equal(swissRoundCount(16), 4);
+  assert.equal(swissRoundCount(17), 5);
+  assert.throws(() => swissRoundCount(1), /at least 2 entrants/);
+});
+
+test("tournamentRoundPlan: a round-robin is one flat round of C(n,2) pairings", () => {
+  for (const n of [2, 3, 5, 8]) {
+    const plan = tournamentRoundPlan("round-robin", n);
+    assert.deepEqual(plan, [{ round: 1, pairings: (n * (n - 1)) / 2 }], `n=${n}`);
+    assert.equal(plan[0].pairings, roundRobinPairs(field(n)).length,
+      `n=${n}: the plan must count exactly the pairs roundRobinPairs produces`);
+  }
+});
+
+test("tournamentRoundPlan: Swiss is roundCount rounds of floor(n/2) pairings, defaulted or overridden", () => {
+  for (const n of [4, 5, 9]) {
+    const plan = tournamentRoundPlan("swiss", n);
+    assert.equal(plan.length, swissRoundCount(n), `n=${n}: the default round count`);
+    for (const r of plan) assert.equal(r.pairings, Math.floor(n / 2), `n=${n}: an odd field's bye takes one entrant out of the pairing`);
+    // ...and the real bracket runs exactly that many pairings per round.
+    const bracket = buildSwissBracket(field(n), swissRoundCount(n), { worlds: ["korrath"], seeds: 1 }, fakePair);
+    assert.deepEqual(bracket.roundsLog.map(r => r.matches.length), plan.map(r => r.pairings), `n=${n}`);
+  }
+  const overridden = tournamentRoundPlan("swiss", 6, 2);
+  assert.deepEqual(overridden, [{ round: 1, pairings: 3 }, { round: 2, pairings: 3 }],
+    "an explicit round count overrides the default");
+});
+
+test("tournamentRoundPlan: a knockout's rounds sum to exactly n-1 pairings, byes or no byes", () => {
+  for (let n = 2; n <= 17; n++) {
+    const plan = tournamentRoundPlan("knockout", n);
+    const total = plan.reduce((s, r) => s + r.pairings, 0);
+    assert.equal(total, knockoutMatchCount(n), `n=${n}: the plan must price the bracket at n-1`);
+    // Byes are NOT pairings — the per-round plan has to match what buildKnockoutBracket really runs,
+    // which is the whole point of deriving progress coordinates from it.
+    const bracket = buildKnockoutBracket(field(n), {}, fakePair);
+    assert.deepEqual(plan.map(r => r.pairings), bracket.rounds.map(r => r.matches.filter(m => !m.bye).length),
+      `n=${n}: per-round pairing counts must match the real bracket, round for round`);
+    assert.deepEqual(plan.map(r => r.round), bracket.rounds.map(r => r.round), `n=${n}: round numbering must match too`);
+  }
+});
+
+test("tallyStandings reproduces buildSwissBracket's own standings from the pairings it reports", () => {
+  // The after-the-fact tally (what a caller holding only "the pairings finished so far" has) has to
+  // land on exactly the table buildSwissBracket accumulates as it runs — otherwise a live standings
+  // readout means something different from the final one it turns into.
+  for (const n of [4, 5, 8]) {
+    const bracket = buildSwissBracket(field(n), 3, { worlds: ["korrath"], seeds: 1 }, fakePair);
+    const tallied = tallyStandings(
+      names(field(n)),
+      bracket.roundsLog.flatMap(r => r.matches),
+      bracket.roundsLog.map(r => r.byeName).filter(Boolean),
+    );
+    assert.deepEqual(tallied, bracket.standings, `n=${n}`);
+  }
+});
+
+test("tallyStandings gives an entrant that hasn't played a 0-0-0 row, and never scores a bye as a win", () => {
+  const rows = tallyStandings(["A", "B", "C"], [{ aName: "A", bName: "B", aWins: 2, bWins: 0, draws: 0 }], ["C"]);
+  assert.equal(rows.length, 3, "the field never appears to shrink mid-tournament");
+  assert.deepEqual(rows.find(r => r.name === "C"), { name: "C", wins: 0, losses: 0, draws: 0, byes: 1 });
+  assert.equal(rows[0].name, "A", "a candidate that only sat out a round can't outrank one that won a real pairing");
+  assert.deepEqual(rows.find(r => r.name === "B"), { name: "B", wins: 0, losses: 2, draws: 0, byes: 0 });
+});
+
+test("tournamentRoundPlan refuses an unknown format and a field too small to schedule", () => {
+  assert.throws(() => tournamentRoundPlan("battle-royale", 4), /format/i);
+  for (const format of ["round-robin", "swiss", "knockout"])
+    assert.throws(() => tournamentRoundPlan(format, 1), /at least 2 entrants/, `${format} needs a real field`);
 });
 
 /* ---------- purity: this module is imported by a browser Worker in the next stage ---------- */

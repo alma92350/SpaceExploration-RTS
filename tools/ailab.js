@@ -102,7 +102,7 @@ import { INITIAL_RATING, applySeries } from "../elo.js";
 // tools/duelCore.js exists: the in-game competition screen needs it in a browser Worker without
 // this file's CLI half (docs/competitions-and-elo.md Phase 3). Imported under the SAME names this
 // file has always used, and re-exported below exactly as before — see the TIER 5 header comment.
-import { rankStandings, pairRound, buildSwissBracket, roundRobinPairs } from "../pairing.js";
+import { rankStandings, pairRound, buildSwissBracket, roundRobinPairs, swissRoundCount } from "../pairing.js";
 
 const WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 const DT = 0.1;                  // the sim's fixed step, same as the game loop
@@ -937,7 +937,10 @@ export function runSwissTournament(candidates, opts = {}) {
   if (candidates.length < 2) throw new Error("a Swiss tournament needs at least 2 candidates");
   const { difficulties, difficulty, rounds, ...rest } = opts;
   const list = difficulties && difficulties.length ? difficulties : [difficulty || "medium"];
-  const numRounds = rounds || Math.max(3, Math.ceil(Math.log2(candidates.length)));
+  // pairing.js's swissRoundCount IS this formula — shared rather than kept as a second copy, so the
+  // in-game tournament screen (which shows the default it will use before starting) and this CLI
+  // can never disagree about how many rounds "default" means.
+  const numRounds = rounds || swissRoundCount(candidates.length);
   return list.map(diff => runSwissBracket(candidates, numRounds, { ...rest, difficulty: diff }));
 }
 

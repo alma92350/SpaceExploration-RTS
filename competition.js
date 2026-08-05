@@ -1,9 +1,15 @@
 /* ============================================================
-   The Competition mode: Quick Duel / Roster / Standings (docs/competitions-and-elo.md Phase 1 +
-   Phase 2). Quick Duel pits two entrants against each other, side-swapped across every world x
-   seed the player picks, off the main thread in competitionWorker.js — never a playable game. This
-   mode never touches boot.js, game.state, the canvas, or the HUD: it runs a background simulation
-   and shows a results screen, nothing else.
+   The Competition mode: Quick Duel / Tournament / Roster / Standings
+   (docs/competitions-and-elo.md Phases 1-3). Quick Duel pits two entrants against each other,
+   side-swapped across every world x seed the player picks, off the main thread in
+   competitionWorker.js — never a playable game. This mode never touches boot.js, game.state, the
+   canvas, or the HUD: it runs a background simulation and shows a results screen, nothing else.
+
+   PHASE 3: the Tournament tab — round-robin, Swiss or a knockout bracket over a multi-selected
+   field of roster entries, scheduled by pairing.js inside the same Worker, with an up-front
+   match-count/time estimate, round-by-round progress, live standings or a bracket view, and every
+   pairing folded into the ledger in real completion order (D6). Its pure half sits with the rest
+   below ("TOURNAMENTS"); its screen sits with the rest of the DOM half ("TOURNAMENT SCREEN").
 
    PHASE 2 (D8/D3): every entrant is now a named, persistent ROSTER row, not a free-typed throwaway
    name — Entrant A/B are each either picked from competitionLedger.js's current roster or drafted
@@ -52,6 +58,7 @@ import { archetypeFor, ARCHETYPES } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { planetName } from "./data.js";
 import { duelSeed } from "./tools/duelCore.js";
+import { swissRoundCount, tournamentRoundPlan, tallyStandings } from "./pairing.js";
 import { INITIAL_RATING, PROVISIONAL_GAMES, applySeries } from "./elo.js";
 import {
   createLedger, addRosterEntry, removeRosterEntry, recordCompetition, standingsFor,
@@ -286,6 +293,225 @@ export function eloFromRows(rows) {
 }
 
 /* ============================================================
+   TOURNAMENTS (docs/competitions-and-elo.md Phase 3) — the pure half of the Tournament tab: the
+   up-front cost estimate, the job competitionWorker.js's tournament kind receives, the knockout's
+   own seeding, and the standings/bracket shaping the results view renders. Same split as
+   everything above (observer.js's observerStats vs observerPanel.js): the DOM layer below decides
+   only how these tables LOOK, never what they contain.
+
+   Nothing here re-derives a schedule. pairing.js owns "how many pairings, in how many rounds"
+   (tournamentRoundPlan/swissRoundCount) and "what a finished set of pairings tallies to"
+   (tallyStandings); this module multiplies that by the worlds/seeds/side-swap the player picked
+   and formats the result.
+   ============================================================ */
+
+// The format picker's options, in optionGroup's own { label, mult, note } shape — one entry per
+// schedule pairing.js can actually run, with the note stating the cost rule the estimate below
+// then applies, so the picker itself explains why one format is cheaper than another.
+export const TOURNAMENT_FORMAT_OPTIONS = [
+  { label: "Round-robin", mult: "round-robin", note: "every pair once — n × (n−1) / 2 pairings" },
+  { label: "Swiss", mult: "swiss", note: "rounds paired by standing — ranks a big field cheaply" },
+  { label: "Knockout", mult: "knockout", note: "single elimination — always n − 1 pairings" },
+];
+
+// Rough wall clock for ONE match, used only to price a run before it starts.
+// docs/competitions-and-elo.md's own measured table (§1): ~1.0 s for a match resolved by
+// elimination, ~1.8 s worst case for one that runs the full 40-sim-minute clock. 1.5 s is a
+// documented average of those two measurements, deliberately nearer the worst case (a tournament
+// full of evenly-matched entrants is exactly the population that goes the distance) — not an
+// invented constant, and not a promise: the UI always renders it as "≈".
+export const SECONDS_PER_MATCH = 1.5;
+
+/**
+ * How many PAIRINGS a format schedules over a field of `entrants` — pairing.js's own plan, summed.
+ * Round-robin is n×(n−1)/2, Swiss is roundCount × floor(n/2) (an odd field's bye is not a pairing),
+ * and a knockout is ALWAYS n−1 however many byes round 1 hands out.
+ * @param {{ format: string, entrants: number, rounds?: number }} cfg
+ * @returns {number}
+ * @throws {Error} on an unknown format or a field smaller than 2 — pairing.js's own guards.
+ */
+export function tournamentPairingCount({ format, entrants, rounds } = {}) {
+  // `rounds` is a Swiss-only override; passing it for the other two would imply it means something
+  // there, and it doesn't (see tournamentRoundPlan's own doc comment).
+  const plan = tournamentRoundPlan(format, entrants, format === "swiss" ? rounds : undefined);
+  return plan.reduce((sum, r) => sum + r.pairings, 0);
+}
+
+// Seconds -> a display string, rounded at the granularity a person actually plans around: seconds
+// below a minute, whole minutes above it (nobody waits "94 seconds", they wait "about 2 minutes").
+function estimateTimeText(seconds) {
+  return seconds < 60 ? `${Math.round(seconds)} s` : `${Math.max(1, Math.round(seconds / 60))} min`;
+}
+
+/**
+ * The whole up-front budget for a tournament — the Phase 3 brief's own "≈ 32 matches, ≈ 1 min",
+ * shown BEFORE Start Tournament is clickable. A MATCH is one (world, seed, side) combination
+ * within a pairing, so the count is pairings × worlds × seeds × 2 — the same "both directions,
+ * side-swapped" rule matchCount applies to a single duel.
+ * @param {{ format: string, entrants: number, worlds: string[]|number, seeds: number, rounds?: number }} cfg
+ * @returns {{ pairings: number, matches: number, seconds: number, timeText: string, text: string }}
+ */
+export function tournamentEstimate({ format, entrants, worlds, seeds, rounds } = {}) {
+  const pairings = tournamentPairingCount({ format, entrants, rounds });
+  const worldCount = Array.isArray(worlds) ? worlds.length : Math.max(0, Math.floor(Number(worlds)) || 0);
+  const matches = pairings * worldCount * Math.max(1, Math.floor(seeds) || 1) * 2;
+  const seconds = matches * SECONDS_PER_MATCH;
+  const timeText = estimateTimeText(seconds);
+  return { pairings, matches, seconds, timeText, text: `≈ ${matches} matches · ≈ ${timeText}` };
+}
+
+// A field entrant, coerced exactly the way buildJob coerces a duel entrant (trimmed name, defaulted
+// strategy, archetype validated against the real ARCHETYPES keys with Object.hasOwn rather than a
+// truthy bracket-access). Deliberately carries NO difficulty: difficulty is ONE shared dial for the
+// whole tournament (D2), pinned identical for every entrant in every pairing, exactly as a Quick
+// Duel already pins it for both sides — a per-entrant difficulty would make the bracket meaningless.
+function tournamentEntrant(raw) {
+  const name = ((raw && raw.name) || "").trim();
+  if (!name) throw new Error("Every tournament entrant needs a name");
+  const archetype = raw && raw.archetype;
+  return {
+    name,
+    strategy: (raw && raw.strategy) || "default",
+    archetype: (typeof archetype === "string" && Object.hasOwn(ARCHETYPES, archetype)) ? archetype : null,
+  };
+}
+
+/**
+ * Shape a tournament config into exactly the job message competitionWorker.js's tournament kind
+ * expects. Deterministic (an unset seed is resolved by the caller, same as buildJob), and it throws
+ * a clear, user-facing message for anything the worker's own guards would reject anyway, so the
+ * config screen can catch it before spinning a Worker up. The FIELD ORDER IS MEANINGFUL — it is the
+ * knockout's seeding (see seedFieldByRating below), so this never sorts it.
+ * @param {{ format: string, field: object[], difficulty: string, worlds: string[], seeds: number,
+ *   seedBase: number, rounds?: number }} cfg
+ */
+export function buildTournamentJob({ format, field, difficulty, worlds, seeds, seedBase, rounds } = {}) {
+  if (!TOURNAMENT_FORMAT_OPTIONS.some(o => o.mult === format)) throw new Error(`Unknown tournament format "${format}"`);
+  const list = Array.isArray(field) ? field : [];
+  if (list.length < 2) throw new Error("Pick at least 2 entrants for a tournament");
+  const entrants = list.map(tournamentEntrant);
+  const seen = new Set();
+  for (const e of entrants) {
+    // Same reasoning as buildJob's own same-name guard: elo.js's RatingsTable is keyed by name, so
+    // one name twice in a field would collide two entrants' ratings into one entry.
+    if (seen.has(e.name)) throw new Error(`"${e.name}" is in the field twice — every entrant needs a different name`);
+    seen.add(e.name);
+  }
+  if (!Array.isArray(worlds) || worlds.length === 0) throw new Error("Pick at least one world");
+  const job = {
+    kind: "tournament",
+    format,
+    field: entrants,
+    difficulty: difficulty || "medium",
+    worlds: [...worlds],
+    seeds: Math.max(1, Math.floor(seeds) || 1),
+    seedBase: (Number(seedBase) || 0) >>> 0,
+  };
+  // Swiss is the only format with a round count to override; the worker defaults an absent one to
+  // pairing.js's swissRoundCount, so leaving it off is meaningful, not lossy.
+  if (format === "swiss" && rounds > 0) job.rounds = Math.floor(rounds);
+  return job;
+}
+
+/**
+ * Order a knockout field strongest-first for pairing.js's buildKnockoutBracket, which consumes a
+ * seeding and deliberately never invents one (its own header: "it consumes an order, it does not
+ * invent one" — that is what keeps it decoupled from the ledger). Rating descending off THIS
+ * bracket's own ratings table, falling back to name for anyone unrated, so the seeding is total and
+ * reproducible rather than dependent on the order boxes happened to be ticked in.
+ * @param {{name: string}[]} entrants
+ * @param {Object.<string, {rating: number, games: number}>|undefined} table   one difficulty bracket's table
+ * @returns {object[]} a new array; the caller's own is untouched.
+ */
+export function seedFieldByRating(entrants, table) {
+  return [...entrants].sort((a, b) =>
+    ratingLookup(table, b.name).rating - ratingLookup(table, a.name).rating
+    || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/**
+ * One progress message -> the line the progress view shows. Real granularity, per the Phase 3
+ * brief: a multi-round format names the round AND the pairing within it; a round-robin is one flat
+ * round (roundRobinPairs' own shape), so naming "round 1 of 1" would be noise. The match counter
+ * rides along either way, because that is what the bar is filling with.
+ * @param {{ round: number, roundTotal: number, pairing: number, pairingTotal: number, completed: number, total: number }} p
+ * @returns {string}
+ */
+export function tournamentProgressLabel({ round, roundTotal, pairing, pairingTotal, completed, total } = {}) {
+  const head = roundTotal > 1
+    ? `Round ${round} of ${roundTotal} · pairing ${pairing} of ${pairingTotal}`
+    : `Pairing ${pairing} of ${pairingTotal}`;
+  return `${head} — ${completed} of ${total} matches`;
+}
+
+/**
+ * Standings rows for a set of FINISHED pairings — pairing.js's own tallyStandings, which is the
+ * same arithmetic buildSwissBracket accumulates internally (and, for a bye, the same "adds to
+ * nobody's wins or losses" rule). Used for the LIVE table as each pairing lands and, for a
+ * round-robin, for the final one too; a finished Swiss bracket ships its own ranked standings and
+ * those are used verbatim instead of being recomputed here.
+ * @param {string[]} names        the whole field, so an entrant that hasn't played yet still shows.
+ * @param {{aName: string, bName: string, aWins: number, bWins: number, draws: number}[]} pairings
+ * @param {string[]} [byeNames]
+ */
+export function tournamentStandingsRows(names, pairings, byeNames) {
+  return tallyStandings(names, pairings, byeNames);
+}
+
+/**
+ * Tournament standings rows -> display rows. Pure FORMATTING, exactly like shapeStandingsTable's
+ * own contract (W-L-D folded into one string, nothing recomputed, the input order — which IS the
+ * ranking — preserved). `byes` rides through for the Swiss table's own extra column.
+ * @param {{name: string, wins: number, losses: number, draws: number, byes: number}[]} rows
+ */
+export function shapeTournamentStandings(rows) {
+  return rows.map(r => ({
+    name: r.name,
+    record: `${r.wins}-${r.losses}-${r.draws}`,
+    wins: r.wins, losses: r.losses, draws: r.draws,
+    byes: r.byes || 0,
+  }));
+}
+
+// The closing rounds get their real names, counting back from the final; anything earlier is just
+// "Round N". Indexed by DISTANCE from the last round, so a 2-entrant bracket's single round is the
+// Final and a 16-entrant bracket's first round isn't miscalled one.
+const KNOCKOUT_ROUND_TITLES = ["Final", "Semifinals", "Quarterfinals"];
+
+/**
+ * A finished knockout bracket (pairing.js's own KnockoutBracket, with or without the per-match rows
+ * — competitionWorker.js strips those before posting) -> the bracket VIEW: one column per round,
+ * each match naming both entrants (or a bye), which of them advanced, and the pairing's aggregate
+ * score. Names only, no entrant objects: the DOM layer renders every cell via textContent.
+ * @param {{ rounds: {round: number, matches: object[]}[], champion: {name: string} }} bracket
+ */
+export function shapeBracketView(bracket) {
+  const rounds = (bracket && bracket.rounds) || [];
+  return {
+    champion: (bracket && bracket.champion && bracket.champion.name) || null,
+    rounds: rounds.map(r => ({
+      round: r.round,
+      title: KNOCKOUT_ROUND_TITLES[rounds.length - r.round] || `Round ${r.round}`,
+      matches: r.matches.map(m => {
+        const a = m.a ? m.a.name : null;
+        const b = m.b ? m.b.name : null;
+        const winner = m.winner ? m.winner.name : null;
+        const res = m.result;
+        return {
+          round: m.round, a, b, bye: !!m.bye, winner,
+          aWon: winner != null && winner === a,
+          bWon: b != null && winner === b,
+          // A bye is not a scoreline; a played pairing shows its aggregate from A's side, with the
+          // draw count appended only when there actually were draws (they're near-impossible here —
+          // D7 — so a permanent "-0" would be noise).
+          score: m.bye ? "bye" : res ? (res.draws ? `${res.aWins}-${res.bWins}-${res.draws}` : `${res.aWins}-${res.bWins}`) : "",
+        };
+      }),
+    })),
+  };
+}
+
+/* ============================================================
    DOM RENDERING — guarded the dom.js way: every entry point below either checks `mapSelectEl`
    itself or is only ever reached from one that did, so this whole section is inert (never throws)
    under Node with no DOM. See test/static-integrity.test.js's C10 check.
@@ -356,6 +582,29 @@ function freshRosterDraft() {
 }
 let rosterDraft = freshRosterDraft();
 
+// --- Tournament screen state (Phase 3). Its own config object rather than sharing compConfig's:
+// the two screens are configured independently (picking 4 worlds for a tournament shouldn't silently
+// rewrite the Quick Duel screen you were just on), but they drive the SAME pickers — see
+// renderWorldPicker/renderSeedsRow/renderSeedRow above, which take whichever config they're editing.
+// `worlds`/`difficulty` start empty/null and are defaulted lazily by renderCompetition() for exactly
+// the TDZ reason compConfig.worlds already documents. ------------------------------------------
+const tourneyConfig = {
+  format: "round-robin",
+  field: [],          // roster NAMES, in tick order — a knockout re-seeds a COPY by rating, never this
+  difficulty: null,
+  worlds: [],
+  seeds: 1,
+  seedText: "",       // blank = random, same convention as the Quick Duel/skirmish Seed rows
+  roundsText: "",     // Swiss only; blank = pairing.js's own swissRoundCount default
+};
+let tourneyView = "config";      // "config" | "progress" | "results"
+let tourneyError = null;
+let tourneyJob = null;           // the job the current/last tournament run was built from
+let tourneyProgress = null;      // the last {type:"progress"} message (plus a pre-run {completed,total})
+let tourneyPairings = [];        // {type:"pairing"} summaries in arrival order — the live standings' input
+let tourneyDone = null;          // the last {type:"done"} tournament message
+let tourneyLedgerNote = null;    // what the ledger fold did: { recorded, total, error, before, after }
+
 // Same fallback boot.js's own resolveSeed(setup) uses — blank/invalid text means "pick something
 // random", a real Math.random call, which is exactly why this lives in the DOM layer and not
 // among the pure exports above.
@@ -373,6 +622,10 @@ function formatElo(entry) {
 function goBack() {
   if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
   compView = "config";
+  // Leaving the mode kills whatever was running, so a run that was mid-flight must not come back as
+  // a frozen, un-cancellable progress view next time this screen opens. A FINISHED tournament's
+  // results are still worth returning to, so only the progress view is reset.
+  if (tourneyView === "progress") tourneyView = "config";
   compError = null;
   setup.mode = "skirmish";
   renderMapSelect();
@@ -380,6 +633,7 @@ function goBack() {
 
 const COMP_TABS = [
   { key: "duel", label: "🏆 Quick Duel" },
+  { key: "tournament", label: "🏟 Tournament" },
   { key: "roster", label: "📋 Roster" },
   { key: "standings", label: "📈 Standings" },
 ];
@@ -396,6 +650,7 @@ function renderCompTabs(container) {
       compScreen = t.key;
       compError = null;
       compRosterError = null;
+      tourneyError = null;
       refreshCompView();
     });
     row.appendChild(btn);
@@ -415,6 +670,7 @@ function refreshCompView() {
 
   if (compScreen === "roster") renderRosterScreen(wrapEl);
   else if (compScreen === "standings") renderStandingsScreen(wrapEl);
+  else if (compScreen === "tournament") renderTournamentScreen(wrapEl);
   else if (compView === "progress") renderProgressView(wrapEl);
   else if (compView === "results") renderResultsView(wrapEl);
   else renderConfigView(wrapEl);
@@ -489,26 +745,60 @@ function renderEntrantCard(container, key, label) {
   container.appendChild(card);
 }
 
-function renderWorldPicker(container) {
+// The world/seeds/seed pickers below all take the config object they edit, so the Tournament screen
+// (Phase 3) drives the SAME three pickers Quick Duel does — same classes, same behaviour, same
+// "every world × every seed runs both directions" rule — over its own state, rather than growing a
+// second, drifting copy of each. `cfg` is compConfig or tourneyConfig; both carry
+// worlds/seeds/seedText.
+function renderWorldPicker(container, cfg) {
   container.appendChild(mk("p", "setup-hint",
     "Worlds — pick one or more. Every world × every seed below runs BOTH directions, side-swapped."));
   const wrap = mk("div", "opt-group comp-worlds");
   MAP_CHOICES.forEach(id => {
-    const selected = compConfig.worlds.includes(id);
+    const selected = cfg.worlds.includes(id);
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "opt-btn" + (selected ? " active" : "");
     btn.appendChild(mk("span", "opt-label", planetName(id)));
     btn.appendChild(mk("span", "opt-note", archetypeFor(id).name));
     btn.addEventListener("click", () => {
-      compConfig.worlds = compConfig.worlds.includes(id)
-        ? compConfig.worlds.filter(w => w !== id)
-        : [...compConfig.worlds, id];
+      cfg.worlds = cfg.worlds.includes(id) ? cfg.worlds.filter(w => w !== id) : [...cfg.worlds, id];
       refreshCompView();
     });
     wrap.appendChild(btn);
   });
   container.appendChild(wrap);
+}
+
+function renderSeedsRow(container, cfg) {
+  const seedsRow = mk("div", "setup-row");
+  seedsRow.appendChild(mk("span", "setup-label", "Seeds / world"));
+  const seedsInput = document.createElement("input");
+  seedsInput.type = "number";
+  seedsInput.min = "1";
+  seedsInput.max = "10";
+  seedsInput.className = "comp-seeds-input";
+  seedsInput.value = String(cfg.seeds);
+  seedsInput.addEventListener("change", () => {
+    cfg.seeds = Math.max(1, Math.floor(Number(seedsInput.value)) || 1);
+    refreshCompView();
+  });
+  seedsRow.appendChild(seedsInput);
+  container.appendChild(seedsRow);
+}
+
+function renderSeedRow(container, cfg) {
+  const seedRow = mk("div", "setup-row");
+  seedRow.appendChild(mk("span", "setup-label", "Seed"));
+  const seedInput = document.createElement("input");
+  seedInput.type = "text";
+  seedInput.inputMode = "numeric";
+  seedInput.className = "seed-input";
+  seedInput.placeholder = "random";
+  seedInput.value = cfg.seedText;
+  seedInput.addEventListener("input", () => { cfg.seedText = seedInput.value; });
+  seedRow.appendChild(seedInput);
+  container.appendChild(seedRow);
 }
 
 function renderConfigView(container) {
@@ -529,34 +819,9 @@ function renderConfigView(container) {
   container.appendChild(mk("p", "setup-hint",
     "One shared difficulty for the whole duel — pinned identical for both entrants, a duel's whole fairness point."));
 
-  renderWorldPicker(container);
-
-  const seedsRow = mk("div", "setup-row");
-  seedsRow.appendChild(mk("span", "setup-label", "Seeds / world"));
-  const seedsInput = document.createElement("input");
-  seedsInput.type = "number";
-  seedsInput.min = "1";
-  seedsInput.max = "10";
-  seedsInput.className = "comp-seeds-input";
-  seedsInput.value = String(compConfig.seeds);
-  seedsInput.addEventListener("change", () => {
-    compConfig.seeds = Math.max(1, Math.floor(Number(seedsInput.value)) || 1);
-    refreshCompView();
-  });
-  seedsRow.appendChild(seedsInput);
-  container.appendChild(seedsRow);
-
-  const seedRow = mk("div", "setup-row");
-  seedRow.appendChild(mk("span", "setup-label", "Seed"));
-  const seedInput = document.createElement("input");
-  seedInput.type = "text";
-  seedInput.inputMode = "numeric";
-  seedInput.className = "seed-input";
-  seedInput.placeholder = "random";
-  seedInput.value = compConfig.seedText;
-  seedInput.addEventListener("input", () => { compConfig.seedText = seedInput.value; });
-  seedRow.appendChild(seedInput);
-  container.appendChild(seedRow);
+  renderWorldPicker(container, compConfig);
+  renderSeedsRow(container, compConfig);
+  renderSeedRow(container, compConfig);
 
   const n = compConfig.worlds.length * compConfig.seeds * 2;
   container.appendChild(mk("p", "setup-hint",
@@ -732,6 +997,9 @@ function startDuel() {
   activeJob = job;
   progress = { completed: 0, total: matchCount(job) };
   compView = "progress";
+  // One worker slot for the whole mode: this duel takes it. A tournament that was running is about
+  // to be terminated below, so its progress view must not be left behind to come back frozen.
+  if (tourneyView === "progress") tourneyView = "config";
   refreshCompView();
 
   if (activeWorker) activeWorker.terminate();   // guard against a stray prior worker, belt-and-suspenders
@@ -783,6 +1051,490 @@ function startDuel() {
       compError = `The duel failed to run: ${msg.message}`;
       compView = "config";
       if (onDuelTab()) refreshCompView();
+    }
+  };
+  activeWorker.postMessage(job);
+}
+
+/* ============================================================
+   TOURNAMENT SCREEN (docs/competitions-and-elo.md Phase 3) — format picker, field builder over the
+   roster, the shared world/seed/difficulty pickers, an up-front cost estimate, live round-by-round
+   progress, and a standings table (round-robin/Swiss) or a real bracket (knockout). Every pairing
+   folds into the ledger when the tournament finishes, one recordCompetition call each, in the
+   worker's own completion order (D6) — see foldTournamentIntoLedger below.
+
+   ENTRANTS ARE ROSTER ROWS, always. Phase 2 established that for Quick Duel ("every entrant is a
+   named, persistent roster row"); a tournament has no ad-hoc-name path AT ALL, because a field of
+   throwaway names would write throwaway rows into the very ladder the tournament exists to move.
+   Too small a roster is answered by pointing at the Roster tab, not by letting names be typed here.
+   ============================================================ */
+
+const formatLabelFor = key => (TOURNAMENT_FORMAT_OPTIONS.find(o => o.mult === key) || {}).label || key;
+const difficultyLabelFor = key => (DIFFICULTY_OPTIONS.find(o => o.mult === key) || {}).label || key;
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// The Swiss round override as a NUMBER, or undefined for "use pairing.js's own default" — blank and
+// junk both mean the default, the same lenient reading resolveSeedBase gives the Seed box.
+function swissRoundsOverride() {
+  const n = Number.parseInt((tourneyConfig.roundsText || "").trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function tourneyDifficulty() {
+  return tourneyConfig.difficulty || compConfig.difficulty;
+}
+
+function renderTournamentScreen(container) {
+  if (tourneyView === "progress") renderTournamentProgress(container);
+  else if (tourneyView === "results" && tourneyDone) renderTournamentResults(container);
+  else renderTournamentConfig(container);
+}
+
+/* ---------- tournament: config ---------- */
+
+function renderFieldBuilder(container) {
+  const roster = ensureLedger().roster;
+  container.appendChild(mk("span", "setup-label", "Field"));
+
+  if (roster.length < 2) {
+    container.appendChild(mk("p", "setup-hint",
+      "A tournament runs on named, persistent entrants, and needs at least 2 of them. " +
+      "Add entrants on the Roster tab, then come back."));
+    const go = mk("button", "btn comp-back-btn", "→ Go to the Roster tab");
+    go.type = "button";
+    go.addEventListener("click", () => { compScreen = "roster"; tourneyError = null; refreshCompView(); });
+    container.appendChild(go);
+    return;
+  }
+
+  // Drop any pick whose roster entry has since been removed, so the field can never name a
+  // now-missing entrant (resolveEntrantPick guards the Quick Duel side of the same hazard).
+  const known = new Set(roster.map(r => r.name));
+  tourneyConfig.field = tourneyConfig.field.filter(name => known.has(name));
+
+  const list = mk("div", "comp-field-list");
+  roster.forEach(entry => {
+    const shaped = shapeRosterRow(entry);
+    const row = mk("label", "comp-field-row" + (tourneyConfig.field.includes(entry.name) ? " picked" : ""));
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "comp-field-check";
+    box.checked = tourneyConfig.field.includes(entry.name);
+    box.addEventListener("change", () => {
+      tourneyConfig.field = box.checked
+        ? [...tourneyConfig.field, entry.name]
+        : tourneyConfig.field.filter(name => name !== entry.name);
+      refreshCompView();
+    });
+    row.appendChild(box);
+    row.appendChild(mk("span", "comp-field-name", shaped.name));
+    row.appendChild(mk("span", "comp-field-meta", `${shaped.strategy} · ${shaped.archetype} · ${shaped.faction}`));
+    list.appendChild(row);
+  });
+  container.appendChild(list);
+
+  const actions = mk("div", "comp-field-actions");
+  const all = mk("button", "btn comp-remove-btn", "Select all");
+  all.type = "button";
+  all.addEventListener("click", () => { tourneyConfig.field = roster.map(r => r.name); refreshCompView(); });
+  const none = mk("button", "btn comp-remove-btn", "Clear");
+  none.type = "button";
+  none.addEventListener("click", () => { tourneyConfig.field = []; refreshCompView(); });
+  actions.append(all, none);
+  actions.appendChild(mk("span", "comp-field-count", `${tourneyConfig.field.length} of ${roster.length} selected`));
+  container.appendChild(actions);
+}
+
+function renderTournamentConfig(container) {
+  container.appendChild(mk("p", "setup-hint comp-intro",
+    "Run a real tournament over your roster — round-robin, Swiss, or a knockout bracket. Every " +
+    "pairing is a full side-swapped duel, run in the background, and every one of them folds into " +
+    "the ladder for this difficulty's bracket as the tournament finishes."));
+
+  const formatRow = mk("div", "setup-row");
+  formatRow.appendChild(mk("span", "setup-label", "Format"));
+  formatRow.appendChild(optionGroup(tourneyConfig.format, TOURNAMENT_FORMAT_OPTIONS, val => {
+    tourneyConfig.format = val;
+    refreshCompView();
+  }));
+  container.appendChild(formatRow);
+
+  renderFieldBuilder(container);
+
+  const diffRow = mk("div", "setup-row");
+  diffRow.appendChild(mk("span", "setup-label", "Difficulty"));
+  diffRow.appendChild(optionGroup(tourneyDifficulty(), DIFFICULTY_OPTIONS, key => { tourneyConfig.difficulty = key; refreshCompView(); }));
+  container.appendChild(diffRow);
+  container.appendChild(mk("p", "setup-hint",
+    "One shared difficulty for the WHOLE tournament — pinned identical for every entrant in every " +
+    "pairing, and its own ladder bracket (D2). Never a per-entrant difficulty."));
+
+  renderWorldPicker(container, tourneyConfig);
+  renderSeedsRow(container, tourneyConfig);
+  renderSeedRow(container, tourneyConfig);
+
+  const n = tourneyConfig.field.length;
+  if (tourneyConfig.format === "swiss") {
+    const roundsRow = mk("div", "setup-row");
+    roundsRow.appendChild(mk("span", "setup-label", "Swiss rounds"));
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.max = "20";
+    input.className = "comp-seeds-input";
+    input.placeholder = n >= 2 ? String(swissRoundCount(n)) : "auto";
+    input.value = tourneyConfig.roundsText;
+    input.addEventListener("change", () => { tourneyConfig.roundsText = input.value; refreshCompView(); });
+    roundsRow.appendChild(input);
+    container.appendChild(roundsRow);
+    container.appendChild(mk("p", "setup-hint",
+      n >= 2
+        ? `Leave blank for the default, max(3, ceil(log₂ n)) — ${plural(swissRoundCount(n), "round")} for this field.`
+        : "Leave blank for the default, max(3, ceil(log₂ n))."));
+  }
+
+  // The up-front budget, BEFORE Start Tournament is clickable (the Phase 3 brief's own point: a
+  // player who picks a huge field deserves to be told it's a long run before it starts).
+  const ready = n >= 2 && tourneyConfig.worlds.length > 0;
+  if (ready) {
+    const est = tournamentEstimate({
+      format: tourneyConfig.format, entrants: n,
+      worlds: tourneyConfig.worlds, seeds: tourneyConfig.seeds, rounds: swissRoundsOverride(),
+    });
+    const line = mk("p", "comp-estimate", est.text);
+    line.appendChild(mk("span", "comp-estimate-detail",
+      `${plural(est.pairings, "pairing")} × ${plural(tourneyConfig.worlds.length, "world")} × ` +
+      `${plural(tourneyConfig.seeds, "seed")} × 2 sides, at roughly ${SECONDS_PER_MATCH}s a match`));
+    container.appendChild(line);
+  } else {
+    container.appendChild(mk("p", "setup-hint",
+      n < 2 ? "Pick at least 2 entrants above to see what this run will cost." : "Pick at least one world."));
+  }
+
+  if (tourneyError) container.appendChild(mk("p", "comp-error", tourneyError));
+
+  const startBtn = mk("button", "btn" + (ready ? "" : " disabled"), "▶ Start Tournament");
+  startBtn.type = "button";
+  startBtn.disabled = !ready;
+  if (ready) startBtn.addEventListener("click", startTournament);
+  container.appendChild(startBtn);
+}
+
+/* ---------- tournament: progress ---------- */
+
+// One table shared by the live progress view and the finished round-robin/Swiss results view, so
+// the number moving on screen and the number it settles on are rendered by the same code.
+function renderTournamentStandingsTable(container, rows, showByes) {
+  const wrap = mk("div", "comp-table-wrap");
+  const table = document.createElement("table");
+  table.className = "comp-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["#", "Name", "W-L-D", ...(showByes ? ["Byes"] : [])].forEach(h => headRow.appendChild(mk("th", null, h)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  shapeTournamentStandings(rows).forEach((row, i) => {
+    const tr = document.createElement("tr");
+    tr.appendChild(mk("td", null, String(i + 1)));
+    tr.appendChild(mk("td", null, row.name));
+    tr.appendChild(mk("td", null, row.record));
+    if (showByes) tr.appendChild(mk("td", null, String(row.byes)));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
+// Every pairing that has finished, newest last — the knockout's live view (a bracket can't be drawn
+// until its tree exists) and a running log for the other two formats.
+function renderPairingLog(container, pairings) {
+  if (!pairings.length) return;
+  const wrap = mk("div", "comp-table-wrap");
+  const table = document.createElement("table");
+  table.className = "comp-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Round", "Pairing", "Result"].forEach(h => headRow.appendChild(mk("th", null, h)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  pairings.forEach(p => {
+    const tr = document.createElement("tr");
+    const winner = p.aWins === p.bWins ? "tied" : `${p.aWins > p.bWins ? p.aName : p.bName} won`;
+    [String(p.round), `${p.aName} vs ${p.bName}`, `${p.aWins}-${p.bWins}-${p.draws} — ${winner}`]
+      .forEach(v => tr.appendChild(mk("td", null, v)));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
+function renderTournamentProgress(container) {
+  const wrap = mk("div", "comp-progress");
+  const p = tourneyProgress || { completed: 0, total: 0 };
+  wrap.appendChild(mk("p", "setup-hint",
+    `${formatLabelFor(tourneyConfig.format)} — ` +
+    (p.round ? tournamentProgressLabel(p) : `starting… 0 of ${p.total} matches`)));
+
+  const bar = mk("div", "comp-progress-bar");
+  const fill = mk("div", "comp-progress-fill");
+  fill.style.width = (p.total ? Math.round((p.completed / p.total) * 100) : 0) + "%";
+  bar.appendChild(fill);
+  wrap.appendChild(bar);
+
+  const cancelBtn = mk("button", "btn", "Cancel");
+  cancelBtn.type = "button";
+  cancelBtn.addEventListener("click", () => {
+    // Worker#terminate() kills the thread outright mid-match — competitionWorker.js needs no
+    // cooperative cancellation, and nothing is written to the ledger until its "done" message,
+    // which a terminated worker never sends.
+    if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+    tourneyView = "config";
+    refreshCompView();
+  });
+  wrap.appendChild(cancelBtn);
+  container.appendChild(wrap);
+
+  if (tourneyConfig.format === "knockout") {
+    renderPairingLog(container, tourneyPairings);
+  } else if (tourneyJob) {
+    container.appendChild(mk("p", "setup-hint", "Standings so far:"));
+    renderTournamentStandingsTable(
+      container,
+      tournamentStandingsRows(tourneyJob.field.map(e => e.name), tourneyPairings),
+      tourneyConfig.format === "swiss",
+    );
+    if (tourneyConfig.format === "swiss")
+      container.appendChild(mk("p", "setup-hint", "Byes are settled when the tournament finishes."));
+  }
+}
+
+/* ---------- tournament: results ---------- */
+
+function bracketSeat(name, won, isBye) {
+  const seat = mk("div", "comp-bracket-seat" + (won ? " winner" : "") + (isBye ? " bye" : ""));
+  seat.appendChild(mk("span", "comp-bracket-seat-name", isBye ? "BYE" : name));
+  if (won) seat.appendChild(mk("span", "comp-bracket-check", "✓"));
+  return seat;
+}
+
+function renderBracket(container, view) {
+  const wrap = mk("div", "comp-bracket-wrap");
+  const board = mk("div", "comp-bracket");
+  view.rounds.forEach(round => {
+    const col = mk("div", "comp-bracket-round");
+    col.appendChild(mk("h4", "comp-bracket-title", round.title));
+    round.matches.forEach(m => {
+      const card = mk("div", "comp-bracket-match" + (m.bye ? " is-bye" : ""));
+      card.appendChild(bracketSeat(m.a, m.aWon, false));
+      card.appendChild(bracketSeat(m.b, m.bWon, m.b == null));
+      card.appendChild(mk("span", "comp-bracket-score", m.score));
+      col.appendChild(card);
+    });
+    board.appendChild(col);
+  });
+  wrap.appendChild(board);
+  container.appendChild(wrap);
+}
+
+// What the ledger fold actually did to every entrant's rating, straight off the ledger (before and
+// after recordCompetition), so "the ladder was updated" is shown rather than merely claimed.
+function renderLadderMovement(container, note) {
+  const names = Object.keys(note.after);
+  if (!names.length) return;
+  container.appendChild(mk("p", "setup-hint", "Ladder movement:"));
+  const wrap = mk("div", "comp-table-wrap");
+  const table = document.createElement("table");
+  table.className = "comp-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Name", "Rating", "Change", "Games"].forEach(h => headRow.appendChild(mk("th", null, h)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  names
+    .sort((x, y) => note.after[y].rating - note.after[x].rating || x.localeCompare(y))
+    .forEach(name => {
+      const before = note.before[name], after = note.after[name];
+      const change = Math.round(after.rating) - Math.round(before.rating);
+      const tr = document.createElement("tr");
+      [name, formatElo(after), `${change > 0 ? "+" : ""}${change}`, String(after.games)]
+        .forEach(v => tr.appendChild(mk("td", null, v)));
+      tbody.appendChild(tr);
+    });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
+function renderTournamentResults(container) {
+  const done = tourneyDone;
+  const job = tourneyJob;
+  const diffLabel = difficultyLabelFor(job.difficulty);
+
+  container.appendChild(mk("h3", "cards-heading",
+    `${formatLabelFor(done.format)} — ${plural(done.field.length, "entrant")}, ${plural(done.pairings.length, "pairing")}`));
+
+  const note = tourneyLedgerNote || { recorded: 0, total: 0, error: "the result was never recorded" };
+  container.appendChild(mk("p", note.error ? "comp-note" : "comp-note comp-note-good",
+    note.error
+      ? `The tournament finished, but the ladder update stopped after ${plural(note.recorded, "pairing")}: ${note.error}`
+      : `Elo updated for the ${diffLabel} bracket — ${plural(note.recorded, "pairing")} recorded, in the order they were played. See the Standings screen.`));
+
+  if (done.format === "knockout") {
+    container.appendChild(mk("p", "comp-champion", `🏆 Champion: ${done.champion}`));
+    renderBracket(container, shapeBracketView(done.bracket));
+  } else {
+    renderTournamentStandingsTable(container, done.standings, done.format === "swiss");
+    if (done.format === "swiss" && done.byeNames && done.byeNames.length)
+      container.appendChild(mk("p", "setup-hint",
+        `Byes: ${done.byeNames.join(", ")} — a bye is never scored as a win, only recorded as a round sat out.`));
+    renderPairingLog(container, done.pairings);
+  }
+
+  if (tourneyLedgerNote) renderLadderMovement(container, tourneyLedgerNote);
+
+  const actions = mk("div", "comp-actions");
+  const again = mk("button", "btn", "Run Another Tournament");
+  again.type = "button";
+  again.addEventListener("click", () => { tourneyView = "config"; refreshCompView(); });
+  actions.appendChild(again);
+  const seeStandings = mk("button", "btn", "View Standings");
+  seeStandings.type = "button";
+  seeStandings.addEventListener("click", () => { standingsDifficulty = job.difficulty; compScreen = "standings"; refreshCompView(); });
+  actions.appendChild(seeStandings);
+  container.appendChild(actions);
+}
+
+/* ---------- tournament: run ---------- */
+
+// Fold a finished tournament into the ledger: ONE recordCompetition call PER PAIRING, in the exact
+// order the worker finished them (round 1 before round 2, in-round order preserved) — D6's
+// canonical-ordering rule applied to a multi-pairing tournament, since Elo is order-dependent.
+// Deliberately NOT one batched call: recordCompetition is shaped around a single aName/bName pair
+// and writes one history entry per competition, exactly as Quick Duel already calls it per duel.
+function foldTournamentIntoLedger(job, done) {
+  const activeLedger = ensureLedger();
+  const names = job.field.map(e => e.name);
+  const bracketBefore = activeLedger.ratingsByDifficulty[job.difficulty];
+  const before = {};
+  for (const name of names) before[name] = ratingLookup(bracketBefore, name);
+
+  let recorded = 0;
+  let error = null;
+  for (const pairing of done.pairings) {
+    try {
+      recordCompetition(activeLedger, {
+        at: Date.now(), difficulty: job.difficulty,
+        aName: pairing.aName, bName: pairing.bName, rows: pairing.rows,
+      });
+      recorded++;
+    } catch (err) {
+      // Not expected — buildTournamentJob already guarantees every name is real, distinct and
+      // non-forbidden — but a rejected write must surface rather than vanish, and the pairings
+      // already recorded stay recorded (they really were played).
+      error = err.message;
+      break;
+    }
+  }
+  saveLedgerToStorage(activeLedger);
+
+  const bracketAfter = activeLedger.ratingsByDifficulty[job.difficulty];
+  const after = {};
+  for (const name of names) after[name] = ratingLookup(bracketAfter, name);
+  tourneyLedgerNote = { recorded, total: done.pairings.length, error, before, after };
+}
+
+function startTournament() {
+  tourneyError = null;
+  const activeLedger = ensureLedger();
+
+  // Resolve every pick against the CURRENT roster (never a stale copy) before building the job —
+  // the same discipline resolveEntrantPick gives a Quick Duel's two pickers.
+  const picked = tourneyConfig.field
+    .map(name => activeLedger.roster.find(r => r.name === name))
+    .filter(Boolean);
+  if (picked.length < 2) {
+    tourneyError = "Pick at least 2 entrants from the roster.";
+    refreshCompView();
+    return;
+  }
+
+  const difficulty = tourneyDifficulty();
+  // A knockout consumes a SEEDING and never invents one (pairing.js's own contract), so seed it
+  // here, off this difficulty bracket's own ladder. The other two formats read the field's order as
+  // nothing more than an order, so they keep the player's own selection order.
+  const field = tourneyConfig.format === "knockout"
+    ? seedFieldByRating(picked, activeLedger.ratingsByDifficulty[difficulty])
+    : picked;
+
+  let job;
+  try {
+    job = buildTournamentJob({
+      format: tourneyConfig.format,
+      field,
+      difficulty,
+      worlds: tourneyConfig.worlds,
+      seeds: tourneyConfig.seeds,
+      seedBase: resolveSeedBase(tourneyConfig.seedText),
+      rounds: swissRoundsOverride(),
+    });
+  } catch (err) {
+    tourneyError = err.message;
+    refreshCompView();
+    return;
+  }
+
+  tourneyJob = job;
+  tourneyPairings = [];
+  tourneyDone = null;
+  tourneyLedgerNote = null;
+  tourneyProgress = {
+    completed: 0,
+    total: tournamentEstimate({
+      format: job.format, entrants: job.field.length, worlds: job.worlds, seeds: job.seeds, rounds: job.rounds,
+    }).matches,
+  };
+  tourneyView = "progress";
+  // The mirror of startDuel's own line: a Quick Duel that was still running loses the worker slot
+  // below, so its progress view is reset rather than left to come back frozen.
+  if (compView === "progress") compView = "config";
+  refreshCompView();
+
+  // One worker slot for the whole mode: starting a tournament cancels whatever was running, exactly
+  // as starting a duel already does.
+  if (activeWorker) activeWorker.terminate();
+  activeWorker = new Worker(new URL("./competitionWorker.js", import.meta.url), { type: "module" });
+  activeWorker.onmessage = e => {
+    const msg = e.data;
+    // Same rule as startDuel's handler: state updates land unconditionally (the ledger write must
+    // happen whichever tab is on screen), but the DOM is only rebuilt when the Tournament tab is
+    // actually showing — otherwise a progress tick would wipe the Roster/Standings screen out from
+    // under whatever it's doing.
+    const onTourneyTab = () => compScreen === "tournament";
+    if (msg.type === "progress") {
+      tourneyProgress = msg;
+      if (onTourneyTab() && tourneyView === "progress") refreshCompView();
+    } else if (msg.type === "pairing") {
+      tourneyPairings = [...tourneyPairings, msg];
+      if (onTourneyTab() && tourneyView === "progress") refreshCompView();
+    } else if (msg.type === "done") {
+      activeWorker = null;
+      tourneyDone = msg;
+      foldTournamentIntoLedger(job, msg);
+      tourneyView = "results";
+      if (onTourneyTab()) refreshCompView();
+    } else if (msg.type === "error") {
+      activeWorker = null;
+      tourneyError = `The tournament failed to run: ${msg.message}`;
+      tourneyView = "config";
+      if (onTourneyTab()) refreshCompView();
     }
   };
   activeWorker.postMessage(job);
@@ -1046,6 +1798,8 @@ export function renderCompetition() {
   // Lazy defaults (see compConfig's own comment on why these can't just be the initializers above):
   // by the time a real render happens, module evaluation is long finished either way.
   if (compConfig.worlds.length === 0) compConfig.worlds = [MAP_CHOICES[0]];
+  if (tourneyConfig.worlds.length === 0) tourneyConfig.worlds = [MAP_CHOICES[0]];
+  if (tourneyConfig.difficulty == null) tourneyConfig.difficulty = compConfig.difficulty;
   if (standingsDifficulty == null) standingsDifficulty = compConfig.difficulty;
   wrapEl = mk("div", "comp-screen");
   mapSelectEl.appendChild(wrapEl);
