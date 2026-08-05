@@ -236,6 +236,20 @@ DOM ids automatically.
 **Risk:** the Worker is the one genuinely new browser surface. Keep the worker a thin shell — all
 logic in importable modules — so it's testable under Node without a Worker at all.
 
+**Status: done.** Landed across two stages on this branch: `elo.js` plus `tools/duelCore.js` (the
+match-runner extracted out of `tools/ailab.js` — not in the Files list above, added so a Worker
+could import it without ailab's ~1600 lines of CLI code) and `tools/ailab.js`'s own Elo column
+landed first; `competition.js` (the Quick Duel screen's pure job/seed/table/Elo logic plus its
+DOM rendering) and `competitionWorker.js` (the batch-simulating module Worker) landed second,
+wired into `setup.js`'s `MODES`/`renderMapSelect()` and `style.css`. Two deliberate deviations
+from the sketch above, both explained in `competition.js`'s own header comment: no Faction picker
+(a duel's dial set — archetype/strategy/difficulty — has no faction option at all in
+`tools/selfplay.js`'s `createSelfPlayState`, so offering one would be cosmetic in a way that could
+misleadingly imply a gameplay effect) and no match-length picker (kept to the screen's own
+explicit spec; every duel runs at `engine/victory.js`'s default 40-minute clock). `index.html`
+needed no changes — the screen reuses `mapSelectEl`, the same div `setup.js`'s own cards already
+own.
+
 ### Phase 2 — Named roster, per-entrant archetype, persistent ladder *(M)*
 
 Turns one-off duels into something that accumulates.

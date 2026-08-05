@@ -21,10 +21,12 @@ import { hasSave, loadGame, hasOdysseySave, loadOdyssey } from "./saveload.js";
 import { APP_VERSION } from "./version.js";
 import { startGame, startScenario, startRaider, startBounty, startOdyssey } from "./boot.js";
 import * as sound from "./sound.js";
+import { renderCompetition } from "./competition.js";
 
 // The curated roster and its order both come from the AI archetype table, so
 // the picker, the opponent temperament, and the tests all agree on one list.
-const MAP_CHOICES = Object.keys(PLANET_ARCHETYPE);
+// Exported: competition.js's world multi-select reuses this exact roster rather than re-deriving it.
+export const MAP_CHOICES = Object.keys(PLANET_ARCHETYPE);
 
 // Every world an Odyssey can start on: the skirmish nine PLUS the two Odyssey-only extras
 // (engine/galaxy.js ODYSSEY_WORLDS builds the identical list the same way — kept independent
@@ -109,6 +111,7 @@ const MODES = [
   { key: "escort", label: "🚚 Convoy Escort", note: "Protect freighters to the destination" },
   { key: "raider", label: "🏴‍☠️ Pirate Raider", note: "Raid the convoy before it escapes" },
   { key: "bounty", label: "⭐ Bounty Marshal", note: "Hunt pirate camps before the clock" },
+  { key: "competition", label: "🏆 Competition", note: "Pit two AI configurations against each other" },
 ];
 
 // The scenario modes that pick a world from the card grid (Odyssey lands on a
@@ -153,8 +156,9 @@ const SCENARIO_COPY = {
 };
 
 // A one-of-N pick rendered as a row of buttons; clicking one selects it and
-// stores its value via onPick.
-function optionGroup(current, options, onPick) {
+// stores its value via onPick. Exported: competition.js reuses this directly for its own
+// Strategy/Difficulty rows rather than redefining the same button-group rendering twice.
+export function optionGroup(current, options, onPick) {
   const wrap = document.createElement("div");
   wrap.className = "opt-group";
   options.forEach(opt => {
@@ -303,7 +307,10 @@ export function renderMapSelect() {
   const copy = SCENARIO_COPY[setup.mode];   // defined for scenarios + Odyssey; undefined for skirmish
   mapSelectEl.innerHTML = "";
   const title = document.createElement("h2");
-  title.textContent = copy ? copy.title : "Configure the skirmish";
+  // Competition isn't in SCENARIO_COPY (none of its other fields — diffHint/brief/subtitle —
+  // apply, since the branch below returns before any of them would be read), so its title is a
+  // direct special-case rather than a mismatched-shape table entry.
+  title.textContent = setup.mode === "competition" ? "🏆 Quick Duel" : copy ? copy.title : "Configure the skirmish";
   mapSelectEl.appendChild(title);
 
   const ver = document.createElement("p");
@@ -315,6 +322,15 @@ export function renderMapSelect() {
   // Picking one re-renders this screen so the setup rows + start action match.
   mapSelectEl.appendChild(optionGroup(setup.mode, MODES.map(m => ({ label: m.label, mult: m.key, note: m.note })),
     key => { setup.mode = key; renderMapSelect(); }));
+
+  // Competition: a background AI-vs-AI simulation, not a playable game — no player economy, no
+  // map size/resources/pop cap/match length/seed rows (renderSetupPanel's own rows below don't
+  // apply, and its unconditional SCENARIO_COPY[mode].diffHint read would throw for a mode with no
+  // entry there). competition.js owns the entire rest of the screen and renders directly into
+  // mapSelectEl itself, the same way the cards flow below does — mirrors this function's own
+  // `if (odyssey) { ... return; }` branch further down: an early return partway through, after the
+  // shared title/version/mode-toggle chrome, for a mode whose layout genuinely diverges.
+  if (setup.mode === "competition") { renderCompetition(); return; }
 
   // Offer to pick up the autosaved skirmish before starting a fresh one (skirmish only).
   if (setup.mode === "skirmish" && hasSave()) {

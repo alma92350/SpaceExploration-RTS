@@ -999,6 +999,116 @@ body.paused::after {
 
 .gameover-seed { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-top: 10px; }
 
+/* ---- Quick Duel screen (competition.js) — reuses .setup/.opt-group/.opt-btn/.seed-input's own
+   visual language throughout; these rules are only what's genuinely new: the two-entrant layout,
+   the world multi-select, the progress bar, and the results table. ---- */
+.comp-screen {
+  width: min(760px, 94vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+/* Deliberately NOT a full-width .btn like Run Duel/Cancel — a small corner link back out of the
+   whole screen, not a primary action of whichever sub-view (config/progress/results) is showing. */
+.comp-back-btn {
+  align-self: flex-start;
+  width: auto;
+  margin-top: 0;
+  padding: 6px 12px;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.comp-back-btn:hover { color: var(--text); border-color: var(--accent-2); }
+.comp-intro { max-width: 640px; margin: 0; }
+
+.comp-entrants { display: flex; gap: 14px; flex-wrap: wrap; }
+.comp-entrant {
+  flex: 1 1 260px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.comp-entrant-heading { margin: 0 0 8px; color: var(--accent); font-size: 0.95rem; }
+.comp-name-input {
+  display: block;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-name-input:focus { outline: none; border-color: var(--accent); }
+.comp-substrategy-label { display: block; margin: 2px 0 6px; }
+
+.comp-worlds { margin-top: 4px; }
+
+.comp-seeds-input {
+  width: 80px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-seeds-input:focus { outline: none; border-color: var(--accent); }
+
+.comp-error { color: var(--bad); font-size: 0.82rem; margin: -6px 0 0; }
+
+.comp-progress { display: flex; flex-direction: column; gap: 10px; }
+.comp-progress-bar {
+  height: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.comp-progress-fill { height: 100%; background: var(--accent); transition: width 150ms ease-out; }
+
+/* Phase 1 has no persistent ledger (docs/competitions-and-elo.md D8 is Phase 2) — this note has
+   to read as a caveat, not a normal status line, so it borrows the warn hue like every other
+   "this changes what you'd otherwise assume" cue (.map-card .mod-note, .update-compat.bad). */
+.comp-note {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 6px;
+}
+
+.comp-elo-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.comp-elo-card {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.comp-elo-name { font-weight: 600; color: var(--text); font-size: 0.9rem; }
+.comp-elo-value { font-size: 1.3rem; color: var(--gold); font-weight: 700; }
+.comp-elo-games { font-size: 0.74rem; color: var(--muted); }
+
+.comp-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.comp-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
+.comp-table th, .comp-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.comp-table th { color: var(--accent); font-weight: 600; background: var(--panel-2); }
+.comp-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+.comp-table tbody tr:last-child td { border-bottom: none; }
+
 /* Attack-move armed: the crosshair cursor alone is easy to miss, so the battlefield
    also gets a warm inset outline that unmistakably says "the next click is an attack". */
 #field.aim-cursor { cursor: crosshair; box-shadow: inset 0 0 0 2px var(--warn); }
