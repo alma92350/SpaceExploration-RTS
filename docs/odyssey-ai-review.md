@@ -58,9 +58,17 @@ wall clock. It is run against two opponents, because the answer differs complete
 `passive` (a player who seats a base and then does nothing) and `skirmisher` (a turtle economy
 that throws its army at the AI whenever it musters one).
 
-Before / after the fixes in this pass, under **identical** metric definitions — the "before"
-column is the pre-fix engine measured with today's bench, from a `git worktree` at the pre-fix
-commit, not remembered numbers:
+> **Numbers in this document are only comparable within a pass.** The detectors have been
+> rewritten twice — 2026-07-30 and 2026-08-05 (§2.12) — and a count taken under one definition
+> says nothing against a count taken under another. Every before/after pair below is therefore
+> measured with ONE build of `tools/ailab.js` across both columns, via a `git worktree` at the
+> older commit with today's bench copied in. Numbers are never carried across a metric change,
+> and the tables are re-generated rather than edited. The table immediately below is the
+> **2026-07-30 pass**, under that pass's own metric; §2.11 and §2.12 carry their own.
+
+Before / after the fixes in the 2026-07-30 pass, under **identical** metric definitions — the
+"before" column is the pre-fix engine measured with that day's bench, from a `git worktree` at the
+pre-fix commit, not remembered numbers:
 
 | detector | passive: before | passive: after | skirmisher: before | skirmisher: after |
 |---|---|---|---|---|
@@ -75,10 +83,17 @@ Read that table honestly, because two of its columns are not wins.
 
 Against a **passive** player the AI is substantially better: it no longer wedges, no longer
 hoards, and develops on eight more worlds. `production-stall` is the exception — it did not move
-at all, across two attempts. Probing the worlds it fires on shows why: the residue is the Rusher
-archetype doing what it is designed to do (six workers, one Barracks) on Medium, where
-`rusherGraduates` deliberately does not apply. That is not a stall the code can fix; it's the
-Medium half of §2.4, and changing it means changing what a Rusher *is*.
+at all, across two attempts. Probing the worlds it fired on gave the explanation held at the time:
+the residue was the Rusher archetype doing what it was designed to do (six workers, one Barracks)
+on Medium, where `rusherGraduates` deliberately does not apply — not a stall the code can fix.
+
+**That explanation is now superseded twice over, and it is worth saying so rather than leaving a
+plausible sentence standing.** The Odyssey Rusher no longer runs six workers — §2.11 raised it to
+nine — so "six workers, one Barracks" is not a description of anything the engine currently does.
+And §2.12 then found that this detector was one of the two measuring the wrong thing entirely: it
+counted samples where a Barracks was caught idle, with no test of whether the line ever restarted.
+Both halves of the old story have to be re-derived under the current detector rather than quoted;
+§2.12 carries the numbers that replace this row.
 
 Against a **skirmisher** the mean fell, 0.373 → 0.336, and that number needs unpacking
 rather than defending. Most of it is a denominator change: `hostile-but-idle` and the `pressure`
@@ -88,13 +103,19 @@ something they used to be excused from. Underneath it, the real story is §2.9 �
 the first ten minutes, so none of the long-game fixes ever come into play. That is the next
 decision to make, and it is not a code decision.
 
-One methodological note, because it bit three times: **a detector must not fire on behaviour the
-design intends.** Scaling the AI up turned three of the five into false positives — "any Barracks
-idle" fired on 42 of 44 healthy runs once surplus opened six of them; a peak-based thrift measure
-scored a working economy (which peaks high and spends straight back down) the same as a stalled
-one; and momentary supply pressure with a Habitat already going up is not a deadlock. Each was
-rewritten and pinned with a test. A metric that rewards the wrong thing is worse than no metric,
-because the tuning loop optimises against it.
+One methodological note, because it has now bitten five times across two passes: **a detector must
+not fire on behaviour the design intends.** Scaling the AI up turned three of the five into false
+positives in July — "any Barracks idle" fired on 42 of 44 healthy runs once surplus opened six of
+them; a peak-based thrift measure scored a working economy (which peaks high and spends straight
+back down) the same as a stalled one; and momentary supply pressure with a Habitat already going up
+is not a deadlock — and scaling it up again in August did the same to the remaining two (§2.12).
+Each was rewritten and pinned with a test. A metric that rewards the wrong thing is worse than no
+metric, because the tuning loop optimises against it.
+
+§2.12 turns that recurring lesson into a rule with a test behind it: a detector must pair its
+symptom with a **non-resolution term**, and must not carry an absolute threshold calibrated
+against one size of economy. `test/ailab.test.js` asserts the whole list stays silent on a healthy
+curve scaled from 1× to 100×.
 
 ### 2.1 Half the galaxy's neighbours can never attack you
 
@@ -500,41 +521,45 @@ that changed.
   over `armyAttackSizeMult` and `garrisonMult` moved 2W-6L to at best 3W-5L. Attacking sooner with
   less was never the problem; having nothing to follow up with was.
 
-**The guardrail, in full, including the row that got worse.** `ailab check` (44 runs, 60 sim-minutes,
-Medium, `passive`), before and after:
+**The guardrail, in full.** `ailab check` (44 runs, 60 sim-minutes, Medium, `passive`), both
+columns measured with the **current** bench — the detectors were rewritten the following day
+(§2.12), so these are the re-generated numbers, not the ones this section originally shipped with:
 
 | detector | before | after |
 |---|---|---|
-| `supply-deadlock` | 1 / 44 | **6 / 44** |
+| `supply-deadlock` | 0 / 44 | 0 / 44 |
 | `hoarding` | 2 / 44 | 2 / 44 |
 | `dev-flatline` | 10 / 44 | **5 / 44** |
 | `hostile-but-idle` | 4 / 44 | **0 / 44** |
-| `production-stall` | 18 / 44 | 17 / 44 |
+| `production-stall` | 0 / 44 | 0 / 44 |
 
-`supply-deadlock` grew, and it is left open rather than papered over. What the growth is measuring
-is visible in a direct 60-minute probe of one of the six rows (`ferros/aggressive`), run against
-both engines:
+No regressions: two detectors improve and three are flat.
+
+**That is not what this section said when it shipped, and the difference is the point of §2.12.**
+Measured with the bench as it stood that day, the same two engines gave `supply-deadlock` 1/44 →
+**6/44** and `production-stall` 18/44 → 17/44 — a regression this section documented at length and
+handed back as an open question rather than papering over. It turned out to be the detector, not
+the AI: both were written as "was this true right now, often enough?" with no test of whether the
+state ever cleared, so an AI that grew fast enough to live at its supply ceiling tripped them
+continuously. §2.12 has the full 2×2 and the rewrite.
+
+The probe that made the diagnosis is still worth keeping, because it is the clearest single
+picture of what §2.11 actually did — one 60-minute `ferros/aggressive` run against both engines:
 
 | | Command Centers | buildings | supply used | habitats |
 |---|---|---|---|---|
 | before | **1** | 20 | 105 | 10 |
 | after | **4** | 169 | 1,248 | 134 |
 
-The neighbour that used to sit on one base for an hour now runs four, and its supply climbs 280 →
-579 → 807 → 1,048 → 1,248 across the run. It is not stuck; it is living at its ceiling while
-growing, and the detector — which samples "blocked right now, with no Habitat under construction
-and money in the bank" — has no notion of whether the state ever resolves, even though its own
-`why` string claims it measures "the state that never resolves itself". This is the *third* time
-that class of false positive has come up in this document (see §2's methodological note), and it
-is the one open question this pass hands back rather than answering: sharpening a detector is a
-decision about what the bench measures, and it needs re-baselining the old engine under the new
-definition before any number from it means anything.
+The neighbour that used to sit on one base for an hour now runs four, and its supply climbs
+280 → 579 → 807 → 1,048 → 1,248 across the run.
 
-An attempted fix was built and **rejected on measurement**: a fourth ore holdback (`ctx.supplyReserve`,
-a Habitat's 75 held back from unit production while blocked with none on the way). It changed
-`check` by nothing at all — all five detectors byte-identical — because it can never bind in real
-play: whenever the AI is blocked and can afford a Habitat it founds one in that same phase, and
-when it cannot afford 75 it cannot afford a 100-ore Skiff either. Reverted rather than shipped.
+Also recorded, and rejected on measurement: a fourth ore holdback (`ctx.supplyReserve` — a
+Habitat's ore held back from unit production while blocked with none on the way) was built to fix
+what looked like a real starvation loop. It changed `check` by nothing at all, all five detectors
+byte-identical, because it cannot bind in real play: `aiBaseAndTech` runs before production, so
+whenever the AI is blocked and can afford a Habitat it founds one that same phase, and when it
+cannot afford 75 it cannot afford a 100-ore Skiff either. Reverted rather than shipped.
 
 **And one dial that had to be tuned across difficulties to be tuned at all.** The first value tried
 for Aggressive was 1.4, which wins Medium harder (54%) — and *loses* Hard, 51% → 44%. `aiDifficulty.js`'s
@@ -542,6 +567,86 @@ Hard row already carries `workerTargetMult: 1.25` and the layers compose multipl
 is really 1.75× there. 1.25 keeps almost all of the Medium gain and turns the Hard result positive.
 This is §2.6's "the multiplicative layers have no clamp" showing up as a measurable loss rather
 than a theoretical one; the composed product is now pinned by a test.
+
+### 2.12 Two of the five detectors were measuring the wrong thing — *fixed*
+
+**Status: fixed.** §2.11 shipped with one guardrail row going the wrong way (`supply-deadlock`
+1/44 → 6/44) and deliberately did not touch the detector, on the grounds that sharpening a metric
+whose number you are being judged on is not a decision the judged party should make. Taken up
+separately, the answer turned out to be bigger than that one row.
+
+**The pattern was in the detectors' own history.** Sort the five by the SHAPE of the predicate:
+
+| | predicate | fate |
+|---|---|---|
+| `dev-flatline` | `devGrowthTail === 0 && devFinal < 12` | growth term — survived two scale-ups untouched |
+| `hoarding` | `bankedFinal > 5000 && armyGrowthTail <= 0` | growth term — survived two scale-ups untouched |
+| `hostile-but-idle` | fraction + an entitlement gate | gated in July, correct since |
+| `supply-deadlock` | `supplyDeadlockFrac > 0.1` | **pure instantaneous fraction — broke** |
+| `production-stall` | `idleRichFrac > 0.25` | **pure instantaneous fraction — broke** |
+
+The two written as *"is this true right now, often enough?"* are exactly the two that have needed
+rescuing, and the ones carrying a *"…and it never resolved"* term have never needed it. A busy AI
+is momentarily blocked, momentarily idle and momentarily rich all the time; only a stuck one is
+still in that state with nothing having moved.
+
+**The rewrite**, in `tools/ailab.js`:
+
+- `supply-deadlock` gains `&& supplyCapGrowthTail <= 0` — blocked, *and the ceiling never rose*.
+- `production-stall` gains `&& armyGrowthTail <= 0` — idle, *and the army never grew*.
+- Both money gates stop being absolute ore figures. `banked > 400` and `banked > 1000` are
+  statements about one size of economy; they are now "could it afford the exact purchase that
+  would have resolved this?" — a Habitat for the block, the next mix unit for the idle line
+  (`sample()`'s `canAffordUnblock` / `canAffordNext`), which has no scale in it at all.
+
+**The 2×2 that justifies it.** The same two engines — pre-§2.11 (`7890096`) and post-§2.11
+(`b0673eb`) — measured under both the old and the new metric. The old-metric columns come from a
+`git worktree` at the older commit with the *then*-current bench; the new-metric columns from the
+same worktree with today's bench copied in, so each column pair is internally comparable:
+
+| detector | before / old | after / old | before / **new** | after / **new** |
+|---|---|---|---|---|
+| `supply-deadlock` | 1 / 44 | **6 / 44** | 0 / 44 | 0 / 44 |
+| `hoarding` | 2 / 44 | 2 / 44 | 2 / 44 | 2 / 44 |
+| `dev-flatline` | 10 / 44 | 5 / 44 | 10 / 44 | 5 / 44 |
+| `hostile-but-idle` | 4 / 44 | 0 / 44 | 4 / 44 | 0 / 44 |
+| `production-stall` | **18 / 44** | 17 / 44 | **0 / 44** | **0 / 44** |
+
+Three things to read out of it.
+
+1. **The three untouched detectors reproduce exactly** across the metric change on the same engine
+   (2, 10, 4). That is the re-baseline validating itself — if the worktree procedure were wrong,
+   those would drift too.
+2. **§2.11's regression was the detector, not the AI.** `supply-deadlock` is 0/44 on *both*
+   engines under a predicate that asks whether the state ever cleared.
+3. **`production-stall`'s 18/44 was never real.** That row has been in this document since
+   2026-07-30, was attacked twice (once with parallel Habitats, once written off as "the Rusher
+   doing what it is designed to do"), and under a predicate that checks whether the line restarted
+   it is **zero on the pre-fix engine too**. Every one of those 18 runs had a growing army in the
+   last third. The AI was never stalled; the detector was counting a Barracks caught between jobs.
+
+**What the named-defect list is now**: `hoarding` 2/44 (`korrath/matching`, `oort/matching` — the
+plateau case §2.3's ledger already describes) and `dev-flatline` 5/44. Nothing else fires.
+
+**Both rewritten detectors are silent on the whole roster, and that is worth stating plainly**
+rather than presenting as a clean sweep. They are regression guards now, not live findings. What
+keeps them honest is that their liveness is asserted directly: `test/ailab.test.js` builds a
+genuinely stuck curve for each and requires it to fire, at 1× and 20× scale, so "detects nothing"
+can never quietly become "detects nothing, ever".
+
+**And the guard that stops a fourth round of this.** Three of five detectors have now been
+rewritten because they fired on a healthy AI that had merely got bigger, and each time it was
+caught by a human reading a scoreboard and thinking *that world isn't stuck* — not a mechanism to
+rely on. That judgement is now a property test: take a curve describing an AI that is
+unambiguously doing well, scale every magnitude in it from 1× to 100×, and assert the whole list
+stays silent. Run against the *old* predicates it fails immediately (`supply-deadlock` fires on the
+healthy curve even at 1×), which is what makes it a real test rather than a passing one.
+
+**Known boundary, stated rather than discovered later:** `production-stall`'s new growth term reads
+"the army never grew", so an AI legitimately pinned at a configured Population cap (§2.11's 150
+rung) would satisfy it. The bench never sets `popCap`, so this cannot arise in `check` — but a
+future sweep that does set one should exclude those samples the way `armyCapped` already excludes
+a strategy that caps its own army.
 
 ---
 
@@ -737,4 +842,9 @@ re-run.
 | 2026-08-04 | what Aggressive lacks is what the tournament WINNER has — an economy to follow up with | `aggressive.workerTargetMult`, verified by re-running the whole round-robin, not by the search | **yes, at 1.25 — and the first value tried was a trap.** At **1.4**: Medium 25W-47L → 39W-33L (35% → 54%) but Hard **51% → 44%**, because `aiDifficulty.js`'s Hard row already carries `workerTargetMult: 1.25` and the layers compose multiplicatively (1.4 → 1.75× there). At **1.25** (the value Economic itself carries): Medium 35% → **53%**, Hard 51% → **54%** — both brackets positive. §2.6's unclamped multiplicative layers, showing up as a measured 7-point loss rather than a theoretical risk. The composed product is now pinned by a test | **yes — 1.25** |
 | 2026-08-04 | the promoted change must not grow the named defect list | `ailab check`, 44 runs, 60 sim-min, before vs after | **Four of five held or improved, one grew.** `dev-flatline` 10/44 → **5/44**, `hostile-but-idle` 4/44 → **0/44**, `hoarding` 2 → 2, `production-stall` 18 → 17 — and `supply-deadlock` **1/44 → 6/44**. A 60-minute probe of one firing row (`ferros/aggressive`) against both engines shows what grew: 1 Command Center / 20 buildings / 105 supply before, **4 / 169 / 1,248** after, with supply climbing 280→579→807→1,048→1,248 across the run. The AI is living at its ceiling while growing, not stuck — but the detector samples an instant and has no notion of resolution, despite its own `why` claiming it measures "the state that never resolves itself" | shipped with the regression **stated, not hidden** |
 | 2026-08-04 | that regression is a real starvation loop — production is supply-blocked, no Habitat is on the way, and unit production has already spent the ore below a Habitat's 75 — so a fourth ore holdback fixes it | `ctx.supplyReserve` in `aiBaseAndTech`, same shape as foundryReserve/refineryReserve/industryReserve, added to `aiProduceAndFortify`'s holdback, Odyssey-only; 3 new tests, one verified to fail without it | **no — rejected on measurement, and reverted.** `check` came back **byte-identical on all five detectors** (supply-deadlock still 6/44). It cannot bind in real play: `aiBaseAndTech` runs before production, so whenever the AI is blocked and can afford a Habitat it founds one in that same phase and the reserve correctly clears — and when it cannot afford 75 it cannot afford a 100-ore Skiff either. The only state where it changes anything is the artificial one its own test had to construct (blocked, with zero workers so the Habitat step is skipped). Dead code in the shipped game | no |
-| 2026-08-04 | (open, handed back) `supply-deadlock` should distinguish "blocked this instant" from "blocked and never resolving" — the same false-positive class §2's methodological note already records twice | — | **not attempted.** Changing a detector changes what every row in this table means, and doing it honestly requires re-baselining the pre-change engine under the new definition (a `git worktree` at the old commit with today's `tools/ailab.js` copied in), exactly as the 2026-07-30 metric-rewrite row did. That is a decision about what the bench measures, so it is left to whoever owns it rather than made by the pass whose own number it would improve | — |
+| 2026-08-04 | (open at the time — **answered the next day, see below**) `supply-deadlock` should distinguish "blocked this instant" from "blocked and never resolving" — the same false-positive class §2's methodological note already records twice | — | **not attempted.** Changing a detector changes what every row in this table means, and doing it honestly requires re-baselining the pre-change engine under the new definition (a `git worktree` at the old commit with today's `tools/ailab.js` copied in), exactly as the 2026-07-30 metric-rewrite row did. That is a decision about what the bench measures, so it is left to whoever owns it rather than made by the pass whose own number it would improve | — |
+| 2026-08-05 | the `supply-deadlock` regression §2.11 handed back is the DETECTOR, not the AI — and the same flaw should be visible in the other detectors' history | sort all five by the shape of the predicate | **Confirmed, and it explains every rewrite this table records.** The two written as a pure instantaneous fraction (`supply-deadlock`, `production-stall`) are exactly the two that have ever needed rescuing; the three carrying a growth/non-resolution term (`dev-flatline`, `hoarding`, and `hostile-but-idle` since its entitlement gate) have survived two separate scale-ups of the AI untouched | n/a — this is §2.12's diagnosis |
+| 2026-08-05 | pair each broken detector's symptom with a non-resolution term, and replace the absolute ore gates with "could it afford the purchase that would have resolved this?" | `supply-deadlock` += `supplyCapGrowthTail <= 0`; `production-stall` += `armyGrowthTail <= 0`; `banked > 400`/`banked > 1000` → `canAffordUnblock`/`canAffordNext` (new `sample()` fields) | Re-baselined properly (a `git worktree` at `7890096` with today's bench copied in, so BOTH columns use one build). Full 2×2 in §2.12. The three untouched detectors reproduce **exactly** across the metric change (2, 10, 4) — the procedure validating itself. `supply-deadlock` is **0/44 on both engines** under the new predicate, so §2.11's 1→6 was entirely the metric. Suite 2056→2061 | **yes** |
+| 2026-08-05 | …and the incidental finding, which is the biggest one: `production-stall` 18/44 was never real | — | **`production-stall` is 0/44 on the PRE-FIX engine under the new predicate.** That row has sat in this document since 2026-07-30, was attacked twice (parallel Habitats; then written off as "the Rusher doing what it is designed to do"), and every one of those 18 runs had a growing army in the last third. The AI was never stalled — the detector was counting a Barracks caught between jobs. Two paragraphs of §2 that explained the residue are now marked superseded rather than left standing (the Rusher's "six workers" is nine since §2.11, on top of it) | **yes** |
+| 2026-08-05 | a property test can stop a fourth round of this, where three rounds of human scoreboard-reading did not | `test/ailab.test.js`: a synthetic HEALTHY curve, every magnitude scaled 1×/5×/20×/100×, must fire NO detector — plus its converse, that a genuinely stuck curve still fires the right one at 1× and 20× | Verified adversarially rather than assumed: run against the OLD predicates the invariance test fails immediately (`supply-deadlock` fires on the healthy curve even at 1×, blocked 0.33 while the ceiling climbed +72), which is what makes it a real guard rather than one that happens to pass. Both halves needed — invariance alone is satisfiable by a detector that never fires | **yes** |
+| 2026-08-05 | (noted, not built) `production-stall`'s new "the army never grew" term would be satisfied by an AI legitimately pinned at a configured Population cap | — | The bench never sets `popCap`, so it cannot arise in `check` today. Recorded in §2.12 as a known boundary rather than discovered later: a future sweep that sets one should exclude those samples the way `armyCapped` already excludes a self-capping strategy | — |

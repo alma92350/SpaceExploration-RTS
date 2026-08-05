@@ -183,6 +183,74 @@ test("every health check is well-formed and covers the whole Odyssey roster", ()
   assert.equal(WORLDS.length, 11, "the lab sweeps the full Odyssey roster (nine skirmish worlds + two extras)");
 });
 
+/* ---------- SCALE INVARIANCE: the property that keeps this list honest ----------
+
+   Three of these five detectors have had to be rewritten because they fired on a HEALTHY AI that
+   had simply got bigger (2026-07-30 took "any Barracks idle" and a peak-based thrift measure;
+   2026-08-05 took supply-deadlock and production-stall — docs/odyssey-ai-review.md §2.12). Each
+   time it was caught by a human reading a scoreboard and thinking "that world isn't stuck", which
+   is not a mechanism you can rely on.
+
+   This is that judgement written down as a property: take a curve describing an AI that is
+   unambiguously doing well, scale every magnitude in it, and assert the whole list stays silent.
+   A detector that hard-codes a threshold against one size of economy fails this the moment the
+   multiplier grows, which is the whole failure mode, reproduced in a millisecond instead of a
+   40-minute sweep. ---------- */
+
+// A curve for an AI that is plainly healthy: developing, growing its army, spending what it earns,
+// producing continuously, and never wedged. `k` scales every magnitude — a 1x AI and a 20x AI are
+// the SAME behaviour at different sizes, so no detector may distinguish them.
+function healthyCurve(k = 1, samples = 30) {
+  return Array.from({ length: samples }, (_, i) => ({
+    t: i * 60,
+    dev: Math.round(2 + i * 0.6),                 // still climbing at the end
+    army: Math.round(k * (5 + i * 2)),            // …and still growing
+    armyValue: Math.round(k * (5 + i * 2) * 120),
+    workers: Math.round(k * 12),
+    buildings: Math.round(k * (4 + i)),
+    banked: Math.round(k * 900),                  // a working balance, in transit
+    stance: -0.2, hostility: 0.3, waves: Math.floor(i / 4),
+    rax: Math.max(1, Math.round(k)), idleRax: 0,  // the line is busy
+    armyCapped: false,
+    canAffordNext: true,                          // …and it could buy more if it wanted
+    supplyBlocked: i % 3 === 0,                   // brushes its ceiling constantly, like any busy AI
+    habitatPending: false,
+    canAffordUnblock: true,
+    supplyCapNow: 20 + i * 8,                     // …and keeps raising it — this is what "resolving" looks like
+    supplyFree: 6, playerBuildings: 3, entitled: true, aiAlive: true,
+  }));
+}
+
+test("SCALE INVARIANCE: no health check fires on a healthy AI, at any size", () => {
+  for (const k of [1, 5, 20, 100]) {
+    const r = summarise(healthyCurve(k));
+    const fired = CHECKS.filter(c => c.hit(r)).map(c => c.id);
+    assert.deepEqual(fired, [],
+      `a healthy AI scaled ${k}x must fire nothing; fired: ${fired.join(", ")} ` +
+      `(dev ${r.devFinal}/+${r.devGrowthTail}, army ${r.armyFinal}/+${r.armyGrowthTail}, ` +
+      `banked ${r.bankedFinal}, idle ${r.idleRichFrac}, blocked ${r.supplyDeadlockFrac}, ` +
+      `cap +${r.supplyCapGrowthTail})`);
+  }
+});
+
+test("SCALE INVARIANCE: the detectors still catch each real defect, at any size", () => {
+  // The other half, and the reason the test above is not just "make everything pass": a genuinely
+  // stuck AI must still be caught, and caught for the SAME reason, however big it is.
+  const broken = {
+    "dev-flatline":     c => c.map(x => ({ ...x, dev: 3 })),                                    // climb stopped
+    "hoarding":         c => c.map(x => ({ ...x, banked: 60000, army: 9 })),                    // bank never converted
+    "production-stall": c => c.map(x => ({ ...x, idleRax: x.rax, army: 9 })),                   // line stopped on affordable money
+    "supply-deadlock":  c => c.map(x => ({ ...x, supplyBlocked: true, supplyCapNow: 40 })),     // ceiling frozen
+  };
+  for (const k of [1, 20]) {
+    for (const [id, breakIt] of Object.entries(broken)) {
+      const r = summarise(breakIt(healthyCurve(k)));
+      assert.ok(CHECKS.find(c => c.id === id).hit(r),
+        `${id} must still fire on its own defect at ${k}x scale`);
+    }
+  }
+});
+
 /* ---------- the bench has to encode the CURRENT contract, not a stale one ---------- */
 
 // Odyssey now distinguishes "doesn't start fights" from "never fights": a neverInitiates strategy
@@ -249,13 +317,27 @@ test("for a never-initiating strategy, standing tracks provocation exactly — a
 // behaviour is worse than no metric — the tuning loop optimises against it.
 
 test("ordinary churn in a scaled-up production line is not a production stall", () => {
-  const healthy = { rax: 6, idleRax: 2, banked: 2200 };
-  const stalled = { rax: 6, idleRax: 6, banked: 12000 };
+  const healthy = { rax: 6, idleRax: 2 };
+  const stalled = { rax: 6, idleRax: 6 };
   const frac = c => summarise([{ ...c, dev: 0, army: 0, waves: 0, hostility: 0, playerBuildings: 1,
-                                 entitled: true, banked: c.banked, armyValue: 0, workers: 0,
+                                 entitled: true, canAffordNext: true, banked: 2200, armyValue: 0, workers: 0,
                                  buildings: 0, supplyBlocked: false, aiAlive: true, t: 0 }]).idleRichFrac;
-  assert.equal(frac(healthy), 0, "two of six Barracks between jobs on a working balance is not a stall");
-  assert.equal(frac(stalled), 1, "every Barracks idle on a large bank is");
+  assert.equal(frac(healthy), 0, "two of six Barracks between jobs is not a stall");
+  assert.equal(frac(stalled), 1, "every Barracks idle while it can afford the next unit is");
+});
+
+test("the money gate is scale-free — it asks what the AI could BUY, not how much ore it holds", () => {
+  // The gate used to be `banked > 1000`, a threshold calibrated against one particular size of
+  // economy: on a neighbour earning several times what it used to, 1,000 banked is change in
+  // transit. These two rows are identical except for the size of the bank, and the detector must
+  // not care — only whether the next unit was affordable (docs/odyssey-ai-review.md §2.12).
+  const row = extra => ({ dev: 0, army: 0, waves: 0, hostility: 0, playerBuildings: 1, entitled: true,
+                          rax: 2, idleRax: 2, armyValue: 0, workers: 0, buildings: 0,
+                          supplyBlocked: false, aiAlive: true, t: 0, ...extra });
+  assert.equal(summarise([row({ banked: 900, canAffordNext: true })]).idleRichFrac, 1,
+    "a small bank that still covers the next unit is a stall — the old absolute gate missed this");
+  assert.equal(summarise([row({ banked: 250000, canAffordNext: false })]).idleRichFrac, 0,
+    "…and a huge bank it cannot spend on THIS unit is not — being broke in the right currency is an excuse");
 });
 
 test("hoarding means a bank it never spent, not a bank it passed through", () => {
@@ -272,10 +354,32 @@ test("supply PRESSURE with a Habitat on the way is not a deadlock", () => {
   const base = { dev: 0, army: 0, waves: 0, hostility: 0, playerBuildings: 1, entitled: true,
                  armyValue: 0, workers: 0, buildings: 0, rax: 1, idleRax: 0, aiAlive: true, t: 0 };
   const frac = c => summarise([{ ...base, ...c }]).supplyDeadlockFrac;
-  assert.equal(frac({ supplyBlocked: true, habitatPending: true, banked: 5000 }), 0,
+  assert.equal(frac({ supplyBlocked: true, habitatPending: true, canAffordUnblock: true }), 0,
     "blocked, but a Habitat is already going up — it resolves itself");
-  assert.equal(frac({ supplyBlocked: true, habitatPending: false, banked: 5000 }), 1,
-    "blocked with nothing on the way is the state that never resolves");
+  assert.equal(frac({ supplyBlocked: true, habitatPending: false, canAffordUnblock: false }), 0,
+    "blocked with nothing on the way but no money for a Habitat — broke, not deadlocked");
+  assert.equal(frac({ supplyBlocked: true, habitatPending: false, canAffordUnblock: true }), 1,
+    "blocked with nothing on the way and the money to fix it is the state that never resolves");
+});
+
+test("a rising supply ceiling clears the deadlock detector however often the AI is momentarily blocked", () => {
+  // The case this detector actually got wrong (docs/odyssey-ai-review.md §2.12): an AI outgrowing
+  // its housing lives AT its ceiling, so a per-sample "blocked right now" test fires constantly on
+  // a world that is manifestly fine. The `why` string always claimed to measure "the state that
+  // never resolves itself"; now the predicate does too.
+  const deadlock = CHECKS.find(c => c.id === "supply-deadlock");
+  assert.ok(deadlock.hit({ supplyDeadlockFrac: 0.9, supplyCapGrowthTail: 0 }),
+    "blocked almost always AND the ceiling never moved — genuinely wedged");
+  assert.ok(!deadlock.hit({ supplyDeadlockFrac: 0.9, supplyCapGrowthTail: 441 }),
+    "blocked just as often, but the ceiling climbed 441 supply in the tail — growing, not stuck");
+});
+
+test("a growing army clears the production-stall detector however often a Barracks is caught idle", () => {
+  const stall = CHECKS.find(c => c.id === "production-stall");
+  assert.ok(stall.hit({ idleRichFrac: 0.9, armyGrowthTail: 0 }),
+    "idle on affordable money AND the army never grew — the line really stopped");
+  assert.ok(!stall.hit({ idleRichFrac: 0.9, armyGrowthTail: 37 }),
+    "…caught idle just as often while the army grew 37 is a busy line sampled between jobs");
 });
 
 /* ---------- leaderboard: Tier 0 of ranking candidates against a fixed yardstick ----------
@@ -345,7 +449,7 @@ test("a strategy that deliberately caps its army isn't reported as a production 
   // Economic keeps 3 units and Force Parity mirrors what it has seen — idle Barracks are the
   // POINT of those strategies, and counting them made the detector fire on the design working.
   const base = { dev: 0, army: 0, waves: 0, hostility: 0, playerBuildings: 1, entitled: true,
-                 armyValue: 0, workers: 0, buildings: 0, rax: 2, idleRax: 2, banked: 5000,
+                 armyValue: 0, workers: 0, buildings: 0, rax: 2, idleRax: 2, canAffordNext: true,
                  supplyBlocked: false, habitatPending: false, aiAlive: true, t: 0 };
   assert.equal(summarise([{ ...base, armyCapped: true }]).idleRichFrac, 0,
     "an army-capped strategy sitting on idle Barracks is doing what it was asked to");
