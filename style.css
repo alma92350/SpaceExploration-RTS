@@ -999,9 +999,10 @@ body.paused::after {
 
 .gameover-seed { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-top: 10px; }
 
-/* ---- Quick Duel screen (competition.js) — reuses .setup/.opt-group/.opt-btn/.seed-input's own
-   visual language throughout; these rules are only what's genuinely new: the two-entrant layout,
-   the world multi-select, the progress bar, and the results table. ---- */
+/* ---- Competition mode (competition.js): Quick Duel / Roster / Standings — reuses
+   .setup/.opt-group/.opt-btn/.seed-input's own visual language throughout; these rules are only
+   what's genuinely new: the tab row, the two-entrant layout, the roster picker/table, the confirm-
+   delete modal, the world multi-select, the progress bar, and the results/standings tables. ---- */
 .comp-screen {
   width: min(760px, 94vw);
   background: var(--panel);
@@ -1024,6 +1025,25 @@ body.paused::after {
   color: var(--muted);
 }
 .comp-back-btn:hover { color: var(--text); border-color: var(--accent-2); }
+
+/* Quick Duel / Roster / Standings — one coherent mode, three sub-screens (docs/
+   competitions-and-elo.md Phase 2). Same opt-btn-style pill row as .opt-group elsewhere, kept as
+   its own class rather than reusing .opt-group directly since these buttons are plain toggles (no
+   sub-label/note row) rather than optionGroup()'s own {label, note} shape. */
+.comp-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.comp-tab-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 14px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.comp-tab-btn:hover { border-color: var(--accent-2); color: var(--text); }
+.comp-tab-btn.active { border-color: var(--accent); color: var(--accent); background: var(--panel); }
+
 .comp-intro { max-width: 640px; margin: 0; }
 
 .comp-entrants { display: flex; gap: 14px; flex-wrap: wrap; }
@@ -1048,6 +1068,20 @@ body.paused::after {
 }
 .comp-name-input:focus { outline: none; border-color: var(--accent); }
 .comp-substrategy-label { display: block; margin: 2px 0 6px; }
+
+/* The entrant card's "From Roster" pick — a native <select> (keyboard/screen-reader friendly for
+   free, no custom listbox to build) styled to match .comp-name-input's own input chrome. */
+.comp-roster-select {
+  display: block;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-roster-select:focus { outline: none; border-color: var(--accent); }
 
 .comp-worlds { margin-top: 4px; }
 
@@ -1074,9 +1108,11 @@ body.paused::after {
 }
 .comp-progress-fill { height: 100%; background: var(--accent); transition: width 150ms ease-out; }
 
-/* Phase 1 has no persistent ledger (docs/competitions-and-elo.md D8 is Phase 2) — this note has
-   to read as a caveat, not a normal status line, so it borrows the warn hue like every other
-   "this changes what you'd otherwise assume" cue (.map-card .mod-note, .update-compat.bad). */
+/* The results view's status line — .comp-note alone is the warn hue (a genuine caveat, e.g. "the
+   ladder couldn't be updated"), same "this changes what you'd otherwise assume" cue as .map-card
+   .mod-note/.update-compat.bad. .comp-note-good (Phase 2: the ordinary, successful case now that a
+   duel really does update a persistent ladder) swaps to the good hue, same idiom as .sel-note.good/
+   .update-compat.ok/.galaxy-toast.good elsewhere in this file. */
 .comp-note {
   margin: 0;
   padding: 8px 10px;
@@ -1085,6 +1121,11 @@ body.paused::after {
   background: rgba(251, 191, 36, 0.08);
   border: 1px solid rgba(251, 191, 36, 0.35);
   border-radius: 6px;
+}
+.comp-note.comp-note-good {
+  color: var(--good, #4ade80);
+  background: rgba(74, 222, 128, 0.08);
+  border-color: rgba(74, 222, 128, 0.35);
 }
 
 .comp-elo-row { display: flex; gap: 14px; flex-wrap: wrap; }
@@ -1102,12 +1143,70 @@ body.paused::after {
 .comp-elo-value { font-size: 1.3rem; color: var(--gold); font-weight: 700; }
 .comp-elo-games { font-size: 0.74rem; color: var(--muted); }
 
+/* Results view's action row (Phase 2: now two buttons, Run Another Duel + View Standings) — side
+   by side rather than .btn's own default full-width stack, same pattern as .comp-io-row below. */
+.comp-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.comp-actions .btn { flex: 1 1 200px; margin-top: 0; }
+
 .comp-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
 .comp-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
 .comp-table th, .comp-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
 .comp-table th { color: var(--accent); font-weight: 600; background: var(--panel-2); }
 .comp-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
 .comp-table tbody tr:last-child td { border-bottom: none; }
+
+/* Roster table's own Remove action — small and quiet (.comp-back-btn's own "not a primary action"
+   sizing), only reading as dangerous once you actually hover it (an accidental click on a packed
+   row shouldn't visually shout "delete" at rest). */
+.comp-remove-btn {
+  width: auto;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.comp-remove-btn:hover { border-color: var(--bad); color: var(--bad); }
+
+/* Standings screen: a provisional entrant (< elo.js's PROVISIONAL_GAMES) gets a small pill next to
+   its name — same gold/warn-adjacent "still settling" read as .comp-elo-games' own inline
+   "— provisional" suffix, just legible on its own in a dense table cell. */
+.comp-provisional-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 10px;
+}
+
+/* Roster screen's Export/Import row — two full-width .btn's side by side rather than stacked. */
+.comp-io-row { display: flex; gap: 10px; }
+.comp-io-row .btn { flex: 1 1 0; margin-top: 0; }
+
+/* Roster removal's confirm-before-delete modal — same overlay/card idiom as saveload.js's own
+   .home-confirm/.home-card and landingPicker.js's own .landing-pick-confirm, each with its own
+   class names rather than literally sharing the first (see landingPicker.js's own comment on why). */
+.comp-confirm {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 7, 15, 0.82); padding: 20px;
+}
+.comp-confirm-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 22px 26px; max-width: 420px; text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.comp-confirm-card h3 { margin: 0 0 8px; font-size: 1.1rem; color: var(--text); }
+.comp-confirm-card p { margin: 0 0 18px; font-size: 0.88rem; color: var(--muted); }
+.comp-confirm-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.comp-confirm-actions .btn { width: auto; margin: 0; padding: 10px 16px; }
+.comp-danger-btn { border-color: var(--bad); color: var(--bad); }
+.comp-danger-btn:hover { border-color: var(--bad); color: var(--bad); background: rgba(248, 113, 113, 0.12); }
 
 /* Attack-move armed: the crosshair cursor alone is easy to miss, so the battlefield
    also gets a warm inset outline that unmistakably says "the next click is an attack". */

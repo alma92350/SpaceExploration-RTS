@@ -47,9 +47,12 @@ const DT = 0.1;   // the sim's fixed step, same as the game loop (engine/loop.js
 /**
  * A skirmish state with BOTH owners driven by the real AI: state.ai (owner "ai", today's exact
  * shape/meaning, untouched) plus a second, independently-configured state.playerAi (owner
- * "player"). `ai`/`playerAi` options are each `{ apm, micro, strategy, difficulty }` — same shape
- * setup.js's own dials use, all optional (defaults mirror createGameState's own: unthrottled APM,
- * no micro, "default" strategy, "medium" difficulty).
+ * "player"). `ai`/`playerAi` options are each `{ apm, micro, strategy, difficulty, archetype }` —
+ * same shape setup.js's own dials use, all optional (defaults mirror createGameState's own:
+ * unthrottled APM, no micro, "default" strategy, "medium" difficulty, the world's own archetype).
+ * `archetype` (docs/competitions-and-elo.md D3) is a STRING KEY into engine/aiArchetypes.js's
+ * ARCHETYPES, resolved independently for each seat — so a Quick Duel entrant carries its own
+ * doctrine instead of both seats sharing whatever temperament the world hands out.
  * @param {{ planetId?: string, seed?: number, sizeMult?: number, resourceMult?: number,
  *   swapAsym?: boolean, matchTimeLimit?: number, popCap?: number,
  *   ai?: object, playerAi?: object }} [opts]
@@ -61,12 +64,14 @@ export function createSelfPlayState({
   const state = createGameState({
     planetId, seed, rng: mulberry32(seed), sizeMult, resourceMult, swapAsym, matchTimeLimit, popCap,
     aiApm: ai.apm, aiMicro: ai.micro, aiStrategy: ai.strategy, difficulty: ai.difficulty,
+    aiArchetype: ai.archetype,
   });
   // The second controller for owner "player" — same factory state.js uses to build state.ai
   // itself, so the two can never structurally drift. Assigning it directly (rather than any
   // setup.js/boot.js flow, which stay untouched) is the ONLY way self-play ever gets activated.
   state.playerAi = createAiController(planetId, {
     apm: playerAi.apm, micro: playerAi.micro, strategy: playerAi.strategy, difficulty: playerAi.difficulty,
+    archetype: playerAi.archetype,
   });
   // Hard difficulty's economic edge (engine/aiDifficulty.js economicEdge, engine/state.js
   // seedDifficultyEdge): createGameState already seeded owner "ai"'s own edge off ITS difficulty;

@@ -67,7 +67,8 @@ function flipRow(r) {
  * (side-swapped — see the header FAIRNESS paragraph), reporting each finished match through
  * `onProgress` as it resolves. Pure/DOM-free/self-free — directly callable from Node (or a test)
  * with no Worker involved at all (see the header's observer.js comparison).
- * @param {{ entrantA: {name: string, strategy?: string}, entrantB: {name: string, strategy?: string},
+ * @param {{ entrantA: {name: string, strategy?: string, archetype?: string|null},
+ *   entrantB: {name: string, strategy?: string, archetype?: string|null},
  *   difficulty: string, worlds: string[], seeds: number, seedBase: number, matchTimeLimit?: number }} job
  * @param {(p: {completed: number, total: number, row: object}) => void} [onProgress]
  * @returns {{ rows: object[], aWins: number, bWins: number, draws: number }}
@@ -88,6 +89,11 @@ export function runCompetitionJob(job, onProgress) {
   // whatever aStrategy/bStrategy it's given verbatim).
   const aStrategy = entrantA.strategy || "default";
   const bStrategy = entrantB.strategy || "default";
+  // docs/competitions-and-elo.md D3: each entrant's own optional per-entrant doctrine, defaulting
+  // to null (no override — runDuelMatch/createSelfPlayState/createAiController all read a falsy
+  // archetype as "use the world's own temperament", exactly as before this option existed).
+  const aArchetype = entrantA.archetype || null;
+  const bArchetype = entrantB.archetype || null;
   const total = worlds.length * seeds * 2;     // both directions, side-swapped
   const rows = [];
   let completed = 0;
@@ -105,21 +111,25 @@ export function runCompetitionJob(job, onProgress) {
       const swapAsym = rep % 2 === 1;   // replicate parity — same rule tools/ailab.js's runDuel uses
 
       // Direction 1 ("bAsAi"): entrantA owns "player", entrantB owns "ai" — runDuelMatch's own
-      // fixed mapping, no relabelling needed.
+      // fixed mapping, no relabelling needed. Archetype rides along the SAME seat its own
+      // strategy does (aArchetype with aStrategy, bArchetype with bStrategy) — an entrant's
+      // doctrine follows the entrant, not the seat, exactly like strategy already does here.
       post({
         ...runDuelMatch({
           world, seed, dials, minutes, swapAsym,
-          aName: entrantA.name, aStrategy, bName: entrantB.name, bStrategy,
+          aName: entrantA.name, aStrategy, aArchetype, bName: entrantB.name, bStrategy, bArchetype,
         }),
         direction: "bAsAi",
       });
 
       // Direction 2 ("aAsAi"): entrantB owns "player", entrantA owns "ai" — then flipped back so
       // the row still reads aName=entrantA/bName=entrantB, exactly like runSwappedDuel's aAsAi.
+      // Archetype swaps seats right alongside strategy, for the same reason.
       post({
         ...flipRow(runDuelMatch({
           world, seed, dials, minutes, swapAsym,
-          aName: entrantB.name, aStrategy: bStrategy, bName: entrantA.name, bStrategy: aStrategy,
+          aName: entrantB.name, aStrategy: bStrategy, aArchetype: bArchetype,
+          bName: entrantA.name, bStrategy: aStrategy, bArchetype: aArchetype,
         })),
         direction: "aAsAi",
       });

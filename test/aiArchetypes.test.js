@@ -189,3 +189,26 @@ test("opts.archetype changes only the archetype field — every other field is e
   const { archetype: _overridden, ...restOverridden } = overridden;
   assert.deepEqual(restBase, restOverridden);
 });
+
+/* ---------- D3, one layer up: createGameState's own opts.aiArchetype threads through to state.ai
+   (createAiController's own opts.archetype is proven above; this proves createGameState actually
+   WIRES it through rather than dropping it, the same "wires the resolved archetype onto state"
+   shape the very first test in this file already pins for the archetype-less default path). ---------- */
+
+test("createGameState with no opts.aiArchetype resolves the planet's own archetype, byte-identical to before this option existed", () => {
+  const state = createGameState({ planetId: "ferros" });
+  assert.equal(state.ai.archetype, ARCHETYPES.economist, "ferros' own archetype, unchanged");
+});
+
+test("createGameState's opts.aiArchetype overrides the planet's own archetype on state.ai", () => {
+  // ferros is normally Economist (PLANET_ARCHETYPE) — rusher must actually win here, proving this
+  // is a real override reaching state.ai, not a no-op that happens to already match.
+  const state = createGameState({ planetId: "ferros", aiArchetype: "rusher" });
+  assert.equal(state.ai.archetype, ARCHETYPES.rusher);
+  assert.notEqual(state.ai.archetype, ARCHETYPES.economist);
+});
+
+test("createGameState's opts.aiArchetype falls back to the planet's own archetype on an unknown key, same fallback createAiController itself uses", () => {
+  const state = createGameState({ planetId: "ferros", aiArchetype: "not-a-real-archetype" });
+  assert.equal(state.ai.archetype, ARCHETYPES.economist);
+});

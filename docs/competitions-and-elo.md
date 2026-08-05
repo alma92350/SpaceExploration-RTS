@@ -272,6 +272,97 @@ Turns one-off duels into something that accumulates.
 **Save-version note:** the *game* save shape is untouched — this is a new, separately-versioned store.
 `state.playerAi` is already persisted, so watching and saving an AI-vs-AI match needs no bump either.
 
+**Status: done.** Landed across two stages on this branch. Stage one: `createAiController`'s
+`opts.archetype` (D3's own resolution seam — a string key into `ARCHETYPES`, falling back to
+`archetypeFor(planetId)` exactly as before for every pre-existing call site) plus `competitionLedger.js`
+itself (`createLedger`/`addRosterEntry`/`removeRosterEntry`/`recordCompetition`/`standingsFor`/
+`sanitizeLedgerStructure`/`exportLedger`/`importLedgerJSON`/`loadLedgerFromStorage`/
+`saveLedgerToStorage`), with no UI wiring yet. Stage two (this one) wired it all into the game:
+
+- **Archetype threading (D3), the rest of the chain.** `opts.archetype` only ever reached
+  `createAiController` before this stage — nothing above it could actually set it for a Quick Duel.
+  `engine/state.js`'s `createGameState` gained the matching `opts.aiArchetype`, forwarded to its own
+  `state.ai` controller; `tools/selfplay.js`'s `createSelfPlayState` threads `ai.archetype`/
+  `playerAi.archetype` independently to both controllers it builds; `tools/duelCore.js`'s
+  `runDuelMatch` gained `aArchetype`/`bArchetype` config fields, forwarded into
+  `createSelfPlayState`. All additive and opt-in — every field defaults to absent/null, resolving
+  identically to before this stage. One deliberate constraint held throughout: `runDuelMatch`'s
+  *returned row* never grew an archetype field — `test/duelCore.test.js`'s own exact-shape test
+  pins that set byte-for-byte (every `tools/ailab.js` consumer depends on it), so archetype is an
+  **input dial only**, resolved into the created states, never echoed back as output.
+  `competitionWorker.js`'s `runCompetitionJob` reads `entrantA.archetype`/`entrantB.archetype` off
+  the job (defaulting to `null`) and threads each entrant's own archetype onto the correct seat in
+  *both* side-swapped directions, right alongside strategy.
+- **`competition.js`'s entrant config gained an Archetype picker**, built from `engine/aiArchetypes.js`'s
+  `ARCHETYPES` (`ARCHETYPE_OPTIONS`, derived from its four keys' own `name`/`workerTarget`/
+  `attackTimeout` fields — no hardcoded second list), reusing `setup.js`'s `optionGroup` per the
+  brief. `buildJob` carries `archetype` through per entrant, coercing anything that isn't a real
+  `ARCHETYPES` key to `null` rather than trusting it verbatim.
+- **The key UX decision — every Quick Duel entrant is now a named, persistent roster row.** Each
+  entrant picker is either "From Roster" (a `<select>` of `competitionLedger.js`'s current roster,
+  each option reading name + strategy + archetype + faction) or "New Entrant" (the same
+  strategy/archetype fields, plus a **Faction** picker — new; Phase 1 deliberately omitted a
+  Faction picker for the *duel itself*, still true (`tools/selfplay.js` takes no faction dial), but
+  a roster entry's own identity does carry one, so the New Entrant form offers it for that, with a
+  line making the distinction explicit). The pure "which entrant is this, really" resolution is
+  `resolveEntrantPick(pick, ledger)`, unit-tested directly. A brand-new entrant joins the roster —
+  via `addRosterEntry` — the instant `startDuel()` commits to actually running (after `buildJob`'s
+  own validation passes, before the Worker spins up), never on a keystroke; a same-name/forbidden-name
+  rejection rolls back whichever half of the pair already got added. A finished duel's rows are
+  folded into the ledger via `recordCompetition` alone — no second, hand-rolled `applySeries` call
+  in `competition.js`. The results view's old "Elo shown ... isn't saved" line is gone; it now
+  reads **"Elo updated for the `<Difficulty>` bracket — see the Standings screen."** (green, not the
+  amber caveat hue), with the actual before/after ledger ratings shown alongside, not a from-scratch
+  session estimate (Phase 1's `eloFromRows` stays exported/tested for whatever still wants that, but
+  the results view itself no longer calls it).
+- **Roster screen** (`competition.js`'s `renderRosterScreen`): table of `name/strategy/archetype/
+  faction` (`shapeRosterRow`, resolving each key to its real display name — never re-deriving one);
+  a direct "Add a roster entry" form (the same three fields, not only reachable mid-duel); Remove,
+  gated behind a confirm modal (`.comp-confirm`) that reads differently depending on
+  `hasRatingHistory` (removing an entry never deletes its `ratingsByDifficulty`/history rows —
+  `competitionLedger.js`'s own `removeRosterEntry` contract — the modal says so); Export Ladder
+  (a small local Blob-plus-synthetic-anchor download mirroring `saveload.js`'s own `downloadJSON`
+  idiom, deliberately *not* importing it — `saveload.js` doesn't export that helper, and
+  `competitionLedger.js`'s own header already keeps this dependency surface small on purpose) and
+  Import Ladder (a file input through `importLedgerJSON`'s full sanitize-then-coerce pipeline,
+  surfacing a clear `.comp-error` on anything corrupt or rejected, never failing silently).
+- **Standings screen** (`renderStandingsScreen`): a difficulty/bracket picker (defaulting to the
+  Quick Duel screen's own pinned difficulty, so it opens on the bracket you were just playing) over
+  a table built from `standingsFor(ledger, difficulty)` alone, formatted (never recomputed) by
+  `shapeStandingsTable` — rating rounded, W-L-D folded into one string, a `PROVISIONAL` badge below
+  `elo.js`'s `PROVISIONAL_GAMES`. Brackets are never blended (D2): switching the picker is the only
+  way to see a different one.
+- **Quick Duel / Roster / Standings read as one coherent mode**: a small tab row
+  (`COMP_TABS`/`.comp-tabs`) sits below the existing "← Back to Menu" link, all three screens
+  sharing the one lazily-loaded ledger (`ensureLedger()`) and `refreshCompView()` dispatcher.
+
+**Deviations from the sketch above:** `engine/types.js` needed no change — `createAiController`'s
+*returned* shape (its `archetype` field) was already declared from stage one; every change this
+stage made was to functions' own *input options* one layer further up the existing call chain,
+never a new field on a constructed object. `saveload.js` was read for its idiom but not imported
+from (see above). `competitionWorker.js`'s job shape and `tools/duelCore.js`'s `runDuelMatch` config
+gained `archetype`/`aArchetype`/`bArchetype` fields beyond this section's original file list, the
+same "found while wiring, not predicted in advance" pattern Phase 1's own status note records for
+`tools/duelCore.js` itself.
+
+**Files touched:** `engine/state.js`, `tools/selfplay.js`, `tools/duelCore.js`, `competitionWorker.js`,
+`competition.js`, `style.css`. **Tests:** `test/competition.test.js` (extended — archetype threading
+into a built job, `resolveEntrantPick`'s roster-vs-adhoc resolution, `ratingLookup`/
+`hasRatingHistory`/`shapeRosterRow`/`shapeStandingsTable`, `ARCHETYPE_OPTIONS`/
+`ROSTER_FACTION_OPTIONS` derivation); `test/competitionWorker.test.js` (new — the job-to-worker
+archetype plumbing specifically); `test/aiArchetypes.test.js`, `test/ai-selfplay.test.js`,
+`test/duelCore.test.js` (extended, one layer each, up the `createAiController` → `createGameState` →
+`createSelfPlayState` → `runDuelMatch` chain); `test/static-integrity.test.js` (`competitionLedger.js`'s
+temporary orphan-module exemption removed — `competition.js` reaches it for real now, the same
+removal `elo.js`'s own entry got in Phase 1). `npm test`: 2193/2193 green (2161 baseline + 32 new,
+zero regressions — `competitionLedger.js`'s own Phase-2-stage-one tests included, unmodified).
+`npm run typecheck`: clean. Live-browser-verified (Playwright): two fresh roster entrants created
+and duelled end-to-end, ratings moved off 1200 in the correct direction on both the results view and
+a freshly-visited Standings screen, roster **and** standings survived a real page reload, ladder
+export/import round-tripped (including proving an import genuinely replaces state, not a no-op), and
+an attempted `__proto__` roster entry was rejected with a visible on-screen error and zero
+`Object.prototype` pollution — zero console errors, zero page errors, throughout.
+
 ### Phase 3 — Real tournaments in-game: round-robin, Swiss, knockout *(M)*
 
 - **Extract the pairing logic** from `tools/ailab.js` into a shared pure module (`pairing.js`), used

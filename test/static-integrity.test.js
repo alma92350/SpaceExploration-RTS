@@ -106,13 +106,11 @@ test("every shipped browser module is reachable from index.html's entry point", 
   // competition screen landed (setup.js -> competition.js -> elo.js), so it's reached for real now
   // — no need to list it here any more.
   //
-  // competitionLedger.js is a NEW temporary exemption, same pattern, same reason: Phase 2 lands the
-  // ledger module itself (roster CRUD, per-bracket ratings, sanitized localStorage/JSON import —
-  // see the module's own header) in this stage, but wiring it INTO the competition screen
-  // (competition.js reading/writing it instead of a session-only Elo table, a roster UI, a
-  // standings view) is explicitly the NEXT stage. Remove this line once that wiring lands and some
-  // real import edge (competition.js -> competitionLedger.js, most likely) reaches it for real —
-  // the same removal elo.js's own entry above already got.
+  // competitionLedger.js's own TEMPORARY exemption (Phase 2's first stage, which landed the ledger
+  // module itself with no UI wiring yet) is gone too, the same way and for the same reason: this
+  // stage wired it into the competition screen for real (competition.js -> competitionLedger.js —
+  // Quick Duel resolving/committing roster entries, the Roster screen's CRUD + export/import, the
+  // Standings screen's standingsFor), so it's reached for real now.
   //
   // competitionWorker.js is a PERMANENT exemption, not a temporary one: it's never reached by a
   // static `import`/`import()`/bare-`import` edge at all. competition.js instantiates it as
@@ -121,7 +119,7 @@ test("every shipped browser module is reachable from index.html's entry point", 
   // by design (see that walk's own IMPORT_SPEC comment for exactly which syntaxes it recognises).
   // It genuinely does run in the browser (every "Run Duel" click constructs one for real; the live
   // browser verification for this stage confirms it), the walker just has no way to see the edge.
-  const EXEMPT = new Set(["engine/types.js", "competitionWorker.js", "competitionLedger.js"]);
+  const EXEMPT = new Set(["engine/types.js", "competitionWorker.js"]);
   const orphans = browserJs()
     .map(f => relative(root, f))
     .filter(f => !EXEMPT.has(f) && !reached.has(join(root, f)));

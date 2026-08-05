@@ -9,9 +9,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildJob, matchCount, matchSeedFor, shapeResultsTable, eloFromRows } from "../competition.js";
+import {
+  buildJob, matchCount, matchSeedFor, shapeResultsTable, eloFromRows,
+  ARCHETYPE_OPTIONS, ROSTER_FACTION_OPTIONS, resolveEntrantPick, ratingLookup,
+  hasRatingHistory, shapeRosterRow, shapeStandingsTable,
+} from "../competition.js";
 import { duelSeed } from "../tools/duelCore.js";
 import { INITIAL_RATING } from "../elo.js";
+import { ARCHETYPES } from "../engine/aiArchetypes.js";
+import { createLedger, addRosterEntry, recordCompetition } from "../competitionLedger.js";
 
 /* ---------- buildJob: deterministic job construction from a fixed entrant config ---------- */
 
@@ -33,13 +39,43 @@ test("buildJob is deterministic: the same fixed entrant config produces a byte-i
 test("buildJob produces exactly the job message shape competitionWorker.js expects", () => {
   const job = buildJob(fixedCfg());
   assert.deepEqual(job, {
-    entrantA: { name: "Alpha", strategy: "aggressive" },
-    entrantB: { name: "Beta", strategy: "economic" },
+    entrantA: { name: "Alpha", strategy: "aggressive", archetype: null },
+    entrantB: { name: "Beta", strategy: "economic", archetype: null },
     difficulty: "hard",
     worlds: ["ferros", "korrath"],
     seeds: 3,
     seedBase: 42,
   });
+});
+
+/* ---------- buildJob: archetype (D3) ---------- */
+
+test("buildJob carries a valid archetype key straight through, per entrant, independently", () => {
+  const job = buildJob({
+    ...fixedCfg(),
+    entrantA: { name: "Alpha", strategy: "aggressive", archetype: "rusher" },
+    entrantB: { name: "Beta", strategy: "economic", archetype: "economist" },
+  });
+  assert.equal(job.entrantA.archetype, "rusher");
+  assert.equal(job.entrantB.archetype, "economist");
+});
+
+test("buildJob defaults a missing archetype to null -- byte-identical to before archetype existed as an option", () => {
+  const job = buildJob(fixedCfg());
+  assert.equal(job.entrantA.archetype, null);
+  assert.equal(job.entrantB.archetype, null);
+});
+
+test("buildJob coerces an unrecognised archetype key to null rather than trusting it verbatim", () => {
+  const job = buildJob({ ...fixedCfg(), entrantA: { name: "Alpha", strategy: "default", archetype: "not-a-real-archetype" } });
+  assert.equal(job.entrantA.archetype, null);
+});
+
+test("buildJob treats every ARCHETYPES key as valid, not just one", () => {
+  for (const key of Object.keys(ARCHETYPES)) {
+    const job = buildJob({ ...fixedCfg(), entrantA: { name: "Alpha", strategy: "default", archetype: key } });
+    assert.equal(job.entrantA.archetype, key);
+  }
 });
 
 test("buildJob carries matchTimeLimit through only when given (optional field)", () => {
@@ -181,4 +217,128 @@ test("eloFromRows is order-sensitive (D6): reversing the rows settles on a diffe
 
 test("eloFromRows is reproducible: the same rows replayed twice give byte-identical ratings", () => {
   assert.deepEqual(eloFromRows(fixedRows()), eloFromRows(fixedRows()));
+});
+
+/* ============================================================
+   PHASE 2: roster/standings shaping and the roster-vs-adhoc entrant resolution. Same "no DOM, no
+   Worker" discipline as everything above -- competitionLedger.js's own functions are real, DOM-free
+   exports, so these tests build a live ledger with them directly rather than mocking anything.
+   ============================================================ */
+
+/* ---------- ARCHETYPE_OPTIONS / ROSTER_FACTION_OPTIONS: derived tables, not a hardcoded copy ---------- */
+
+test("ARCHETYPE_OPTIONS derives its real entries from engine/aiArchetypes.js's ARCHETYPES, not a hardcoded duplicate list", () => {
+  const keys = ARCHETYPE_OPTIONS.filter(o => o.mult !== null).map(o => o.mult);
+  assert.deepEqual(keys.sort(), Object.keys(ARCHETYPES).sort());
+  for (const opt of ARCHETYPE_OPTIONS) {
+    if (opt.mult === null) continue;
+    assert.equal(opt.label, ARCHETYPES[opt.mult].name, `${opt.mult}'s label must be its real ARCHETYPES name, not a hardcoded copy`);
+  }
+});
+
+test("ARCHETYPE_OPTIONS offers a null \"no override\" choice first", () => {
+  assert.equal(ARCHETYPE_OPTIONS[0].mult, null);
+});
+
+test("ROSTER_FACTION_OPTIONS covers every playable faction plus neutral, with no hardcoded label copy", () => {
+  const keys = ROSTER_FACTION_OPTIONS.map(o => o.mult);
+  assert.ok(keys.includes("neutral"), "a roster entry can default to Unaligned, unlike the skirmish setup screen's own FACTION_OPTIONS");
+  assert.ok(keys.includes("frontier") && keys.includes("miners") && keys.includes("syndicate"));
+  assert.equal(new Set(keys).size, keys.length, "no duplicate faction entries");
+});
+
+/* ---------- resolveEntrantPick: the roster-vs-adhoc entrant resolution ---------- */
+
+test('resolveEntrantPick in "roster" mode reads the CURRENT roster entry back by name', () => {
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate" });
+  const resolved = resolveEntrantPick({ mode: "roster", rosterName: "Blitz" }, ledger);
+  assert.deepEqual(resolved, { name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", isNew: false });
+});
+
+test('resolveEntrantPick in "roster" mode throws a clear error when the picked name is no longer on the roster', () => {
+  const ledger = createLedger();
+  assert.throws(() => resolveEntrantPick({ mode: "roster", rosterName: "Ghost" }, ledger), /roster/i);
+});
+
+test('resolveEntrantPick in "new" mode trims the name and defaults strategy/archetype/faction, marking isNew', () => {
+  const resolved = resolveEntrantPick({ mode: "new", name: "  Fresh  " }, createLedger());
+  assert.deepEqual(resolved, { name: "Fresh", strategy: "default", archetype: null, faction: "neutral", isNew: true });
+});
+
+test('resolveEntrantPick in "new" mode carries a chosen strategy/archetype/faction through unchanged', () => {
+  const resolved = resolveEntrantPick(
+    { mode: "new", name: "Fresh", strategy: "economic", archetype: "balanced", faction: "miners" }, createLedger());
+  assert.deepEqual(resolved, { name: "Fresh", strategy: "economic", archetype: "balanced", faction: "miners", isNew: true });
+});
+
+test('resolveEntrantPick defaults to "new" semantics when mode is missing, unrecognised, or the pick itself is absent', () => {
+  assert.equal(resolveEntrantPick({ name: "Fresh" }, createLedger()).isNew, true);
+  assert.equal(resolveEntrantPick({ mode: "bogus", name: "Fresh" }, createLedger()).isNew, true);
+  assert.equal(resolveEntrantPick(undefined, createLedger()).isNew, true);
+});
+
+/* ---------- ratingLookup ---------- */
+
+test("ratingLookup returns the table's own entry when the entrant has played this bracket", () => {
+  const table = { Alpha: { rating: 1300, games: 5 } };
+  assert.deepEqual(ratingLookup(table, "Alpha"), { rating: 1300, games: 5 });
+});
+
+test("ratingLookup returns INITIAL_RATING at 0 games for an entrant absent from the table", () => {
+  assert.deepEqual(ratingLookup({}, "Nobody"), { rating: INITIAL_RATING, games: 0 });
+});
+
+test("ratingLookup returns the same default when the table itself is undefined (bracket never played)", () => {
+  assert.deepEqual(ratingLookup(undefined, "Nobody"), { rating: INITIAL_RATING, games: 0 });
+});
+
+test("ratingLookup does not mistake an inherited Object.prototype member for a real rating", () => {
+  assert.deepEqual(ratingLookup({}, "toString"), { rating: INITIAL_RATING, games: 0 });
+});
+
+/* ---------- hasRatingHistory ---------- */
+
+test("hasRatingHistory is true once an entrant has a rating entry in ANY bracket, false beforehand", () => {
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "Alpha" });
+  addRosterEntry(ledger, { name: "Beta" });
+  assert.equal(hasRatingHistory(ledger, "Alpha"), false);
+  recordCompetition(ledger, { difficulty: "hard", aName: "Alpha", bName: "Beta", rows: [{ aName: "Alpha", bName: "Beta", winner: "a" }] });
+  assert.equal(hasRatingHistory(ledger, "Alpha"), true);
+  assert.equal(hasRatingHistory(ledger, "Beta"), true);
+  assert.equal(hasRatingHistory(ledger, "Gamma"), false, "an entrant that never even played has no history");
+});
+
+/* ---------- shapeRosterRow ---------- */
+
+test("shapeRosterRow maps strategy/archetype/faction keys to their real display names", () => {
+  const row = shapeRosterRow({ name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", createdAt: 1 });
+  assert.equal(row.name, "Blitz");
+  assert.equal(row.strategy, "Aggressive");
+  assert.equal(row.archetype, "Rusher");
+  assert.equal(row.faction, "Syndicate");
+});
+
+test("shapeRosterRow shows a clear placeholder for a null (world-default) archetype", () => {
+  const row = shapeRosterRow({ name: "Plain", strategy: "default", archetype: null, faction: "neutral" });
+  assert.equal(typeof row.archetype, "string");
+  assert.notEqual(row.archetype, "");
+});
+
+/* ---------- shapeStandingsTable: formats standingsFor's own rows, never recomputes them ---------- */
+
+test("shapeStandingsTable formats standingsFor's own fields without recomputing any of them", () => {
+  const standings = [{ name: "Alpha", rating: 1234.6, games: 7, wins: 5, losses: 1, draws: 1, avgMargin: 12.34, provisional: true }];
+  assert.deepEqual(shapeStandingsTable(standings), [
+    { name: "Alpha", rating: 1235, games: 7, record: "5-1-1", avgMargin: "12.3", provisional: true },
+  ]);
+});
+
+test("shapeStandingsTable preserves standingsFor's own sort order (never re-sorts)", () => {
+  const standings = [
+    { name: "B", rating: 1300, games: 1, wins: 1, losses: 0, draws: 0, avgMargin: 5, provisional: true },
+    { name: "A", rating: 1200, games: 1, wins: 0, losses: 1, draws: 0, avgMargin: -5, provisional: true },
+  ];
+  assert.deepEqual(shapeStandingsTable(standings).map(r => r.name), ["B", "A"]);
 });

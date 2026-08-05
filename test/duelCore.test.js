@@ -127,6 +127,37 @@ test("runDuelMatch actually resolves a fight: a strong candidate beats a defence
   assert.ok(row.margin > 0, "the winning side's score margin must be positive");
 });
 
+/* ---------- D3 (docs/competitions-and-elo.md): aArchetype/bArchetype -- the per-entrant archetype
+   override, threaded through runDuelMatch's own config into createSelfPlayState's two controllers.
+   The row shape itself must stay UNCHANGED (archetype is an input dial here, never a reported
+   output field -- see the exact-shape test above), so this proves the override reaches the sim
+   some other way: two otherwise-identical runs that disagree only on archetype must diverge. ---------- */
+
+test("runDuelMatch's aArchetype/bArchetype reach the simulated match without changing the row's own field set", () => {
+  const cfg = {
+    world: "ferros", seed: duelSeed(9, "ferros", "medium", "A", "B", 0), dials,
+    aName: "A", aStrategy: "default", bName: "B", bStrategy: "default", minutes: 8,
+  };
+  const baseline = runDuelMatch(cfg);
+  const withArchetypes = runDuelMatch({ ...cfg, aArchetype: "rusher", bArchetype: "technologist" });
+
+  assert.deepEqual(Object.keys(withArchetypes).sort(), Object.keys(baseline).sort(),
+    "supplying an archetype must not add or remove ANY field from the row -- it's an input dial, not an output");
+  assert.notEqual(JSON.stringify(baseline), JSON.stringify(withArchetypes),
+    "two otherwise-identical matches that disagree only on archetype must actually simulate differently -- " +
+    "proof the override genuinely reaches the created states, not just accepted and ignored");
+});
+
+test("runDuelMatch treats a missing/null aArchetype/bArchetype as byte-identical to omitting the option entirely", () => {
+  const cfg = {
+    world: "ferros", seed: duelSeed(9, "ferros", "medium", "A", "B", 0), dials,
+    aName: "A", aStrategy: "default", bName: "B", bStrategy: "default", minutes: 8,
+  };
+  const omitted = runDuelMatch(cfg);
+  const explicitNull = runDuelMatch({ ...cfg, aArchetype: null, bArchetype: undefined });
+  assert.equal(JSON.stringify(omitted), JSON.stringify(explicitNull));
+});
+
 /* ---------- browser importability (docs/competitions-and-elo.md Phase 1: "it will be imported by
    a Worker next stage") -- same idiom test/ai-selfplay.test.js already uses for tools/selfplay.js,
    pointed at this file instead. ---------- */

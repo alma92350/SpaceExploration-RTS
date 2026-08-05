@@ -123,7 +123,7 @@ export function createAiController(planetId, opts = {}) {
  * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
  *   resourceMult?: number, swapAsym?: boolean, matchTimeLimit?: number, popCap?: number, endless?: boolean,
  *   aiApm?: number, aiMicro?: boolean,
- *   aiStrategy?: string, difficulty?: string, playerFaction?: string, aiFaction?: string }} [opts]
+ *   aiStrategy?: string, difficulty?: string, aiArchetype?: string, playerFaction?: string, aiFaction?: string }} [opts]
  * @returns {State}
  */
 export function createGameState(opts = {}) {
@@ -215,6 +215,12 @@ export function createGameState(opts = {}) {
     // self-documenting, and is behaviourally identical (they were read `|| 0` / `?? …` anyway).
     ai: createAiController(planetId, {
       apm: opts.aiApm, micro: opts.aiMicro, strategy: opts.aiStrategy, difficulty: opts.difficulty,
+      // docs/competitions-and-elo.md D3, one layer up from createAiController's own opts.archetype
+      // (which this just forwards verbatim, including its own null/unknown-key fallback to
+      // archetypeFor(planetId)) — absent on every call site before this stage, so byte-identical
+      // until a caller actually passes it (Quick Duel's own per-entrant archetype pick, via
+      // tools/duelCore.js's runDuelMatch -> tools/selfplay.js's createSelfPlayState -> here).
+      archetype: opts.aiArchetype,
     }),
     // A second, parallel AI controller for owner "player" — same shape as `ai` above (see
     // createAiController), but null for every match that exists today. Tier 1 self-play
