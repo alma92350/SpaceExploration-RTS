@@ -106,6 +106,12 @@ test("every shipped browser module is reachable from index.html's entry point", 
   // competition screen landed (setup.js -> competition.js -> elo.js), so it's reached for real now
   // — no need to list it here any more.
   //
+  // competitionLedger.js's own TEMPORARY exemption (Phase 2's first stage, which landed the ledger
+  // module itself with no UI wiring yet) is gone too, the same way and for the same reason: this
+  // stage wired it into the competition screen for real (competition.js -> competitionLedger.js —
+  // Quick Duel resolving/committing roster entries, the Roster screen's CRUD + export/import, the
+  // Standings screen's standingsFor), so it's reached for real now.
+  //
   // competitionWorker.js is a PERMANENT exemption, not a temporary one: it's never reached by a
   // static `import`/`import()`/bare-`import` edge at all. competition.js instantiates it as
   // `new Worker(new URL("./competitionWorker.js", import.meta.url), { type: "module" })` — a

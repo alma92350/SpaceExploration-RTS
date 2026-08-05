@@ -11,7 +11,7 @@
 import { generateMap } from "./map.js";
 import { BUILDINGS, UNITS } from "./entities.js";
 import { createFog, updateFog } from "./fog.js";
-import { archetypeFor } from "./aiArchetypes.js";
+import { archetypeFor, ARCHETYPES } from "./aiArchetypes.js";
 import { difficultyFor } from "./aiDifficulty.js";
 
 // Entity-id counter. Reset to 1 at the start of every createGameState (below)
@@ -85,7 +85,7 @@ export function makeBuilding(type, owner, x, y, opts = {}) {
  * either one the same way. Every field here matches state.ai's own inline literal below field for
  * field, in the same order, so createGameState's construction of state.ai stays byte-identical.
  * @param {string} planetId
- * @param {{ apm?: number, micro?: boolean, strategy?: string, difficulty?: string }} [opts]
+ * @param {{ apm?: number, micro?: boolean, strategy?: string, difficulty?: string, archetype?: string }} [opts]
  */
 export function createAiController(planetId, opts = {}) {
   return {
@@ -104,7 +104,23 @@ export function createAiController(planetId, opts = {}) {
     unitsBuilt: 0,            // total combat units this controller has produced (drives its build cadence)
     waveCount: 0,             // committed-wave counter — drives the economy-raid cadence (waveCount % RAID_EVERY)
     nextWaveAt: null,        // Odyssey: scheduled time of the next offensive wave; null ⇒ wave-ready
-    archetype: archetypeFor(planetId),   // this world's opponent temperament — see engine/aiArchetypes.js
+    // This world's opponent temperament (engine/aiArchetypes.js) — UNLESS opts.archetype names a
+    // real ARCHETYPES key, in which case that per-entrant pick wins instead (docs/
+    // competitions-and-elo.md D3: a competition entrant carries its own doctrine, so "Rusher vs
+    // Turtle" is a real matchup rather than both seats sharing whatever temperament the world
+    // hands out). opts.archetype is a STRING KEY, never an archetype object — the caller names a
+    // doctrine, this resolves it, mirroring archetypeFor's own ARCHETYPES[key] lookup. Absent, or
+    // naming a key that isn't in ARCHETYPES, falls back to archetypeFor(planetId) exactly as
+    // before this option existed — byte-identical for every call site today, none of which pass
+    // opts.archetype yet. Object.hasOwn, not a truthy `ARCHETYPES[opts.archetype]` bracket-access:
+    // a plain object's inherited keys (e.g. "constructor") or the specially-handled "__proto__"
+    // accessor would otherwise resolve to something that isn't a real archetype at all — this
+    // module has no user-facing input today (the only two callers, competitionLedger.js's roster
+    // guard and the Archetype picker, already restrict to real keys), but this is an exported,
+    // reusable function and should refuse a hostile/reserved key on its own rather than depend on
+    // every future caller re-deriving that guard.
+    archetype: (typeof opts.archetype === "string" && Object.hasOwn(ARCHETYPES, opts.archetype))
+      ? ARCHETYPES[opts.archetype] : archetypeFor(planetId),
   };
 }
 
@@ -114,7 +130,7 @@ export function createAiController(planetId, opts = {}) {
  * @param {{ planetId?: string, rng?: () => number, seed?: number, sizeMult?: number,
  *   resourceMult?: number, swapAsym?: boolean, matchTimeLimit?: number, popCap?: number, endless?: boolean,
  *   aiApm?: number, aiMicro?: boolean,
- *   aiStrategy?: string, difficulty?: string, playerFaction?: string, aiFaction?: string }} [opts]
+ *   aiStrategy?: string, difficulty?: string, aiArchetype?: string, playerFaction?: string, aiFaction?: string }} [opts]
  * @returns {State}
  */
 export function createGameState(opts = {}) {
@@ -206,6 +222,12 @@ export function createGameState(opts = {}) {
     // self-documenting, and is behaviourally identical (they were read `|| 0` / `?? …` anyway).
     ai: createAiController(planetId, {
       apm: opts.aiApm, micro: opts.aiMicro, strategy: opts.aiStrategy, difficulty: opts.difficulty,
+      // docs/competitions-and-elo.md D3, one layer up from createAiController's own opts.archetype
+      // (which this just forwards verbatim, including its own null/unknown-key fallback to
+      // archetypeFor(planetId)) — absent on every call site before this stage, so byte-identical
+      // until a caller actually passes it (Quick Duel's own per-entrant archetype pick, via
+      // tools/duelCore.js's runDuelMatch -> tools/selfplay.js's createSelfPlayState -> here).
+      archetype: opts.aiArchetype,
     }),
     // A second, parallel AI controller for owner "player" — same shape as `ai` above (see
     // createAiController), but null for every match that exists today. Tier 1 self-play

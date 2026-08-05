@@ -70,6 +70,7 @@ export function duelSeed(base, world, difficulty, aName, bName, rep) {
  * @param {{ world: string, seed: number,
  *   dials: { difficulty: string, apm: number|null, micro: boolean },
  *   aName: string, aStrategy: string, bName: string, bStrategy: string,
+ *   aArchetype?: string|null, bArchetype?: string|null,
  *   minutes?: number, swapAsym?: boolean }} cfg
  * @returns {{
  *   world: string, seed: number, difficulty: string, swapAsym: boolean,
@@ -80,12 +81,15 @@ export function duelSeed(base, world, difficulty, aName, bName, rep) {
  *   aScore: number, bScore: number, margin: number,
  * }}
  */
-export function runDuelMatch({ world, seed, dials, aName, aStrategy, bName, bStrategy, minutes, swapAsym }) {
+export function runDuelMatch({ world, seed, dials, aName, aStrategy, bName, bStrategy, aArchetype, bArchetype, minutes, swapAsym }) {
   const state = createSelfPlayState({
     planetId: world, seed, swapAsym,
     matchTimeLimit: minutes ? minutes * 60 : undefined,
-    ai: { ...dials, strategy: bStrategy },
-    playerAi: { ...dials, strategy: aStrategy },
+    // aArchetype/bArchetype (docs/competitions-and-elo.md D3): an INPUT dial only — never reflected
+    // on the returned row below, whose field set is pinned byte-for-byte by test/duelCore.test.js's
+    // own exact-shape test (every tools/ailab.js consumer depends on it not growing a field).
+    ai: { ...dials, strategy: bStrategy, archetype: bArchetype },
+    playerAi: { ...dials, strategy: aStrategy, archetype: aArchetype },
   });
   const result = runSelfPlayMatch(state, minutes ? { maxSeconds: minutes * 60 + 120 } : undefined);
   const aScore = playerScore(state, "player");
