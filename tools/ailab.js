@@ -332,10 +332,23 @@ function sample(s) {
     // 4- and 8-supply Odyssey units. That combination is a hard deadlock, so it's measured.
     supplyBlocked: !!next && supplyUsed(s, "ai") + (UNITS[next].supplyCost || 0) > supplyCap(s, "ai"),
     // …and is it doing anything about it? A healthy AI at full tilt runs close to its cap and is
-    // momentarily blocked all the time — that's supply PRESSURE, not deadlock. The deadlock is
-    // being blocked with no Habitat on the way, which is the state that never resolves itself.
+    // momentarily blocked all the time — that's supply PRESSURE, not deadlock. Being blocked with
+    // no Habitat on the way is the first half of the deadlock signature; the second half is that
+    // the ceiling never moved afterwards, which lives in summarise's supplyCapGrowthTail.
     habitatPending: [...s.buildings.values()].some(b => b.owner === "ai" && b.type === "habitat" && b.constructing),
     supplyFree: +(supplyCap(s, "ai") - supplyUsed(s, "ai")).toFixed(1),
+    // SCALE-FREE MONEY GATES. Both deadlock/stall detectors need "…and it had the money, so being
+    // broke isn't the explanation". That used to be an absolute ore figure (400 and 1000), which
+    // is a threshold calibrated against one particular size of AI: on a neighbour earning several
+    // times what it used to, 1,000 banked is change in transit rather than a war chest, and the
+    // detector drifts toward firing on anything busy. Ask the question that has no scale in it
+    // instead — could it pay for the exact purchase that would have resolved the state? — so the
+    // gate means the same thing on a 13-worker opening and a four-base capital.
+    canAffordUnblock: canAfford(res, BUILDINGS.habitat.cost),                  // the Habitat that lifts a supply block
+    canAffordNext: !!next && canAfford(res, UNITS[next].cost),                 // the unit an idle Barracks would have queued
+    // The cap ITSELF, not just the free room above it (supplyFree), because "did this ever
+    // resolve?" is a question about the ceiling moving — see summarise's supplyCapGrowthTail.
+    supplyCapNow: +supplyCap(s, "ai").toFixed(1),
     playerBuildings: playerBuildingsOf(s).length,
     aiAlive: done.some(b => b.type === "command"),
     // ENTITLED to attack right now? Odyssey draws a line between a strategy that goes looking for
@@ -381,6 +394,12 @@ function summarise(curve) {
   const tail = curve.slice(Math.floor(curve.length * 2 / 3));
   const devGrowthTail = tail.length > 1 ? tail[tail.length - 1].dev - tail[0].dev : 0;
   const armyGrowthTail = tail.length > 1 ? tail[tail.length - 1].army - tail[0].army : 0;
+  // Did the SUPPLY CEILING move in the tail? This is the resolution half of the deadlock
+  // question. A wedged AI's cap is frozen — that's what being wedged means — while an AI merely
+  // living at its ceiling raises it continuously (measured: 280 -> 579 -> 807 -> 1,048 -> 1,248
+  // across one 60-minute run that the pre-2026-08-05 detector called deadlocked).
+  const supplyCapGrowthTail = tail.length > 1
+    ? (tail[tail.length - 1].supplyCapNow || 0) - (tail[0].supplyCapNow || 0) : 0;
   const firstWave = curve.find(c => c.waves > 0);
   // Only samples where the AI was BOTH hostile and entitled to act on it (see sample().entitled).
   const hostileSamples = curve.filter(c => c.hostility >= 0.5 && c.playerBuildings > 0 && c.entitled);
@@ -403,15 +422,17 @@ function summarise(curve) {
     // How much of the run the AI actually had standing to attack. Zero means the question
     // "did it apply pressure?" was never asked of it — scored the same way an opponent-less run is.
     entitledSamples: hostileSamples.length,
-    // Fraction of samples where EVERY Barracks stood idle while the AI held real money — i.e. it
-    // had nothing left it knew how to buy. Deliberately "every", not "any": once surplus opens
-    // extra Barracks, one of six sitting between jobs is ordinary churn, and an "any" test fired on
-    // 42 of 44 healthy runs. This is the version that distinguishes a working production line from
-    // a stopped one.
-    idleRichFrac: +(curve.filter(c => !c.armyCapped && c.rax > 0 && c.idleRax === c.rax && c.banked > 1000)
+    // Fraction of samples where EVERY Barracks stood idle while the AI could afford the very unit
+    // it would have queued next — i.e. it had nothing left it knew how to buy. Two hard-won
+    // qualifiers: "every", not "any" (once surplus opens extra Barracks, one of six between jobs is
+    // ordinary churn — an "any" test fired on 42 of 44 healthy runs), and affordability of the NEXT
+    // PURCHASE rather than an absolute bank (a fixed ore threshold is a statement about one size of
+    // economy). This is the symptom half only; production-stall pairs it with armyGrowthTail.
+    idleRichFrac: +(curve.filter(c => !c.armyCapped && c.rax > 0 && c.idleRax === c.rax && c.canAffordNext)
       .length / curve.length).toFixed(2),
-    supplyDeadlockFrac: +(curve.filter(c => c.supplyBlocked && !c.habitatPending && c.banked > 400)
+    supplyDeadlockFrac: +(curve.filter(c => c.supplyBlocked && !c.habitatPending && c.canAffordUnblock)
       .length / curve.length).toFixed(2),
+    supplyCapGrowthTail,
     stanceFinal: last.stance,
     playerBuildingsFinal: last.playerBuildings,
     aiAlive: last.aiAlive,
@@ -1101,14 +1122,37 @@ export function runSwissTournament(candidates, opts = {}) {
    Each is a named, reproducible defect rather than a paragraph in a review doc: run the
    check, get the list of worlds it fires on. Fix the AI and the list shrinks. These are
    REPORTED, not asserted — the tool's job is to measure, and today several of them fire.
+
+   THE DESIGN RULE, learned the expensive way (three rewrites across 2026-07-30 and
+   2026-08-05, docs/odyssey-ai-review.md §2.12). Sort these five by the SHAPE of the
+   predicate and the whole history explains itself:
+
+     • carries a "…and it never resolved" term  — dev-flatline (devGrowthTail), hoarding
+       (armyGrowthTail). Both survived two separate scale-ups of the AI untouched.
+     • pure instantaneous fraction               — supply-deadlock, production-stall. Both
+       became false positives the moment the AI got bigger, because "is this true right
+       now, often enough?" is a question whose answer drifts with scale.
+
+   So every detector here must now be BOTH halves: a symptom (a fraction of samples) AND a
+   non-resolution term proving the symptom never cleared. A busy AI is momentarily blocked,
+   momentarily idle, and momentarily rich all the time; only a stuck one is still in that
+   state with nothing having moved. The absolute ore thresholds went the same way — a gate
+   of "banked > 1000" is a statement about one particular size of economy, so both are now
+   asked as "could it afford the exact purchase that would have resolved this?" (sample()'s
+   canAffordUnblock / canAffordNext), which has no scale in it at all.
+
+   test/ailab.test.js pins this as a property rather than a set of cases: a synthetic
+   HEALTHY curve, scaled from 1x to 100x, must fire nothing. That is the guard that stops a fourth
+   round of this.
    ============================================================ */
 
 export const CHECKS = [
   { id: "supply-deadlock",
     why: "the mix cycle is stuck on a unit that won't fit under the supply cap, with no Habitat on "
-       + "the way to raise it — the state that never resolves itself (being momentarily blocked "
-       + "WITH one under construction is ordinary supply pressure on a busy AI, not a deadlock)",
-    hit: r => r.supplyDeadlockFrac > 0.1 },
+       + "the way to raise it and the money to buy one — AND the cap never moved in the last third, "
+       + "so it genuinely never resolved (being blocked while the ceiling climbs is ordinary supply "
+       + "pressure on an AI outgrowing its housing, not a deadlock)",
+    hit: r => r.supplyDeadlockFrac > 0.1 && r.supplyCapGrowthTail <= 0 },
   { id: "hoarding",
     why: "it finished sitting on a large bank AND its army hadn't grown — money it has no way to "
        + "spend, rather than a working balance in transit",
@@ -1121,9 +1165,10 @@ export const CHECKS = [
        + "(samples where a never-initiating strategy was left unprovoked don't count — that's the contract)",
     hit: r => r.entitledSamples > 0 && r.hostileIdleFrac > 0.5 },
   { id: "production-stall",
-    why: "every Barracks stood idle while the AI held real money, on a strategy that isn't "
-       + "deliberately capping its army — it had nothing left it knew how to buy",
-    hit: r => r.idleRichFrac > 0.25 },
+    why: "every Barracks stood idle while the AI could afford the very unit it would have queued, "
+       + "on a strategy that isn't deliberately capping its army — AND the army never grew in the "
+       + "last third, so the line really had stopped rather than being between jobs",
+    hit: r => r.idleRichFrac > 0.25 && r.armyGrowthTail <= 0 },
 ];
 
 /* ============================================================
