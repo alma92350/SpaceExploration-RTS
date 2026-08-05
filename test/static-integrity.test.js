@@ -112,6 +112,13 @@ test("every shipped browser module is reachable from index.html's entry point", 
   // Quick Duel resolving/committing roster entries, the Roster screen's CRUD + export/import, the
   // Standings screen's standingsFor), so it's reached for real now.
   //
+  // pairing.js gets the SAME temporary exemption those two had, for the same reason and with the
+  // same expiry: Phase 3's first stage lands the pure pairing/scheduling module (extracted out of
+  // tools/ailab.js, which reaches it as a Node bench) with no UI wiring yet. The stage that adds
+  // the tournament formats to the competition screen — competition.js/competitionWorker.js
+  // importing roundRobinPairs/buildSwissBracket/buildKnockoutBracket for real — must delete this
+  // line, exactly as elo.js's and competitionLedger.js's were deleted above.
+  //
   // competitionWorker.js is a PERMANENT exemption, not a temporary one: it's never reached by a
   // static `import`/`import()`/bare-`import` edge at all. competition.js instantiates it as
   // `new Worker(new URL("./competitionWorker.js", import.meta.url), { type: "module" })` — a
@@ -119,7 +126,7 @@ test("every shipped browser module is reachable from index.html's entry point", 
   // by design (see that walk's own IMPORT_SPEC comment for exactly which syntaxes it recognises).
   // It genuinely does run in the browser (every "Run Duel" click constructs one for real; the live
   // browser verification for this stage confirms it), the walker just has no way to see the edge.
-  const EXEMPT = new Set(["engine/types.js", "competitionWorker.js"]);
+  const EXEMPT = new Set(["engine/types.js", "competitionWorker.js", "pairing.js"]);
   const orphans = browserJs()
     .map(f => relative(root, f))
     .filter(f => !EXEMPT.has(f) && !reached.has(join(root, f)));
