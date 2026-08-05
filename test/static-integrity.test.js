@@ -101,7 +101,13 @@ test("every shipped browser module is reachable from index.html's entry point", 
 
   // engine/types.js is JSDoc typedefs with no runtime code; it says so itself and is never
   // imported by design. tools/ are Node CLI benches, not browser code.
-  const EXEMPT = new Set(["engine/types.js"]);
+  //
+  // elo.js is a TEMPORARY exemption. docs/competitions-and-elo.md's Phase 1 lands in two steps:
+  // this stage adds the pure rating module and wires it into tools/ailab.js's CLI (Node, not
+  // browser, so it doesn't satisfy this reachability check); a later stage of the same phase adds
+  // the in-game competition screen (setup.js/competition.js/competitionWorker.js) that actually
+  // imports it client-side. Remove "elo.js" from this set the moment that screen lands.
+  const EXEMPT = new Set(["engine/types.js", "elo.js"]);
   const orphans = browserJs()
     .map(f => relative(root, f))
     .filter(f => !EXEMPT.has(f) && !reached.has(join(root, f)));

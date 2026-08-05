@@ -88,8 +88,15 @@ import { ARCHETYPES, archetypeFor, PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE } f
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
 import { mulberry32, hashStr } from "../engine/rng.js";
-import { createSelfPlayState, runSelfPlayMatch } from "./selfplay.js";
-import { playerScore } from "../engine/victory.js";
+// The fairness-critical "run one duel match" primitive lives in tools/duelCore.js now
+// (docs/competitions-and-elo.md Phase 1) so a browser Worker can import it without this file's
+// ~1600 lines of CLI/printing/argv code. Re-imported under the SAME local names this file has
+// always used (duelRun is duelCore's runDuelMatch, renamed there since it's no longer nested
+// among duel-specific names) so every call site below — runDuel, runRoundRobinSwapped,
+// runSwissBracket, and everything built on them — keeps working unmodified; pinnedDuelDials is
+// re-exported at the bottom of this file exactly as it was when declared here directly.
+import { pinnedDuelDials, duelSeed, runDuelMatch as duelRun } from "./duelCore.js";
+import { INITIAL_RATING, applySeries } from "../elo.js";
 
 const WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 const DT = 0.1;                  // the sim's fixed step, same as the game loop
@@ -583,13 +590,15 @@ export function runLeaderboard(candidates, { worlds, difficulty = "medium", oppo
    FAIRNESS, the one property this command cannot be trusted without: difficulty — and
    therefore APM and micro, both DERIVED from the difficulty row (engine/aiDifficulty.js
    DIFFICULTY_OPTIONS: aiApm/aiMicro) — is pinned IDENTICAL for both sides. That isn't a
-   convention the caller has to remember: pinnedDuelDials() below reads the difficulty
-   ONCE into a single `dials` object, and duelRun() spreads that SAME object into both
-   createSelfPlayState `ai` and `playerAi` configs. There is only one variable in the
-   whole call graph that could ever hold "this side's apm/micro/difficulty" — so there is
-   no second code path left that could read a different value for either side, even by
-   mistake. Only `strategy` (and whatever --overrides row it names) differs between the
-   two candidates — that is the entire point of the comparison.
+   convention the caller has to remember: pinnedDuelDials() (tools/duelCore.js) reads the
+   difficulty ONCE into a single `dials` object, and duelRun() (tools/duelCore.js's
+   runDuelMatch, imported below under this file's own long-standing local name) spreads
+   that SAME object into both createSelfPlayState `ai` and `playerAi` configs. There is
+   only one variable in the whole call graph that could ever hold "this side's
+   apm/micro/difficulty" — so there is no second code path left that could read a
+   different value for either side, even by mistake. Only `strategy` (and whatever
+   --overrides row it names) differs between the two candidates — that is the entire
+   point of the comparison.
 
    Candidate A always plays owner "player", candidate B always plays owner "ai" — a fixed,
    documented mapping. That is NOT enough on its own: some worlds (oort, nimbus — both
@@ -625,59 +634,14 @@ export function runLeaderboard(candidates, { worlds, difficulty = "medium", oppo
    itself would settle a tie with.
    ============================================================ */
 
-// difficulty -> the ONE dial object both sides read (apm/micro, derived from the same
-// DIFFICULTY_OPTIONS row labWorld's own --apm real already reads for a single side) — see
-// the FAIRNESS paragraph above. Exported so a test can read back exactly what a run should
-// have used, rather than trusting the CLI flag was honoured.
-export function pinnedDuelDials(difficulty) {
-  const opt = DIFFICULTY_OPTIONS.find(o => o.mult === difficulty) || DIFFICULTY_OPTIONS.find(o => o.mult === "medium");
-  // Echo back opt.mult, NOT the raw input: apm/micro already fall back to medium's values when
-  // `difficulty` doesn't match any DIFFICULTY_OPTIONS row, so the reported difficulty has to fall
-  // back with them — otherwise a typo'd/unknown --difficulty would run medium's dials but LABEL
-  // the result with the garbage string, misleading anyone reading a saved --json duel result about
-  // which difficulty actually ran.
-  return { difficulty: opt.mult, apm: opt.aiApm, micro: !!opt.aiMicro };
-}
-
-// Every duel match's seed is derived from (base seed, world, difficulty, BOTH candidate
-// names, replicate) — reproducible on its own, same discipline as runSeed() above, just
-// keyed on the pair rather than a single strategy since a duel row always involves two.
-// The pair's names are SORTED into the hash, so runDuel(a,b) and runDuel(b,a) draw the identical
-// map. runSwappedDuel exists to isolate seat asymmetry — its header says "a side-symmetry bug would
-// show up as those two disagreeing" — and with an order-dependent seed the two halves differed in
-// seat AND map, so a disagreement was confounded with ordinary seed variance and carried no
-// information at all. (swapAsym, the map-side control, was already paired correctly by replicate
-// parity; this makes the seat-side control match it.)
-const duelSeed = (base, world, difficulty, aName, bName, rep) =>
-  hashStr(`${base}:duel:${world}:${difficulty}:${[aName, bName].sort().join("|")}:${rep}`);
-
-// Run ONE match: candidate A as owner "player", candidate B as owner "ai", both spending
-// from the SAME `dials` object (see pinnedDuelDials/FAIRNESS above). `swapAsym` exchanges
-// the map's own asym halves (engine/map.js) for THIS match only — see the FAIRNESS
-// paragraph above for why runDuel alternates it by replicate parity rather than holding it
-// fixed. Returns a plain result row, mirroring run()'s own "cfg in, small row out" shape.
-function duelRun({ world, seed, dials, aName, aStrategy, bName, bStrategy, minutes, swapAsym }) {
-  const state = createSelfPlayState({
-    planetId: world, seed, swapAsym,
-    matchTimeLimit: minutes ? minutes * 60 : undefined,
-    ai: { ...dials, strategy: bStrategy },
-    playerAi: { ...dials, strategy: aStrategy },
-  });
-  const result = runSelfPlayMatch(state, minutes ? { maxSeconds: minutes * 60 + 120 } : undefined);
-  const aScore = playerScore(state, "player");
-  const bScore = playerScore(state, "ai");
-  const winner = !result.over ? "draw" : result.winner === "player" ? "a" : "b";
-  return {
-    world, seed, difficulty: dials.difficulty, swapAsym: !!swapAsym,
-    aName, aStrategy, bName, bStrategy,
-    // Read back off the actual controllers, not the input — the structural-fairness test
-    // asserts on exactly these fields, so a bug that let the two dials diverge would show here.
-    aDifficulty: state.playerAi.difficulty, bDifficulty: state.ai.difficulty,
-    aApm: state.playerAi.apm, bApm: state.ai.apm, aMicro: state.playerAi.micro, bMicro: state.ai.micro,
-    winner, winReason: result.winReason, time: +result.time.toFixed(1),
-    aScore: +aScore.toFixed(1), bScore: +bScore.toFixed(1), margin: +(aScore - bScore).toFixed(1),
-  };
-}
+// pinnedDuelDials, duelSeed, and duelRun (tools/duelCore.js's runDuelMatch, imported above under
+// this file's own pre-existing local name) used to be defined here directly. They now live in
+// tools/duelCore.js — pulled out so a browser Worker can import just the match-runner in a later
+// stage without this file's CLI/printing/search/leaderboard code (docs/competitions-and-elo.md
+// Phase 1) — and are re-imported unchanged: every call site below reads exactly as it always has.
+// See tools/duelCore.js for their implementations and doc comments (dial-pinning, seed derivation,
+// the row shape), and the FAIRNESS paragraph above for WHY pinnedDuelDials/duelRun are shaped the
+// way they are.
 
 // Head-to-head: candidate A vs candidate B across `worlds` x `seeds`, difficulty pinned
 // identical for both (pinnedDuelDials — see the FAIRNESS paragraph above). `worlds`/
@@ -1265,6 +1229,25 @@ function printSwappedDuel(res) {
     + `draws: ${res.draws}  avg score margin (${res.aName} - ${res.bName}): ${res.avgMargin}`);
 }
 
+// ELO — one shared implementation (elo.js, D1: the CLI and the in-game competition screen must
+// mean the same thing by "rating," so this file imports elo.js rather than reimplementing any of
+// its math). Computed FRESH per table printed below: Phase 1 has no persistent ledger yet (that's
+// Phase 2's competitionLedger, docs/competitions-and-elo.md D8), so every CLI invocation starts
+// every entrant at INITIAL_RATING and folds in only the matches THIS run just played. `matches` is
+// a flat array of runSwappedDuel results (one per pairing); each is unpacked into its two
+// directions (bAsAi rows, then aAsAi rows — the order runSwappedDuel itself actually ran them in)
+// and fed through applySeries IN THE ORDER `matches` LISTS THEM — pairing order for a plain duel or
+// round-robin, round-then-pairing-within-round for Swiss — so D6's canonical order (round, then
+// pairing index, then side) falls straight out of how each command already schedules its matches,
+// never reimposed here. Never blended across brackets/difficulties (D2): called once per bracket,
+// below, never across two calls.
+const eloRowOf = r => ({ aName: r.aName, bName: r.bName, score: r.winner === "a" ? 1 : r.winner === "draw" ? 0.5 : 0 });
+const eloForMatches = matches => applySeries({}, matches.flatMap(res => [...res.bAsAi.rows, ...res.aAsAi.rows].map(eloRowOf)));
+// D7: an entrant under 10 games in THIS table is still provisional — rendered with a trailing "?"
+// rather than a number that reads as more settled than it is.
+const formatElo = entry => !entry ? `${INITIAL_RATING}?`
+  : entry.games < 10 ? `${Math.round(entry.rating)}?` : String(Math.round(entry.rating));
+
 function printFindings(rows) {
   console.log("\nHealth checks (a row here is a reproducible defect, not a style note):");
   let any = false;
@@ -1537,7 +1520,13 @@ const CMDS = {
       const a = JSON.parse(readFileSync(args.a, "utf8"));
       const b = JSON.parse(readFileSync(args.b, "utf8"));
       const brackets = runDuelBrackets(a, b, { ...duelOpts, difficulties });
-      for (const res of brackets) { printSwappedDuel(res); console.log(); }
+      for (const res of brackets) {
+        printSwappedDuel(res);
+        const ratings = eloForMatches([res]);
+        console.log(`elo (${res.difficulty}, this run only, from a fresh ${INITIAL_RATING}): `
+          + `${res.aName} ${formatElo(ratings[res.aName])}   ${res.bName} ${formatElo(ratings[res.bName])}`);
+        console.log();
+      }
       if (args.json) { writeFileSync(args.json, JSON.stringify(brackets, null, 1)); console.log(`\nwrote ${args.json}`); }
       return;
     }
@@ -1546,9 +1535,11 @@ const CMDS = {
     for (const { difficulty, pairs, standings } of roundRobinBrackets) {
       console.log(`\n=== difficulty: ${difficulty} ===`);
       for (const res of pairs) { printSwappedDuel(res); console.log(); }
+      const ratings = eloForMatches(pairs);
       console.log(`ROUND-ROBIN STANDINGS (${difficulty})`);
-      console.log(pad("#", 4) + pad("candidate", 28) + pad("W", 5) + pad("L", 5) + "D");
-      standings.forEach((s, i) => console.log(pad(String(i + 1), 4) + pad(s.name, 28) + pad(s.wins, 5) + pad(s.losses, 5) + s.draws));
+      console.log(pad("#", 4) + pad("candidate", 28) + pad("W", 5) + pad("L", 5) + pad("D", 5) + "elo");
+      standings.forEach((s, i) => console.log(pad(String(i + 1), 4) + pad(s.name, 28) + pad(s.wins, 5) + pad(s.losses, 5)
+        + pad(s.draws, 5) + formatElo(ratings[s.name])));
     }
     if (args.json) {
       writeFileSync(args.json, JSON.stringify(roundRobinBrackets, null, 1));
@@ -1585,10 +1576,12 @@ const CMDS = {
         if (byeName) console.log(`  bye: ${byeName} (not paired this round -- no win/loss credit either way)`);
         for (const res of matches) { printSwappedDuel(res); console.log(); }
       }
+      const ratings = eloForMatches(roundsLog.flatMap(r => r.matches));
       console.log(`SWISS STANDINGS (${difficulty})`);
-      console.log(pad("#", 4) + pad("candidate", 28) + pad("W", 5) + pad("L", 5) + pad("D", 5) + "byes");
+      console.log(pad("#", 4) + pad("candidate", 28) + pad("W", 5) + pad("L", 5) + pad("D", 5) + pad("byes", 6) + "elo");
       standings.forEach((s, i) =>
-        console.log(pad(String(i + 1), 4) + pad(s.name, 28) + pad(s.wins, 5) + pad(s.losses, 5) + pad(s.draws, 5) + s.byes));
+        console.log(pad(String(i + 1), 4) + pad(s.name, 28) + pad(s.wins, 5) + pad(s.losses, 5)
+          + pad(s.draws, 5) + pad(s.byes, 6) + formatElo(ratings[s.name])));
     }
     if (args.json) {
       writeFileSync(args.json, JSON.stringify(brackets, null, 1));
@@ -1634,7 +1627,10 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
                               plays both the "ai" and "player" owner slot, both halves reported),
                               and --difficulties (plural) sweeps several brackets, each reported
                               standalone -- never averaged across difficulty -- see the TIER 3
-                              header comment.
+                              header comment. Also prints an elo column/line (elo.js, D1) --
+                              a fresh 1200-baseline rating folded through just THIS run's own
+                              matches, in the order they actually completed; under 10 games shows
+                              a trailing "?" (D7). No persistence across runs yet (Phase 2).
   node tools/ailab.js swiss  --candidates a.json,b.json,c.json,...
                               [--rounds N] [--worlds a,b] [--difficulties medium,hard]
                               [--seeds 2] [--seed 1] [--minutes 40] [--json out.json]
@@ -1645,7 +1641,8 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
                               round pairs candidates by closest current standing, backtracking to
                               find a zero-repeat pairing whenever one exists rather than a repeat
                               a greedy walk could've avoided -- see the TIER 5 header comment for
-                              the pairing/bye rules.
+                              the pairing/bye rules. SWISS STANDINGS carries the same elo column as
+                              'duel', folded through the whole bracket in round/pairing order.
 
 Common flags
   --overrides f.json   inject candidate rows into the AI tables before running:
@@ -1675,4 +1672,8 @@ function main(argv) {
 // Only run the CLI when invoked directly, so a test can import run/score/CHECKS.
 if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) main(process.argv.slice(2));
 
-export { run, labWorld, sample, summarise, OPPONENTS, WORLDS, snapshotTables, restoreTables };
+// pinnedDuelDials used to be declared `export function` right here in this file; now it's
+// implemented in tools/duelCore.js and imported above, so it's re-exported here instead — same
+// public name, same behaviour, test/ailab.test.js's own `import { pinnedDuelDials } from
+// "../tools/ailab.js"` keeps resolving unmodified.
+export { run, labWorld, sample, summarise, OPPONENTS, WORLDS, snapshotTables, restoreTables, pinnedDuelDials };
