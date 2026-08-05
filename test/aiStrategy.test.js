@@ -17,6 +17,7 @@ import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
 import { mulberry32 } from "../engine/rng.js";
 import { STRATEGIES, strategyFor } from "../engine/aiStrategy.js";
+import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
 import { createDiplomacy, updateDiplomacy } from "../engine/diplomacy.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
@@ -58,6 +59,23 @@ test("every strategy names itself, and only Economic/Force Parity opt out of eve
   assert.equal(STRATEGIES.matching.neverInitiates, true);
   assert.ok(!STRATEGIES.aggressive.neverInitiates);
   assert.ok(!STRATEGIES.default.neverInitiates);
+});
+
+test("Aggressive funds its aggression: a worker economy, sized so Hard's own multiplier can compose onto it", () => {
+  // Head-to-head self-play (tools/ailab.js duel, the shipped four over 6 worlds x 2 seeds x both
+  // owner slots) put Aggressive LAST at Medium, 25W-47L, and its own offense dials could not fix
+  // it — the missing piece was an economy to follow up with, which is what the tournament winner
+  // (Economic) actually had. See engine/aiStrategy.js for the full numbers.
+  assert.ok(STRATEGIES.aggressive.workerTargetMult > 1,
+    "Aggressive invests in workers — early pressure it cannot reinforce just feeds units");
+  // The ceiling is the real lesson and the reason this is pinned: aiDifficulty.js's Hard row
+  // carries its OWN workerTargetMult, and engine/aiEconomy.js multiplies the two together. At 1.4
+  // the composed Hard value turned a +3-point Hard result into a -7-point one. Keep the composed
+  // product inside the band the tournament actually verified.
+  const hard = DIFFICULTY_OPTIONS.find(o => o.mult === "hard");
+  assert.ok(STRATEGIES.aggressive.workerTargetMult * (hard.workerTargetMult || 1) <= 1.6,
+    `Aggressive x Hard composes to ${(STRATEGIES.aggressive.workerTargetMult * hard.workerTargetMult).toFixed(2)}x — ` +
+    `past ~1.6x it over-invests and loses the Hard bracket it used to win`);
 });
 
 test("strategyFor falls back to default for an unset or unrecognised state.ai.strategy", () => {

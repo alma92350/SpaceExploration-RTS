@@ -50,6 +50,19 @@ export const STRATEGIES = {
     grievanceMult: 1.6,
     // …and it lets go slowly: a grudge outlasts the fight that caused it (diplomacy.js forgiveness).
     forgiveness: 0.6,
+    // ECONOMY TO PAY FOR THE AGGRESSION (2026-08-04). Aggressive was the WORST of the four in
+    // head-to-head self-play — `ailab duel --candidates` over the shipped roster, 6 worlds x 2
+    // seeds x both owner slots: 25W-47L (35%) at Medium, last place, against Economic's 51W-21L.
+    // A coordinate scan over its own offense dials could not fix that (armyAttackSizeMult and
+    // garrisonMult moved 2W-6L to at best 3W-5L) — because attacking sooner with less was never
+    // the problem. What the tournament winner had that this strategy lacked was an economy to
+    // FOLLOW UP with: Economic's own workerTargetMult 1.25. Given the same one, Aggressive goes
+    // 25W-47L -> 38W-34L (53%) at Medium and 37W-35L -> 39W-33L (54%) at Hard.
+    //   The value is 1.25 and not higher for a reason worth keeping: at 1.4 this wins Medium
+    // harder (54%) but LOSES Hard (51% -> 44%), because engine/aiDifficulty.js's Hard row already
+    // carries workerTargetMult 1.25 and the layers compose multiplicatively — 1.4 there is really
+    // 1.75x. A dial tuned on one difficulty is not tuned.
+    workerTargetMult: 1.25,
     // SUPERWEAPON (engine/aiSuperweapon.js): once a Helium Bomb is built, walk
     // it to the current attack target and trigger it there, rather than
     // leaving it as a purely defensive home trap (every strategy gets that
