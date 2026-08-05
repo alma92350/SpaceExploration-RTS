@@ -325,3 +325,26 @@ test("the self-play think ordering stays bounded to one cycle and one direction 
   assert.equal((body.match(/runAI\(/g) || []).length, 1,
     "exactly one explicit runAI call in tickSelfPlay — a second would widen the information edge");
 });
+
+/* ============================================================
+   5. BROWSER IMPORTABILITY (docs/competitions-and-elo.md Phase 0) — tools/selfplay.js is the pure
+   core every later phase needs to import from a browser main thread and from a Worker, neither of
+   which has a `process` or `document` global. Same "scan the source for a global this file must
+   never reference" idiom test/engine-purity.test.js uses for the engine's Math.random/Date.now ban,
+   pointed at this file instead of engine/ — and stricter: no `deterministic-exempt`-style opt-out,
+   because the requirement is that the reference doesn't exist at all, not that it's guarded.
+   ============================================================ */
+
+test("tools/selfplay.js has no bare `process` or `document` reference anywhere in its source", () => {
+  const src = readFileSync(new URL("../tools/selfplay.js", import.meta.url), "utf8");
+  const FORBIDDEN = /\bprocess\b|\bdocument\b/;
+  const offenders = [];
+  src.split("\n").forEach((line, i) => {
+    if (FORBIDDEN.test(line)) offenders.push(`${i + 1}: ${line.trim()}`);
+  });
+  assert.deepEqual(offenders, [],
+    "tools/selfplay.js must have zero `process`/`document` references — not even inside a guarded " +
+    "comment (e.g. `typeof process !== \"undefined\"`) — so importing it from a browser (main thread " +
+    "or Worker) can never throw a ReferenceError. Move CLI-only code to tools/selfplay-cli.js:\n"
+    + offenders.join("\n"));
+});

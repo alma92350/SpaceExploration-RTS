@@ -198,12 +198,17 @@ The blocker, and nothing else.
 - Keep the file *itself* free of DOM too, so the same module runs in Node, on the main thread, and in
   a Worker.
 
-**Files:** `tools/selfplay.js` (+ possibly `tools/selfplay-cli.js`).
+**Files:** `tools/selfplay.js` (pure core) and `tools/selfplay-cli.js` (CLI entry point).
 **Tests:** existing `test/ai-selfplay.test.js` stays green; add a case asserting the core module's
 source contains no bare `process`/`document` reference (the `test/engine-purity.test.js` idiom,
 pointed at this file).
-**Done when:** `node tools/selfplay.js run …` still works and the core imports cleanly with `process`
+**Done when:** `node tools/selfplay-cli.js run …` still works and the core imports cleanly with `process`
 deleted from the global scope.
+
+**Status: done.** The split landed exactly this way — `tools/selfplay.js` now holds only
+`createSelfPlayState`/`tickSelfPlay`/`runSelfPlayMatch`/`fingerprint` (plus the `DT` they share) with
+zero `process`/`document` references, and `tools/selfplay-cli.js` took the CLI half
+(`parseArgs`/`runCmd`/`USAGE`/`main`) — run it as `node tools/selfplay-cli.js run …`.
 
 ### Phase 1 — `elo.js`, and an AI-vs-AI **Quick Duel** in the game *(M)*
 
