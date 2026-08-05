@@ -97,6 +97,12 @@ import { mulberry32, hashStr } from "../engine/rng.js";
 // re-exported at the bottom of this file exactly as it was when declared here directly.
 import { pinnedDuelDials, duelSeed, runDuelMatch as duelRun } from "./duelCore.js";
 import { INITIAL_RATING, applySeries } from "../elo.js";
+// The pairing/scheduling logic (Swiss matching + byes + standings order, and round-robin's own
+// every-unordered-pair loop) lives in the root-level pairing.js now, for the same reason
+// tools/duelCore.js exists: the in-game competition screen needs it in a browser Worker without
+// this file's CLI half (docs/competitions-and-elo.md Phase 3). Imported under the SAME names this
+// file has always used, and re-exported below exactly as before — see the TIER 5 header comment.
+import { rankStandings, pairRound, buildSwissBracket, roundRobinPairs, swissRoundCount } from "../pairing.js";
 
 const WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 const DT = 0.1;                  // the sim's fixed step, same as the game loop
@@ -741,12 +747,12 @@ function assertUniqueCandidateNames(candidates) {
 // single --a/--b duel would be. A nice-to-have that falls straight out of runDuel already
 // being pair-shaped — deliberately NOT a new tournament engine (no swiss pairing, no bracket):
 // just every pair, once, tallied. Exported so a test can exercise it without going via argv.
+// The pair list itself comes from pairing.js's roundRobinPairs, which IS the nested i/j loop this
+// function used to write inline — same pairs, same order, now shared with the in-game round-robin
+// format so there is one round-robin schedule rather than two.
 export function runRoundRobin(candidates, opts = {}) {
   assertUniqueCandidateNames(candidates);
-  const pairs = [];
-  for (let i = 0; i < candidates.length; i++)
-    for (let j = i + 1; j < candidates.length; j++)
-      pairs.push(runDuel(candidates[i], candidates[j], opts));
+  const pairs = roundRobinPairs(candidates).map(([a, b]) => runDuel(a, b, opts));
   const standings = new Map(candidates.map(c => [c.name, { name: c.name, wins: 0, losses: 0, draws: 0 }]));
   for (const res of pairs) {
     const A = standings.get(res.aName), B = standings.get(res.bName);
@@ -854,10 +860,8 @@ export function runRoundRobinSwapped(candidates, opts = {}) {
   const { difficulties, difficulty, ...rest } = opts;
   const list = difficulties && difficulties.length ? difficulties : [difficulty || "medium"];
   return list.map(diff => {
-    const pairs = [];
-    for (let i = 0; i < candidates.length; i++)
-      for (let j = i + 1; j < candidates.length; j++)
-        pairs.push(runSwappedDuel(candidates[i], candidates[j], { ...rest, difficulty: diff }));
+    // Same shared every-unordered-pair schedule runRoundRobin uses — see its comment above.
+    const pairs = roundRobinPairs(candidates).map(([a, b]) => runSwappedDuel(a, b, { ...rest, difficulty: diff }));
     const standings = new Map(candidates.map(c => [c.name, { name: c.name, wins: 0, losses: 0, draws: 0 }]));
     for (const res of pairs) {
       const A = standings.get(res.aName), B = standings.get(res.bName);
@@ -888,36 +892,15 @@ export function runRoundRobinSwapped(candidates, opts = {}) {
    opts shape as runDuel/runRoundRobinSwapped. Tier 5 is a new SCHEDULE on top of a trusted
    primitive, not a new way of deciding who won a match.
 
-   PAIRING RULE (findMatching/pairRound below): sort the field by current wins (ties keep the
-   stable order they arrive in), then find a matching that avoids every already-played pair IF
-   ONE EXISTS. The first cut of this shipped as pure greedy — walk the sorted list, pair each
-   candidate with the first not-yet-played opponent remaining — and independent review caught
-   that it does NOT deliver the "avoids a repeat unless truly forced" guarantee it claimed:
-   fuzz-testing against a brute-force ground-truth checker measured avoidable repeats in roughly
-   a quarter to half of realistic tournaments (n=6..50), because a greedy walk can strand two
-   candidates with each other even when a full zero-repeat matching exists elsewhere in the same
-   round (classic "first fit with no lookahead" failure). findMatching now backtracks: for each
-   candidate (closest-standing first) it tries an unplayed opponent before ever trying a repeat,
-   and if that choice can't be extended into a complete matching for the rest of the pool, it
-   backtracks and tries the next one. Bounded by MATCH_ATTEMPT_CAP (small Swiss pools — this
-   tool's whole use case — resolve in a handful of attempts; the cap exists so a pathological
-   input can never hang) with a plain greedy pass as the last-resort fallback if the cap is hit,
-   so this always terminates and always returns a complete pairing.
-
-   BYES: odd `candidates.length` leaves one candidate unpaired each round. It's awarded to the
-   LOWEST-standing candidate who hasn't had one yet, falling back to lowest-standing overall once
-   everyone has — standard Swiss practice. That fallback CAN eventually reach the field's current
-   leader in a long-enough Swiss on a small pool (this tool's own default rounds formula keeps
-   real runs far short of that, but nothing prevents it if `--rounds` is pushed high). A bye is
-   NOT a win: it's the schedule's own bookkeeping for "this candidate wasn't paired," and the
-   first cut of this got that wrong too — it credited a bye as a full pairing's worth of wins
-   (`worlds.length * seeds * 2`, i.e. a maximum-margin sweep) with zero matching losses, which an
-   independent review caught letting a candidate that never fights at all tie or outrank one that
-   won a genuine match (reproduced live: a neverInitiates/zero-standing-army candidate that drew
-   a bye matched a real winner's standing). A bye now adds to nobody's `wins`/`losses` — only its
-   own `byes` counter — so standings reflect actual fighting, never schedule luck. `byeMatchCount`
-   is kept as an informational field only (how big a real pairing this round would have been),
-   never applied to anyone's tally.
+   THE PAIRING RULE ITSELF NOW LIVES IN ../pairing.js — moved there whole, comments included
+   (docs/competitions-and-elo.md Phase 3), so the in-game competition screen schedules a tournament
+   through this exact code instead of a second copy of it. Its header carries the two paragraphs
+   that used to sit here: PAIRING RULE (why findMatching backtracks rather than walking greedily —
+   independent review measured avoidable repeats in a quarter to half of realistic tournaments with
+   the greedy version) and BYES (why a bye adds to nobody's wins/losses, which the first cut got
+   wrong). Read them there before changing any of it. rankStandings/pairRound/buildSwissBracket are
+   re-exported below under their original names, so every caller here — and every test — is
+   unchanged.
 
    ROUNDS: default `Math.max(3, Math.ceil(Math.log2(candidates.length)))` — the textbook rule
    of thumb for how many Swiss rounds separate a field of that size — override with `--rounds`.
@@ -926,144 +909,14 @@ export function runRoundRobinSwapped(candidates, opts = {}) {
    standings) — never blended, for the identical reason those two keep brackets separate.
    ============================================================ */
 
-const pairKey = (a, b) => [a, b].sort().join("::");
-
-// Total (candidate, opponent) trial attempts findMatching will spend across an ENTIRE call
-// (shared across all its recursive branches via the mutable `budget` object) before giving up
-// and falling back to a plain greedy pass. Small Swiss pools — this tool's whole use case —
-// resolve in well under this; it exists purely so a pathological input can never hang.
-const MATCH_ATTEMPT_CAP = 20000;
-
-// Backtracking search for a COMPLETE ZERO-REPEAT matching over `pool` (already sorted by
-// standing, closest-first) — every pair it considers must be absent from `played`; it never
-// accepts a repeat itself. For the pool's first member, tries each unplayed opponent in
-// closest-standing order, recursing on what's left; if a choice can't be extended into a
-// complete zero-repeat matching for the REST of the pool, it backtracks and tries the next
-// opponent — the step a plain greedy walk skips, which is exactly how it can strand two
-// candidates with each other (see the header comment above). Returns null — not a
-// repeat-containing matching — when no zero-repeat completion exists from here, so a caller
-// can tell "impossible" apart from "found one" and only then fall back to greedyMatching, which
-// is the one place a repeat is ever chosen. `budget.n` is decremented on every attempt and
-// shared across the whole recursion (mutated in place), so total work is bounded regardless of
-// tree depth; running out returns null the same as genuine impossibility, and the caller's
-// greedy fallback still always completes since repeats are unconditionally allowed there.
-function findMatching(pool, played, budget) {
-  if (!pool.length) return [];
-  const [a, ...rest] = pool;
-  for (const b of rest) {
-    if (played.has(pairKey(a.name, b.name))) continue;   // this search only ever considers UNPLAYED pairs
-    if (budget.n <= 0) return null;
-    budget.n--;
-    const remaining = rest.filter(c => c !== b);
-    const sub = findMatching(remaining, played, budget);
-    if (sub) return [[a, b], ...sub];
-  }
-  return null;   // no zero-repeat completion from here (or the budget ran out) — caller falls back
-}
-
-// The original greedy pass (closest-standing first, first not-yet-played opponent, forced repeat
-// if none remain) — kept only as findMatching's fallback if MATCH_ATTEMPT_CAP is ever exhausted,
-// so pairRound always terminates and always returns a complete pairing either way.
-function greedyMatching(pool, played) {
-  const rest = [...pool];
-  const pairs = [];
-  while (rest.length) {
-    const a = rest.shift();
-    let idx = rest.findIndex(b => !played.has(pairKey(a.name, b.name)));
-    if (idx === -1) idx = 0;
-    const b = rest.splice(idx, 1)[0];
-    pairs.push([a, b]);
-  }
-  return pairs;
-}
-
-// One round's pairings off the current standings, sorted highest-first. `played` is the set of
-// pairKey()s already run in ANY earlier round of this bracket; `hadBye` is the set of names
-// already given a bye. Returns { pairs: [[aRow, bRow], ...], byeName } — `pairs` holds the
-// standings rows (not the candidate objects; the caller looks the candidate up by name), so
-// this function stays pure and easy to test on plain data. Exported for direct, fast unit tests
-// against synthetic standings/played-sets — the pairing algorithm's own correctness doesn't
-// depend on running real matches.
-// Rank a Swiss field. Win RATE, with raw wins as the tie-break — not absolute wins, which is what
-// this used to sort on. A bye is scorable-neutral (nothing added to wins or losses), but its
-// recipient simply plays one fewer pairing, i.e. worlds x seeds x 2 fewer chances to earn a win —
-// 16 under the swiss CLI defaults. Sorting on totals therefore ranked "everyone who avoided a bye,
-// then everyone who didn't": a 2W-2L candidate at 50% finished below a 3W-3L candidate at 50%
-// purely for having played more. That is the mirror image of the bug e9ad1d0 fixed, in the one
-// place the tool is meant to be trustworthy. Ties fall back to name so the order is total.
-export function rankStandings(rows) {
-  const rate = r => {
-    const n = (r.wins || 0) + (r.losses || 0) + (r.draws || 0);
-    return n > 0 ? (r.wins || 0) / n : 0;
-  };
-  return [...rows].sort((x, y) =>
-    rate(y) - rate(x) || (y.wins || 0) - (x.wins || 0) || (x.losses || 0) - (y.losses || 0)
-    || (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
-}
-
-export function pairRound(standingsRows, played, hadBye) {
-  // Tie-break the pairing order by NAME, not by list position. Every standing is 0-0 in round 1, and
-  // a stable sort preserved input order, so the loop below always took the last-LISTED candidate:
-  // `--candidates a.json,…,e.json` structurally penalised e.json for nothing but its position.
-  const order = [...standingsRows].sort((a, b) =>
-    b.wins - a.wins || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  let byeName = null;
-  if (order.length % 2 === 1) {
-    let idx = -1;
-    for (let i = order.length - 1; i >= 0; i--) if (!hadBye.has(order[i].name)) { idx = i; break; }
-    if (idx === -1) idx = order.length - 1;   // everyone's already had one — lowest standing again
-    byeName = order.splice(idx, 1)[0].name;
-  }
-  const pairs = findMatching(order, played, { n: MATCH_ATTEMPT_CAP }) || greedyMatching(order, played);
-  return { pairs, byeName };
-}
-
-// One difficulty bracket's whole Swiss schedule: `numRounds` rounds of pairRound, each pairing
-// run through runSwappedDuel exactly like round-robin's own pairs — same opts shape, same
-// fairness. Standings accumulate match wins/losses/draws round over round, same tallying
-// runRoundRobinSwapped already does per pairing; a bye adds only to `byes`, never `wins`/
-// `losses` — see the header comment above.
-// The Swiss SCHEDULE, with the match runner injected. Extracted so the combinatorics — round count,
-// pairings per round, bye rotation, rematch avoidance, standings order — can be tested on synthetic
-// results in milliseconds instead of by simulating real 15-40 sim-minute matches. Those schedule
-// tests were roughly 50 s of the suite's wall clock, all of it spent proving arithmetic. (The file
-// already demonstrated the fast idiom once, in pairRound's own test, and said why it was better.)
-// runSwissBracket below is now a thin wrapper that injects the real runSwappedDuel.
-export function buildSwissBracket(candidates, numRounds, opts, runPair) {
-  const worlds = opts.worlds || ["korrath", "ferros", "vesper", "kybernet"];
-  const seeds = opts.seeds ?? 2;
-  const byeMatchCount = worlds.length * seeds * 2;   // informational only — == a real pairing's runSwappedDuel `n`
-  const standings = new Map(candidates.map(c => [c.name, { name: c.name, wins: 0, losses: 0, draws: 0, byes: 0 }]));
-  const played = new Set(), hadBye = new Set();
-  const rounds = [];
-  for (let round = 1; round <= numRounds; round++) {
-    const { pairs, byeName } = pairRound([...standings.values()], played, hadBye);
-    if (byeName) {
-      standings.get(byeName).byes += 1;   // NOT a win — see header comment
-      hadBye.add(byeName);
-    }
-    const matches = [];
-    // Fold the round number into the seed so a forced rematch in a later round isn't a byte-for-byte
-    // copy of the earlier one, while staying fully deterministic (hashStr, no clock, no Math.random)
-    // — the same discipline duelSeed() already applies to world/difficulty/names/rep.
-    const roundSeedBase = hashStr(`${opts.seedBase ?? 1}:swiss:round${round}`);
-    for (const [aRow, bRow] of pairs) {
-      const a = candidates.find(c => c.name === aRow.name);
-      const b = candidates.find(c => c.name === bRow.name);
-      played.add(pairKey(a.name, b.name));
-      const res = runPair(a, b, { ...opts, seedBase: roundSeedBase });
-      const A = standings.get(a.name), B = standings.get(b.name);
-      A.wins += res.aWins; A.losses += res.bWins; A.draws += res.draws;
-      B.wins += res.bWins; B.losses += res.aWins; B.draws += res.draws;
-      matches.push(res);
-    }
-    rounds.push({ round, byeName, byeMatchCount: byeName ? byeMatchCount : null, matches });
-  }
-  return {
-    rounds: numRounds, byeMatchCount, roundsLog: rounds,
-    standings: rankStandings([...standings.values()]),
-  };
-}
+// pairKey, MATCH_ATTEMPT_CAP, findMatching, greedyMatching, rankStandings, pairRound and
+// buildSwissBracket were all declared right here until Phase 3 moved them — whole, comments
+// included — into the root-level ../pairing.js (see the header comment above for why). The three
+// this file has always exported are re-exported from there under the same names, so
+// `import { pairRound, rankStandings, buildSwissBracket } from "../tools/ailab.js"` keeps
+// resolving exactly as before; the other four were internal to the matcher and stay internal,
+// now to pairing.js.
+export { rankStandings, pairRound, buildSwissBracket };
 
 function runSwissBracket(candidates, numRounds, opts) {
   return {
@@ -1084,7 +937,10 @@ export function runSwissTournament(candidates, opts = {}) {
   if (candidates.length < 2) throw new Error("a Swiss tournament needs at least 2 candidates");
   const { difficulties, difficulty, rounds, ...rest } = opts;
   const list = difficulties && difficulties.length ? difficulties : [difficulty || "medium"];
-  const numRounds = rounds || Math.max(3, Math.ceil(Math.log2(candidates.length)));
+  // pairing.js's swissRoundCount IS this formula — shared rather than kept as a second copy, so the
+  // in-game tournament screen (which shows the default it will use before starting) and this CLI
+  // can never disagree about how many rounds "default" means.
+  const numRounds = rounds || swissRoundCount(candidates.length);
   return list.map(diff => runSwissBracket(candidates, numRounds, { ...rest, difficulty: diff }));
 }
 

@@ -311,6 +311,16 @@ export function recordAutoSaveOutcome(ok) {
 // non-existent `window` — the whole block is browser-only wiring.
 if (typeof window !== "undefined") {
   setInterval(() => {
+    // "Nothing to save" is NOT a failure, and must never feed the failure streak. autoSave()
+    // returns false for two unrelated reasons — no resumable game, or a write that actually threw
+    // — and conflating them meant sitting on any menu screen for three intervals (36s) raised a
+    // red "Autosave is failing" banner while localStorage was perfectly healthy. Rare before the
+    // Competition screens existed (nobody idled on the splash that long); constant once a
+    // tournament keeps you on a menu screen for minutes at a time, which is how this surfaced.
+    // Checked here rather than inside autoSave() so its documented return contract is untouched:
+    // "Save & Exit" still needs false to mean "did not save" for BOTH reasons, since either one
+    // leaves the player with nothing to Continue.
+    if (!resumableMode(game)) return;
     if (recordAutoSaveOutcome(autoSave())) {
       showGalaxyToast("Autosave is failing — use Save to export a file.", "bad");
     }

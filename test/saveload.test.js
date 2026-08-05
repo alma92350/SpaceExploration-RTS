@@ -260,6 +260,30 @@ test("recordAutoSaveOutcome warns exactly once, on the 3rd CONSECUTIVE failure, 
   assert.equal(recordAutoSaveOutcome(false), false, "3rd again — already warned once this session, stays quiet for good");
 });
 
+test("autoSave() reports 'nothing to save' as false — so the periodic timer must not feed that to the failure streak", () => {
+  // Regression fence for a real false alarm: autoSave() returns false BOTH when a write threw and
+  // when there is simply no resumable game, and the periodic timer used to hand that conflated
+  // boolean straight to recordAutoSaveOutcome. Three intervals on any menu screen (36s) then raised
+  // a red "Autosave is failing" banner with localStorage perfectly healthy — rare before the
+  // Competition screens existed, constant once a tournament parks you on a menu for minutes.
+  // saveload.js now gates the timer on resumableMode(game) BEFORE recording an outcome.
+  //
+  // Asserting on the two halves this test can reach directly: autoSave() genuinely returns false
+  // with no game (so the conflation is real, not hypothetical), and the timer's source carries the
+  // guard ahead of its recordAutoSaveOutcome call. The banner itself is browser-only wiring behind
+  // `typeof window !== "undefined"`, which is exactly why it went unnoticed.
+  game.state = null;
+  game.galaxy = null;
+  assert.equal(autoSave(), false, "no resumable game: autoSave reports false — indistinguishable from a failed write");
+
+  const src = readFileSync(new URL("../saveload.js", import.meta.url), "utf8");
+  const timer = src.slice(src.indexOf("setInterval("), src.indexOf("AUTOSAVE_INTERVAL_MS);", src.indexOf("setInterval(")));
+  assert.match(timer, /resumableMode\(game\)/,
+    "the periodic autosave timer must check for a resumable game before recording a failure");
+  assert.ok(timer.indexOf("resumableMode(game)") < timer.indexOf("recordAutoSaveOutcome"),
+    "the guard has to run BEFORE recordAutoSaveOutcome, or the streak still counts menu ticks");
+});
+
 // --- driving the REAL file-Load path: loadBtn -> loadFromFile -> importSave -> bootState/bootGalaxy ---
 // importSave() (saveload.js ~line 124) is the shape-autodetect dispatch: isGalaxySave(parsed) ?
 // bootGalaxy(deserializeGalaxy(parsed)) : bootState(deserializeGame(parsed)). isGalaxySave() itself

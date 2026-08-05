@@ -309,8 +309,11 @@ export function renderMapSelect() {
   const title = document.createElement("h2");
   // Competition isn't in SCENARIO_COPY (none of its other fields — diffHint/brief/subtitle —
   // apply, since the branch below returns before any of them would be read), so its title is a
-  // direct special-case rather than a mismatched-shape table entry.
-  title.textContent = setup.mode === "competition" ? "🏆 Quick Duel" : copy ? copy.title : "Configure the skirmish";
+  // direct special-case rather than a mismatched-shape table entry. It names the MODE, not one of
+  // its tabs: competition.js's own tab row (Quick Duel / Tournament / Roster / Standings) says
+  // which screen you're on, and titling the whole mode after one tab stopped being true when
+  // Phase 3 added tournaments.
+  title.textContent = setup.mode === "competition" ? "🏆 Competition" : copy ? copy.title : "Configure the skirmish";
   mapSelectEl.appendChild(title);
 
   const ver = document.createElement("p");

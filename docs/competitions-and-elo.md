@@ -382,6 +382,105 @@ an attempted `__proto__` roster entry was rejected with a visible on-screen erro
 module — including the brute-force fuzz check for avoidable repeats, which is the whole reason that
 code is trustworthy; knockout bracket shape (byes for non-power-of-two fields).
 
+**Status: done.** Landed across two stages on this branch. Stage one: `pairing.js` itself — the Swiss
+matcher moved out of `tools/ailab.js` whole (comments included, since they are the record of three
+real bugs), plus `roundRobinPairs`, `buildKnockoutBracket` and `knockoutMatchCount`, with
+`tools/ailab.js` re-exporting the moved names so every CLI caller and test stayed unmodified. Stage
+two (this one) wired all three formats into the game as a fourth **Tournament** tab:
+
+- **`competitionWorker.js` gained a SECOND job kind**, `{ kind: "tournament", format, field,
+  difficulty, worlds, seeds, seedBase, rounds? }` → `runTournamentJob(job, onProgress)`. The
+  single-duel job (no `kind` field) still dispatches to `runCompetitionJob`, unchanged — Quick Duel's
+  own message contract is untouched. The tournament's injected `runPair` is a thin wrapper *around
+  `runCompetitionJob` itself*, so a tournament pairing **is** a Quick Duel — same side-swap, same
+  replicate-parity `swapAsym`, same one pinned difficulty for both seats, same row shape the ledger
+  already stores — aggregated into the `{aWins, bWins, draws, avgMargin}` shape `pairing.js`'s
+  schedules read. Round-robin loops `roundRobinPairs`; Swiss hands the runner to `buildSwissBracket`
+  (which owns its own round loop); knockout hands it to `buildKnockoutBracket`. Progress is posted at
+  real granularity — a `{type:"progress"}` per **match** carrying round/pairing coordinates, and a
+  `{type:"pairing"}` summary per **pairing** so the screen can fold a finished pairing into live
+  standings immediately. The `{type:"done"}` message carries the format's own full result (standings
+  for round-robin/Swiss, the whole bracket tree for knockout) plus `pairings`: every pairing's rows
+  in true completion order. The rows travel exactly once — the bracket tree and the Swiss rounds log
+  are posted with each pairing's rows stripped.
+- **Three additions to `pairing.js`**, all schedule facts that would otherwise have been duplicated
+  between the worker and the screen: `swissRoundCount(n)` (the `max(3, ceil(log2 n))` default —
+  `tools/ailab.js`'s `runSwissTournament` now calls it instead of keeping its own copy of the
+  formula), `tournamentRoundPlan(format, n, rounds?)` (pairings per round: the up-front estimate sums
+  it, and the Worker turns a flat pairing counter into "round 2 of 4, pairing 3 of 8" with it —
+  `test/pairing.test.js` checks every plan against a *real* bracket, round for round, rather than
+  against a restatement of its own formula), and `tallyStandings(names, pairings, byeNames)` (the
+  after-the-fact tally — the worker's round-robin standings and the screen's live standings are the
+  same code, pinned by a test to agree with what `buildSwissBracket` accumulates internally).
+- **`competition.js`'s Tournament tab** (`renderTournamentScreen`, alongside the existing Quick Duel /
+  Roster / Standings tabs and the same `.comp-tabs` pattern), with three sub-views —
+  `renderTournamentConfig` / `renderTournamentProgress` / `renderTournamentResults`:
+  - a **format picker** (`TOURNAMENT_FORMAT_OPTIONS`, through `setup.js`'s own `optionGroup`), and a
+    **field builder** — a checkbox list of the current roster (`renderFieldBuilder`), with Select
+    all/Clear and a live count. Below 2 picked entrants Start Tournament is genuinely `disabled`; an
+    under-2 *roster* is answered by a line pointing at the Roster tab plus a button that goes there.
+    A tournament has **no ad-hoc-name path at all** (Phase 2's own principle, applied harder: a field
+    of throwaway names would write throwaway rows into the ladder the tournament exists to move).
+  - the **same world/seeds/seed pickers Quick Duel uses** — `renderWorldPicker`/`renderSeedsRow`/
+    `renderSeedRow` now take the config object they edit, so both screens drive one implementation
+    over their own state — plus **one shared difficulty** for the whole tournament (D2), never a
+    per-entrant one: `buildTournamentJob`'s entrants carry `name`/`strategy`/`archetype` only.
+  - an **up-front estimate** before Start is clickable: `tournamentEstimate` → "≈ 30 matches · ≈ 45 s",
+    with the working shown ("15 pairings × 1 world × 1 seed × 2 sides"). Pairings come from
+    `tournamentPairingCount` (round-robin `n(n−1)/2`; Swiss `roundCount × floor(n/2)`, the round
+    count defaulted or overridden through a Swiss-only "Swiss rounds" box; knockout **always** n−1,
+    read straight off `knockoutMatchCount`), matches are `pairings × worlds × seeds × 2`, and time is
+    `SECONDS_PER_MATCH = 1.5` — a documented average of §1's own measured ~1.0 s (elimination) and
+    ~1.8 s (full clock), not an invented constant. Rendered in seconds below a minute, minutes above.
+  - a **progress view** reusing Quick Duel's bar, with `tournamentProgressLabel` showing the real
+    round/pairing coordinates, live standings (round-robin/Swiss) or a running pairing log
+    (knockout), and a Cancel that terminates the Worker.
+  - **results**: for round-robin/Swiss a standings table (name, W-L-D, plus a **Byes** column and a
+    bye line for Swiss); for knockout a real **bracket view** — one column per round, titled
+    Round N / Quarterfinals / Semifinals / Final, each match showing both seats or a visible `BYE`,
+    the winner bolded on a green ground with a ✓, ending in a marked champion. The pure shaping
+    (`shapeBracketView`, `tournamentStandingsRows`, `shapeTournamentStandings`) is exported and
+    unit-tested with no DOM, the same observer.js-style split Phases 1-2 established.
+  - **the ledger fold**: `foldTournamentIntoLedger` calls `recordCompetition` **once per pairing**,
+    in the worker's own completion order (round 1's pairings before round 2's, in-round order
+    preserved) — D6's canonical ordering applied to a multi-pairing tournament, never one batched
+    call. The results view then states which bracket moved and shows a **Ladder movement** table
+    (before → after, straight off the ledger) plus a View Standings button.
+  - a knockout's field is seeded first by `seedFieldByRating` (rating descending off *that* bracket's
+    table, name as the tie-break), because `buildKnockoutBracket` deliberately consumes a seeding and
+    never invents one.
+
+**Deviations from the sketch above.** `setup.js` is in the touched list beyond the four files named:
+its competition-mode title said "🏆 Quick Duel", which stopped being true the moment the mode grew a
+second run screen, so it now names the mode ("🏆 Competition") and the tab row says which screen
+you're on. `style.css` likewise (new `comp-` classes for the field checklist, the estimate line and
+the bracket) — the same "found while wiring" pattern Phases 1-2 record. The Swiss pairing tests did
+**not** move out of `test/ailab.test.js`: stage one deliberately left them there as the safety net
+proving the extraction changed nothing observable, and added direct `test/pairing.test.js` coverage
+instead. Live standings show a Swiss field's **byes** as 0 until the run finishes (the bye is the
+schedule's own bookkeeping and `buildSwissBracket` reports it with the final result, not through
+`runPair`); the progress view says so.
+
+**Files touched:** `pairing.js`, `competitionWorker.js`, `competition.js`, `style.css`, `setup.js`,
+`tools/ailab.js`. **Tests:** `test/competition.test.js` (extended — estimate/match-count formulas for
+all three formats, tournament-job construction, knockout seeding, progress labelling, and
+standings/bracket shaping off *real* `pairing.js` results); `test/competitionWorker.test.js`
+(extended — job validation, and one small end-to-end knockout proving the pairings come back with
+their rows in completion order and the progress messages carry real coordinates);
+`test/pairing.test.js` (extended — `swissRoundCount`, `tournamentRoundPlan` checked against real
+brackets, `tallyStandings` against `buildSwissBracket`'s own standings);
+`test/static-integrity.test.js` (`pairing.js`'s temporary orphan exemption removed — the screen and
+the Worker reach it for real now). `npm test`: **2267/2267 green** (2223 baseline + 44 new, zero
+regressions). `npm run typecheck`: clean. Live-browser-verified (Playwright, zero console messages
+and zero page errors throughout): a 3-entrant round-robin (estimate shown up front, all 3 pairings
+run, standings 4-0-0/2-2-0/0-4-0, Standings tab and ladder moved to 1271/1200/1128); a 5-entrant
+Swiss (round-by-round progress visible, no repeat pairings, byes rotated across Echo/Delta/Charlie
+and counted as byes rather than wins); a 5-entrant knockout (3 first-round byes rendered as BYE
+slots, 4 = n−1 matches, winners bolded with a ✓, one champion); a 6-entrant round-robin cancelled
+mid-run at pairing 6 of 15 (progress stopped dead, the screen returned to config, and the ladder was
+untouched by the cancelled run, before and after a reload); and a ledger check showing exactly one
+history entry per pairing, in completion order.
+
 ### Phase 4 — The human enters the field *(L — the flagship)*
 
 - **Human as an entrant**: a roster row flagged `human: true`, seated as owner `"player"` (D4), with

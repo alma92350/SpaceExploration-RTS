@@ -1208,6 +1208,94 @@ body.paused::after {
 .comp-danger-btn { border-color: var(--bad); color: var(--bad); }
 .comp-danger-btn:hover { border-color: var(--bad); color: var(--bad); background: rgba(248, 113, 113, 0.12); }
 
+/* ---- Tournament tab (competition.js, docs/competitions-and-elo.md Phase 3): the field-builder
+   checklist, the up-front cost estimate, and the knockout bracket. Everything else on that screen
+   (format/difficulty/world pickers, the progress bar, the standings and pairing tables, the results
+   actions) reuses the classes above unchanged — these are only the genuinely new pieces. ---- */
+
+/* Field builder: one checkbox row per roster entry, in a scrolling list so a 30-entry roster
+   doesn't push the estimate and the Start button off the screen. */
+.comp-field-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.comp-field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.84rem;
+}
+.comp-field-row:last-child { border-bottom: none; }
+.comp-field-row:hover { background: rgba(255, 255, 255, 0.03); }
+.comp-field-row.picked { background: rgba(56, 189, 248, 0.08); }
+.comp-field-check { accent-color: var(--accent); cursor: pointer; }
+.comp-field-name { color: var(--text); font-weight: 600; }
+.comp-field-meta { color: var(--muted); font-size: 0.74rem; }
+.comp-field-actions { display: flex; align-items: center; gap: 10px; }
+.comp-field-count { color: var(--muted); font-size: 0.76rem; }
+
+/* The pre-run budget line — deliberately louder than a .setup-hint (it's the one number that
+   decides whether to press the button) but not an alarm: the accent hue, same as a table header. */
+.comp-estimate {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.comp-estimate-detail { display: block; margin-top: 3px; color: var(--muted); font-size: 0.74rem; font-weight: 400; }
+
+.comp-champion {
+  margin: 0;
+  color: var(--gold);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+/* The bracket: one column per round, scrolling horizontally on a narrow screen (a 5-round bracket
+   is genuinely wide) rather than reflowing, so the left-to-right "who advanced" reading survives. */
+.comp-bracket-wrap { max-width: 100%; overflow-x: auto; }
+.comp-bracket { display: flex; gap: 14px; align-items: stretch; min-width: min-content; }
+.comp-bracket-round { display: flex; flex-direction: column; gap: 10px; justify-content: space-around; min-width: 170px; }
+.comp-bracket-title { margin: 0; color: var(--accent); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.comp-bracket-match {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.comp-bracket-match.is-bye { border-style: dashed; }
+/* The winner has to be unmistakable at a glance — bolder, brighter, its own background, plus a
+   check. Colour alone would leave it ambiguous for anyone who can't see the hue difference. */
+.comp-bracket-seat {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.comp-bracket-seat.winner { background: rgba(74, 222, 128, 0.14); color: var(--text); font-weight: 700; }
+.comp-bracket-seat.bye { color: var(--muted); font-style: italic; }
+.comp-bracket-seat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp-bracket-check { color: var(--good, #4ade80); font-weight: 700; }
+.comp-bracket-score { align-self: flex-end; color: var(--muted); font-size: 0.7rem; }
+
 /* Attack-move armed: the crosshair cursor alone is easy to miss, so the battlefield
    also gets a warm inset outline that unmistakably says "the next click is an attack". */
 #field.aim-cursor { cursor: crosshair; box-shadow: inset 0 0 0 2px var(--warn); }
