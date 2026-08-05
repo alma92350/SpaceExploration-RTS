@@ -59,12 +59,18 @@ import { INITIAL_RATING, applySeries } from "./elo.js";
  * pure). Throws a clear, user-facing message for anything that would make competitionWorker.js's
  * own guards throw anyway — an empty name or an empty world list — so the config screen can catch
  * it before ever spinning up a Worker.
+ * Also rejects two entrants sharing a name (post-trim): elo.js's RatingsTable is keyed by name
+ * (D1/D2), so a same-name pairing would collide both entrants' Elo into one entry instead of two
+ * (elo.js's own applyResult throws on exactly this, as a backstop) — catching it here means the
+ * config screen can reject it before ever spinning up a Worker, instead of running a full duel
+ * only to throw when the results view folds the rows through eloFromRows.
  * @param {{ entrantA: {name: string, strategy?: string}, entrantB: {name: string, strategy?: string},
  *   difficulty: string, worlds: string[], seeds: number, seedBase: number, matchTimeLimit?: number }} cfg
  */
 export function buildJob({ entrantA, entrantB, difficulty, worlds, seeds, seedBase, matchTimeLimit } = {}) {
   if (!entrantA || !entrantA.name || !entrantA.name.trim()) throw new Error("Entrant A needs a name");
   if (!entrantB || !entrantB.name || !entrantB.name.trim()) throw new Error("Entrant B needs a name");
+  if (entrantA.name.trim() === entrantB.name.trim()) throw new Error("Entrant A and Entrant B need different names");
   if (!Array.isArray(worlds) || worlds.length === 0) throw new Error("Pick at least one world");
   const job = {
     entrantA: { name: entrantA.name.trim(), strategy: entrantA.strategy || "default" },

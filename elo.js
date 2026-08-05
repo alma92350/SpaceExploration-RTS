@@ -80,13 +80,33 @@ export function kFactor(games, rating) {
  * the equal-K and unequal-K cases. This is guaranteed by construction: both deltas are derived from
  * ONE shared `diff` (A's actual-minus-expected score this match), not from two independently
  * rounded `expectedScore` calls, so at equal K the negation is exact, not merely close.
+ *
+ * REJECTS aName === bName, before touching `ratings` at all. RatingsTable is keyed by name (see
+ * the module header), so a same-name pairing would make `a`/`b` above alias the SAME object:
+ * this function would compute A's post-match entry, write it to `ratings[aName]`, then
+ * unconditionally overwrite that exact slot with B's post-match entry (`ratings[bName] = ...` runs
+ * second and always wins, since aName and bName are one key) — A's half silently vanishes and the
+ * survivor represents neither side faithfully. Two entrants that are conceptually different (say,
+ * different strategies) but happen to share one display string collide exactly the same way, since
+ * this module has no notion of identity beyond the name string. That's not a match anyone can
+ * actually referee — an entrant can't play itself — so it's refused up front rather than silently
+ * producing a garbage rating; every shipped caller (competition.js's buildJob, tools/ailab.js's
+ * runDuel) already rejects this earlier, with a user/CLI-facing message, but this check is the
+ * shared backstop any caller gets for free, present or future, per D1's "one implementation" point.
  * @param {RatingsTable} ratings
  * @param {string} aName
  * @param {string} bName
  * @param {number} score   A's result: 1 (A won), 0.5 (draw), 0 (A lost).
  * @returns {RatingsTable} the same `ratings` object, mutated in place.
+ * @throws {Error} if aName === bName.
  */
 export function applyResult(ratings, aName, bName, score) {
+  if (aName === bName) {
+    throw new Error(
+      `applyResult: A and B must be different entrants, both were "${aName}" — RatingsTable is ` +
+      `keyed by name, so a same-name pairing would collide both sides into one entry instead of two`
+    );
+  }
   const a = ratings[aName] || (ratings[aName] = { rating: INITIAL_RATING, games: 0 });
   const b = ratings[bName] || (ratings[bName] = { rating: INITIAL_RATING, games: 0 });
   const kA = kFactor(a.games, a.rating);

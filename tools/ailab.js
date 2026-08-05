@@ -651,12 +651,20 @@ export function runLeaderboard(candidates, { worlds, difficulty = "medium", oppo
 // live fight, unlike leaderboard's candidates which never meet) — snapshot/restored around
 // the whole call exactly like runLeaderboard does around each candidate, via the same
 // snapshotTables/restoreTables this file already uses.
+//
+// A and B must have DIFFERENT names, same reasoning as assertUniqueCandidateNames below (which
+// covers 3+ candidate round-robins/Swiss but never runs for a plain --a/--b pair): elo.js's
+// RatingsTable is keyed by name, and eloForMatches near the bottom of this file folds every duel's
+// rows through it, so a same-name pair would silently collide both candidates' Elo into one entry
+// (elo.js's own applyResult throws on exactly this, as a backstop — this check just gives the CLI
+// user a clear, immediate reason instead of a duel that runs to completion and THEN throws).
 export function runDuel(a, b, {
   worlds = ["korrath", "ferros", "vesper", "kybernet"], difficulty = "medium",
   seeds = 2, seedBase = 1, minutes,
 } = {}) {
   if (!a || !a.name) throw new Error('candidate A needs a "name"');
   if (!b || !b.name) throw new Error('candidate B needs a "name"');
+  if (a.name === b.name) throw new Error(`candidate A and candidate B need different names (both were "${a.name}")`);
   const dials = pinnedDuelDials(difficulty);   // read ONCE — see the FAIRNESS paragraph above
   assertNoOverrideCollision(a, b);
   const snap = snapshotTables();

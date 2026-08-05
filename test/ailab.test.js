@@ -539,6 +539,13 @@ test("a duel candidate needs a name, on either side", () => {
   assert.throws(() => runDuel(named, { strategy: "default" }, shortDuel()), /candidate B needs a "name"/);
 });
 
+test("a duel's two candidates must have different names -- elo.js's RatingsTable is keyed by name, " +
+  "so a same-name pairing would collide both sides into one entry (see test/elo.test.js)", () => {
+  const a = { name: "Same", strategy: "default" };
+  const b = { name: "Same", strategy: "aggressive" };
+  assert.throws(() => runDuel(a, b, shortDuel()), /same|different|distinct/i);
+});
+
 test("a duel's overrides never leak into what runs next", () => {
   const before = JSON.stringify(STRATEGIES.aggressive);
   const a = { name: "A", strategy: "aggressive", overrides: { strategies: { aggressive: { garrisonMult: 0.01 } } } };

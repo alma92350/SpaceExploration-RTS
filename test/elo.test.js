@@ -91,6 +91,44 @@ test("NOT zero-sum at UNEQUAL K: a provisional entrant meeting a graduated one i
   assert.notEqual(deltaA, -deltaB, "unequal K must NOT produce exact-negative deltas");
 });
 
+/* ---------- applyResult: same-name collision guard ----------
+   RatingsTable is a plain object keyed by entrant name (see elo.js's own header). Two entrants
+   sharing a name in the SAME match make `ratings[aName]` and `ratings[bName]` the identical slot:
+   applyResult computes A's post-match entry, writes it, then unconditionally overwrites it with
+   B's post-match entry (`ratings[bName] = ...` runs second and wins) -- A's half silently vanishes
+   and the survivor doesn't represent either side faithfully. That must be rejected up front, not
+   left to corrupt silently. */
+
+test("applyResult throws when aName === bName instead of silently corrupting the shared entry", () => {
+  const ratings = {};
+  assert.throws(() => applyResult(ratings, "Aggressive", "Aggressive", 1), /same|different|distinct/i);
+});
+
+test("applyResult's same-name guard fires before any mutation -- a rejected call leaves ratings untouched", () => {
+  const ratings = {};
+  assert.throws(() => applyResult(ratings, "X", "X", 1));
+  assert.deepEqual(ratings, {}, "the colliding entry must not even be half-created");
+});
+
+test("applyResult's same-name guard fires even when that name is already seeded, and leaves it untouched", () => {
+  const ratings = { Solo: { rating: 1500, games: 12 } };
+  assert.throws(() => applyResult(ratings, "Solo", "Solo", 0.5));
+  assert.deepEqual(ratings, { Solo: { rating: 1500, games: 12 } }, "the pre-existing entry must survive intact");
+});
+
+test("applySeries propagates the same-name guard for whichever row triggers it", () => {
+  const ratings = {};
+  const rows = [
+    { aName: "A", bName: "B", score: 1 },
+    { aName: "C", bName: "C", score: 0.5 },   // the offending row
+  ];
+  assert.throws(() => applySeries(ratings, rows), /same|different|distinct/i);
+  // The row before the offending one must still have gone through -- applyResult/applySeries never
+  // retroactively undoes earlier, valid matches just because a later row in the same series is bad.
+  assert.ok(ratings.A, "the earlier, valid row must still have been applied");
+  assert.ok(ratings.B, "the earlier, valid row must still have been applied");
+});
+
 test("both sides' games increment by exactly 1, win or lose", () => {
   const ratings = {};
   applyResult(ratings, "A", "B", 0.5);

@@ -54,6 +54,19 @@ test("buildJob trims entrant names and rejects an empty or blank one", () => {
   assert.throws(() => buildJob({ ...fixedCfg(), entrantA: null }), /name/i);
 });
 
+test("buildJob rejects identical entrant names -- they'd collide into one elo.js RatingsTable entry", () => {
+  assert.throws(
+    () => buildJob({ ...fixedCfg(), entrantA: { name: "Bob", strategy: "default" }, entrantB: { name: "Bob", strategy: "aggressive" } }),
+    /same|different|distinct/i,
+  );
+  // Compared post-trim, same as the existing blank-name check -- "Bob" and " Bob " are one collision,
+  // not two distinct entrants that merely LOOK different in the raw input.
+  assert.throws(
+    () => buildJob({ ...fixedCfg(), entrantA: { name: " Bob ", strategy: "default" }, entrantB: { name: "Bob", strategy: "aggressive" } }),
+    /same|different|distinct/i,
+  );
+});
+
 test("buildJob throws when no world is selected", () => {
   assert.throws(() => buildJob({ ...fixedCfg(), worlds: [] }), /world/i);
 });
