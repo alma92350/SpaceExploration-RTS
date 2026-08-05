@@ -7,6 +7,7 @@ import { runAI } from "../engine/ai.js";
 import { tick } from "../engine/sim.js";
 import { UNITS } from "../engine/entities.js";
 import { mulberry32 } from "../engine/rng.js";
+import { POP_CAP_OPTIONS } from "../setup.js";
 
 const THINK_INTERVAL = 1.5;   // must match ai.js's own THINK_INTERVAL to force a fresh think cycle each call
 
@@ -31,7 +32,38 @@ test("supplyCap counts only completed buildings — a constructing Habitat grant
   assert.equal(supplyCap(state, "player"), 18, "once finished it adds its 8");
 });
 
-/* ---------- setup.js's Population cap row (200/250/300/Max — state.popCap) ---------- */
+/* ---------- setup.js's Population cap row (150/200/250/300/Max — state.popCap) ---------- */
+
+test("the Population cap row offers a 150 rung, ascending, with Max last", () => {
+  // The 150 rung is a PERFORMANCE option, not a balance one: the cap bounds both sides' armies and
+  // the housing that feeds them, so it is the only dial that bounds total entity count directly.
+  // Measured on a 60-minute ferros/aggressive Odyssey (the heaviest world the AI now produces),
+  // timing one sim-minute at minute 60: popCap 150 holds it to 100 units / 39 buildings and 650ms,
+  // against 563 / 166 and 8,080ms uncapped — roughly 12x cheaper to simulate. See
+  // docs/odyssey-ai-review.md §2.11 for why the AI got big enough for this to matter.
+  const caps = POP_CAP_OPTIONS.map(o => o.mult);
+  assert.ok(caps.includes(150), "a 150 rung is offered");
+  assert.equal(caps[0], 150, "…and it is the lowest, so it reads as the smooth-frame-rate end of the row");
+  assert.equal(caps[caps.length - 1], null, "Max (null, uncapped) stays the last option and the default");
+  const finite = caps.filter(c => c != null);
+  for (let i = 1; i < finite.length; i++)
+    assert.ok(finite[i] > finite[i - 1], `the row ascends: ${finite[i - 1]} then ${finite[i]}`);
+  for (const o of POP_CAP_OPTIONS) assert.ok(o.label && o.note, `${o.label} has a label and a note`);
+});
+
+test("a 150 population cap clamps exactly like every other rung — it needs no special case", () => {
+  // It is only a new value in an existing row: supplyCap's clamp, engine/persist.js's positive-
+  // finite sanitizer, and boot.js's plumbing all take it unchanged, which is the whole reason this
+  // option costs nothing to add.
+  const state = createGameState({ planetId: "ferros" });
+  for (let i = 0; i < 20; i++) {
+    const h = makeBuilding("habitat", "player", 700 + i * 30, 500);
+    state.buildings.set(h.id, h);
+  }
+  assert.ok(buildingSupplyCap(state, "player") > 150, "fixture sanity: housing alone would exceed 150");
+  state.popCap = 150;
+  assert.equal(supplyCap(state, "player"), 150, "clamped to the configured 150 ceiling");
+});
 
 test("a configured population cap clamps supplyCap below the building-derived total", () => {
   const state = createGameState({ planetId: "ferros" });

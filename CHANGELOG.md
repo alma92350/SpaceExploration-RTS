@@ -63,6 +63,16 @@ All notable changes to this project are documented here. The format follows
   flag so a probe can exercise a difficulty row's real APM throttle instead of always running
   unthrottled.
 
+### Added
+
+- **A 150 rung on the Population cap**, below what used to be the tightest setting. It's there for
+  frame rate rather than balance: the cap bounds both sides' armies *and* the housing that feeds
+  them, so it's the one setting that bounds how many things exist at all. Measured on the heaviest
+  world the improved AI produces — a 60-minute Ferros Odyssey, timing one simulated minute at the
+  end — a capped-at-150 world holds 100 units across 39 buildings and simulates ~12× faster than an
+  uncapped one, which reaches 563 units across 166 buildings. Pick it if you want the galaxy to stay
+  responsive; Max is still the default and still uncapped.
+
 ### Changed
 
 - **Odyssey neighbours now actually grow, because they can finally afford to.** Every archetype

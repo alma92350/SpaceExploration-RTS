@@ -62,7 +62,15 @@ const MATCH_LENGTH_OPTIONS = [
 // (the default pick, matching setup.popCap's own default below) changes nothing from before this
 // option existed. Offered in both economy modes (skirmish + Odyssey) — a scripted scenario runs a
 // fixed roster instead of open production, so it never queues against a cap to begin with.
-const POP_CAP_OPTIONS = [
+// The 150 rung exists for FRAME RATE, not for balance, which is why it sits below what used to be
+// the tightest option: the cap bounds both sides' armies AND the housing that feeds them (a
+// Habitat stops going up once the raw building total reaches the ceiling — engine/aiEconomy.js's
+// rawCapHeadroom), so it is the one dial that bounds total entity count directly. It earns its
+// place now that a neighbour actually develops (docs/odyssey-ai-review.md §2.11): measured on a
+// 60-minute ferros/aggressive Odyssey, an uncapped world reaches ~1,250 supply across ~170
+// buildings, and at 150 the same world settles at a fraction of that.
+export const POP_CAP_OPTIONS = [
+  { label: "150", mult: 150, note: "lean economy — smoothest" },
   { label: "200", mult: 200, note: "tight economy" },
   { label: "250", mult: 250, note: "moderate economy" },
   { label: "300", mult: 300, note: "large economy" },
@@ -92,7 +100,7 @@ export const setup = { mode: "skirmish", difficulty: "medium", faction: "frontie
   startWorld: null,    // Odyssey: explicit start-world pick (a planet id), or null for the seed's own random draw
   swapAsym: false,     // skirmish: play the swapped half of an asymmetric world's matchup (Oort, Nimbus) — see engine/map.js opts.swapAsym
   matchTimeLimit: DEFAULT_MATCH_TIME_LIMIT,   // skirmish: Match length row (Quick/Standard/Marathon) — see engine/victory.js
-  popCap: null };      // economy modes: Population cap row (200/250/300/Max) — see engine/supply.js
+  popCap: null };      // economy modes: Population cap row (150/200/250/300/Max) — see engine/supply.js
 
 // The game modes the splash toggles between.
 const MODES = [

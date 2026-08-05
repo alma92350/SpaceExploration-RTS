@@ -8,7 +8,7 @@
    construction (state already holds the whole truth).
 
    A match can ALSO set a hard ceiling on top of that (state.popCap — setup.js's Population cap
-   option, 200/250/300/Max, null/Max meaning uncapped): supplyCap clamps the building-derived total
+   option, 150/200/250/300/Max, null/Max meaning uncapped): supplyCap clamps the building-derived total
    to it, identically for both owners (it's a shared match rule, not a per-side or AI-temperament
    dial like difficulty/aiStrategy). buildingSupplyCap exposes the pre-clamp raw total for the one
    caller that needs to tell "still-blocked" apart from "no housing would help" — engine/aiEconomy.js's
