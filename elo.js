@@ -35,6 +35,12 @@
 // Every new entrant starts here (D7). Exported so a caller never hardcodes the number twice.
 export const INITIAL_RATING = 1200;
 
+// Games played before an entrant "graduates" out of the wide provisional K (D7) — the same
+// threshold competitionLedger.js's standings read-back uses to flag a row `provisional`, so the
+// number lives in exactly one place (this file's own INITIAL_RATING precedent) rather than being
+// hardcoded a second time wherever "is this rating still noisy" needs asking.
+export const PROVISIONAL_GAMES = 10;
+
 /**
  * The standard Elo expectation: A's probability of "winning" this pairing (1 = certain win,
  * 0.5 = a coin flip, 0 = certain loss), purely a function of the ratings gap — D7's formula,
@@ -62,7 +68,7 @@ export function expectedScore(ratingA, ratingB) {
  * @returns {number} the K-factor: 40, 20, or 10.
  */
 export function kFactor(games, rating) {
-  if (games < 10) return 40;
+  if (games < PROVISIONAL_GAMES) return 40;
   return rating >= 2400 ? 10 : 20;
 }
 

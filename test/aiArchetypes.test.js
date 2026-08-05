@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { archetypeFor, ARCHETYPES, PLANET_ARCHETYPE, ODYSSEY_EXTRA_ARCHETYPE } from "../engine/aiArchetypes.js";
-import { createGameState } from "../engine/state.js";
+import { createGameState, createAiController } from "../engine/state.js";
 import { PLANETS } from "../data.js";
 
 test("each of the three playable planets maps to a distinct archetype", () => {
@@ -130,4 +130,62 @@ test("PLANET_ARCHETYPE (the skirmish nine) is untouched by the Technologist addi
     oort: "rusher",
     forge: "economist",
   }, "the skirmish roster's archetype keys are byte-identical to before the Technologist was added");
+});
+
+/* ---------- D3 (docs/competitions-and-elo.md): createAiController's optional per-entrant
+   archetype override — a competition entrant can carry its own doctrine instead of both seats
+   sharing whatever temperament the world hands out ("Rusher vs Turtle" becomes a real matchup). ---------- */
+
+test("createAiController with no opts.archetype resolves the planet's own archetype, byte-identical to before this option existed", () => {
+  const bare = createAiController("ferros");
+  assert.equal(bare.archetype, ARCHETYPES.economist, "ferros' own archetype, unchanged");
+
+  // An opts object that simply never mentions archetype (every existing call site today —
+  // createGameState, tools/selfplay.js, test/save-hardening.test.js) must behave identically to
+  // the same opts with archetype explicitly absent.
+  const withOtherOpts = createAiController("ferros", { apm: 90, micro: true, strategy: "aggressive", difficulty: "hard" });
+  assert.equal(withOtherOpts.archetype, ARCHETYPES.economist, "other opts fields don't affect archetype resolution at all");
+});
+
+test("a valid opts.archetype key overrides the planet's own archetype", () => {
+  // ferros is normally Economist (see PLANET_ARCHETYPE) — rusher must actually win here, proving
+  // this is a real override and not a no-op that happens to already match.
+  const c = createAiController("ferros", { archetype: "rusher" });
+  assert.equal(c.archetype, ARCHETYPES.rusher);
+  assert.notEqual(c.archetype, ARCHETYPES.economist);
+});
+
+test("every ARCHETYPES key is honored as an override, not just one", () => {
+  for (const key of Object.keys(ARCHETYPES)) {
+    const c = createAiController("ferros", { archetype: key });
+    assert.equal(c.archetype, ARCHETYPES[key], `opts.archetype: "${key}" should resolve to ARCHETYPES.${key}`);
+  }
+});
+
+test("an unknown or invalid opts.archetype key falls back to the planet's own archetype instead of producing undefined", () => {
+  const unknown = createAiController("ferros", { archetype: "not-a-real-archetype" });
+  assert.equal(unknown.archetype, ARCHETYPES.economist);
+  assert.notEqual(unknown.archetype, undefined);
+
+  const blank = createAiController("ferros", { archetype: "" });
+  assert.equal(blank.archetype, ARCHETYPES.economist, "an empty string is falsy, same fallback as omitting the field");
+
+  const wrongType = createAiController("ferros", { archetype: 123 });
+  assert.equal(wrongType.archetype, ARCHETYPES.economist, "a non-string archetype value falls back rather than throwing");
+});
+
+test("opts.archetype takes a STRING KEY, not an archetype object — passing an object doesn't work as an override", () => {
+  // Guards the documented contract: ARCHETYPES[opts.archetype] must be a real lookup, so handing
+  // it an already-resolved archetype object (rather than its key) must NOT silently "just work" —
+  // ARCHETYPES[{...}] stringifies to "[object Object]", which isn't a real key, so this falls back.
+  const c = createAiController("ferros", { archetype: ARCHETYPES.rusher });
+  assert.equal(c.archetype, ARCHETYPES.economist, "an archetype OBJECT (not its string key) is not a valid override");
+});
+
+test("opts.archetype changes only the archetype field — every other field is exactly as before", () => {
+  const base = createAiController("ferros");
+  const overridden = createAiController("ferros", { archetype: "rusher" });
+  const { archetype: _base, ...restBase } = base;
+  const { archetype: _overridden, ...restOverridden } = overridden;
+  assert.deepEqual(restBase, restOverridden);
 });
