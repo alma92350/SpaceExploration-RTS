@@ -116,7 +116,11 @@ export function buildJob({ entrantA, entrantB, difficulty, worlds, seeds, seedBa
   if (!entrantB || !entrantB.name || !entrantB.name.trim()) throw new Error("Entrant B needs a name");
   if (entrantA.name.trim() === entrantB.name.trim()) throw new Error("Entrant A and Entrant B need different names");
   if (!Array.isArray(worlds) || worlds.length === 0) throw new Error("Pick at least one world");
-  const knownArchetype = a => (a && ARCHETYPES[a]) ? a : null;
+  // Object.hasOwn, not a truthy `ARCHETYPES[a]` bracket-access: a plain object's inherited keys
+  // (e.g. "constructor") or the specially-handled "__proto__" accessor would otherwise read back
+  // as "known" even though they name no real archetype — this function's own doc comment above
+  // promises unknown input becomes `null`, and a hostile-looking key is exactly "unknown".
+  const knownArchetype = a => (typeof a === "string" && Object.hasOwn(ARCHETYPES, a)) ? a : null;
   const job = {
     entrantA: { name: entrantA.name.trim(), strategy: entrantA.strategy || "default", archetype: knownArchetype(entrantA.archetype) },
     entrantB: { name: entrantB.name.trim(), strategy: entrantB.strategy || "default", archetype: knownArchetype(entrantB.archetype) },
@@ -210,7 +214,8 @@ export function shapeRosterRow(entry) {
   return {
     name: entry.name,
     strategy: strategyLabel(entry.strategy),
-    archetype: (entry.archetype && ARCHETYPES[entry.archetype]) ? ARCHETYPES[entry.archetype].name : "World default",
+    archetype: (typeof entry.archetype === "string" && Object.hasOwn(ARCHETYPES, entry.archetype))
+      ? ARCHETYPES[entry.archetype].name : "World default",
     faction: (FACTIONS[entry.faction] || FACTIONS.neutral).short,
   };
 }

@@ -71,6 +71,18 @@ test("buildJob coerces an unrecognised archetype key to null rather than trustin
   assert.equal(job.entrantA.archetype, null);
 });
 
+test("buildJob coerces a reserved/inherited key (__proto__, constructor, prototype) to null, not to the key itself", () => {
+  // Regression: knownArchetype used to be `(a && ARCHETYPES[a]) ? a : null` -- a truthy
+  // bracket-access, which for a plain object resolves "__proto__"/"constructor"/"prototype" to an
+  // inherited (always-truthy) property rather than "not a real key". That let a hostile archetype
+  // string survive into the job as-is, contradicting this function's own doc comment ("anything
+  // else -- missing, blank, unknown -- becomes null"). Object.hasOwn is the fix.
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    const job = buildJob({ ...fixedCfg(), entrantA: { name: "Alpha", strategy: "default", archetype: key } });
+    assert.equal(job.entrantA.archetype, null, `"${key}" must coerce to null, not survive as "${key}"`);
+  }
+});
+
 test("buildJob treats every ARCHETYPES key as valid, not just one", () => {
   for (const key of Object.keys(ARCHETYPES)) {
     const job = buildJob({ ...fixedCfg(), entrantA: { name: "Alpha", strategy: "default", archetype: key } });
@@ -324,6 +336,18 @@ test("shapeRosterRow shows a clear placeholder for a null (world-default) archet
   const row = shapeRosterRow({ name: "Plain", strategy: "default", archetype: null, faction: "neutral" });
   assert.equal(typeof row.archetype, "string");
   assert.notEqual(row.archetype, "");
+});
+
+test("shapeRosterRow falls back to the world-default placeholder for a reserved/inherited archetype key too", () => {
+  // Regression: a truthy `ARCHETYPES[entry.archetype]` bracket-access resolved "__proto__" to
+  // Object.prototype (always truthy, no .name), which would have rendered "undefined" instead of
+  // "World default" -- competitionLedger.js's own roster guard means a real roster entry can never
+  // actually carry this value, but the display function shouldn't depend on that upstream guard to
+  // stay correct on its own.
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    const row = shapeRosterRow({ name: "Hostile", strategy: "default", archetype: key, faction: "neutral" });
+    assert.equal(row.archetype, "World default", `"${key}" must render the placeholder, not "undefined"`);
+  }
 });
 
 /* ---------- shapeStandingsTable: formats standingsFor's own rows, never recomputes them ---------- */

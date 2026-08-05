@@ -174,6 +174,20 @@ test("an unknown or invalid opts.archetype key falls back to the planet's own ar
   assert.equal(wrongType.archetype, ARCHETYPES.economist, "a non-string archetype value falls back rather than throwing");
 });
 
+test("a reserved/inherited key (__proto__, constructor, prototype) as opts.archetype falls back instead of resolving to a bogus non-archetype value", () => {
+  // Regression: (opts.archetype && ARCHETYPES[opts.archetype]) is a truthy bracket-access, which
+  // for a plain object resolves "__proto__" to the object's own prototype (Object.prototype, always
+  // truthy) rather than treating it as "not a real key" — so the old implementation returned
+  // Object.prototype as the "archetype", not archetypeFor(planetId) as documented. "constructor"/
+  // "prototype" are ordinary inherited properties (Object.prototype.constructor/.prototype) and hit
+  // the identical bug. Object.hasOwn is the fix; this pins the fallback behavior so it can't regress.
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    const c = createAiController("ferros", { archetype: key });
+    assert.equal(c.archetype, ARCHETYPES.economist, `opts.archetype: "${key}" must fall back, not resolve to Object.prototype's own "${key}"`);
+    assert.notEqual(c.archetype, Object.prototype, `"${key}" must not resolve to Object.prototype itself`);
+  }
+});
+
 test("opts.archetype takes a STRING KEY, not an archetype object — passing an object doesn't work as an override", () => {
   // Guards the documented contract: ARCHETYPES[opts.archetype] must be a real lookup, so handing
   // it an already-resolved archetype object (rather than its key) must NOT silently "just work" —

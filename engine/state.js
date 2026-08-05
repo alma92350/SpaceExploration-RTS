@@ -112,8 +112,15 @@ export function createAiController(planetId, opts = {}) {
     // doctrine, this resolves it, mirroring archetypeFor's own ARCHETYPES[key] lookup. Absent, or
     // naming a key that isn't in ARCHETYPES, falls back to archetypeFor(planetId) exactly as
     // before this option existed — byte-identical for every call site today, none of which pass
-    // opts.archetype yet.
-    archetype: (opts.archetype && ARCHETYPES[opts.archetype]) || archetypeFor(planetId),
+    // opts.archetype yet. Object.hasOwn, not a truthy `ARCHETYPES[opts.archetype]` bracket-access:
+    // a plain object's inherited keys (e.g. "constructor") or the specially-handled "__proto__"
+    // accessor would otherwise resolve to something that isn't a real archetype at all — this
+    // module has no user-facing input today (the only two callers, competitionLedger.js's roster
+    // guard and the Archetype picker, already restrict to real keys), but this is an exported,
+    // reusable function and should refuse a hostile/reserved key on its own rather than depend on
+    // every future caller re-deriving that guard.
+    archetype: (typeof opts.archetype === "string" && Object.hasOwn(ARCHETYPES, opts.archetype))
+      ? ARCHETYPES[opts.archetype] : archetypeFor(planetId),
   };
 }
 
