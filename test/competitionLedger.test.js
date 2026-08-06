@@ -31,23 +31,28 @@ const row = (aName, bName, winner, margin = 0) => ({
 
 /* ---------- createLedger ---------- */
 
+// `gauntlet: null` and a roster entry's `human: false` are Phase 4's two additive fields (see
+// competitionLedger.js's own COMPETITION_VERSION comment for why they needed no version bump).
+// They're asserted on here — in the exact-shape tests — rather than only in
+// test/competitionGauntlet.test.js, because "the ledger's shape is exactly this" is what these
+// three cases exist to pin, and a field silently missing from them would be a real regression.
 test("createLedger returns an empty ledger with the current version", () => {
-  assert.deepEqual(createLedger(), { v: COMPETITION_VERSION, roster: [], ratingsByDifficulty: {}, history: [] });
+  assert.deepEqual(createLedger(), { v: COMPETITION_VERSION, roster: [], ratingsByDifficulty: {}, history: [], gauntlet: null });
 });
 
-/* ---------- roster CRUD ---------- */
+/* ---------- roster CRUD (the human flag and the one-human rule live in test/competitionGauntlet.test.js) ---------- */
 
 test("addRosterEntry adds a well-formed entry, mutating and returning the ledger", () => {
   const ledger = createLedger();
   const returned = addRosterEntry(ledger, { name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", createdAt: 1000 });
   assert.equal(returned, ledger, "addRosterEntry returns the SAME ledger it mutated");
-  assert.deepEqual(ledger.roster, [{ name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", createdAt: 1000 }]);
+  assert.deepEqual(ledger.roster, [{ name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", createdAt: 1000, human: false }]);
 });
 
 test("addRosterEntry trims the name and coerces an unknown strategy/archetype/faction/createdAt to safe defaults", () => {
   const ledger = createLedger();
   addRosterEntry(ledger, { name: "  Odd  ", strategy: "not-a-real-strategy", archetype: "not-a-real-archetype", faction: "not-a-real-faction", createdAt: "soon" });
-  assert.deepEqual(ledger.roster[0], { name: "Odd", strategy: "default", archetype: null, faction: "neutral", createdAt: null });
+  assert.deepEqual(ledger.roster[0], { name: "Odd", strategy: "default", archetype: null, faction: "neutral", createdAt: null, human: false });
 });
 
 test("addRosterEntry rejects a missing or blank name, touching nothing", () => {
