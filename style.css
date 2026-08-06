@@ -468,6 +468,69 @@ body.scenario .under-attack { top: 64px; z-index: 6; }
 }
 .observer-banner.hidden { display: none; }
 
+/* The spectate bar for a WATCHED AI-vs-AI match (observerPanel.js, docs/competitions-and-elo.md
+   Phase 5): sits directly under the observer banner, and unlike that banner it IS interactive —
+   speed, the exhibition disclosure, and the way out all live here. Centered rather than
+   full-width so it reads as a control strip, not a second alarm. */
+.spectate-bar {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 32px);
+  padding: 6px 12px;
+  background: rgba(5, 7, 15, 0.88);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 12px;
+  z-index: 8;
+}
+.spectate-bar.hidden { display: none; }
+.spectate-vs { color: var(--accent); font-weight: 700; }
+.spectate-speeds { display: flex; align-items: center; gap: 4px; }
+.spectate-speed-label { color: var(--muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; }
+.spectate-speed-btn {
+  min-width: 32px;
+  padding: 3px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.spectate-speed-btn:hover { border-color: var(--accent); }
+.spectate-speed-btn.active { background: rgba(79, 209, 255, 0.22); border-color: var(--accent); color: var(--accent); }
+/* Amber, matching the mode's own .comp-note caveat hue: this is the one line that says a watched
+   match isn't rated, and it must not read as decoration. */
+.spectate-note { color: var(--gold); font-size: 11.5px; }
+.spectate-leave-btn {
+  padding: 3px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.spectate-leave-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* One block per SEAT in the watched-match stats panel — the entrant's name above its own rows. */
+.observer-seat-name {
+  margin-top: 6px;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border);
+  padding-top: 5px;
+}
+.observer-rows > .observer-seat-name:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+
 .observer-panel {
   position: absolute;
   right: 16px;
@@ -998,6 +1061,430 @@ body.paused::after {
 .seed-input:focus { outline: none; border-color: var(--accent); }
 
 .gameover-seed { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-top: 10px; }
+
+/* The competition block on the game-over screen (overlays.js renderCompetitionResult, Phase 4):
+   what a just-played gauntlet match did to the ladder, and what's next. Boxed off from the
+   victory/defeat copy above it because it's a different KIND of statement — the match's own verdict
+   versus the run's bookkeeping — while staying on the same screen, which is the whole point (a
+   player wants both at once). */
+.gameover-comp {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  max-width: 520px;
+  text-align: left;
+}
+.gameover-comp-title { font-size: 0.78rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+.gameover-comp-outcome { font-size: 1.05rem; font-weight: 700; color: var(--text); margin-top: 6px; }
+.gameover-comp-rating { font-size: 1.15rem; font-weight: 700; color: var(--gold); margin-top: 6px; }
+.gameover-comp-standing { font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+.gameover-comp-error { font-size: 0.82rem; color: var(--bad); margin-top: 8px; }
+/* The D4 seat-asymmetry disclosure: quiet, but genuinely legible — never a tooltip, and never
+   small enough to read as fine print nobody is meant to read. */
+.gameover-comp-note {
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--muted);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.gameover-comp-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.gameover-comp-actions .btn { width: auto; margin: 0; padding: 9px 16px; font-size: 0.85rem; }
+
+/* ---- Competition mode (competition.js): Quick Duel / Roster / Standings — reuses
+   .setup/.opt-group/.opt-btn/.seed-input's own visual language throughout; these rules are only
+   what's genuinely new: the tab row, the two-entrant layout, the roster picker/table, the confirm-
+   delete modal, the world multi-select, the progress bar, and the results/standings tables. ---- */
+.comp-screen {
+  width: min(760px, 94vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+/* Deliberately NOT a full-width .btn like Run Duel/Cancel — a small corner link back out of the
+   whole screen, not a primary action of whichever sub-view (config/progress/results) is showing. */
+.comp-back-btn {
+  align-self: flex-start;
+  width: auto;
+  margin-top: 0;
+  padding: 6px 12px;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.comp-back-btn:hover { color: var(--text); border-color: var(--accent-2); }
+
+/* Quick Duel / Roster / Standings — one coherent mode, three sub-screens (docs/
+   competitions-and-elo.md Phase 2). Same opt-btn-style pill row as .opt-group elsewhere, kept as
+   its own class rather than reusing .opt-group directly since these buttons are plain toggles (no
+   sub-label/note row) rather than optionGroup()'s own {label, note} shape. */
+.comp-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.comp-tab-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 14px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.comp-tab-btn:hover { border-color: var(--accent-2); color: var(--text); }
+.comp-tab-btn.active { border-color: var(--accent); color: var(--accent); background: var(--panel); }
+
+.comp-intro { max-width: 640px; margin: 0; }
+
+.comp-entrants { display: flex; gap: 14px; flex-wrap: wrap; }
+.comp-entrant {
+  flex: 1 1 260px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.comp-entrant-heading { margin: 0 0 8px; color: var(--accent); font-size: 0.95rem; }
+.comp-name-input {
+  display: block;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-name-input:focus { outline: none; border-color: var(--accent); }
+.comp-substrategy-label { display: block; margin: 2px 0 6px; }
+
+/* The entrant card's "From Roster" pick — a native <select> (keyboard/screen-reader friendly for
+   free, no custom listbox to build) styled to match .comp-name-input's own input chrome. */
+.comp-roster-select {
+  display: block;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-roster-select:focus { outline: none; border-color: var(--accent); }
+
+.comp-worlds { margin-top: 4px; }
+
+.comp-seeds-input {
+  width: 80px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-seeds-input:focus { outline: none; border-color: var(--accent); }
+
+.comp-error { color: var(--bad); font-size: 0.82rem; margin: -6px 0 0; }
+
+.comp-progress { display: flex; flex-direction: column; gap: 10px; }
+.comp-progress-bar {
+  height: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.comp-progress-fill { height: 100%; background: var(--accent); transition: width 150ms ease-out; }
+
+/* The results view's status line — .comp-note alone is the warn hue (a genuine caveat, e.g. "the
+   ladder couldn't be updated"), same "this changes what you'd otherwise assume" cue as .map-card
+   .mod-note/.update-compat.bad. .comp-note-good (Phase 2: the ordinary, successful case now that a
+   duel really does update a persistent ladder) swaps to the good hue, same idiom as .sel-note.good/
+   .update-compat.ok/.galaxy-toast.good elsewhere in this file. */
+.comp-note {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 6px;
+}
+.comp-note.comp-note-good {
+  color: var(--good, #4ade80);
+  background: rgba(74, 222, 128, 0.08);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.comp-elo-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.comp-elo-card {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.comp-elo-name { font-weight: 600; color: var(--text); font-size: 0.9rem; }
+.comp-elo-value { font-size: 1.3rem; color: var(--gold); font-weight: 700; }
+.comp-elo-games { font-size: 0.74rem; color: var(--muted); }
+
+/* Results view's action row (Phase 2: now two buttons, Run Another Duel + View Standings) — side
+   by side rather than .btn's own default full-width stack, same pattern as .comp-io-row below. */
+.comp-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.comp-actions .btn { flex: 1 1 200px; margin-top: 0; }
+
+.comp-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.comp-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
+.comp-table th, .comp-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.comp-table th { color: var(--accent); font-weight: 600; background: var(--panel-2); }
+.comp-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+.comp-table tbody tr:last-child td { border-bottom: none; }
+
+/* Roster table's own Remove action — small and quiet (.comp-back-btn's own "not a primary action"
+   sizing), only reading as dangerous once you actually hover it (an accidental click on a packed
+   row shouldn't visually shout "delete" at rest). */
+.comp-remove-btn {
+  width: auto;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.comp-remove-btn:hover { border-color: var(--bad); color: var(--bad); }
+
+/* Replay (docs/competitions-and-elo.md Phase 5) — the per-match action on the Quick Duel results
+   table and the Standings screen's match history. Same small, quiet geometry as .comp-remove-btn
+   next to it (a table-cell action, not a primary button), but it warms toward the ACCENT rather
+   than the danger colour on hover: replaying costs nothing and changes nothing. */
+.comp-replay-btn {
+  width: auto;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.comp-replay-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* …and where that button would be for a match that CAN'T be re-run (a live human match, most
+   often). Deliberately not a disabled button: a disabled control invites clicking to find out why,
+   while this states the reason on hover and reads as a fact about the row. */
+.comp-replay-refused {
+  font-size: 0.7rem;
+  color: var(--muted);
+  opacity: 0.75;
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* Seasons (Phase 5): the new-season label field — .comp-seeds-input's own chrome, just wide enough
+   for a real name rather than a number. */
+.comp-season-input {
+  flex: 1 1 220px;
+  min-width: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-season-input:focus { outline: none; border-color: var(--accent); }
+
+/* The season currently being viewed, marked in the list the same tinted way the human's own
+   standings row is — the table above changed meaning, so which row did that has to be obvious. */
+.comp-season-row.is-viewing { background: rgba(56, 189, 248, 0.08); }
+
+/* Standings screen: a provisional entrant (< elo.js's PROVISIONAL_GAMES) gets a small pill next to
+   its name — same gold/warn-adjacent "still settling" read as .comp-elo-games' own inline
+   "— provisional" suffix, just legible on its own in a dense table cell. */
+.comp-provisional-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 10px;
+}
+
+/* Standings screen: the human's own row (D4). Same pill geometry as the provisional badge next to
+   it, in the accent colour the Gauntlet's .comp-human-card already uses for "this one is you" —
+   plus a tinted row, because the mark has to survive a glance down a column of numbers. This is the
+   one table that ranks a person against the AI field, so which row is theirs cannot be a guess. */
+.comp-you-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+}
+.comp-standings-row.is-you { background: rgba(56, 189, 248, 0.10); }
+.comp-standings-row.is-you td { color: var(--text); font-weight: 600; }
+
+/* Roster screen's Export/Import row — two full-width .btn's side by side rather than stacked. */
+.comp-io-row { display: flex; gap: 10px; }
+.comp-io-row .btn { flex: 1 1 0; margin-top: 0; }
+
+/* Roster removal's confirm-before-delete modal — same overlay/card idiom as saveload.js's own
+   .home-confirm/.home-card and landingPicker.js's own .landing-pick-confirm, each with its own
+   class names rather than literally sharing the first (see landingPicker.js's own comment on why). */
+.comp-confirm {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 7, 15, 0.82); padding: 20px;
+}
+.comp-confirm-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 22px 26px; max-width: 420px; text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.comp-confirm-card h3 { margin: 0 0 8px; font-size: 1.1rem; color: var(--text); }
+.comp-confirm-card p { margin: 0 0 18px; font-size: 0.88rem; color: var(--muted); }
+.comp-confirm-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.comp-confirm-actions .btn { width: auto; margin: 0; padding: 10px 16px; }
+.comp-danger-btn { border-color: var(--bad); color: var(--bad); }
+.comp-danger-btn:hover { border-color: var(--bad); color: var(--bad); background: rgba(248, 113, 113, 0.12); }
+
+/* ---- Tournament tab (competition.js, docs/competitions-and-elo.md Phase 3): the field-builder
+   checklist, the up-front cost estimate, and the knockout bracket. Everything else on that screen
+   (format/difficulty/world pickers, the progress bar, the standings and pairing tables, the results
+   actions) reuses the classes above unchanged — these are only the genuinely new pieces. ---- */
+
+/* Field builder: one checkbox row per roster entry, in a scrolling list so a 30-entry roster
+   doesn't push the estimate and the Start button off the screen. */
+.comp-field-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.comp-field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.84rem;
+}
+.comp-field-row:last-child { border-bottom: none; }
+.comp-field-row:hover { background: rgba(255, 255, 255, 0.03); }
+.comp-field-row.picked { background: rgba(56, 189, 248, 0.08); }
+.comp-field-check { accent-color: var(--accent); cursor: pointer; }
+.comp-field-name { color: var(--text); font-weight: 600; }
+.comp-field-meta { color: var(--muted); font-size: 0.74rem; }
+.comp-field-actions { display: flex; align-items: center; gap: 10px; }
+.comp-field-count { color: var(--muted); font-size: 0.76rem; }
+
+/* The pre-run budget line — deliberately louder than a .setup-hint (it's the one number that
+   decides whether to press the button) but not an alarm: the accent hue, same as a table header. */
+.comp-estimate {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.comp-estimate-detail { display: block; margin-top: 3px; color: var(--muted); font-size: 0.74rem; font-weight: 400; }
+
+.comp-champion {
+  margin: 0;
+  color: var(--gold);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+/* The bracket: one column per round, scrolling horizontally on a narrow screen (a 5-round bracket
+   is genuinely wide) rather than reflowing, so the left-to-right "who advanced" reading survives. */
+.comp-bracket-wrap { max-width: 100%; overflow-x: auto; }
+.comp-bracket { display: flex; gap: 14px; align-items: stretch; min-width: min-content; }
+.comp-bracket-round { display: flex; flex-direction: column; gap: 10px; justify-content: space-around; min-width: 170px; }
+.comp-bracket-title { margin: 0; color: var(--accent); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.comp-bracket-match {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.comp-bracket-match.is-bye { border-style: dashed; }
+/* The winner has to be unmistakable at a glance — bolder, brighter, its own background, plus a
+   check. Colour alone would leave it ambiguous for anyone who can't see the hue difference. */
+.comp-bracket-seat {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.comp-bracket-seat.winner { background: rgba(74, 222, 128, 0.14); color: var(--text); font-weight: 700; }
+.comp-bracket-seat.bye { color: var(--muted); font-style: italic; }
+.comp-bracket-seat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp-bracket-check { color: var(--good, #4ade80); font-weight: 700; }
+.comp-bracket-score { align-self: flex-end; color: var(--muted); font-size: 0.7rem; }
+
+/* ---- Gauntlet (docs/competitions-and-elo.md Phase 4): the human against the field. Reuses the
+   comp- language above wholesale — the tab, the field checklist, the estimate line, the elo card,
+   the tables, the confirm modal — so only three genuinely new things live here. ---- */
+
+/* THE SEAT DISCLOSURE (D4). Deliberately NOT a .setup-hint: it sits directly under the human's own
+   rating and has to read as a qualification OF that number, so it gets its own left rule and a size
+   that is plainly meant to be read. Not a tooltip, by explicit design. */
+.comp-disclosure {
+  max-width: 640px;
+  margin: 0;
+  padding: 8px 0 8px 12px;
+  border-left: 2px solid var(--warn);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+/* The human's own entrant card in the config screen — the same .comp-entrant box, marked as the
+   one that is you. `flex: 0 0 auto` overrides .comp-entrant's own `1 1 260px`, which is sized for
+   life inside the Quick Duel screen's ROW of two cards: this card is a direct child of
+   .comp-screen's COLUMN flex instead, where that 260px basis is a height, not a width, and left
+   the card standing half-empty. */
+.comp-human-card { border-color: var(--accent); flex: 0 0 auto; }
+.comp-human-name { margin: 0 0 6px; font-size: 1.05rem; font-weight: 700; color: var(--text); }
+/* The fixture list: one row per opponent, coloured by what happened. A forfeit reads as a loss
+   (it is one) but keeps its own italic label, so schedule luck is never mistaken for a fight. */
+.comp-fixture-row.is-won td { color: var(--good, #4ade80); }
+.comp-fixture-row.is-lost td, .comp-fixture-row.is-forfeit td { color: var(--bad); }
+.comp-fixture-row.is-forfeit td:nth-child(4) { font-style: italic; }
+.comp-fixture-row.is-next { background: rgba(56, 189, 248, 0.10); }
+.comp-fixture-row.is-next td { color: var(--text); font-weight: 600; }
+.comp-fixture-row.is-pending td { color: var(--muted); }
 
 /* Attack-move armed: the crosshair cursor alone is easy to miss, so the battlefield
    also gets a warm inset outline that unmistakably says "the next click is an attack". */

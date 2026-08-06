@@ -692,3 +692,97 @@ test("a real jump (focusActivePlanet) clears only the destination world's colony
   game.colonyAlerts = {};
   resetPause();
 });
+
+/* ============================================================
+   THE SIM RATE A SPECTATED/REPLAYED MATCH RUNS AT (docs/competitions-and-elo.md Phase 5).
+
+   This is the seam a replay lives or dies on, and it is worth stating why it needs a test of its
+   own rather than being obvious. Every recorded ledger row was produced by tools/selfplay.js at
+   ITS fixed step (SELFPLAY_DT); ordinary play runs the loop at the game's own step. Those two
+   numbers are not the same, and a fixed step is not a cosmetic tuning knob — the same seed
+   advanced in different-sized steps is a DIFFERENT GAME (different tick count, different think
+   cycles, different float accumulation). So a match booted through startSpectatedMatch has to be
+   driven at the self-play step, and an ordinary skirmish has to keep running at exactly the rate
+   it always did.
+
+   Driven end-to-end through the REAL loop rather than by inspecting a constant: the rAF callback
+   is captured and fed timestamps by hand (test/loop.test.js's own harness idiom), and the
+   assertion is on how far the simulation itself actually advanced.
+   ============================================================ */
+
+const { startSpectatedMatch } = await import("../boot.js");
+const { SELFPLAY_DT } = await import("../tools/selfplay.js");
+const { pinnedDuelDials } = await import("../tools/duelCore.js");
+
+// A minimal Web Audio stand-in — startSpectatedMatch calls sound.unlockAudio() (a real user
+// gesture starts it in the browser), which reads `window.AudioContext` unguarded. Same idiom, and
+// the same reason, as test/saveload.test.js's own FakeAudioContext.
+class SilentAudioContext {
+  currentTime = 0;
+  state = "running";
+  destination = {};
+  createGain() { return { gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+  createOscillator() { return { type: "sine", frequency: { value: 0, setValueAtTime() {} }, connect() {}, start() {}, stop() {} }; }
+  createBuffer() { return { getChannelData: () => new Float32Array(1) }; }
+  createBufferSource() { return { buffer: null, connect() {}, start() {}, stop() {} }; }
+  createBiquadFilter() { return { type: "lowpass", frequency: { value: 0 }, connect() {} }; }
+  resume() {}
+}
+
+// Boot `start()`, then feed the loop `frames` animation frames `msPerFrame` apart, and report how
+// far the sim advanced. render() is left to do whatever it does — createLoop already catches a
+// throwing render by design, so this measures the UPDATE path exactly as the browser drives it.
+function driveFrames(start, { frames, msPerFrame }) {
+  let cb = null;
+  const prevRaf = globalThis.requestAnimationFrame, prevError = console.error;
+  globalThis.requestAnimationFrame = fn => { cb = fn; return 1; };
+  console.error = () => {};
+  try {
+    start();
+    assert.ok(cb, "sanity: booting started a loop and asked for an animation frame");
+    for (let i = 0; i <= frames; i++) cb(i * msPerFrame);   // frame 0 primes `last`, no elapsed time yet
+    return { tick: game.state.tick, time: game.state.time };
+  } finally {
+    globalThis.requestAnimationFrame = prevRaf;
+    console.error = prevError;
+  }
+}
+
+test("a SPECTATED match advances at tools/selfplay.js's own fixed step — the one every recorded row was simulated at", () => {
+  resetPause();
+  window.AudioContext = SilentAudioContext;
+  const dials = pinnedDuelDials("medium");
+  const advanced = driveFrames(() => startSpectatedMatch({
+    world: "ferros", seed: 4242, swapAsym: false, aName: "Blitz", bName: "Bulwark", difficulty: "medium",
+    ai: { ...dials, strategy: "defensive", archetype: "turtle" },
+    playerAi: { ...dials, strategy: "aggressive", archetype: "rusher" },
+  }), { frames: 4, msPerFrame: SELFPLAY_DT * 1000 });
+
+  assert.equal(advanced.tick, 4, "four self-play-step frames must run exactly four sim ticks");
+  assert.ok(Math.abs(advanced.time - 4 * SELFPLAY_DT) < 1e-9,
+    `each tick must advance the sim by exactly ${SELFPLAY_DT}s — got ${advanced.time / 4}s per tick`);
+
+  game.spectateMatch = null;
+  game.state = null;
+  game.input = null;
+  delete window.AudioContext;
+  hideObjectives();
+  resetPause();
+});
+
+test("an ORDINARY skirmish keeps its own sim rate — the self-play step is for spectated matches only", () => {
+  resetPause();
+  resetSetup();
+  const advanced = driveFrames(() => startGame("ferros"), { frames: 4, msPerFrame: SELFPLAY_DT * 1000 });
+
+  assert.ok(advanced.tick > 4,
+    "an ordinary game must still run its own (faster) fixed step — this is the regression guard that " +
+    "the spectate change didn't slow normal play down");
+  assert.ok(Math.abs(advanced.time - 4 * SELFPLAY_DT) < 1e-9,
+    "…covering the same amount of SIM TIME, just in more, smaller steps");
+
+  game.state = null;
+  game.input = null;
+  hideObjectives();
+  resetPause();
+});

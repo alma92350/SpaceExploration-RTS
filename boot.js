@@ -15,6 +15,11 @@ import { createGameState } from "./engine/state.js";
 import { mulberry32 } from "./engine/rng.js";
 import { createLoop } from "./engine/loop.js";
 import { tick } from "./engine/sim.js";
+// The self-play core (docs/competitions-and-elo.md Phase 0 made it browser-importable): the ONE
+// way a spectated match gets both of its seats driven by the real AI — createSelfPlayState builds
+// the state with a second controller for owner "player", tickSelfPlay runs it before the ordinary
+// tick() that already drives owner "ai".
+import { createSelfPlayState, tickSelfPlay, SELFPLAY_HZ } from "./tools/selfplay.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { drawFrame, resetFacing, snapshotPositions } from "./render.js";
@@ -24,10 +29,11 @@ import { attachInput } from "./input.js";
 import { addTracer, addDeathFlash, addUnderAttackPing, addFireworks, addExplosion, addFuseWarning, activePings, resetEffects, DEATH_BASE_RADIUS } from "./effects.js";
 import { UNITS, BUILDINGS } from "./engine/entities.js";
 import { renderHUD, resetPanelSignature } from "./hud.js";
-import { observedState, exitObserverMode } from "./observer.js";
+import { observedState, exitObserverMode, enterObserverMode } from "./observer.js";
 import { renderObserverPanel } from "./observerPanel.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
+import { captureCompetitionResult, spectatedGameOverBlock } from "./competition.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
 import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, surrenderGalaxy, DOMINATION_TARGET, playerSpaceports, canJump, canJumpTo, jumpCost } from "./engine/galaxy.js";
 import { openLandingPicker } from "./landingPicker.js";
@@ -116,6 +122,110 @@ export function startGame(planetId) {
     matchTimeLimit: setup.matchTimeLimit, popCap: setup.popCap,
     playerFaction: setup.faction, aiFaction });
   bootState(fresh, { intro: true });
+}
+
+// Start one COMPETITION fixture as a real, live skirmish (docs/competitions-and-elo.md Phase 4 —
+// the Gauntlet's "Play Next Match"). Deliberately a near-copy of startGame above rather than a
+// second code path: same resolveSeed/difficultyDials/createGameState/bootState chain, same loop,
+// same HUD — this IS an ordinary skirmish, it just knows which fixture it belongs to. Nothing about
+// the running game changes; only `game.competition` (session.js) is set, which the game-over hook
+// below reads to route the result into the ledger.
+//
+// EVERYTHING IS TAKEN FROM THE FIXTURE, not from the setup screen: the world, the exact seed (off
+// the gauntlet's own schedule — never a fresh random one, or a resumed run would replay a different
+// map, D6), the pinned difficulty, the opponent's own strategy/archetype, the match length, and
+// this fixture's swapAsym parity. The human plays owner "player" with their chosen faction, exactly
+// as in a normal skirmish (D4: there is no other seat available to them).
+//
+// The three map dials are PINNED, not read off `setup`: a duel's own createSelfPlayState leaves
+// sizeMult/resourceMult/popCap at engine defaults, so every rating already in the ladder was earned
+// on that map shape. Letting a player's leftover skirmish preferences (Gigantic, Abundant) shape
+// the matches that move THEIR rating in the same bracket would make the two numbers incomparable.
+//
+// BUT PINNING THOSE DOES NOT MAKE A HUMAN MATCH THE SAME SHAPE AS A SIMULATED ONE, and it would be
+// dishonest to imply it does. Three differences remain, by construction, and none of them can be
+// closed from here:
+//   • ONE match, not a worlds x seeds x 2 sweep — a human cannot play forty games (Phase 4's
+//     founding constraint), so a human rating rests on far fewer, noisier samples.
+//   • NO side-swap, because the human can only ever hold owner "player" (D4). That is the seat the
+//     13%-of-think-cycles edge is measured AGAINST, and it is the deviation the UI discloses.
+//   • The human HAS a faction and their simulated opponents do not — a self-play match has no
+//     faction dial at all (see aiFaction below), so a faction's passive traits appear on exactly
+//     one side of a human match and neither side of every other rated match in the bracket.
+// The honest framing, and the one the screen states: a human rating is a rating in the SAME table,
+// earned under a documented and bounded set of differences — not a number produced by an identical
+// process. Do not add a compensating fudge for any of this; see D4 on why a correction nobody can
+// derive is worse than a difference everybody can read.
+export function startCompetitionMatch(fixture) {
+  const { world, seed, difficulty, matchTimeLimit, swapAsym, aiStrategy, aiArchetype, playerFaction, competition } = fixture;
+  sound.unlockAudio();   // a real user gesture (the Play button), same point setup.js's map cards unlock audio
+  const resolved = resolveSeed({ seed });
+  const diff = difficultyDials(difficulty);
+  // The opponent's faction comes from the world's archetype, exactly as in a normal skirmish — a
+  // roster entry's own faction stays what Phase 2 made it (flavour on the row), because a self-play
+  // match has no faction dial at all, so every AI-vs-AI rating in this bracket was earned without
+  // one. Giving the human's opponents a faction edge here alone would break that comparison.
+  const aiFaction = archetypeFor(world).faction || "neutral";
+  const fresh = createGameState({
+    planetId: world, seed: resolved, rng: mulberry32(resolved),
+    aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy, difficulty, aiArchetype,
+    sizeMult: 1, resourceMult: 1, popCap: null,
+    swapAsym: !!swapAsym, matchTimeLimit,
+    playerFaction: playerFaction || setup.faction, aiFaction,
+  });
+  bootState(fresh, { intro: true });
+  game.competition = competition;   // after bootState, which clears it (see its own line)
+}
+
+// WATCH one AI-vs-AI match live (docs/competitions-and-elo.md Phase 5 — competition.js's Quick
+// Duel "Watch" button is the only caller). Same relationship to startGame that
+// startCompetitionMatch above has: one bootState, one loop, one HUD — what makes this a SPECTATED
+// match rather than a played one is two facts parked on the session afterwards.
+//
+// 1. THE STATE COMES FROM createSelfPlayState, not createGameState. That is what gives owner
+//    "player" a second AI controller (state.playerAi), and it is the SAME constructor
+//    tools/duelCore.js's runDuelMatch feeds for every simulated, rated match — so what you watch
+//    is configured identically to what the Worker would have run: same world, same derived seed,
+//    same swapAsym parity, the same ONE pinned difficulty dial set on both seats, each entrant's
+//    own strategy/archetype on its own seat. competition.js's buildWatchConfig shapes that config
+//    and is unit-tested against the worker's own seed derivation.
+// 2. `game.spectateMatch` then makes the loop below call tickSelfPlay instead of tick (so owner
+//    "player" is actually driven), lets Observer Mode be entered without an Odyssey, and marks the
+//    match un-checkpointable (saveShape.js's resumableMode).
+//
+// Observer Mode is entered immediately and deliberately: it is what reveals the fog, gives the
+// spectator its own free camera, and — the part that matters most — makes input.js refuse to issue
+// a single order (every mouse/wheel/key path already early-returns into observer.js while
+// game.observerMode is on). The human watches; they do not play.
+//
+// EXHIBITION ONLY: nothing here writes to the ledger. `game.competition` stays null, so the
+// game-over hook's captureCompetitionResult returns null and no rating moves — see the exhibition
+// argument at competition.js's EXHIBITION_NOTE, and the honest game-over copy it feeds.
+export function startSpectatedMatch(cfg) {
+  const { world, seed, swapAsym, matchTimeLimit, ai, playerAi, aName, bName, difficulty, onLeave, recorded } = cfg;
+  sound.unlockAudio();   // a real user gesture (the Watch button), same point startCompetitionMatch unlocks audio
+  const fresh = createSelfPlayState({ planetId: world, seed, swapAsym, matchTimeLimit, ai, playerAi });
+  // `selfPlay: true` is what makes this the same simulation the Worker runs, not merely the same
+  // configuration: the loop steps at tools/selfplay.js's own fixed step. It is what a REPLAY needs
+  // to reproduce its recorded row, and the watched path shares it so "what you watch is what the
+  // Worker would have run" is true of the run and not just of the config.
+  bootState(fresh, { intro: false, selfPlay: true });   // no objectives strip: that checklist is a PLAYER's to-do list
+  // After bootState, which clears both (see its own lines) — exactly the startOdyssey/
+  // startCompetitionMatch pattern.
+  // `recorded` (present only for a REPLAY) is the outcome this re-run is expected to reproduce —
+  // carried so the spectate bar can say what is being replayed and the game-over screen can state,
+  // honestly, whether the determinism claim held this time. It is read-only display data; nothing
+  // in the sim ever sees it.
+  game.spectateMatch = { aName, bName, world, seed, difficulty, matchTimeLimit, onLeave, recorded: recorded || null };
+  game.spectateSpeed = 1;
+  enterObserverMode();
+  // bootState's own renderHUD() ran a frame ago, while the flag above was still null — so the
+  // selection panel and the topbar chips were built for an ordinary skirmish and their signature
+  // guard (hudPanelSignature.js) would keep them frozen that way, offering "Select Army" over an
+  // AI's army. The flag is set exactly once per game, right here, so one forced repaint is the
+  // whole fix; nothing downstream has to re-check it every tick.
+  resetPanelSignature();
+  renderHUD();
 }
 
 // Start a Convoy Escort scenario on `planetId` at the chosen difficulty. Shares
@@ -289,16 +399,44 @@ export function restartToMapSelect() {
   exitObserverMode();   // a dangling spectateId into a galaxy that's about to be nulled would wedge the next game's input guards
   game.state = null;
   game.galaxy = null;
+  // No game, no fixture in play. Every path that leaves a LIVE competition match has already
+  // settled it before reaching here — the game-over hook records its result, saveload.js's Home
+  // confirm forfeits it — so this is the belt-and-suspenders clear, not the one that decides.
+  game.competition = null;
+  // …and no watched match either. Nothing to settle for a spectated one (it is exhibition-only and
+  // writes nothing), but leaving it set would tell the NEXT game's loop to drive owner "player"
+  // with an AI controller that state doesn't have, and would keep offering Observer Mode in an
+  // ordinary skirmish. Same dangling-session hazard as the spectateId exitObserverMode clears above.
+  game.spectateMatch = null;
+  game.spectateSpeed = 1;
+  // Repaint the observer UI once, now that all of the above is false: the banner, the spectate bar
+  // and the stats panel are only ever hidden by this function, and the render loop that normally
+  // calls it has just been stopped. Without this they survive as stale elements — covered by the
+  // full-screen map-select, but still live, and still there under the NEXT game until its first
+  // HUD tick happens to hide them. The same "don't leave the session half torn down" reasoning as
+  // the exitObserverMode call above.
+  renderObserverPanel();
   clearPause();   // leaving a game clears any pause + the PAUSED banner
   pauseBtn.classList.add("hidden");   // …and the topbar pause control (no game to pause)
   renderMapSelect();
   mapSelectEl.classList.remove("hidden");
 }
 
+// The sim rate ordinary play has always run at — engine/loop.js's own default, restated here
+// because bootState now chooses between two rates and a caller reading this file should see both
+// numbers side by side rather than one of them hiding in a default parameter.
+const PLAY_HZ = 20;
+
 // Wire a state — freshly created OR loaded from a save — to input, camera, the
 // fixed-timestep loop, and the HUD. The single boot path both startGame and
 // loadGame funnel through.
-export function bootState(newState, { intro }) {
+//
+// `selfPlay` (docs/competitions-and-elo.md Phase 5) runs the loop at tools/selfplay.js's own fixed
+// step instead of PLAY_HZ. It is set for the one kind of game whose tick sequence has to MATCH
+// something already simulated — a watched or replayed AI-vs-AI match — because a fixed step is the
+// simulation, not a tuning knob: same seed, different step, different game (see SELFPLAY_DT's own
+// comment for the measured proof). Every other boot path is untouched and still runs at PLAY_HZ.
+export function bootState(newState, { intro, selfPlay = false }) {
   if (loop) loop.stop();
   if (game.input) game.input.destroy();
   exitObserverMode();   // fresh/loaded game → fresh session, same reasoning as game.groups/colonyAlerts below
@@ -309,6 +447,8 @@ export function bootState(newState, { intro }) {
   hideObjectives();
 
   game.galaxy = null;   // cleared by default; startOdyssey re-sets it right after this returns
+  game.competition = null;   // …and likewise: startCompetitionMatch re-sets it right after this returns
+  game.spectateMatch = null; game.spectateSpeed = 1;   // …and likewise: startSpectatedMatch re-sets them right after this returns
   game.groups = {};     // fresh game → fresh control groups (entity ids reset per game, so stale groups would mis-select)
   game.colonyAlerts = {};   // fresh game → fresh starmap alert ledger (a previous game's background-colony alerts are meaningless here)
   game.state = newState;
@@ -339,6 +479,16 @@ export function bootState(newState, { intro }) {
   let lastFrame = performance.now();
 
   loop = createLoop({
+    // The fixed step (see this function's own `selfPlay` note). Read ONCE, at construction, and
+    // deliberately not a live getter like `speed` below: the timestep must not move mid-match, or
+    // the run stops being the deterministic thing a replay is comparing against.
+    hz: selfPlay ? SELFPLAY_HZ : PLAY_HZ,
+    // Spectate speed (docs/competitions-and-elo.md Phase 5), read LIVE so the on-screen
+    // 1x/2x/4x/8x control takes effect on the very next frame without rebuilding the loop. Pinned
+    // to 1 whenever no match is being watched, so an ordinary game can never inherit a leftover
+    // multiplier — and engine/loop.js scales the SIM TIME a real second buys, never the fixed
+    // timestep, so the tick sequence (and replay determinism) is exactly what it always was.
+    speed: () => (game.spectateMatch ? game.spectateSpeed : 1),
     // Odyssey advances every world in the galaxy each tick (only the active one
     // is rendered), so the colonies you left keep evolving; otherwise just the
     // one match state ticks.
@@ -368,6 +518,12 @@ export function bootState(newState, { intro }) {
           game.galaxy.reliefNote = false;
           showGalaxyToast("A relief colony ship has arrived at your landing zone — re-found your Odyssey.", "warn");
         }
+      } else if (game.spectateMatch) {
+        // A WATCHED match: owner "player" is driven by state.playerAi here, then tickSelfPlay's own
+        // tick() drives owner "ai" exactly as the branch below does. Deliberately the same
+        // tools/selfplay.js entry point every simulated duel already runs through, so a match you
+        // watch and the identical match the Worker would have simulated advance the same way.
+        tickSelfPlay(game.state, dt);
       } else tick(game.state, dt);
     },
     render: (alpha) => {
@@ -391,12 +547,30 @@ export function bootState(newState, { intro }) {
       if (game.state.over && !announced) {
         announced = true;
         loop.stop();
+        // A WATCHED match's own ending, computed BEFORE Observer Mode is torn down (it reads
+        // game.spectateMatch). Then leave Observer Mode and repaint its UI once, so the spectate
+        // bar and stats panel — which carry explicit z-indexes and would otherwise sit ON TOP of
+        // the game-over overlay — are gone before that overlay goes up.
+        const spectate = game.spectateMatch ? spectatedGameOverBlock(game.state, game.spectateMatch) : null;
+        if (spectate) { exitObserverMode(); renderObserverPanel(); }
         if (game.state.scenario) showScenarioEnd(game.state, restartToMapSelect);
         else showGameOver(game.state.winner, game.state.seed, restartToMapSelect,
           { odyssey: !!game.galaxy, wonBy: game.galaxy?.wonBy, surrendered: !!game.galaxy?.surrendered,
+            // A WATCHED match's ending (Phase 5, computed just above). Neither seat is the
+            // player's, so the ordinary "Victory — the enemy's last Command Center is destroyed"
+            // copy would be a lie in both directions; competition.js names the entrant that
+            // actually won and restates that the result was exhibition-only. null for every other
+            // game, leaving that screen untouched.
+            spectate,
             // winReason (engine/victory.js finish) + the state itself, so showGameOver can branch
             // its copy honestly and, for a score decision, show the bank/army/structures breakdown.
-            winReason: game.state.winReason, state: game.state });
+            winReason: game.state.winReason, state: game.state,
+            // A competition fixture's result is recorded HERE, at the one point the match is
+            // genuinely over (docs/competitions-and-elo.md Phase 4) — competition.js owns the write
+            // (it holds the live ledger) and hands back the block this screen shows: the rating
+            // change, the seat disclosure, and what the next fixture is with a button to play it.
+            // null for every ordinary skirmish, which leaves this screen byte-identical to before.
+            competition: game.competition ? captureCompetitionResult(game.state) : null });
       }
     },
   });
@@ -593,6 +767,10 @@ function processFrameEvents() {
 // stay in lockstep with each other during a sustained siege instead of
 // re-flashing on every single hit.
 function triggerUnderAttack(x, y) {
+  // Nobody's base is under attack in a WATCHED match — both sides are AI entrants, and "⚠ Under
+  // Attack" over a match the human isn't playing is simply false. (The alarm fires off an
+  // owner-"ai" attackHit, which in a spectated duel just means one entrant hit the other.)
+  if (game.spectateMatch) return;
   game.lastAttackAt = { x, y };   // remembered even while throttled, so a click/Backspace always jumps to the freshest hit
   const now = performance.now();
   if (now - lastUnderAttackAt < UNDER_ATTACK_THROTTLE_MS) return;

@@ -28,3 +28,14 @@ test("resumableMode: reports the checkpoint mode, or null when nothing is resuma
   assert.equal(resumableMode({ state: { over: true }, galaxy: { seed: 1 } }), null,
     "a finished game is not resumable even in Odyssey mode");
 });
+
+test("resumableMode: a SPECTATED AI-vs-AI match is never checkpointed", () => {
+  // docs/competitions-and-elo.md Phase 5. A watched match isn't the player's game: both seats are
+  // AI-driven, and a resumed autosave would come back as an ordinary skirmish with the "player"
+  // seat suddenly unmanned (game.spectateMatch, and with it tickSelfPlay, does not survive a
+  // reload). Refusing the checkpoint is the honest answer — the same call a scenario already gets.
+  assert.equal(resumableMode({ state: { over: false }, spectateMatch: { aName: "A", bName: "B" } }), null,
+    "a spectated match is not the player's game to resume");
+  assert.equal(resumableMode({ state: { over: false }, spectateMatch: null }), "skirmish",
+    "…and an ordinary skirmish is untouched by that rule");
+});

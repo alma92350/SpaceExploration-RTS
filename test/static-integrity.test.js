@@ -101,7 +101,31 @@ test("every shipped browser module is reachable from index.html's entry point", 
 
   // engine/types.js is JSDoc typedefs with no runtime code; it says so itself and is never
   // imported by design. tools/ are Node CLI benches, not browser code.
-  const EXEMPT = new Set(["engine/types.js"]);
+  //
+  // elo.js's own TEMPORARY exemption (docs/competitions-and-elo.md Phase 1) is gone: the in-game
+  // competition screen landed (setup.js -> competition.js -> elo.js), so it's reached for real now
+  // — no need to list it here any more.
+  //
+  // competitionLedger.js's own TEMPORARY exemption (Phase 2's first stage, which landed the ledger
+  // module itself with no UI wiring yet) is gone too, the same way and for the same reason: this
+  // stage wired it into the competition screen for real (competition.js -> competitionLedger.js —
+  // Quick Duel resolving/committing roster entries, the Roster screen's CRUD + export/import, the
+  // Standings screen's standingsFor), so it's reached for real now.
+  //
+  // pairing.js's own TEMPORARY exemption (Phase 3's first stage, which landed the pairing/
+  // scheduling module with no UI wiring yet) is gone as well, on exactly the schedule its comment
+  // named: this stage wired it in for real (competition.js -> pairing.js for the Tournament tab's
+  // estimate/standings shaping, and competitionWorker.js -> pairing.js for the schedules
+  // themselves), so an import chain from index.html reaches it now.
+  //
+  // competitionWorker.js is a PERMANENT exemption, not a temporary one: it's never reached by a
+  // static `import`/`import()`/bare-`import` edge at all. competition.js instantiates it as
+  // `new Worker(new URL("./competitionWorker.js", import.meta.url), { type: "module" })` — a
+  // browser API call, not an import statement — which is invisible to the regex-based walk above
+  // by design (see that walk's own IMPORT_SPEC comment for exactly which syntaxes it recognises).
+  // It genuinely does run in the browser (every "Run Duel" click constructs one for real; the live
+  // browser verification for this stage confirms it), the walker just has no way to see the edge.
+  const EXEMPT = new Set(["engine/types.js", "competitionWorker.js"]);
   const orphans = browserJs()
     .map(f => relative(root, f))
     .filter(f => !EXEMPT.has(f) && !reached.has(join(root, f)));
@@ -314,7 +338,17 @@ test("the shipped module graph has no import cycle outside the known UI cluster 
     }
   }
 
-  const KNOWN = ["boot.js", "hud.js", "hudSelection.js", "overlays.js", "saveload.js", "setup.js"];
+  // competition.js joined this cluster in docs/competitions-and-elo.md's Phase 1 (the in-game
+  // Quick Duel screen): setup.js delegates its whole rendering to competition.js's
+  // renderCompetition() (a `setup.mode === "competition"` branch in renderMapSelect(), the same
+  // shape as the existing `if (odyssey)` branch), and competition.js reuses setup.js's own
+  // STRATEGY_OPTIONS/optionGroup/MAP_CHOICES rather than redefining them — CONTRIBUTING.md's own
+  // "prefer a small pure helper in the right module" over a duplicate copy. Both edges are real
+  // and intentional, so this is a deliberate 7th member of the SAME cycle, not a new one — same
+  // "called at runtime, not at module-evaluation time" invariant as the other six (see
+  // competition.js's own header for the TDZ hazard this would otherwise create, and how its
+  // `compConfig.worlds` default is deferred specifically to avoid it).
+  const KNOWN = ["boot.js", "competition.js", "hud.js", "hudSelection.js", "overlays.js", "saveload.js", "setup.js"];
   assert.deepEqual(sccs.map(c => c.join(" ")), [KNOWN.join(" ")],
     "import cycle(s) other than the documented UI cluster (see overlays.js's note on live bindings):\n" +
     sccs.map(c => c.join(", ")).join("\n"));

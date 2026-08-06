@@ -53,11 +53,17 @@ const doc = installFakeDom();
 // this file ever reaches that creates an <input> (setup.js's seed-input field is the only other
 // call site in the whole codebase, and setup.js is never invoked here), so "most recent" is
 // unambiguous.
+// `lastAnchor` is the same trick for the SAVE side: downloadJSON() (saveload.js) builds a local
+// <a download=…> and clicks it, so an anchor appearing here is the only in-process evidence that a
+// file download was actually attempted — what the "a watched match never downloads a save file"
+// test below needs to assert on.
 let lastFileInput = null;
+let lastAnchor = null;
 const createElement = doc.createElement.bind(doc);
 doc.createElement = tag => {
   const el = createElement(tag);
   if (tag === "input") lastFileInput = el;
+  if (tag === "a") lastAnchor = el;
   return el;
 };
 // boot.js/input.js wire a couple of listeners onto the document itself; the shared harness models
@@ -260,6 +266,30 @@ test("recordAutoSaveOutcome warns exactly once, on the 3rd CONSECUTIVE failure, 
   assert.equal(recordAutoSaveOutcome(false), false, "3rd again — already warned once this session, stays quiet for good");
 });
 
+test("autoSave() reports 'nothing to save' as false — so the periodic timer must not feed that to the failure streak", () => {
+  // Regression fence for a real false alarm: autoSave() returns false BOTH when a write threw and
+  // when there is simply no resumable game, and the periodic timer used to hand that conflated
+  // boolean straight to recordAutoSaveOutcome. Three intervals on any menu screen (36s) then raised
+  // a red "Autosave is failing" banner with localStorage perfectly healthy — rare before the
+  // Competition screens existed, constant once a tournament parks you on a menu for minutes.
+  // saveload.js now gates the timer on resumableMode(game) BEFORE recording an outcome.
+  //
+  // Asserting on the two halves this test can reach directly: autoSave() genuinely returns false
+  // with no game (so the conflation is real, not hypothetical), and the timer's source carries the
+  // guard ahead of its recordAutoSaveOutcome call. The banner itself is browser-only wiring behind
+  // `typeof window !== "undefined"`, which is exactly why it went unnoticed.
+  game.state = null;
+  game.galaxy = null;
+  assert.equal(autoSave(), false, "no resumable game: autoSave reports false — indistinguishable from a failed write");
+
+  const src = readFileSync(new URL("../saveload.js", import.meta.url), "utf8");
+  const timer = src.slice(src.indexOf("setInterval("), src.indexOf("AUTOSAVE_INTERVAL_MS);", src.indexOf("setInterval(")));
+  assert.match(timer, /resumableMode\(game\)/,
+    "the periodic autosave timer must check for a resumable game before recording a failure");
+  assert.ok(timer.indexOf("resumableMode(game)") < timer.indexOf("recordAutoSaveOutcome"),
+    "the guard has to run BEFORE recordAutoSaveOutcome, or the streak still counts menu ticks");
+});
+
 // --- driving the REAL file-Load path: loadBtn -> loadFromFile -> importSave -> bootState/bootGalaxy ---
 // importSave() (saveload.js ~line 124) is the shape-autodetect dispatch: isGalaxySave(parsed) ?
 // bootGalaxy(deserializeGalaxy(parsed)) : bootState(deserializeGame(parsed)). isGalaxySave() itself
@@ -330,7 +360,7 @@ globalThis.cancelAnimationFrame = () => {};
 // (session.js) was already imported near the top of this file — bootState/bootGalaxy mutate that
 // same live singleton for real, so it's what every test below (including the earlier
 // two-generation rotation tests) observes.
-const { loadBtn } = await import("../dom.js");
+const { loadBtn, saveBtn, homeBtn } = await import("../dom.js");
 
 // Real fixtures, not hand-typed JSON: run the actual serializers (engine/persist.js) over a real
 // createGameState/createGalaxy, so the payload fed through the fake file below is byte-for-byte
@@ -452,4 +482,107 @@ test("loadGame flashes 'No save' when neither generation exists at all", () => {
   loadBtn.textContent = "Load";
   loadGame();
   assert.equal(loadBtn.textContent, "No save");
+});
+
+/* ============================================================
+   The ⌂ Home confirm during a WATCHED / REPLAYED match (docs/competitions-and-elo.md Phase 5).
+
+   Phase 5 closes the save path for a spectated AI-vs-AI match in two places — hud.js HIDES the
+   topbar Save/Load buttons, and saveShape.js's resumableMode refuses to checkpoint one — but the ⌂
+   Home button is visible in EVERY mode, so its confirm dialog is the third door to the same place.
+   Left on the ordinary skirmish copy it promised something false ("Your progress autosaves — Save &
+   Exit checkpoints it now") and offered "Save & Exit" as the default-focused PRIMARY button, where
+   clicking it: got false back from autoSave(), fell through to a FILE download of the exhibition
+   match (a plain skirmish save that loads back handing the human one entrant's army — the exact
+   outcome requestExitObserverMode and resumableMode exist to prevent), flashed "Saved ✓" on the
+   button hud.js had just hidden, and did not exit. Same shape as the gauntlet-fixture branch Phase 4
+   added right above it, so it's pinned the same way: honest copy, no Save & Exit, a plain Leave.
+   ============================================================ */
+
+// Drive the REAL topbar ⌂ handler and return the dialog it built, addressed the way the code builds
+// it (overlay.home-confirm > card.home-card > [h2, p, div.home-actions]) rather than by index.
+function openHomeConfirm() {
+  homeBtn.dispatchEvent(new Event("click"));
+  const overlay = doc.body.children.filter(el => el.classList.contains("home-confirm")).pop();
+  assert.ok(overlay, "clicking ⌂ Home should build a confirm dialog");
+  const card = overlay.querySelector(".home-card");
+  const actions = overlay.querySelector(".home-actions");
+  const [heading, body] = card.children;
+  return { overlay, heading: heading.textContent, body: body.textContent, buttons: actions.children };
+}
+
+// A watched match's session shape: an ordinary skirmish state plus the spectate flag boot.js's
+// startSpectatedMatch parks on the session (game.competition stays null — a watched match is
+// exhibition-only, so liveCompetitionFixture() is null and the Phase 4 branch does NOT cover this).
+function spectateSession({ recorded = null } = {}) {
+  globalThis.localStorage = fakeLocalStorage();
+  lastAnchor = null;
+  saveBtn.textContent = "Save";
+  game.galaxy = null;
+  game.competition = null;
+  game.state = createGameState({ seed: 606, planetId: "ferros", rng: mulberry32(606) });
+  let left = 0;
+  game.spectateMatch = { aName: "Alpha", bName: "Beta", world: "ferros", seed: 606, recorded, onLeave: () => { left++; } };
+  return { left: () => left };
+}
+
+test("the ⌂ Home confirm during a WATCHED match offers no 'Save & Exit' and never claims the match autosaves", () => {
+  spectateSession();
+  const { heading, body, buttons } = openHomeConfirm();
+  const labels = buttons.map(b => b.textContent);
+
+  assert.ok(!labels.includes("Save & Exit"),
+    `a spectated match must not offer to save someone else's match — got ${JSON.stringify(labels)}`);
+  assert.deepEqual(labels, ["Leave", "Cancel"], "a plain Leave, exactly like the spectate bar's own way out");
+  assert.ok(buttons[0].classList.contains("primary"),
+    "Leave is the primary (and default-focused) action — the dialog's first button");
+  assert.doesNotMatch(body, /autosave|Save & Exit|Continue later/i,
+    `the copy must not promise a checkpoint resumableMode refuses to write — got ${JSON.stringify(body)}`);
+  assert.match(heading + " " + body, /watch/i, "the copy should say what leaving actually does: stop watching");
+  assert.match(body, /Alpha|Beta/, "…and name the two entrants whose match this is");
+
+  game.spectateMatch = null; game.state = null;
+});
+
+test("the ⌂ Home confirm during a REPLAY says so, and still refuses to save it", () => {
+  spectateSession({ recorded: { winnerName: "Alpha", margin: 3 } });
+  const { heading, body, buttons } = openHomeConfirm();
+
+  assert.deepEqual(buttons.map(b => b.textContent), ["Leave", "Cancel"]);
+  assert.match(heading + " " + body, /replay/i,
+    "a replay is a re-run of an already-rated match — the copy should say replay, not 'watch'");
+  assert.doesNotMatch(body, /autosave|Save & Exit/i);
+
+  game.spectateMatch = null; game.state = null;
+});
+
+test("Leave from the ⌂ Home confirm during a watched match exits via the launcher's own onLeave, writing and downloading nothing", () => {
+  const watch = spectateSession();
+  const { overlay, buttons } = openHomeConfirm();
+
+  buttons[0].dispatchEvent(new Event("click"));   // "Leave"
+
+  assert.equal(watch.left(), 1, "it takes the SAME way out the spectate bar's Leave button does");
+  assert.equal(localStorage.getItem(SAVE_KEY), null, "nothing was checkpointed to localStorage");
+  assert.equal(localStorage.getItem(SAVE_KEY + ".prev"), null);
+  assert.equal(lastAnchor, null, "and no <a download> was built — a watched match is never written to a file");
+  assert.equal(saveBtn.textContent, "Save", "no 'Saved ✓' / 'Save failed' flash on a button hud.js has hidden");
+  assert.ok(!doc.body.children.includes(overlay), "the dialog closes on its way out");
+
+  game.spectateMatch = null; game.state = null;
+});
+
+test("an ordinary skirmish still gets Save & Exit and the autosave copy — the spectate branch is additive", () => {
+  globalThis.localStorage = fakeLocalStorage();
+  game.galaxy = null;
+  game.competition = null;
+  game.spectateMatch = null;
+  game.state = createGameState({ seed: 607, planetId: "ferros", rng: mulberry32(607) });
+
+  const { body, buttons } = openHomeConfirm();
+  assert.deepEqual(buttons.map(b => b.textContent), ["Save & Exit", "Exit without Saving", "Cancel"]);
+  assert.match(body, /autosaves/, "the ordinary skirmish promise is unchanged — it is true there");
+
+  buttons[2].dispatchEvent(new Event("click"));   // Cancel — leave the shared session alone
+  game.state = null;
 });

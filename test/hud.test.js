@@ -64,6 +64,26 @@ test("renderHUD: inside the final 5 minutes, the clock flips to a countdown and 
   assert.match(scoreBarEl.textContent, /\d+/, "the score bar should show at least one numeric score");
 });
 
+test("renderHUD: a WATCHED match names both entrants in the score bar — there is no \"you\" in it", () => {
+  // Phase 5's spectator drives BOTH seats with the real AI, so the first-person endgame copy
+  // ("You 400 · AI 380") addresses a commander who isn't playing. game.spectateMatch carries the
+  // two entrant names; it's null in every ordinary game, so the human-facing copy is untouched.
+  const state = setup(404);
+  state.time = DEFAULT_MATCH_TIME_LIMIT - 60;
+  game.spectateMatch = { aName: "Blitz", bName: "Bulwark" };
+  try {
+    renderHUD();
+    assert.match(scoreBarEl.textContent, /Blitz/, "the owner-\"player\" seat is named, not called You");
+    assert.match(scoreBarEl.textContent, /Bulwark/, "the owner-\"ai\" seat is named too");
+    assert.doesNotMatch(scoreBarEl.textContent, /\bYou\b/, "nobody watching a match is a side in it");
+  } finally {
+    game.spectateMatch = null;
+  }
+  // …and with no spectated match the original first-person copy is exactly as it was.
+  renderHUD();
+  assert.match(scoreBarEl.textContent, /\bYou\b/, "an ordinary match still addresses the player directly");
+});
+
 test("renderHUD: the countdown respects a matchTimeLimit override, not just the 40-minute default", () => {
   const state = setup(403, { matchTimeLimit: 1200 });   // "Quick 20"
   state.time = 1200 - 30;   // 0:30 left on the SHORT override

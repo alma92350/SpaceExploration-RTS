@@ -32,6 +32,7 @@ import { mulberry32 } from "../engine/rng.js";
 import {
   createSelfPlayState, tickSelfPlay, runSelfPlayMatch, fingerprint,
 } from "../tools/selfplay.js";
+import { ARCHETYPES } from "../engine/aiArchetypes.js";
 
 const DT = 0.1;
 
@@ -133,6 +134,29 @@ test("the two controllers' action budgets never collide — spending one never s
   assert.notEqual(state.ai.actionBudget, state.playerAi.actionBudget,
     "sanity: two very different APMs should not coincidentally land on the exact same budget");
   assert.ok(state.ai.apm === 20 && state.playerAi.apm === 200, "each controller kept its own configured APM");
+});
+
+/* ---------- D3 (docs/competitions-and-elo.md): each self-play controller can carry its own
+   per-entrant archetype override, independently — this is the plumbing point "Rusher vs Turtle"
+   actually depends on: createAiController's own opts.archetype is proven in test/aiArchetypes.test.js;
+   this proves createSelfPlayState actually THREADS ai.archetype/playerAi.archetype through to the
+   two controllers it builds, rather than dropping them on the way. ---------- */
+
+test("createSelfPlayState threads ai.archetype and playerAi.archetype through independently, overriding the world's own temperament on either or both seats", () => {
+  const state = createSelfPlayState({
+    planetId: "ferros",   // ferros' own archetype is Economist (PLANET_ARCHETYPE) — neither override below matches it
+    seed: 1,
+    ai: { archetype: "rusher" },
+    playerAi: { archetype: "technologist" },
+  });
+  assert.equal(state.ai.archetype, ARCHETYPES.rusher, "the 'ai' seat's own override must win over ferros' own Economist temperament");
+  assert.equal(state.playerAi.archetype, ARCHETYPES.technologist, "the 'player' seat's own, DIFFERENT override must win too");
+});
+
+test("createSelfPlayState with no archetype opts resolves both controllers to the world's own temperament, byte-identical to before this option existed", () => {
+  const state = createSelfPlayState({ planetId: "ferros", seed: 1 });
+  assert.equal(state.ai.archetype, ARCHETYPES.economist);
+  assert.equal(state.playerAi.archetype, ARCHETYPES.economist);
 });
 
 /* ============================================================
@@ -324,4 +348,27 @@ test("the self-play think ordering stays bounded to one cycle and one direction 
   const body = src.slice(src.indexOf("export function tickSelfPlay"), src.indexOf("\n}", src.indexOf("export function tickSelfPlay")));
   assert.equal((body.match(/runAI\(/g) || []).length, 1,
     "exactly one explicit runAI call in tickSelfPlay — a second would widen the information edge");
+});
+
+/* ============================================================
+   5. BROWSER IMPORTABILITY (docs/competitions-and-elo.md Phase 0) — tools/selfplay.js is the pure
+   core every later phase needs to import from a browser main thread and from a Worker, neither of
+   which has a `process` or `document` global. Same "scan the source for a global this file must
+   never reference" idiom test/engine-purity.test.js uses for the engine's Math.random/Date.now ban,
+   pointed at this file instead of engine/ — and stricter: no `deterministic-exempt`-style opt-out,
+   because the requirement is that the reference doesn't exist at all, not that it's guarded.
+   ============================================================ */
+
+test("tools/selfplay.js has no bare `process` or `document` reference anywhere in its source", () => {
+  const src = readFileSync(new URL("../tools/selfplay.js", import.meta.url), "utf8");
+  const FORBIDDEN = /\bprocess\b|\bdocument\b/;
+  const offenders = [];
+  src.split("\n").forEach((line, i) => {
+    if (FORBIDDEN.test(line)) offenders.push(`${i + 1}: ${line.trim()}`);
+  });
+  assert.deepEqual(offenders, [],
+    "tools/selfplay.js must have zero `process`/`document` references — not even inside a guarded " +
+    "comment (e.g. `typeof process !== \"undefined\"`) — so importing it from a browser (main thread " +
+    "or Worker) can never throw a ReferenceError. Move CLI-only code to tools/selfplay-cli.js:\n"
+    + offenders.join("\n"));
 });

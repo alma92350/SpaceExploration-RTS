@@ -1,17 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createLoop } from "../engine/loop.js";
+import { SELFPLAY_DT, SELFPLAY_HZ } from "../tools/selfplay.js";
 
 // Drive the loop by hand: capture the rAF callback and feed it timestamps, so the
 // accumulator/substep logic can be tested without a browser. (The loop reads the
 // timestamp the browser passes to the rAF callback, not a wall clock.)
-function harness(hz = 20) {
+function harness(hz = 20, speed) {
   const updates = [], renders = [];
   let cb = null;
   const prevRaf = globalThis.requestAnimationFrame, prevCancel = globalThis.cancelAnimationFrame;
   globalThis.requestAnimationFrame = fn => { cb = fn; return 1; };
   globalThis.cancelAnimationFrame = () => {};
-  const loop = createLoop({ update: dt => updates.push(dt), render: f => renders.push(f), hz });
+  const loop = createLoop({ update: dt => updates.push(dt), render: f => renders.push(f), hz, speed });
   loop.start();
   return {
     updates, renders,
@@ -127,6 +128,56 @@ test("at a higher sim rate a stall past the substep cap drops the backlog instea
   h.restore();
 });
 
+/* ---------- speed control (docs/competitions-and-elo.md Phase 5: spectated matches) ---------- */
+
+test("speed multiplies how many fixed steps run per real second — never the step size", () => {
+  const h = harness(20, 4);
+  h.frame(0);
+  h.frame(50);   // 50 ms of real time at 4x = 200 ms of sim time = four 50 ms steps
+  assert.equal(h.updates.length, 4, "4x runs four fixed steps where 1x runs one");
+  assert.ok(h.updates.every(dt => Math.abs(dt - 0.05) < 1e-9),
+    "THE fixed timestep is still fixed — speed must never change dt, or the sim stops being replayable");
+  h.restore();
+});
+
+test("speed can be a live getter, so it's changeable mid-match without rebuilding the loop", () => {
+  let speed = 1;
+  const h = harness(20, () => speed);
+  h.frame(0);
+  h.frame(50);
+  assert.equal(h.updates.length, 1, "1x: one step per 50 ms");
+  speed = 2;
+  h.updates.length = 0;
+  h.frame(100);
+  assert.equal(h.updates.length, 2, "2x, read fresh on the next frame: two steps per 50 ms");
+  h.restore();
+});
+
+test("speed past the substep cap degrades to slow motion, it does not spiral", () => {
+  // 8x at a 10 fps frame rate wants 8 steps a frame; MAX_SUBSTEPS is 5. The point of the cap is
+  // that the excess is DROPPED (the match just runs slower than the label promises) rather than
+  // accumulating into an ever-deepening backlog — the same degradation a slow update() already
+  // gets, which is exactly why speed is implemented as scaled sim-time rather than a faster tick.
+  const h = harness(20, 8);
+  h.frame(0);
+  h.frame(100);
+  assert.equal(h.updates.length, 5, "capped at MAX_SUBSTEPS");
+  h.updates.length = 0;
+  h.frame(200);
+  assert.equal(h.updates.length, 5, "the next frame is capped too — no compounding catch-up burst");
+  h.restore();
+});
+
+test("an absent/invalid speed leaves the loop at exactly its pre-speed behaviour", () => {
+  for (const speed of [undefined, 0, -2, NaN, "fast", null]) {
+    const h = harness(20, speed);
+    h.frame(0);
+    h.frame(50);
+    assert.equal(h.updates.length, 1, `speed ${String(speed)} must fall back to 1x`);
+    h.restore();
+  }
+});
+
 test("the render interpolation alpha always stays in [0,1) (C16)", () => {
   const h = harness(60);
   h.frame(0);
@@ -135,5 +186,44 @@ test("the render interpolation alpha always stays in [0,1) (C16)", () => {
   h.frame(10416);
   for (const a of h.renders)
     assert.ok(a >= 0 && a < 1, `interpolation alpha out of range: ${a}`);
+  h.restore();
+});
+
+/* ---------- the SELF-PLAY sim rate (docs/competitions-and-elo.md Phase 5: replay) ----------
+   A watched or replayed match must advance in exactly the steps its recorded/simulated
+   counterpart took, because the fixed step is not a cosmetic tuning knob — it IS the sim. Two
+   runs of the same seed at two different fixed steps are two different games, so the loop has to
+   be able to run at tools/selfplay.js's own step, and its speed control must not disturb that. */
+
+test("the loop can run at the SELF-PLAY fixed step, and speed still only changes how many of those steps run", () => {
+  const h = harness(SELFPLAY_HZ, 4);
+  h.frame(0);
+  h.frame(100);   // 100 ms real at 4x = 400 ms of sim = four 100 ms steps
+  assert.equal(h.updates.length, 4);
+  assert.ok(h.updates.every(dt => Math.abs(dt - SELFPLAY_DT) < 1e-12),
+    "every update must be exactly tools/selfplay.js's DT — a replay run at any other step is a DIFFERENT match");
+  h.restore();
+});
+
+test("SELFPLAY_HZ and SELFPLAY_DT are two statements of ONE number, so a loop built from one matches a match simulated at the other", () => {
+  assert.equal(SELFPLAY_DT, 1 / SELFPLAY_HZ);
+  const h = harness(SELFPLAY_HZ);
+  h.frame(0);
+  h.frame(SELFPLAY_DT * 1000);
+  assert.equal(h.updates.length, 1, "one real self-play step of wall time buys exactly one sim step");
+  assert.equal(h.updates[0], SELFPLAY_DT);
+  h.restore();
+});
+
+test("8x at the self-play step stays comfortably inside MAX_SUBSTEPS on a 60 Hz display", () => {
+  // The reason SPECTATE_SPEEDS tops out at 8x (observer.js). At a 60 fps frame rate, 8x buys
+  // 8/60 s of sim time per frame; at the self-play step that is well under the five substeps a
+  // frame allows, so 8x delivers what its label promises instead of silently degrading.
+  const h = harness(SELFPLAY_HZ, 8);
+  h.frame(0);
+  for (let t = 16; t <= 16 * 20; t += 16) h.frame(t);
+  const perFrame = h.updates.length / 20;
+  assert.ok(perFrame < 5, `8x must not sit at the substep cap, got ${perFrame.toFixed(2)} steps/frame`);
+  assert.ok(perFrame > 1, "…while still genuinely running faster than 1x");
   h.restore();
 });

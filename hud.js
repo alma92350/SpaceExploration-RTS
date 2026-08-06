@@ -153,8 +153,14 @@ export function renderHUD() {
   // in an Odyssey (whole-galaxy save), but a scripted scenario can't be resumed,
   // so they're hidden there.
   starmapBtn.classList.toggle("hidden", !game.galaxy);
-  saveBtn.classList.toggle("hidden", !!state.scenario);
-  loadBtn.classList.toggle("hidden", !!state.scenario);
+  // A WATCHED match (docs/competitions-and-elo.md Phase 5) hides Save/Load for the same reason a
+  // scenario does, one step further: it isn't the player's game to keep. Both seats are AI-driven
+  // by a session flag that no save carries, so a saved-and-resumed watched match would come back
+  // as a skirmish with an unmanned player seat (saveShape.js's resumableMode already refuses to
+  // autosave one — this is the matching affordance).
+  const spectating = !!game.spectateMatch;
+  saveBtn.classList.toggle("hidden", !!state.scenario || spectating);
+  loadBtn.classList.toggle("hidden", !!state.scenario || spectating);
   pauseBtn.classList.remove("hidden");   // pause is available in every mode (touch has no P key)
 
   if (state.scenario) {
@@ -306,7 +312,14 @@ export function renderHUD() {
       clockEl.textContent = `-${m}:${s}`;
       clockEl.classList.add("endgame");
       const you = Math.round(playerScore(state, "player")), foe = Math.round(playerScore(state, "ai"));
-      scoreBarEl.textContent = `⚔ You ${you} · AI ${foe}`;
+      // In a WATCHED match there is no "you" — both seats are AI (docs/competitions-and-elo.md
+      // Phase 5), so name the two entrants instead of addressing a commander who isn't playing.
+      // game.spectateMatch carries them; it's null in every ordinary game, which keeps the
+      // first-person copy exactly as it was for the mode that actually has a human in it.
+      const watching = game.spectateMatch;
+      scoreBarEl.textContent = watching
+        ? `⚔ ${watching.aName} ${you} · ${watching.bName} ${foe}`
+        : `⚔ You ${you} · AI ${foe}`;
       scoreBarEl.classList.remove("hidden");
     } else {
       const mins = Math.floor(state.time / 60);
@@ -323,7 +336,12 @@ export function renderHUD() {
       if (u.owner === "player" && UNITS[u.type]?.role === "worker" && !u.order && (!u.orderQueue || !u.orderQueue.length)) idle++;
     }
     idleWorkersEl.textContent = `⚒ ${idle} idle`;
-    idleWorkersEl.classList.toggle("hidden", idle === 0);
+    // Hidden outright while WATCHING a match. These two chips are the only remaining route into
+    // state.selection while Observer Mode is on (input.js delegates every mouse/key path away, but
+    // these call input.focusIdleWorker/focusIdleProducer directly through main.js), and a selection
+    // is what puts real order buttons on the selection panel. In a spectated match those workers
+    // aren't the player's to command — so the affordance goes, not just the orders.
+    idleWorkersEl.classList.toggle("hidden", idle === 0 || spectating);
 
     // Idle-production indicator: the building-scale sibling above — multiple Barracks are normal
     // mid-game (the AI explicitly runs several, per README), and an empty Produce queue on one
@@ -334,7 +352,7 @@ export function renderHUD() {
       if (b.owner === "player" && !b.constructing && BUILDINGS[b.type]?.produces && b.queue.length === 0) idleProduction++;
     }
     idleProductionEl.textContent = `🏭 ${idleProduction} idle`;
-    idleProductionEl.classList.toggle("hidden", idleProduction === 0);
+    idleProductionEl.classList.toggle("hidden", idleProduction === 0 || spectating);   // see the idle-worker chip above
   }
 
   renderScenarioBar(state);
