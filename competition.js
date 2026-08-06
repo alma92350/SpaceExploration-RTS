@@ -1003,8 +1003,18 @@ export function buildReplayConfig(row, ledger) {
   const flipped = row.direction === "aAsAi";
   const seatA = flipped ? row.bName : row.aName;
   const seatB = flipped ? row.aName : row.bName;
-  const seatAStrategy = (flipped ? row.bStrategy : row.aStrategy) || "default";
-  const seatBStrategy = (flipped ? row.aStrategy : row.bStrategy) || "default";
+  // Validated against the real strategy table, not merely defaulted when absent. A history row is
+  // untrusted input — competitionLedger.js's cleanHistoryRow coerces aName/bName and leaves the
+  // rest as it found it, so a hand-edited or imported ladder can carry any string here. The engine
+  // would survive it (strategyFor falls back to STRATEGIES.default for an unknown key), but the
+  // replay would then silently run a DIFFERENT match than the row describes and report the
+  // mismatch as a divergence — a determinism failure that isn't one, which is exactly the wrong
+  // thing for the one feature whose whole promise is "this reproduces what was recorded". Mirrors
+  // archetypeOf's own Object.hasOwn check just below; the two are the same hazard.
+  const knownStrategy = s =>
+    (typeof s === "string" && STRATEGY_OPTIONS.some(o => o.mult === s)) ? s : "default";
+  const seatAStrategy = knownStrategy(flipped ? row.bStrategy : row.aStrategy);
+  const seatBStrategy = knownStrategy(flipped ? row.aStrategy : row.bStrategy);
   const archetypeOf = name => {
     const entry = ((ledger && ledger.roster) || []).find(r => r.name === name);
     return (entry && typeof entry.archetype === "string" && Object.hasOwn(ARCHETYPES, entry.archetype)) ? entry.archetype : null;

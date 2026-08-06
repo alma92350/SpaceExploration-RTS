@@ -312,7 +312,14 @@ export function renderHUD() {
       clockEl.textContent = `-${m}:${s}`;
       clockEl.classList.add("endgame");
       const you = Math.round(playerScore(state, "player")), foe = Math.round(playerScore(state, "ai"));
-      scoreBarEl.textContent = `⚔ You ${you} · AI ${foe}`;
+      // In a WATCHED match there is no "you" — both seats are AI (docs/competitions-and-elo.md
+      // Phase 5), so name the two entrants instead of addressing a commander who isn't playing.
+      // game.spectateMatch carries them; it's null in every ordinary game, which keeps the
+      // first-person copy exactly as it was for the mode that actually has a human in it.
+      const watching = game.spectateMatch;
+      scoreBarEl.textContent = watching
+        ? `⚔ ${watching.aName} ${you} · ${watching.bName} ${foe}`
+        : `⚔ You ${you} · AI ${foe}`;
       scoreBarEl.classList.remove("hidden");
     } else {
       const mins = Math.floor(state.time / 60);

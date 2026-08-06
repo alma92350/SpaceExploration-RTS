@@ -500,7 +500,7 @@ body.scenario .under-attack { top: 64px; z-index: 6; }
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--fg);
+  color: var(--text);
   font-size: 11.5px;
   font-weight: 700;
   cursor: pointer;
@@ -515,7 +515,7 @@ body.scenario .under-attack { top: 64px; z-index: 6; }
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--fg);
+  color: var(--text);
   font-size: 11.5px;
   cursor: pointer;
 }
