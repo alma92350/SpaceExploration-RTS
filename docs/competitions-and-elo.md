@@ -553,7 +553,13 @@ playable half:
 - **The disclosure (D4)** is one plain paragraph (`.comp-disclosure`, a left rule, not a tooltip)
   wherever the human's rating or standing appears: the config screen, the in-progress standing
   directly under the rating card, the final standing, and the game-over screen after every match —
-  carried by `shapeGauntletSummary`'s own return value so a standing cannot be rendered without it.
+  carried by `shapeGauntletSummary`'s own return value so a standing cannot be rendered without it —
+  **and the Standings screen**, which is where the completion view's "View Standings" button routes
+  and the only table that ranks the human's rating *against* the AI ratings it is being compared
+  with. That table also **marks the human's own row** (a `you` pill, a tinted row): `standingsFor`
+  carries each roster entry's `human` flag into its standing and `shapeStandingsTable` passes it
+  through, so the screen knows both which row is the person and whether to state the note at all
+  (an all-AI bracket has no seat asymmetry to disclose).
 - **Resumability** is structural rather than bolted on: the run lives in the ledger, and the screen
   reads it back on every entry, so a reload, a navigation into a live match, or a week away all
   resume identically. There is no module-level "is a gauntlet running" flag to get out of step.

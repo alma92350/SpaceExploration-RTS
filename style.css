@@ -1216,6 +1216,26 @@ body.paused::after {
   border-radius: 10px;
 }
 
+/* Standings screen: the human's own row (D4). Same pill geometry as the provisional badge next to
+   it, in the accent colour the Gauntlet's .comp-human-card already uses for "this one is you" —
+   plus a tinted row, because the mark has to survive a glance down a column of numbers. This is the
+   one table that ranks a person against the AI field, so which row is theirs cannot be a guess. */
+.comp-you-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+}
+.comp-standings-row.is-you { background: rgba(56, 189, 248, 0.10); }
+.comp-standings-row.is-you td { color: var(--text); font-weight: 600; }
+
 /* Roster screen's Export/Import row — two full-width .btn's side by side rather than stacked. */
 .comp-io-row { display: flex; gap: 10px; }
 .comp-io-row .btn { flex: 1 1 0; margin-top: 0; }

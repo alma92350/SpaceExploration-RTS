@@ -133,7 +133,7 @@ import { hashStr } from "./engine/rng.js";
  * @typedef {{ v: number, roster: RosterEntry[], ratingsByDifficulty: Object.<string, LedgerRatingsTable>, history: LedgerHistoryEntry[], gauntlet: GauntletState|null }} CompetitionLedger
  */
 /**
- * @typedef {{ name: string, rating: number, games: number, wins: number, losses: number, draws: number, avgMargin: number, provisional: boolean }} Standing
+ * @typedef {{ name: string, rating: number, games: number, wins: number, losses: number, draws: number, avgMargin: number, provisional: boolean, human: boolean }} Standing
  */
 
 // Exact-match version gate on load (CONTRIBUTING.md's save-versioning rule, applied to this
@@ -350,7 +350,10 @@ export function recordCompetition(ledger, entry) {
  * (it only ever tracks rating + games), so they're derived here by re-scanning `history` for this
  * difficulty; avgMargin is signed from THIS entrant's own perspective (their score minus the
  * opponent's, averaged — a row's own `margin` field is always aName-relative, so a row where this
- * entrant played as B contributes its negation).
+ * entrant played as B contributes its negation). Each row also carries the roster entry's own
+ * `human` flag, so a table mixing the person in with the AI field can mark which row is them and
+ * state D4's seat disclosure beside it (see the Gauntlet section below) without re-reading the
+ * roster it just summarised.
  * @param {CompetitionLedger} ledger
  * @param {string} difficulty
  * @returns {Standing[]}
@@ -390,6 +393,10 @@ export function standingsFor(ledger, difficulty) {
       wins, losses, draws,
       avgMargin: marginGames ? marginTotal / marginGames : 0,
       provisional: rated.games < PROVISIONAL_GAMES,
+      // Carried through from the roster entry rather than left for the caller to re-look-up: a
+      // standings table is exactly where D4's seat disclosure has to be stated, and a display layer
+      // can only know to state it (and which row to mark as you) if the rows say who is the human.
+      human: entrant.human === true,
     });
   }
 

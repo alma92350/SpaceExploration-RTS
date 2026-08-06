@@ -244,7 +244,13 @@ export function shapeRosterRow(entry) {
  * standingsFor's own job; see this module's header and that function's own doc comment for exactly
  * which fields it already derives). Preserves standingsFor's own sort order (rating descending, tie
  * -> name) verbatim — this never re-sorts.
- * @param {Array<{name: string, rating: number, games: number, wins: number, losses: number, draws: number, avgMargin: number, provisional: boolean}>} standings
+ *
+ * `human` rides through unformatted because the Standings screen is the ONE place a human rating is
+ * shown alongside the AI ratings it is being compared against (D4): the table has to mark which row
+ * is the person, and state the seat disclosure whenever it contains one. A row without the flag
+ * reads as false rather than undefined, so a caller's "does this table contain a human" test is a
+ * plain boolean check.
+ * @param {Array<{name: string, rating: number, games: number, wins: number, losses: number, draws: number, avgMargin: number, provisional: boolean, human?: boolean}>} standings
  */
 export function shapeStandingsTable(standings) {
   return standings.map(s => ({
@@ -254,6 +260,7 @@ export function shapeStandingsTable(standings) {
     record: `${s.wins}-${s.losses}-${s.draws}`,
     avgMargin: s.avgMargin.toFixed(1),
     provisional: s.provisional,
+    human: s.human === true,
   }));
 }
 
@@ -542,10 +549,12 @@ export function shapeBracketView(bracket) {
    ============================================================ */
 
 // D4's disclosure, in one plain sentence-set, stated wherever the human's rating or standing shows
-// — the config screen, the in-progress standing, the completion summary, and the game-over screen
-// after a live match. Deliberately a plain string constant, not markup and not a tooltip: the
-// Phase 4 brief's own wording is "plain and factual, not buried in a tooltip", and a constant is
-// also the only shape a Node test can assert the CONTENT of.
+// — the config screen, the in-progress standing, the completion summary, the game-over screen after
+// a live match, and the Standings screen whenever the bracket being shown contains the human (which
+// is the one place the rating is read AGAINST the AI ratings rather than on its own, and where the
+// completion view's "View Standings" button lands). Deliberately a plain string constant, not
+// markup and not a tooltip: the Phase 4 brief's own wording is "plain and factual, not buried in a
+// tooltip", and a constant is also the only shape a Node test can assert the CONTENT of.
 export const SEAT_DISCLOSURE =
   'Seat note: you always play the "player" seat, so a gauntlet pairing can never be side-swapped ' +
   'the way an AI-vs-AI one is. The known edge runs the other way — the "ai" seat reads state the ' +
@@ -2072,10 +2081,17 @@ function renderStandingsScreen(container) {
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  shapeStandingsTable(standings).forEach((row, i) => {
+  const shaped = shapeStandingsTable(standings);
+  shaped.forEach((row, i) => {
     const tr = document.createElement("tr");
+    // The human's row is MARKED, not just present. This is the one table in the mode that ranks a
+    // person's rating against the AI ratings it's being compared with, and an unmarked row reads as
+    // one more entrant — the reader can't tell which number is theirs, or which one the seat note
+    // below qualifies.
+    if (row.human) tr.className = "comp-standings-row is-you";
     tr.appendChild(mk("td", null, String(i + 1)));
     const nameTd = mk("td", null, row.name);
+    if (row.human) nameTd.appendChild(mk("span", "comp-you-badge", "you"));
     if (row.provisional) nameTd.appendChild(mk("span", "comp-provisional-badge", "provisional"));
     tr.appendChild(nameTd);
     [row.rating, row.games, row.record, row.avgMargin].forEach(v => tr.appendChild(mk("td", null, String(v))));
@@ -2084,6 +2100,14 @@ function renderStandingsScreen(container) {
   table.appendChild(tbody);
   wrap.appendChild(table);
   container.appendChild(wrap);
+
+  // D4's disclosure, the fifth place it's stated (config, in-progress standing, final standing,
+  // game-over block are the other four) — and the one that matters most, because this is where the
+  // human's rating is read AGAINST the AI ratings rather than on its own, and where the Gauntlet's
+  // own "View Standings" button lands the player. Shown only when this bracket actually contains
+  // the human: on a pure AI bracket there is no seat asymmetry to disclose, and a note about "you"
+  // beside a table you're not in would be noise.
+  if (shaped.some(row => row.human)) container.appendChild(mk("p", "comp-disclosure", SEAT_DISCLOSURE));
 }
 
 /* ============================================================
@@ -2097,9 +2121,10 @@ function renderStandingsScreen(container) {
        under two at Quick (which is why Quick is the default). gauntletEstimate says so before
        Start is clickable.
      • THE SEAT DISCLOSURE (D4). Stated in plain words wherever the human's rating or standing
-       shows: here on config, on the in-progress standing, on the final one, and on the game-over
+       shows: here on config, on the in-progress standing, on the final one, on the game-over
        screen after every match — carried by shapeGauntletSummary itself so a standing can't be
-       rendered without it.
+       rendered without it — and on the Standings screen (above), whose table is the only one that
+       ranks the human's rating against the AI ratings it is being compared with.
      • RESUMABILITY. The run lives in the ledger (competitionLedger.js), not in this module, so
        entering this tab always reads it back from storage — after a page reload, and after the
        navigation away into a live match and back, which is the normal case, not the edge one.

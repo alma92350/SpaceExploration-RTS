@@ -261,6 +261,22 @@ test("standingsFor sorts by rating descending, ties broken by name", () => {
   assert.equal(standings[0].name, "Alpha", "Alpha won every game it played -- should be on top");
 });
 
+// D4: the Standings screen is the one place a human rating is read side by side with AI ratings, so
+// it has to be able to tell which row is the person -- to mark it, and to say the seat disclosure
+// next to it. That fact lives on the RosterEntry already; standingsFor is the read path, so it
+// carries it through rather than making every caller re-look-up the roster it just summarised.
+test("standingsFor carries each entrant's own human flag through to its row (D4)", () => {
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "Ada", human: true });
+  addRosterEntry(ledger, { name: "Beta" });
+  recordCompetition(ledger, { difficulty: "medium", aName: "Ada", bName: "Beta", rows: [row("Ada", "Beta", "a", 12)] });
+
+  const standings = standingsFor(ledger, "medium");
+  assert.equal(standings.find(s => s.name === "Ada").human, true);
+  assert.equal(standings.find(s => s.name === "Beta").human, false,
+    "an AI entrant's row must say human:false, not undefined -- the flag is the marker, so it is always present");
+});
+
 test("standingsFor flags provisional exactly at the games-below-ten boundary (PROVISIONAL_GAMES)", () => {
   const ledger = createLedger();
   addRosterEntry(ledger, { name: "Alpha" });

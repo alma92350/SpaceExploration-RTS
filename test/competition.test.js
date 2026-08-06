@@ -368,10 +368,28 @@ test("shapeRosterRow falls back to the world-default placeholder for a reserved/
 /* ---------- shapeStandingsTable: formats standingsFor's own rows, never recomputes them ---------- */
 
 test("shapeStandingsTable formats standingsFor's own fields without recomputing any of them", () => {
-  const standings = [{ name: "Alpha", rating: 1234.6, games: 7, wins: 5, losses: 1, draws: 1, avgMargin: 12.34, provisional: true }];
+  const standings = [{ name: "Alpha", rating: 1234.6, games: 7, wins: 5, losses: 1, draws: 1, avgMargin: 12.34, provisional: true, human: false }];
   assert.deepEqual(shapeStandingsTable(standings), [
-    { name: "Alpha", rating: 1235, games: 7, record: "5-1-1", avgMargin: "12.3", provisional: true },
+    { name: "Alpha", rating: 1235, games: 7, record: "5-1-1", avgMargin: "12.3", provisional: true, human: false },
   ]);
+});
+
+// D4: without this the Standings screen -- the one screen that shows a human rating NEXT TO the AI
+// ratings it is being compared against, and the screen the gauntlet's own "View Standings" button
+// routes to -- cannot mark which row is the person, nor know to state the seat disclosure at all.
+test("shapeStandingsTable carries the human flag through so the Standings screen can mark the row (D4)", () => {
+  const standings = [
+    { name: "Ada", rating: 1239.2, games: 2, wins: 1, losses: 1, draws: 0, avgMargin: 3, provisional: true, human: true },
+    { name: "Grinder", rating: 1200, games: 2, wins: 1, losses: 1, draws: 0, avgMargin: -3, provisional: true, human: false },
+  ];
+  assert.deepEqual(shapeStandingsTable(standings).map(r => r.human), [true, false]);
+});
+
+// The flag is a marker the DOM layer branches on, so an older/hand-built row that never carried one
+// must read as "not the human" rather than as undefined leaking into a `.some(r => r.human)` test.
+test("shapeStandingsTable defaults a missing human flag to false rather than passing undefined on", () => {
+  const [row] = shapeStandingsTable([{ name: "Alpha", rating: 1200, games: 1, wins: 1, losses: 0, draws: 0, avgMargin: 1, provisional: true }]);
+  assert.equal(row.human, false);
 });
 
 test("shapeStandingsTable preserves standingsFor's own sort order (never re-sorts)", () => {
