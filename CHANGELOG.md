@@ -62,6 +62,21 @@ All notable changes to this project are documented here. The format follows
   Arsenal gate and fields a real Tier-2/3 composition instead of Skiffs only, and a `--apm`
   flag so a probe can exercise a difficulty row's real APM throttle instead of always running
   unthrottled.
+- **The AI opponent can now be EVOLVED** — `node tools/ailab.js evolve` breeds a population of
+  AI "genomes" (`tools/genome.js`: the dial tables as a schema'd, mutable, crossable data
+  structure) and selects them by real head-to-head self-play, with the four shipped strategies
+  riding along as a fixed rating anchor. Mutation is per gene *kind* — multiplicative for
+  ratios, additive for headcounts, rare flips for the switches that decide whether other genes
+  mean anything, and sequence operators for the unit-mix production cycle — and crossover cuts
+  at the boundaries between functional modules (offense / economy / defense / composition), so
+  a child inherits a working sub-plan intact rather than a shredded one. Nothing under
+  `engine/` changed: a candidate AI was already just JSON, which is what makes this possible at
+  all. Design, traps and results: `docs/ai-evolution-design.md`.
+  Two supporting fixes fell out of building it, both of which had been silently wrong:
+  `runDuel` never forwarded a candidate's own archetype to the match runner (so a CLI duel gave
+  both seats the *world's* temperament and ignored the candidate files), and `duelSeed` hashes
+  the candidates' names, so generated names drew their own map set every generation — it now
+  takes an optional `seedKey` to pin one, with today's derivation unchanged when it's omitted.
 
 ### Added
 

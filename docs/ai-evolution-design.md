@@ -355,9 +355,10 @@ return hashStr(`${base}:duel:${world}:${difficulty}:${[aName, bName].sort().join
 Within one duel this is fine and deliberate (the sort is there so a side-swap draws the identical
 map). Across *generations* it is a real confound: `gen3-ind7` vs `gen2-ind4` is fought on entirely
 different maps than `gen2-ind4` vs `gen1-ind2` was, so "the child scored better than its parent
-did" is partly a statement about map luck. **Fix before starting:** add an optional `seedKey` that
-defaults to the sorted names (byte-identical behaviour today), and have the evolution loop pass a
-fixed per-generation key so a whole lineage is measured on a pinned map set.
+did" is partly a statement about map luck. **Fixed** (§9): `duelSeed` takes an optional `seedKey`
+that replaces the names segment and defaults to today's exact derivation; `runDuel` forwards it,
+and the evolution loop passes one fixed key for the whole run. The cost of pinning is that a run
+can overfit the pinned map set — which is what held-out worlds are for (§8.6).
 
 **8.2 `assertNoOverrideCollision` will refuse a population of mutants.**
 `tools/ailab.js:720` throws if two candidates override the same table key — correctly, since they
@@ -372,11 +373,13 @@ Layers compose *multiplicatively* (archetype × strategy × difficulty), so a mi
 carries 1.25 and 1.4 there is really 1.75×. **A genome scored on one difficulty is not scored.**
 Fitness must be the worst — or at minimum the mean — across brackets, never a single one.
 
-**8.4 `runDuel` doesn't plumb per-side archetypes; `runDuelMatch` does.**
+**8.4 `runDuel` didn't plumb per-side archetypes; `runDuelMatch` always has.**
 `tools/duelCore.js:84` accepts `aArchetype`/`bArchetype` and `competitionWorker.js:109` passes
-them, but `tools/ailab.js`'s `runDuel` (`:688`) never sets them — so in a CLI duel **both sides
-play the world's own archetype**. That means today the CLI can only evolve the *strategy*
-chromosome; evolving archetypes needs a two-line plumb through `runDuel` first.
+them, but `tools/ailab.js`'s `runDuel` never set them — so in a CLI duel **both sides played the
+world's own archetype**, and a candidate file carrying its own was silently ignored. **Fixed**
+(§9), which is what makes the macro/tempo/composition chromosome measurable at all. Note this was
+a pre-existing bug in the shipped bench, not something evolution introduced: any `duel` run
+comparing two archetypes before this was measuring something else.
 
 **8.5 Engine purity is non-negotiable.** No `Math.random`, no `Date.now()` under `engine/`, ever
 (`test/engine-purity.test.js`). All mutation RNG uses `mulberry32` from `engine/rng.js` with an
@@ -408,27 +411,77 @@ already uses for its labour retuning.
 
 ---
 
-## 9. A concrete Phase 1
+## 9. Phase 1 — shipped
 
-Small enough to be worth doing before any of the above is settled:
+Everything in this section is implemented. Nothing under `engine/` changed: the shipped game, the
+skirmish path, and every determinism guarantee are untouched, which is the whole point of the
+genotype living in `tools/`.
 
-1. **`tools/genome.js`** — `GENOME_SCHEMA`: for each gene, `{ layer, type, min, max, sigma, module }`.
-   One source of truth for what a legal gene is, the same role `DIFFICULTY_OPTIONS` plays for
-   difficulty keys. Plus `mutate(genome, rng, rate)`, `cross(a, b, rng)`, `toOverrides(genome)`.
-   Pure, seeded, testable without running a single match.
-2. **The `seedKey` fix** from §8.1 — two lines in `duelCore.js`, defaulting to today's behaviour.
-3. **`tools/ailab.js evolve`** — a new CLI verb: population, generations, Swiss fitness with the
-   four shipped baselines as the hall of fame, `CHECKS` as a disqualifier, elitism 2, results
-   written as candidate JSON files so every generation's champion drops straight into the existing
-   `duel`/`sweep`/`leaderboard` tooling with no adapter.
-4. **Run it on the strategy chromosome only**, held-out worlds, both difficulty brackets, and
-   record the result in the search ledger — *including if it loses to the hand-tuned strategies*,
-   which is a genuinely possible outcome and worth knowing.
+### `tools/genome.js` — the schema and the operators
 
-The honest prior: the four shipped strategies have had real human search spent on them, and a
-first GA may not beat them. The value in Phase 1 is not necessarily a stronger AI — it is a
-**reusable variation-and-selection loop**, and the diverse archive from §6E, which is content the
-hand-tuning process cannot produce at all.
+`GENOME_SCHEMA` is the one source of truth for what a legal gene is — `{ key, layer, kind, module,
+min, max, odysseyOnly, gatedBy }` — the same role `DIFFICULTY_OPTIONS` plays for difficulty keys.
+28 genes across two chromosomes and six linkage groups. Alongside it: `mutate`, `cross`,
+`randomGenome`, `genomeFrom` (seed from a shipped row), and `toOverrides`/`toCandidate`, which
+lower a genome back into exactly the `--overrides` / `{ name, strategy, overrides }` shapes the
+rest of the bench already consumes. Pure and seeded — every operator takes an explicit `mulberry32`
+stream, so a whole run reproduces from one integer.
+
+Two schema fields are load-bearing and were not in the original sketch:
+
+- **`odysseyOnly`** marks a gene whose use site is behind a `state.endless` / `state.diplomacy`
+  guard. Every duel is a **skirmish** (`tools/selfplay.js`: "no Odyssey, no diplomacy, no galaxy"),
+  so the entire DIPLOMACY module plus `wantsIndustryAlways` and `useBombOffensively` are read by
+  *nothing* under a duel objective. They are excluded by default; evolving them against duel Elo
+  would be optimising pure drift. This was nearly a silent waste of a whole search.
+- **`gatedBy`** handles the genes whose use site tests *presence* rather than value.
+  `aiEconomy.js` reads `strategy.standingArmyCap != null`, so emitting a default would cap the army
+  of every genome in the population. It is modelled as an explicit `capsArmy` switch plus a value
+  that keeps drifting while the switch is off — §3.3's junk-DNA argument made concrete.
+
+### The two plumbing fixes from §8
+
+- **`duelSeed` takes an optional `seedKey`** (`tools/duelCore.js`) that replaces the sorted-names
+  segment of the hash. Omitted, it is byte-for-byte the derivation it has always been — pinned by a
+  test. The evolution loop passes one fixed key for the whole run, so every genome ever evaluated
+  in round *R* faced the identical maps.
+- **`runDuel` now forwards each candidate's own `archetype`** to `runDuelMatch`, which has always
+  accepted it and which `competitionWorker.js` has always passed. Before this, a CLI duel gave both
+  seats whatever temperament the *world* hands out and silently ignored the candidate's own — so
+  the archetype chromosome could not have been measured at all.
+
+### `node tools/ailab.js evolve`
+
+Population, generations, elites, tournament selection, module-wise crossover, self-adaptive
+mutation. Fitness is Swiss-scheduled duel Elo with the four shipped baselines riding along as a
+hall of fame, every difficulty bracket rated separately and aggregated by the worst (`--agg min`).
+The champion is written as a runnable candidate file, so it goes straight back into
+`duel`/`sweep`/`leaderboard`.
+
+One correction the implementation forced, worth recording because the bug was invisible:
+`eloForMatches` folds every rating from a **fresh 1200** over one generation's own matches, so a
+raw Elo is only comparable *within* a generation — the field changes every generation and the mean
+is pinned at 1200 regardless of the field's absolute strength. Comparing generation 6's champion to
+generation 1's on raw Elo would have measured nothing, reintroducing the exact Red Queen failure
+the hall of fame exists to prevent, in the arithmetic rather than in the design. The loop therefore
+reports **`edge`** — rating above the hall of fame's own mean in the same tournament. Anchors are
+fixed genomes, so their mean is a fixed point of skill and an edge *is* comparable across
+generations; within a generation it is a constant offset, so it changes no ranking.
+
+`--screen` (CHECKS as a disqualifier) is **opt-in**, and that is a calibration argument rather than
+a cost one. Every detector in `CHECKS` is written for a 40–60 sim-minute *Odyssey* run and several
+carry an explicit "…and it never resolved in the last third" term keyed to that length; run over a
+duel-length skirmish they fire on healthy genomes, which is precisely the failure this repo's own
+CHECKS header records three rewrites of. So the screen runs at its own length, on its own Odyssey
+worlds, and only when asked.
+
+### The honest prior
+
+The four shipped strategies have had real human search spent on them, and a first GA may not beat
+them. The value in Phase 1 is not necessarily a stronger AI — it is a **reusable
+variation-and-selection loop**, plus §6E's diverse archive, which the hand-tuning process cannot
+produce at all. See the search ledger in `docs/odyssey-ai-review.md` for what the first run
+actually measured.
 
 ---
 

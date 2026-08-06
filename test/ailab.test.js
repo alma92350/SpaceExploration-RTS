@@ -27,8 +27,10 @@ import {
   run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard,
   runDuel, runRoundRobin, pinnedDuelDials, runSwappedDuel, runDuelBrackets, runRoundRobinSwapped, runSearch,
   runSwissTournament, pairRound, rankStandings, buildSwissBracket, snapshotTables, restoreTables,
+  runEvolution,
 } from "../tools/ailab.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
+import { ARCHETYPES } from "../engine/aiArchetypes.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
 import { tick } from "../engine/sim.js";
 import { hashStr } from "../engine/rng.js";
@@ -1160,4 +1162,125 @@ test("standings rank by RESULT, not by how many pairings the schedule handed out
   const strictlyBetter = { name: "better", wins: 3, losses: 1, draws: 0, byes: 1 };
   assert.equal(rankStandings([played, strictlyBetter])[0].name, "better",
     "a 75% record must outrank a 50% one even though it played fewer pairings");
+});
+
+/* ---------- the per-side archetype plumb through runDuel (docs/ai-evolution-design.md §8.4) ----------
+
+   tools/duelCore.js's runDuelMatch has always accepted aArchetype/bArchetype, and
+   competitionWorker.js has always passed them — but runDuel never forwarded them, so a CLI duel
+   silently ignored a candidate's own archetype and gave BOTH seats whatever temperament the world
+   hands out. That is invisible from the outside: the duel runs, a winner is reported, and it is a
+   measurement of something other than what the candidate files describe.
+   ---------- */
+
+test("runDuel forwards each candidate's own archetype, so two temperaments really do meet", () => {
+  const worlds = ["ferros"];   // an Economist world — neither candidate's own pick, so both differ from it
+  const opts = { worlds, seeds: 1, minutes: 6 };
+  const bothWorlds = runDuel({ name: "plain-a" }, { name: "plain-b" }, opts);
+  const rusherVsTech = runDuel(
+    { name: "rush", archetype: "rusher" },
+    { name: "tech", archetype: "technologist" }, opts);
+  // If the archetype were dropped, both duels would be the SAME match modulo candidate names — and
+  // duelSeed hashes the names, so compare on the match OUTCOME rather than the seed.
+  const shape = r => r.rows.map(x => `${x.winReason}:${x.time}:${x.aScore}:${x.bScore}`).join("|");
+  assert.notEqual(shape(bothWorlds), shape(rusherVsTech),
+    "a candidate's archetype reached nothing — runDuel is dropping aArchetype/bArchetype");
+});
+
+test("an absent archetype is byte-identical to today's behaviour", () => {
+  const opts = { worlds: ["korrath"], seeds: 1, minutes: 6 };
+  const shape = r => r.rows.map(x => `${x.seed}:${x.winner}:${x.winReason}:${x.time}:${x.margin}`).join("|");
+  assert.equal(
+    shape(runDuel({ name: "a" }, { name: "b" }, opts)),
+    shape(runDuel({ name: "a", archetype: null }, { name: "b", archetype: undefined }, opts)),
+    "an absent/null archetype must not change a single existing duel row");
+});
+
+test("runDuel's seedKey pins a pair's maps regardless of the candidates' names", () => {
+  const opts = { worlds: ["ferros"], seeds: 2, minutes: 4, seedKey: "evolve" };
+  const seeds = r => r.rows.map(x => x.seed).join("|");
+  assert.equal(
+    seeds(runDuel({ name: "g1i0" }, { name: "g1i1" }, opts)),
+    seeds(runDuel({ name: "g9i7" }, { name: "g9i2" }, opts)),
+    "with seedKey pinned, two differently-named pairs must draw the identical map set");
+  assert.notEqual(
+    seeds(runDuel({ name: "g1i0" }, { name: "g1i1" }, { ...opts, seedKey: undefined })),
+    seeds(runDuel({ name: "g9i7" }, { name: "g9i2" }, { ...opts, seedKey: undefined })),
+    "sanity: without it, the names DO reach the map draw — which is the confound seedKey exists for");
+});
+
+/* ---------- evolve: a population, bred and selected by real self-play ----------
+
+   Short runs (tiny population, 4-minute matches) — this guards the LOOP, not the AI. Whether an
+   evolved genome is actually better is a question for a long run and the search ledger, never for
+   a test suite that has to finish in seconds.
+   ---------- */
+
+const evoOpts = {
+  population: 4, generations: 2, worlds: ["korrath"], seeds: 1, minutes: 4, rounds: 2, elites: 1,
+};
+
+test("runEvolution is deterministic: the same seed breeds the same champion", () => {
+  const strip = r => JSON.stringify({ best: r.best, log: r.log });
+  assert.equal(strip(runEvolution({ ...evoOpts, seed: 5 })), strip(runEvolution({ ...evoOpts, seed: 5 })));
+});
+
+test("a different seed breeds a different run — the search is actually stochastic", () => {
+  const a = runEvolution({ ...evoOpts, seed: 5, generations: 3 });
+  const b = runEvolution({ ...evoOpts, seed: 6, generations: 3 });
+  assert.notEqual(JSON.stringify(a.log), JSON.stringify(b.log));
+});
+
+test("the champion is a RUNNABLE candidate — it duels without an adapter", () => {
+  const res = runEvolution({ ...evoOpts, seed: 3 });
+  assert.ok(res.best.name && res.best.strategy && res.best.overrides.strategies[res.best.name]);
+  // The actual contract: it goes straight back into the tooling it came from.
+  const snap = snapshotTables();
+  try {
+    const duel = runDuel(res.best, { name: "Baseline: Adaptive" }, { worlds: ["korrath"], seeds: 1, minutes: 4 });
+    assert.equal(duel.n, 1);
+    assert.ok(["a", "b", "draw"].includes(duel.rows[0].winner));
+  } finally { restoreTables(snap); }
+});
+
+test("evolution leaves the shipped AI tables exactly as it found them", () => {
+  // Every genome writes a row into STRATEGIES to be evaluated. If one leaked, every LATER
+  // measurement in the same process — a sweep, a check, another duel — would silently be measuring
+  // a mutant. runDuel snapshot/restores around each pairing; this asserts the whole loop does too.
+  const before = JSON.stringify({ s: STRATEGIES, a: ARCHETYPES, d: DIFFICULTY_OPTIONS });
+  runEvolution({ ...evoOpts, seed: 8, layers: ["strategy", "archetype"] });
+  assert.equal(JSON.stringify({ s: STRATEGIES, a: ARCHETYPES, d: DIFFICULTY_OPTIONS }), before);
+});
+
+test("the hall of fame is rated alongside the population and anchors the scale", () => {
+  const hallOfFame = [{ name: "Baseline: Adaptive" }, { name: "Baseline: Aggressive", strategy: "aggressive" }];
+  const res = runEvolution({ ...evoOpts, seed: 4, hallOfFame });
+  for (const entry of res.log) {
+    assert.deepEqual(entry.anchors.map(a => a.name), hallOfFame.map(h => h.name),
+      "both baselines must appear in every generation's ratings");
+    // edge is elo measured against the anchors' own mean — the only cross-generation-comparable
+    // number here, since eloForMatches restarts from a fresh 1200 every generation.
+    // (every term is logged rounded to 1dp, so the identity holds only to within that rounding)
+    for (const r of entry.ranked) assert.ok(Math.abs((r.elo - entry.anchorMean) - r.edge) < 0.2,
+      `edge must be elo above the anchor mean: ${r.elo} - ${entry.anchorMean} != ${r.edge}`);
+  }
+});
+
+test("Odyssey-gated genes are excluded by default, because a duel is a skirmish", () => {
+  const res = runEvolution({ ...evoOpts, seed: 9 });
+  const keys = res.genes.map(g => g.key);
+  for (const dead of ["graceMult", "grievanceMult", "forgiveness", "wantsIndustryAlways", "useBombOffensively"])
+    assert.ok(!keys.includes(dead), `${dead} is read by nothing in a skirmish — evolving it is scoring drift`);
+  assert.ok(runEvolution({ ...evoOpts, seed: 9, odyssey: true }).genes.some(g => g.odysseyOnly),
+    "…and asking for them explicitly must still work");
+});
+
+test("elitism is monotone: the best genome is never lost to an unlucky mutation", () => {
+  // With a noisy objective a generation WILL sometimes breed nothing better than what it had. The
+  // guarantee elites buy is that the run's best-so-far can only ever improve.
+  const res = runEvolution({ ...evoOpts, seed: 2, generations: 4, elites: 2 });
+  let seen = -Infinity;
+  for (const entry of res.log) seen = Math.max(seen, entry.champion.edge);
+  assert.equal(+res.bestEdge.toFixed(1), seen,   // the log rounds to 1dp; the result carries full precision
+    "the reported best must be the best edge any generation actually reached");
 });

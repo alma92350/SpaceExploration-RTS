@@ -103,6 +103,11 @@ import { INITIAL_RATING, applySeries } from "../elo.js";
 // this file's CLI half (docs/competitions-and-elo.md Phase 3). Imported under the SAME names this
 // file has always used, and re-exported below exactly as before — see the TIER 5 header comment.
 import { rankStandings, pairRound, buildSwissBracket, roundRobinPairs, swissRoundCount } from "../pairing.js";
+// The genome — the AI as a schema'd, mutable, crossable data structure (docs/ai-evolution-design.md).
+// A leaf module like duelCore/pairing: it imports the three AI tables and mulberry32 and nothing
+// else, so `evolve` below is the only thing in this file that knows evolution exists.
+import { geneKeys, genomeFrom, randomGenome, mutate, cross, cloneGenome, toCandidate, rngFor, diffGenes }
+  from "./genome.js";
 
 const WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 const DT = 0.1;                  // the sim's fixed step, same as the game loop
@@ -664,9 +669,19 @@ export function runLeaderboard(candidates, { worlds, difficulty = "medium", oppo
 // rows through it, so a same-name pair would silently collide both candidates' Elo into one entry
 // (elo.js's own applyResult throws on exactly this, as a backstop — this check just gives the CLI
 // user a clear, immediate reason instead of a duel that runs to completion and THEN throws).
+// `archetype` (docs/competitions-and-elo.md D3) is a per-candidate field tools/duelCore.js's
+// runDuelMatch has always accepted and competitionWorker.js has always passed, but which this
+// function never forwarded — so a CLI duel had both seats playing whatever temperament the WORLD
+// hands out, and a candidate carrying its own archetype was silently ignored here while working
+// in-game. Forwarded now (absent/undefined on every hand-written candidate file, and runDuelMatch
+// treats absent as byte-identical to omitting it — test/duelCore.test.js pins that), which is what
+// lets an evolved genome carry a macro/tempo/composition chromosome and not just a strategy row.
+//
+// `seedKey`, likewise, is forwarded straight to duelSeed — see its comment in tools/duelCore.js
+// for why an evolutionary caller needs to pin a generation's maps and why nothing else should.
 export function runDuel(a, b, {
   worlds = ["korrath", "ferros", "vesper", "kybernet"], difficulty = "medium",
-  seeds = 2, seedBase = 1, minutes,
+  seeds = 2, seedBase = 1, minutes, seedKey,
 } = {}) {
   if (!a || !a.name) throw new Error('candidate A needs a "name"');
   if (!b || !b.name) throw new Error('candidate B needs a "name"');
@@ -686,8 +701,9 @@ export function runDuel(a, b, {
     for (const world of worlds)
       for (let rep = 0; rep < seeds; rep++)
         rows.push(duelRun({
-          world, seed: duelSeed(seedBase, world, difficulty, a.name, b.name, rep),
+          world, seed: duelSeed(seedBase, world, difficulty, a.name, b.name, rep, seedKey),
           dials, aName: a.name, aStrategy, bName: b.name, bStrategy, minutes,
+          aArchetype: a.archetype || null, bArchetype: b.archetype || null,
           // Alternate the map's own asym halves by replicate parity — see the FAIRNESS
           // paragraph above. A no-op on every world without an `asym` block.
           swapAsym: rep % 2 === 1,
@@ -942,6 +958,217 @@ export function runSwissTournament(candidates, opts = {}) {
   // can never disagree about how many rounds "default" means.
   const numRounds = rounds || swissRoundCount(candidates.length);
   return list.map(diff => runSwissBracket(candidates, numRounds, { ...rest, difficulty: diff }));
+}
+
+/* ============================================================
+   EVOLUTION — a population of genomes, selected by real self-play (docs/ai-evolution-design.md)
+
+   `search` above is a coordinate scan: it moves ONE dial at a time and greedily keeps whatever
+   improved. That is the cheapest thing that works, and it has a structural blind spot — it cannot
+   cross a valley where two dials must move TOGETHER. This codebase has the worked example already
+   written down: engine/aiStrategy.js records that Aggressive finished last of four in self-play,
+   that a coordinate scan over its own offense dials could not fix it, and that what fixed it was
+   an ECONOMY dial (workerTargetMult) borrowed from another strategy. A scan structurally cannot
+   find that; a population with mutation and crossover finds it by construction.
+
+   So this is the same "candidate vs a yardstick" shape the rest of the file has, with three
+   differences: candidates are generated rather than hand-written (tools/genome.js), there are many
+   of them at once, and the yardstick includes each other.
+
+   WHAT MAKES THE FITNESS TRUSTWORTHY, since that is the only part that decides whether any of this
+   is real:
+
+     • It is DUEL Elo, not score(). score()'s six weights are a hand-written definition of "better
+       AI", and a population is a machine for exploiting hand-written definitions — `thrift` pays
+       for ending poor (a genome that dumps ore into junk turrets farms it), `pressure` counts
+       waves (a genome that trickles one unit at a time farms it). A win cannot be farmed except by
+       winning. score() stays available as a DIAGNOSTIC via `sweep`, never as the objective here.
+     • It is SWISS-scheduled, so a generation costs O(n log n) pairings instead of round-robin's
+       C(n,2) — the difference between a generation taking minutes and taking an hour, which is
+       the difference between running this and not.
+     • The four shipped baselines ride along as a HALL OF FAME. A population evolving only against
+       itself can drift in a cycle forever (rusher beats greedy beats turtle beats rusher) with no
+       absolute progress — the Red Queen. Elo measured partly against a fixed anchor is absolute.
+       tools/candidates/baseline-*.json already exist and are exactly that anchor.
+     • Every bracket in `--difficulties` is rated SEPARATELY and then aggregated by the WORST of
+       them by default (`--agg min`). engine/aiStrategy.js has the cautionary row for this too: a
+       workerTargetMult of 1.4 wins Medium harder and LOSES Hard, because Hard's own row already
+       carries 1.25 and the layers compose multiplicatively. A genome scored on one difficulty is
+       not scored.
+     • Every pairing in the whole run shares ONE seedKey (tools/duelCore.js duelSeed), so every
+       genome ever evaluated in round R faced the identical maps. Without it, each generation's
+       generated names hash to their own map set and "the child beat its parent's number" is partly
+       a statement about map luck. The cost of pinning is that the run can overfit that map set,
+       which is what `--holdout-worlds` is for: validate the champion on worlds it never trained on
+       and report both numbers.
+   ============================================================ */
+
+const EVO_SEED_KEY = "evolve";   // see the seedKey paragraph above — one pinned map set per run
+
+/**
+ * Rate one generation's field and return fitness per candidate name. One INDEPENDENT rating table
+ * per difficulty bracket (elo.js D2: brackets are never blended), aggregated by `agg`.
+ * @returns {{ fitness: Map<string, number>, perBracket: Object[] }}
+ */
+function rateGeneration(candidates, { difficulties, agg, ...opts }) {
+  const brackets = runSwissTournament(candidates, { ...opts, difficulties });
+  const ratings = brackets.map(b => eloForMatches(b.roundsLog.flatMap(r => r.matches)));
+  const fitness = new Map();
+  for (const c of candidates) {
+    const vals = ratings.map(t => (t[c.name] ? t[c.name].rating : INITIAL_RATING));
+    fitness.set(c.name, agg === "mean" ? vals.reduce((a, v) => a + v, 0) / vals.length : Math.min(...vals));
+  }
+  return { fitness, perBracket: brackets.map((b, i) => ({ difficulty: b.difficulty, standings: b.standings, ratings: ratings[i] })) };
+}
+
+/**
+ * Disqualify a genome that trips one of the named CHECKS — a genome that wins duels while
+ * deadlocking its own supply is a bug the search found, not a strategy.
+ *
+ * OPT-IN, and that is a deliberate calibration argument rather than a cost one. Every detector in
+ * CHECKS is written for a 40-60 sim-minute ODYSSEY run and several carry an explicit
+ * "…and it never resolved in the last third" term keyed to that length. Run them over a duel-length
+ * skirmish and they fire on healthy genomes — which is the exact failure this file's own CHECKS
+ * header calls out ("a metric that fires on correct behaviour is worse than no metric", three
+ * rewrites). So the screen runs at its OWN length on its OWN Odyssey worlds, and only when asked.
+ */
+function screenGenome(cand, { worlds, minutes, opponent, seedBase }) {
+  const snap = snapshotTables();
+  try {
+    if (cand.overrides) applyOverrides(cand.overrides);
+    const tripped = new Set();
+    for (const world of worlds) {
+      const r = run({ minutes, sample: 5, opponent, apm: "real", seedBase, world,
+                      strategy: cand.strategy, difficulty: "medium",
+                      seed: runSeed(seedBase, world, cand.strategy, "medium", 0) });
+      for (const c of CHECKS) if (c.hit(r)) tripped.add(c.id);
+    }
+    return [...tripped];
+  } finally {
+    restoreTables(snap);
+  }
+}
+
+/**
+ * Run the whole thing. Returns a plain result object (never console output) so the CLI and a test
+ * can both read it — the same shape discipline runSearch already follows. `best` is the champion
+ * lowered back into a runnable candidate; `bestEdge` (not `bestFitness`) is the cross-generation
+ * comparable number — see the anchoring comment in the loop below.
+ * @param {Object} opts
+ * @returns {{ genes: Object[], layers: string[], odyssey: boolean, agg: string,
+ *   generations: number, population: number, bestName: string, bestGenome: Object,
+ *   bestFitness: number, bestEdge: number, bestGen: number, best: Object, log: Object[] }}
+ */
+export function runEvolution({
+  population = 12, generations = 5, seed = 1, elites = 2,
+  worlds = ["korrath", "ferros", "vesper"], difficulties = ["medium"], seeds = 1, minutes = 40,
+  rounds, agg = "min", layers = ["strategy"], odyssey = false,
+  hallOfFame = [], seedStrategies = Object.keys(STRATEGIES),
+  screen = null, onGeneration = null,
+} = {}) {
+  const genes = geneKeys({ layers, odyssey });
+  if (!genes.length) throw new Error(`no genes selected — layers "${layers.join(",")}" matched nothing in GENOME_SCHEMA`);
+  const rng = rngFor(hashStr(`${seed}:evolve`));
+
+  // SEED THE POPULATION from the shipped strategies first. They are the best starting points
+  // anyone has — four rows with real human search already spent on them — and a run that discards
+  // them starts from behind. The remainder is split between mutated copies of those (local search
+  // around known-good) and uniformly random genomes (so the run can reach regions no shipped row
+  // is near).
+  let pop = [];
+  for (const key of seedStrategies) {
+    if (pop.length >= population) break;
+    pop.push(genomeFrom({ strategy: key, genes }));
+  }
+  const seeded = pop.length;
+  // Alternate mutant/random, and cycle the mutant's PARENT across all the seeded rows rather than
+  // deriving from pop.length (which, at an even population, only ever lands on the even-indexed
+  // seeds — half the shipped strategies would get no local search around them at all).
+  for (let fill = 0; pop.length < population; fill++) {
+    pop.push(fill % 2 === 0 && seeded
+      ? mutate(pop[Math.floor(fill / 2) % seeded], rng, { genes })
+      : randomGenome(rng, genes));
+  }
+
+  const log = [];
+  let best = null;
+  for (let gen = 1; gen <= generations; gen++) {
+    const named = pop.map((genome, i) => {
+      const name = `g${gen}i${i}`;
+      return { genome, name, cand: toCandidate(genome, name, { genes }) };
+    });
+    const field = [...named.map(n => n.cand), ...hallOfFame];
+    const { fitness, perBracket } = rateGeneration(field, {
+      worlds, difficulties, seeds, seedBase: seed, minutes, rounds, agg, seedKey: EVO_SEED_KEY,
+    });
+
+    // Screening runs AFTER rating (so the log records what a disqualified genome would have
+    // scored) and only over the individuals that could actually be selected.
+    const ranked = named.map(n => ({ ...n, fitness: fitness.get(n.name), tripped: [] }))
+      .sort((x, y) => y.fitness - x.fitness);
+    if (screen) {
+      for (const r of ranked.slice(0, Math.max(elites, Math.ceil(ranked.length / 2)))) {
+        r.tripped = screenGenome(r.cand, { ...screen, seedBase: seed });
+        if (r.tripped.length) r.fitness = -Infinity;
+      }
+      ranked.sort((x, y) => y.fitness - x.fitness);
+    }
+
+    const anchors = hallOfFame.map(h => ({ name: h.name, elo: fitness.get(h.name) }));
+    const champion = ranked[0];
+    // ANCHOR THE SCALE. Elo is folded from a FRESH 1200 baseline over each generation's own
+    // matches (eloForMatches — no persistence across runs, elo.js D7), so a raw rating is only
+    // comparable WITHIN a generation: the field changes every generation and the mean is pinned at
+    // 1200 whatever the field's absolute strength. Comparing generation 5's champion to generation
+    // 1's on raw Elo would therefore measure nothing at all — the exact Red Queen failure the hall
+    // of fame exists to prevent, reintroduced in the arithmetic.
+    //   `edge` is the rating ABOVE the hall of fame's own mean in the same tournament. The anchors
+    // are fixed genomes, so their mean is a fixed point of skill, and an edge IS comparable across
+    // generations. Within a generation it is a constant offset, so it changes no ranking.
+    //   With no hall of fame there is nothing to anchor to, and edge degenerates to "rating above
+    // the 1200 origin" — still the honest number, just not an absolute one; the CLI says so.
+    const anchorMean = anchors.length
+      ? anchors.reduce((a, x) => a + x.elo, 0) / anchors.length : INITIAL_RATING;
+    for (const r of ranked) r.edge = r.fitness === -Infinity ? -Infinity : r.fitness - anchorMean;
+    if (!best || champion.edge > best.edge) best = { ...champion, gen };
+    log.push({
+      gen, anchorMean: +anchorMean.toFixed(1),
+      ranked: ranked.map(r => ({ name: r.name, elo: +r.fitness.toFixed(1), edge: +r.edge.toFixed(1),
+                                 sigma: +r.genome.sigma.toFixed(3), tripped: r.tripped })),
+      anchors: anchors.map(a => ({ name: a.name, elo: +a.elo.toFixed(1) })),
+      perBracket: perBracket.map(b => ({ difficulty: b.difficulty, standings: b.standings })),
+      champion: { name: champion.name, elo: +champion.fitness.toFixed(1), edge: +champion.edge.toFixed(1) },
+    });
+    if (onGeneration) onGeneration(log[log.length - 1], ranked, anchors);
+    if (gen === generations) break;
+
+    // BREED. Elites carried through UNCHANGED — a generation that can lose its best individual to
+    // an unlucky mutation is not monotonic, and with a noisy objective it will do that regularly.
+    const next = ranked.slice(0, elites).map(r => cloneGenome(r.genome));
+    // Tournament selection: three at random, fittest breeds. Cheap, needs no normalised fitness
+    // (Elo is an interval scale with an arbitrary origin — proportional selection on it would be
+    // meaningless), and its selection pressure is tunable by the tournament size alone.
+    const draft = () => {
+      let bestOf = null;
+      for (let k = 0; k < 3; k++) {
+        const c = ranked[Math.floor(rng() * ranked.length)];
+        if (!bestOf || c.fitness > bestOf.fitness) bestOf = c;
+      }
+      return bestOf.genome;
+    };
+    while (next.length < population) {
+      const p1 = draft(), p2 = draft();
+      next.push(mutate(cross(p1, p2, rng, { genes }), rng, { genes }));
+    }
+    pop = next;
+  }
+
+  return {
+    genes, layers, odyssey, agg, generations, population,
+    bestName: best.name, bestGenome: best.genome, bestFitness: best.fitness, bestEdge: best.edge,
+    bestGen: best.gen, best: toCandidate(best.genome, "evolved", { genes }),
+    log,
+  };
 }
 
 /* ============================================================
@@ -1452,7 +1679,80 @@ const CMDS = {
       console.log(`\nwrote ${args.json}`);
     }
   },
+
+  // A population of genomes, bred and selected by the same side-swapped, difficulty-bracketed
+  // self-play `duel`/`swiss` already run — see the EVOLUTION header comment above for why the
+  // fitness is duel Elo rather than score(), why the shipped baselines ride along, and why the
+  // whole run shares one pinned map set.
+  evolve(args) {
+    const layers = list(args.genes, ["strategy"]);
+    const hallOfFame = list(args.baselines, [
+      "tools/candidates/baseline-adaptive.json", "tools/candidates/baseline-aggressive.json",
+      "tools/candidates/baseline-economic.json", "tools/candidates/baseline-force-parity.json",
+    ]).map(p => JSON.parse(readFileSync(p, "utf8")));
+    const worlds = list(args.worlds, ["korrath", "ferros", "vesper"]);
+    const difficulties = list(args.difficulties, [args.difficulty || "medium"]);
+    const screen = args.screen && args.screen !== "false"
+      ? { worlds: list(args["screen-worlds"], ["ferros", "korrath"]),
+          minutes: num(args["screen-minutes"], 40), opponent: args.opponent || "tech" }
+      : null;
+    const opts = {
+      population: num(args.population, 12), generations: num(args.generations, 5),
+      seed: num(args.seed, 1), elites: num(args.elites, 2),
+      worlds, difficulties, seeds: num(args.seeds, 1),
+      minutes: args.minutes !== undefined ? Number(args.minutes) : 40,
+      rounds: args.rounds !== undefined ? Number(args.rounds) : undefined,
+      agg: args.agg === "mean" ? "mean" : "min",
+      layers, odyssey: args.odyssey === "true", hallOfFame, screen,
+    };
+    console.log(`EVOLVE — population ${opts.population} x ${opts.generations} generations`);
+    console.log(`  genes:        ${geneKeys({ layers, odyssey: opts.odyssey }).map(g => g.key).join(", ")}`);
+    console.log(`  worlds:       ${worlds.join(", ")}   seeds ${opts.seeds}   minutes ${opts.minutes}`);
+    console.log(`  brackets:     ${difficulties.join(", ")}   aggregated by ${opts.agg}`);
+    console.log(`  hall of fame: ${hallOfFame.map(h => h.name).join(", ") || "(none)"}`);
+    console.log(`  screen:       ${screen ? `${screen.worlds.join("/")} @ ${screen.minutes}m vs ${screen.opponent}` : "off"}`);
+    if (!opts.odyssey)
+      console.log(`  note:         Odyssey-only genes are EXCLUDED — a duel is a skirmish, so diplomacy\n`
+        + `                and industry genes are read by nothing there. --odyssey true to include them\n`
+        + `                anyway (they will drift freely; the objective cannot see them).`);
+    console.log();
+
+    const baseline = genomeFrom({ strategy: "default", genes: geneKeys({ layers, odyssey: opts.odyssey }) });
+    const res = runEvolution({
+      ...opts,
+      onGeneration: (entry, ranked) => {
+        console.log(`-- generation ${entry.gen} --`);
+        console.log(pad("#", 4) + pad("genome", 9) + padL("elo", 6) + padL("edge", 7) + padL("sigma", 7)
+          + "  genes vs. Adaptive");
+        ranked.slice(0, 5).forEach((r, i) => console.log(
+          pad(String(i + 1), 4) + pad(r.name, 9)
+          + padL(r.fitness === -Infinity ? "DQ" : r.fitness.toFixed(0), 6)
+          + padL(r.edge === -Infinity ? "-" : (r.edge >= 0 ? "+" : "") + r.edge.toFixed(0), 7)
+          + padL(r.genome.sigma.toFixed(3), 7) + "  "
+          + (r.tripped.length ? `[${r.tripped.join(",")}] ` : "")
+          + diffGenes(r.genome, baseline, { genes: genesFor(opts) }).slice(0, 92)));
+        console.log(`    anchors (mean ${entry.anchorMean.toFixed(0)}): `
+          + entry.anchors.map(a => `${a.name} ${a.elo.toFixed(0)}`).join("   "));
+        console.log();
+      },
+    });
+
+    console.log(`BEST: ${res.bestName} from generation ${res.bestGen}, elo ${res.bestFitness.toFixed(0)} `
+      + `(${res.bestEdge >= 0 ? "+" : ""}${res.bestEdge.toFixed(0)} vs the hall of fame's own mean`
+      + `${hallOfFame.length ? "" : " — NO baselines given, so this is only vs the 1200 origin"})`);
+    console.log(`  ${diffGenes(res.bestGenome, baseline, { genes: res.genes })}`);
+    const out = args.out || "evolved.json";
+    writeFileSync(out, JSON.stringify({ ...res.best, _hypothesis:
+      `Evolved: population ${opts.population} x ${opts.generations} generations, fitness = duel Elo `
+      + `(${difficulties.join("/")}, agg ${opts.agg}) on ${worlds.join("/")}, seed ${opts.seed}.` }, null, 2));
+    console.log(`\nwrote ${out} — a runnable candidate: duel it against a baseline, then sweep it.`);
+    if (args.json) { writeFileSync(args.json, JSON.stringify(res.log, null, 1)); console.log(`wrote ${args.json}`); }
+  },
 };
+
+// The gene set a given `evolve` invocation is varying — recomputed for the progress printer rather
+// than threaded through, since runEvolution's own result only becomes available after it returns.
+const genesFor = opts => geneKeys({ layers: opts.layers, odyssey: opts.odyssey });
 
 const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
 
@@ -1507,6 +1807,25 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
                               a greedy walk could've avoided -- see the TIER 5 header comment for
                               the pairing/bye rules. SWISS STANDINGS carries the same elo column as
                               'duel', folded through the whole bracket in round/pairing order.
+  node tools/ailab.js evolve [--population 12] [--generations 5] [--elites 2] [--seed 1]
+                              [--genes strategy|strategy,archetype] [--odyssey true]
+                              [--worlds a,b] [--difficulties medium,hard] [--agg min|mean]
+                              [--seeds 1] [--minutes 40] [--rounds N] [--baselines a.json,b.json]
+                              [--screen] [--screen-worlds a,b] [--screen-minutes 40]
+                              [--out evolved.json] [--json log.json]
+                              -- a POPULATION of genomes (tools/genome.js), mutated and crossed,
+                              selected by the same side-swapped, difficulty-bracketed self-play
+                              'swiss' already runs. Fitness is duel ELO, never score(): a weighted
+                              metric is a hand-written definition of "better" and a population is a
+                              machine for exploiting one. The four shipped baselines ride along as
+                              a HALL OF FAME so the rating is anchored to something fixed rather
+                              than drifting in a Red Queen cycle, and every difficulty bracket is
+                              rated separately then aggregated by the WORST of them (--agg min) --
+                              see the EVOLUTION header comment for both arguments. Writes the
+                              champion as a runnable candidate file, so it goes straight back into
+                              duel/sweep/leaderboard. Odyssey-gated genes (diplomacy, industry) are
+                              EXCLUDED by default: a duel is a skirmish, so nothing there reads
+                              them and evolving them would be scoring pure drift.
 
 Common flags
   --overrides f.json   inject candidate rows into the AI tables before running:
