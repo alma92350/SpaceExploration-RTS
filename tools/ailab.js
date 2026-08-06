@@ -1718,9 +1718,29 @@ const CMDS = {
     console.log();
 
     const baseline = genomeFrom({ strategy: "default", genes: geneKeys({ layers, odyssey: opts.odyssey }) });
+    // CHECKPOINT AFTER EVERY GENERATION, not just at the end. A real run is long — and it gets
+    // LONGER as it succeeds, because a population converging on `neverInitiates` stops resolving
+    // matches by elimination and starts running every one of them to the full clock. Writing only
+    // on completion means an interrupted run yields nothing at all, which is the difference between
+    // "the search is still going" and "the search has to start over". Purely an output side effect:
+    // it consumes no rng and changes no decision, so a checkpointed run and an unwatched one breed
+    // the identical champion.
+    const out = args.out || "evolved.json";
+    const partial = [];
+    const writeCheckpoint = (genome, gen, edge) => {
+      writeFileSync(out, JSON.stringify({ ...toCandidate(genome, "evolved", { genes: genesFor(opts) }), _hypothesis:
+        `Evolved: population ${opts.population} x ${opts.generations} generations, fitness = duel Elo `
+        + `(${difficulties.join("/")}, agg ${opts.agg}) on ${worlds.join("/")}, seed ${opts.seed}.`
+        + ` Champion of generation ${gen}, edge ${edge >= 0 ? "+" : ""}${edge.toFixed(0)} vs the hall of fame.` }, null, 2));
+      if (args.json) writeFileSync(args.json, JSON.stringify(partial, null, 1));
+    };
+    let bestSoFar = null;
     const res = runEvolution({
       ...opts,
       onGeneration: (entry, ranked) => {
+        partial.push(entry);
+        if (!bestSoFar || ranked[0].edge > bestSoFar.edge) bestSoFar = { genome: ranked[0].genome, gen: entry.gen, edge: ranked[0].edge };
+        writeCheckpoint(bestSoFar.genome, bestSoFar.gen, bestSoFar.edge);
         console.log(`-- generation ${entry.gen} --`);
         console.log(pad("#", 4) + pad("genome", 9) + padL("elo", 6) + padL("edge", 7) + padL("sigma", 7)
           + "  genes vs. Adaptive");
@@ -1741,12 +1761,11 @@ const CMDS = {
       + `(${res.bestEdge >= 0 ? "+" : ""}${res.bestEdge.toFixed(0)} vs the hall of fame's own mean`
       + `${hallOfFame.length ? "" : " — NO baselines given, so this is only vs the 1200 origin"})`);
     console.log(`  ${diffGenes(res.bestGenome, baseline, { genes: res.genes })}`);
-    const out = args.out || "evolved.json";
-    writeFileSync(out, JSON.stringify({ ...res.best, _hypothesis:
-      `Evolved: population ${opts.population} x ${opts.generations} generations, fitness = duel Elo `
-      + `(${difficulties.join("/")}, agg ${opts.agg}) on ${worlds.join("/")}, seed ${opts.seed}.` }, null, 2));
+    // The final write goes through the same checkpoint path, so an interrupted run and a completed
+    // one leave a file of exactly the same shape — no "the real output only exists if it finished".
+    writeCheckpoint(res.bestGenome, res.bestGen, res.bestEdge);
     console.log(`\nwrote ${out} — a runnable candidate: duel it against a baseline, then sweep it.`);
-    if (args.json) { writeFileSync(args.json, JSON.stringify(res.log, null, 1)); console.log(`wrote ${args.json}`); }
+    if (args.json) console.log(`wrote ${args.json}`);
   },
 };
 
