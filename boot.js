@@ -28,6 +28,7 @@ import { observedState, exitObserverMode } from "./observer.js";
 import { renderObserverPanel } from "./observerPanel.js";
 import { showObjectives, hideObjectives, showSeedChip, showFactionChip, showGameOver, showScenarioEnd, showGalaxyToast } from "./overlays.js";
 import { renderMapSelect, setup, DIFFICULTY_OPTIONS } from "./setup.js";
+import { captureCompetitionResult } from "./competition.js";
 import { setupEscort, setupRaider, setupBounty } from "./engine/scenarios.js";
 import { createGalaxy, activeState, jumpCapital, sweepColonies, stepGalaxy, surrenderGalaxy, DOMINATION_TARGET, playerSpaceports, canJump, canJumpTo, jumpCost } from "./engine/galaxy.js";
 import { openLandingPicker } from "./landingPicker.js";
@@ -116,6 +117,44 @@ export function startGame(planetId) {
     matchTimeLimit: setup.matchTimeLimit, popCap: setup.popCap,
     playerFaction: setup.faction, aiFaction });
   bootState(fresh, { intro: true });
+}
+
+// Start one COMPETITION fixture as a real, live skirmish (docs/competitions-and-elo.md Phase 4 —
+// the Gauntlet's "Play Next Match"). Deliberately a near-copy of startGame above rather than a
+// second code path: same resolveSeed/difficultyDials/createGameState/bootState chain, same loop,
+// same HUD — this IS an ordinary skirmish, it just knows which fixture it belongs to. Nothing about
+// the running game changes; only `game.competition` (session.js) is set, which the game-over hook
+// below reads to route the result into the ledger.
+//
+// EVERYTHING IS TAKEN FROM THE FIXTURE, not from the setup screen: the world, the exact seed (off
+// the gauntlet's own schedule — never a fresh random one, or a resumed run would replay a different
+// map, D6), the pinned difficulty, the opponent's own strategy/archetype, the match length, and
+// this fixture's swapAsym parity. The human plays owner "player" with their chosen faction, exactly
+// as in a normal skirmish (D4: there is no other seat available to them).
+//
+// The three map dials are PINNED, not read off `setup`: a duel's own createSelfPlayState leaves
+// sizeMult/resourceMult/popCap at engine defaults, so every rating already in the ladder was earned
+// on that map shape. Letting a player's leftover skirmish preferences (Gigantic, Abundant) shape
+// the matches that move THEIR rating in the same bracket would make the two numbers incomparable.
+export function startCompetitionMatch(fixture) {
+  const { world, seed, difficulty, matchTimeLimit, swapAsym, aiStrategy, aiArchetype, playerFaction, competition } = fixture;
+  sound.unlockAudio();   // a real user gesture (the Play button), same point setup.js's map cards unlock audio
+  const resolved = resolveSeed({ seed });
+  const diff = difficultyDials(difficulty);
+  // The opponent's faction comes from the world's archetype, exactly as in a normal skirmish — a
+  // roster entry's own faction stays what Phase 2 made it (flavour on the row), because a self-play
+  // match has no faction dial at all, so every AI-vs-AI rating in this bracket was earned without
+  // one. Giving the human's opponents a faction edge here alone would break that comparison.
+  const aiFaction = archetypeFor(world).faction || "neutral";
+  const fresh = createGameState({
+    planetId: world, seed: resolved, rng: mulberry32(resolved),
+    aiApm: diff.aiApm, aiMicro: diff.aiMicro, aiStrategy, difficulty, aiArchetype,
+    sizeMult: 1, resourceMult: 1, popCap: null,
+    swapAsym: !!swapAsym, matchTimeLimit,
+    playerFaction: playerFaction || setup.faction, aiFaction,
+  });
+  bootState(fresh, { intro: true });
+  game.competition = competition;   // after bootState, which clears it (see its own line)
 }
 
 // Start a Convoy Escort scenario on `planetId` at the chosen difficulty. Shares
@@ -289,6 +328,10 @@ export function restartToMapSelect() {
   exitObserverMode();   // a dangling spectateId into a galaxy that's about to be nulled would wedge the next game's input guards
   game.state = null;
   game.galaxy = null;
+  // No game, no fixture in play. Every path that leaves a LIVE competition match has already
+  // settled it before reaching here — the game-over hook records its result, saveload.js's Home
+  // confirm forfeits it — so this is the belt-and-suspenders clear, not the one that decides.
+  game.competition = null;
   clearPause();   // leaving a game clears any pause + the PAUSED banner
   pauseBtn.classList.add("hidden");   // …and the topbar pause control (no game to pause)
   renderMapSelect();
@@ -309,6 +352,7 @@ export function bootState(newState, { intro }) {
   hideObjectives();
 
   game.galaxy = null;   // cleared by default; startOdyssey re-sets it right after this returns
+  game.competition = null;   // …and likewise: startCompetitionMatch re-sets it right after this returns
   game.groups = {};     // fresh game → fresh control groups (entity ids reset per game, so stale groups would mis-select)
   game.colonyAlerts = {};   // fresh game → fresh starmap alert ledger (a previous game's background-colony alerts are meaningless here)
   game.state = newState;
@@ -396,7 +440,13 @@ export function bootState(newState, { intro }) {
           { odyssey: !!game.galaxy, wonBy: game.galaxy?.wonBy, surrendered: !!game.galaxy?.surrendered,
             // winReason (engine/victory.js finish) + the state itself, so showGameOver can branch
             // its copy honestly and, for a score decision, show the bank/army/structures breakdown.
-            winReason: game.state.winReason, state: game.state });
+            winReason: game.state.winReason, state: game.state,
+            // A competition fixture's result is recorded HERE, at the one point the match is
+            // genuinely over (docs/competitions-and-elo.md Phase 4) — competition.js owns the write
+            // (it holds the live ledger) and hands back the block this screen shows: the rating
+            // change, the seat disclosure, and what the next fixture is with a button to play it.
+            // null for every ordinary skirmish, which leaves this screen byte-identical to before.
+            competition: game.competition ? captureCompetitionResult(game.state) : null });
       }
     },
   });

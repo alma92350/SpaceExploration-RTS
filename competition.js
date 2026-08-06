@@ -52,17 +52,27 @@
 "use strict";
 
 import { mapSelectEl } from "./dom.js";
-import { STRATEGY_OPTIONS, optionGroup, MAP_CHOICES, setup, renderMapSelect } from "./setup.js";
+import { game } from "./session.js";
+import { STRATEGY_OPTIONS, optionGroup, MAP_CHOICES, MATCH_LENGTH_OPTIONS, setup, renderMapSelect } from "./setup.js";
+// The Gauntlet's live matches (Phase 4) are booted through boot.js like any other game, and its
+// "back to the competition screen" path leaves one the same way the game-over screen does. boot.js
+// imports this module in return (for captureCompetitionResult) — both files are already inside
+// test/static-integrity.test.js's documented UI cluster, so this closes no new cycle; every use
+// below is at CALL time, never at module scope, so neither side can read the other in its TDZ.
+import { startCompetitionMatch, restartToMapSelect } from "./boot.js";
 import { DIFFICULTY_OPTIONS } from "./engine/aiDifficulty.js";
 import { archetypeFor, ARCHETYPES } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { planetName } from "./data.js";
 import { duelSeed } from "./tools/duelCore.js";
 import { swissRoundCount, tournamentRoundPlan, tallyStandings } from "./pairing.js";
-import { INITIAL_RATING, PROVISIONAL_GAMES, applySeries } from "./elo.js";
+import { INITIAL_RATING, PROVISIONAL_GAMES, applySeries, applyResult } from "./elo.js";
+import { playerScore } from "./engine/victory.js";
 import {
   createLedger, addRosterEntry, removeRosterEntry, recordCompetition, standingsFor,
   exportLedger, importLedgerJSON, loadLedgerFromStorage, saveLedgerToStorage,
+  GAUNTLET_DEFAULT_MATCH_SECONDS, humanEntry, startGauntlet, currentGauntletFixture,
+  recordGauntletMatch, recordGauntletForfeit, gauntletProgress, abandonGauntlet,
 } from "./competitionLedger.js";
 
 /* ============================================================
@@ -512,6 +522,262 @@ export function shapeBracketView(bracket) {
 }
 
 /* ============================================================
+   THE GAUNTLET (docs/competitions-and-elo.md Phase 4) — the pure half of the human-inclusive
+   format: the config the player builds -> the start opts competitionLedger.js's startGauntlet
+   consumes, the fixture list the in-progress screen renders, next-fixture resolution, the live
+   match's own outcome mapping, and the completion summary. Same split as everything above.
+
+   ONE LIVE MATCH PER OPPONENT, and that is the format's defining decision, not an economy measure.
+   An AI-vs-AI pairing is worlds x seeds x 2 sides of SIMULATED matches — a few seconds of compute
+   — but a person cannot play 40 real matches. One live match each is what makes a human-inclusive
+   format playable at all, which is why Gauntlet is the one that ships first (the doc's own Phase 4
+   note). Everything below prices, schedules and reports a run on exactly that basis: `matches`
+   here is a count of REAL GAMES A PERSON SITS AND PLAYS, so it is measured in wall-clock hours,
+   never in the ~1.5 s/match SECONDS_PER_MATCH the AI-vs-AI estimates above use.
+
+   D4 runs through all of it: the human is always owner "player", so a human pairing cannot be
+   side-swapped, the seat edge tools/selfplay.js measures runs against the human, and that is
+   DISCLOSED (SEAT_DISCLOSURE below, carried by shapeGauntletSummary itself so a standing and the
+   caveat that qualifies it can't be rendered apart) rather than papered over with a rating fudge.
+   ============================================================ */
+
+// D4's disclosure, in one plain sentence-set, stated wherever the human's rating or standing shows
+// — the config screen, the in-progress standing, the completion summary, and the game-over screen
+// after a live match. Deliberately a plain string constant, not markup and not a tooltip: the
+// Phase 4 brief's own wording is "plain and factual, not buried in a tooltip", and a constant is
+// also the only shape a Node test can assert the CONTENT of.
+export const SEAT_DISCLOSURE =
+  'Seat note: you always play the "player" seat, so a gauntlet pairing can never be side-swapped ' +
+  'the way an AI-vs-AI one is. The known edge runs the other way — the "ai" seat reads state the ' +
+  '"player" seat has already changed on ~13% of think cycles, always in the "ai" seat\'s favour. ' +
+  "Your rating is not adjusted for it (an underivable correction would be worse than a disclosed " +
+  "one); the map's own asymmetric halves do still alternate from match to match.";
+
+// Seconds -> the granularity a person planning an evening actually thinks in. Minutes below an
+// hour, hours-and-minutes above it — deliberately NOT estimateTimeText above, which prices a
+// background SIMULATION in seconds-to-minutes; this prices real play in minutes-to-hours.
+function playTimeText(seconds) {
+  const mins = Math.round(seconds / 60);
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/**
+ * What a gauntlet will actually cost the player, shown BEFORE Start is clickable: one live match
+ * per opponent, and the wall-clock that implies at the pinned match length. `seconds` is the
+ * worst case — every match running its full clock — hence "up to" in the text; a match settled by
+ * elimination ends sooner.
+ * @param {{ opponents: number, matchTimeLimit?: number }} cfg
+ * @returns {{ matches: number, perMatch: number, seconds: number, timeText: string, text: string }}
+ */
+export function gauntletEstimate({ opponents, matchTimeLimit } = {}) {
+  const matches = Math.max(0, Math.floor(Number(opponents)) || 0);
+  const perMatch = Number(matchTimeLimit) > 0 ? Math.floor(Number(matchTimeLimit)) : GAUNTLET_DEFAULT_MATCH_SECONDS;
+  const seconds = matches * perMatch;
+  return {
+    matches, perMatch, seconds, timeText: playTimeText(seconds),
+    text: `${matches} live match${matches === 1 ? "" : "es"} — one per opponent — up to about `
+      + `${playTimeText(seconds)} of real play (${playTimeText(perMatch)} each)`,
+  };
+}
+
+/**
+ * Shape the Gauntlet config screen's state into exactly the opts competitionLedger.js's
+ * startGauntlet consumes. Deterministic — an unset seed is resolved by the CALLER before this runs,
+ * the same division buildJob/buildTournamentJob already hold to — and it throws the same
+ * user-facing messages startGauntlet's own guards would, so the config screen can refuse a bad
+ * field without a half-built run ever existing.
+ * @param {{ field: string[], difficulty?: string, matchTimeLimit?: number, worlds: string[],
+ *   seedBase?: number, humanName?: string }} cfg
+ * @returns {{ field: string[], difficulty: string, matchTimeLimit: number, worlds: string[], seedBase: number }}
+ */
+export function buildGauntletStart({ field, difficulty, matchTimeLimit, worlds, seedBase, humanName } = {}) {
+  const names = (Array.isArray(field) ? field : []).map(n => (typeof n === "string" ? n.trim() : "")).filter(Boolean);
+  if (names.length === 0) throw new Error("Pick at least one opponent for the field");
+  const seen = new Set();
+  for (const name of names) {
+    // Same reasoning as buildJob's own same-name guard: the ladder is keyed by name, and the
+    // gauntlet plays each opponent EXACTLY once, so one name twice is not a field this can run.
+    if (seen.has(name)) throw new Error(`"${name}" is in the field twice — each opponent is played exactly once`);
+    seen.add(name);
+    if (humanName && name === humanName) throw new Error("Leave yourself out of the field — you play everyone else");
+  }
+  if (!Array.isArray(worlds) || worlds.length === 0) throw new Error("Pick at least one world");
+  return {
+    field: names,
+    difficulty: difficulty || "medium",
+    // Quick (20 min) is the default for a real reason worth restating at the seam that applies it:
+    // five opponents at Standard is over three hours of PLAY. GAUNTLET_DEFAULT_MATCH_SECONDS is
+    // competitionLedger.js's own constant, so the picker, this builder and the sanitizer's fallback
+    // are all one number.
+    matchTimeLimit: Number(matchTimeLimit) > 0 ? Math.floor(Number(matchTimeLimit)) : GAUNTLET_DEFAULT_MATCH_SECONDS,
+    worlds: [...worlds],
+    seedBase: (Number(seedBase) || 0) >>> 0,
+  };
+}
+
+// A resolved fixture's status, from the run's own record: a played one reads off its result (a
+// forfeit is a loss, but a DISTINGUISHABLE one — the screen shows it as what it was), an unplayed
+// one is either the next match or still waiting behind it.
+const GAUNTLET_STATUS_LABEL = {
+  won: "Won", lost: "Lost", drawn: "Drawn", forfeit: "Forfeited", next: "Next up", pending: "Pending",
+};
+
+/**
+ * The gauntlet's whole fixture list, shaped for display — one row per opponent, in play order,
+ * each carrying its own state. Never re-derives a schedule (competitionLedger.js owns that, once,
+ * at start — D6) and never re-decides an outcome: this reads `results` and `nextIndex` back.
+ * @param {{ gauntlet: object|null }} ledger
+ * @returns {Array<{index: number, number: number, opponent: string, world: string, worldName: string,
+ *   swapAsym: boolean, played: boolean, current: boolean, status: string, statusLabel: string,
+ *   margin: number|null}>}
+ */
+export function shapeGauntletFixtures(ledger) {
+  const g = ledger && ledger.gauntlet;
+  if (!g) return [];
+  return g.schedule.map((fixture, i) => {
+    const result = g.results[i] || null;
+    const status = result
+      ? (result.forfeit ? "forfeit" : result.winner === "human" ? "won" : result.winner === "opponent" ? "lost" : "drawn")
+      : (i === g.nextIndex ? "next" : "pending");
+    return {
+      index: i, number: i + 1,
+      opponent: fixture.opponent,
+      world: fixture.world, worldName: planetName(fixture.world),
+      swapAsym: !!fixture.swapAsym,
+      played: !!result, current: status === "next",
+      status, statusLabel: GAUNTLET_STATUS_LABEL[status],
+      margin: result ? result.margin : null,
+    };
+  });
+}
+
+/**
+ * The next unplayed fixture — competitionLedger.js's own currentGauntletFixture (which is what a
+ * live match is actually booted from: the SCHEDULED world and seed, never a fresh random one)
+ * plus the two display fields the screen and the game-over view both need. Null when there is no
+ * gauntlet, or when every opponent has been faced.
+ * @param {object} ledger
+ */
+export function nextGauntletFixture(ledger) {
+  const fixture = currentGauntletFixture(ledger);
+  if (!fixture) return null;
+  const worldName = planetName(fixture.world);
+  return {
+    ...fixture,
+    number: fixture.index + 1,
+    worldName,
+    label: `Match ${fixture.index + 1} of ${fixture.total} — you vs ${fixture.opponent} on ${worldName}`,
+  };
+}
+
+/**
+ * A finished live match's terminal state -> the result recordGauntletMatch takes, stated in the
+ * GAUNTLET's own vocabulary. The mapping is deliberately made HERE and only here: the human is
+ * always owner "player" (D4), so "the player seat won" is "the human won" — but recordGauntletMatch
+ * refuses owner ids outright precisely so that equivalence is written down once, in a tested pure
+ * function, rather than assumed at each call site.
+ *
+ * `margin` is engine/victory.js's own playerScore difference, human-relative — the same
+ * aName-relative convention tools/duelCore.js's runDuelMatch row already uses, so a human row's
+ * margin means exactly what an AI row's does.
+ * @param {{ winner: string|null, winReason: string|null, time: number }} state  a finished game state.
+ * @returns {{ winner: "human"|"opponent"|"draw", margin: number, time: number|null, winReason: string|null }}
+ */
+export function humanMatchOutcome(state) {
+  const human = playerScore(state, "player");
+  const opponent = playerScore(state, "ai");
+  return {
+    winner: state.winner === "player" ? "human" : state.winner === "ai" ? "opponent" : "draw",
+    margin: +(human - opponent).toFixed(1),
+    time: Number.isFinite(state.time) ? +state.time.toFixed(1) : null,
+    winReason: typeof state.winReason === "string" ? state.winReason : null,
+  };
+}
+
+/**
+ * What each gauntlet match did to the HUMAN's rating, per fixture. Not stored anywhere — a
+ * GauntletResult carries the outcome, not a rating snapshot — so it is REPLAYED here: every history
+ * entry in the gauntlet's own bracket, in the order the ledger recorded it, folded through the same
+ * elo.js applyResult competitionLedger.js itself applied (D1: one rating implementation), reading
+ * the human's entry off before and after each row that belongs to a fixture of THIS run.
+ *
+ * Replaying the whole bracket rather than just this run's rows is the point: a rating change is a
+ * function of what both sides were rated going in, so a gauntlet interleaved with duels or a
+ * tournament must see those too, or its numbers would silently disagree with the Standings screen.
+ * Rows are matched to fixtures by (world, seed, opponent) — the fixture's own identity, recorded on
+ * every human row — never by position, which a later run against the same field would break.
+ * @param {object} ledger
+ * @returns {Array<{index: number, opponent: string, before: {rating: number, games: number},
+ *   after: {rating: number, games: number}, change: number}>}
+ */
+export function gauntletLadderTrail(ledger) {
+  const g = ledger && ledger.gauntlet;
+  if (!g) return [];
+  const wanted = new Map();
+  g.schedule.forEach((f, i) => { if (i < g.results.length) wanted.set(`${f.world}|${f.seed}|${f.opponent}`, i); });
+
+  const ratings = {};
+  const trail = [];
+  for (const entry of ledger.history || []) {
+    if (entry.difficulty !== g.difficulty) continue;   // D2: a rating only ever moves inside its own bracket
+    for (const row of entry.rows) {
+      const mine = row.human === true && row.aName === g.humanName
+        ? wanted.get(`${row.world}|${row.seed}|${row.bName}`) : undefined;
+      // Captured BEFORE the fold: applyResult replaces the table's entry object rather than
+      // mutating it, so this reference stays the genuine pre-match rating afterwards.
+      const before = mine === undefined ? null : ratingLookup(ratings, g.humanName);
+      applyResult(ratings, row.aName, row.bName, row.winner === "a" ? 1 : row.winner === "draw" ? 0.5 : 0);
+      if (mine === undefined) continue;
+      const after = ratingLookup(ratings, g.humanName);
+      trail.push({
+        index: mine, opponent: row.bName,
+        before: { ...before }, after: { ...after },
+        // Rounded on both ends, exactly like the results view's own eloCard, so the change shown
+        // is the change between the two numbers actually on screen.
+        change: Math.round(after.rating) - Math.round(before.rating),
+      });
+    }
+  }
+  return trail.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * The whole run, shaped for the in-progress standing AND the final one — they are the same table,
+ * just at different points (a resumed gauntlet is exactly a half-finished one, so giving them two
+ * shapes would mean two things to keep in step). Counts come from competitionLedger.js's own
+ * gauntletProgress, the rating from the pinned bracket's table, the per-fixture change from
+ * gauntletLadderTrail above; nothing here re-derives an outcome. Null when there's no gauntlet.
+ * @param {object} ledger
+ */
+export function shapeGauntletSummary(ledger) {
+  const progress = gauntletProgress(ledger);
+  if (!progress) return null;
+  const trail = new Map(gauntletLadderTrail(ledger).map(t => [t.index, t]));
+  const rating = ratingLookup((ledger.ratingsByDifficulty || {})[progress.difficulty], progress.humanName);
+  const rows = shapeGauntletFixtures(ledger).map(row => {
+    const moved = trail.get(row.index) || null;
+    return { ...row, change: moved ? moved.change : null, ratingAfter: moved ? Math.round(moved.after.rating) : null };
+  });
+  return {
+    humanName: progress.humanName,
+    difficulty: progress.difficulty,
+    matchTimeLimit: progress.matchTimeLimit,
+    total: progress.total, played: progress.played, remaining: progress.remaining,
+    wins: progress.wins, losses: progress.losses, draws: progress.draws, forfeits: progress.forfeits,
+    complete: progress.complete,
+    record: `${progress.wins}-${progress.losses}-${progress.draws}`,
+    rating: { rating: Math.round(rating.rating), games: rating.games, provisional: rating.games < PROVISIONAL_GAMES },
+    netChange: rows.reduce((sum, r) => sum + (r.change || 0), 0),
+    rows,
+    // The disclosure travels WITH the standing (D4): a caller can render one without the other only
+    // by deliberately dropping a field, rather than by simply forgetting a separate constant exists.
+    disclosure: SEAT_DISCLOSURE,
+  };
+}
+
+/* ============================================================
    DOM RENDERING — guarded the dom.js way: every entry point below either checks `mapSelectEl`
    itself or is only ever reached from one that did, so this whole section is inert (never throws)
    under Node with no DOM. See test/static-integrity.test.js's C10 check.
@@ -599,6 +865,7 @@ const tourneyConfig = {
 };
 let tourneyView = "config";      // "config" | "progress" | "results"
 let tourneyError = null;
+let gauntletError = null;        // a validation/boot error, shown on the Gauntlet screen
 let tourneyJob = null;           // the job the current/last tournament run was built from
 let tourneyProgress = null;      // the last {type:"progress"} message (plus a pre-run {completed,total})
 let tourneyPairings = [];        // {type:"pairing"} summaries in arrival order — the live standings' input
@@ -636,6 +903,7 @@ const COMP_TABS = [
   { key: "tournament", label: "🏟 Tournament" },
   { key: "roster", label: "📋 Roster" },
   { key: "standings", label: "📈 Standings" },
+  { key: "gauntlet", label: "🎯 Gauntlet" },
 ];
 
 function renderCompTabs(container) {
@@ -651,6 +919,7 @@ function renderCompTabs(container) {
       compError = null;
       compRosterError = null;
       tourneyError = null;
+      gauntletError = null;
       refreshCompView();
     });
     row.appendChild(btn);
@@ -671,6 +940,7 @@ function refreshCompView() {
   if (compScreen === "roster") renderRosterScreen(wrapEl);
   else if (compScreen === "standings") renderStandingsScreen(wrapEl);
   else if (compScreen === "tournament") renderTournamentScreen(wrapEl);
+  else if (compScreen === "gauntlet") renderGauntletScreen(wrapEl);
   else if (compView === "progress") renderProgressView(wrapEl);
   else if (compView === "results") renderResultsView(wrapEl);
   else renderConfigView(wrapEl);
@@ -750,9 +1020,13 @@ function renderEntrantCard(container, key, label) {
 // "every world × every seed runs both directions" rule — over its own state, rather than growing a
 // second, drifting copy of each. `cfg` is compConfig or tourneyConfig; both carry
 // worlds/seeds/seedText.
-function renderWorldPicker(container, cfg) {
+// `hint` overrides the default line for a format whose worlds mean something else: the Gauntlet
+// (Phase 4) plays ONE match per opponent, drawn from this pool, and — being a human match — is
+// never side-swapped (D4), so the default sentence would be false there in exactly the way this
+// screen is meant to be careful about.
+function renderWorldPicker(container, cfg, hint) {
   container.appendChild(mk("p", "setup-hint",
-    "Worlds — pick one or more. Every world × every seed below runs BOTH directions, side-swapped."));
+    hint || "Worlds — pick one or more. Every world × every seed below runs BOTH directions, side-swapped."));
   const wrap = mk("div", "opt-group comp-worlds");
   MAP_CHOICES.forEach(id => {
     const selected = cfg.worlds.includes(id);
@@ -1092,8 +1366,13 @@ function renderTournamentScreen(container) {
 
 /* ---------- tournament: config ---------- */
 
-function renderFieldBuilder(container) {
-  const roster = ensureLedger().roster;
+// The multi-select field builder, over whichever config object owns a `field` array of roster
+// NAMES. Shared by the Tournament screen and (Phase 4) the Gauntlet screen rather than copied:
+// they differ only in how big a field they need and whether one roster row is excluded (the human
+// never plays themself), which is exactly what the two options are for.
+// `cfg` is tourneyConfig or gauntletConfig; `exclude` is a predicate on a roster ENTRY.
+function renderFieldBuilder(container, cfg, { exclude = null, minimum = 2, tooFewHint = "" } = {}) {
+  const roster = ensureLedger().roster.filter(entry => !(exclude && exclude(entry)));
   // The label goes in its own .setup-row, like every other labelled row on this screen (Format,
   // Difficulty, Swiss rounds, Seeds/world). .setup-label is styled for life INSIDE a .setup-row —
   // appended straight into .comp-screen it picked up the wrong layout and sat misaligned against
@@ -1103,13 +1382,11 @@ function renderFieldBuilder(container) {
   labelRow.appendChild(mk("span", "setup-label", "Field"));
   container.appendChild(labelRow);
 
-  if (roster.length < 2) {
-    container.appendChild(mk("p", "setup-hint",
-      "A tournament runs on named, persistent entrants, and needs at least 2 of them. " +
-      "Add entrants on the Roster tab, then come back."));
+  if (roster.length < minimum) {
+    container.appendChild(mk("p", "setup-hint", tooFewHint));
     const go = mk("button", "btn comp-back-btn", "→ Go to the Roster tab");
     go.type = "button";
-    go.addEventListener("click", () => { compScreen = "roster"; tourneyError = null; refreshCompView(); });
+    go.addEventListener("click", () => { compScreen = "roster"; tourneyError = null; gauntletError = null; refreshCompView(); });
     container.appendChild(go);
     return;
   }
@@ -1117,20 +1394,20 @@ function renderFieldBuilder(container) {
   // Drop any pick whose roster entry has since been removed, so the field can never name a
   // now-missing entrant (resolveEntrantPick guards the Quick Duel side of the same hazard).
   const known = new Set(roster.map(r => r.name));
-  tourneyConfig.field = tourneyConfig.field.filter(name => known.has(name));
+  cfg.field = cfg.field.filter(name => known.has(name));
 
   const list = mk("div", "comp-field-list");
   roster.forEach(entry => {
     const shaped = shapeRosterRow(entry);
-    const row = mk("label", "comp-field-row" + (tourneyConfig.field.includes(entry.name) ? " picked" : ""));
+    const row = mk("label", "comp-field-row" + (cfg.field.includes(entry.name) ? " picked" : ""));
     const box = document.createElement("input");
     box.type = "checkbox";
     box.className = "comp-field-check";
-    box.checked = tourneyConfig.field.includes(entry.name);
+    box.checked = cfg.field.includes(entry.name);
     box.addEventListener("change", () => {
-      tourneyConfig.field = box.checked
-        ? [...tourneyConfig.field, entry.name]
-        : tourneyConfig.field.filter(name => name !== entry.name);
+      cfg.field = box.checked
+        ? [...cfg.field, entry.name]
+        : cfg.field.filter(name => name !== entry.name);
       refreshCompView();
     });
     row.appendChild(box);
@@ -1143,12 +1420,12 @@ function renderFieldBuilder(container) {
   const actions = mk("div", "comp-field-actions");
   const all = mk("button", "btn comp-remove-btn", "Select all");
   all.type = "button";
-  all.addEventListener("click", () => { tourneyConfig.field = roster.map(r => r.name); refreshCompView(); });
+  all.addEventListener("click", () => { cfg.field = roster.map(r => r.name); refreshCompView(); });
   const none = mk("button", "btn comp-remove-btn", "Clear");
   none.type = "button";
-  none.addEventListener("click", () => { tourneyConfig.field = []; refreshCompView(); });
+  none.addEventListener("click", () => { cfg.field = []; refreshCompView(); });
   actions.append(all, none);
-  actions.appendChild(mk("span", "comp-field-count", `${tourneyConfig.field.length} of ${roster.length} selected`));
+  actions.appendChild(mk("span", "comp-field-count", `${cfg.field.length} of ${roster.length} selected`));
   container.appendChild(actions);
 }
 
@@ -1166,7 +1443,11 @@ function renderTournamentConfig(container) {
   }));
   container.appendChild(formatRow);
 
-  renderFieldBuilder(container);
+  renderFieldBuilder(container, tourneyConfig, {
+    minimum: 2,
+    tooFewHint: "A tournament runs on named, persistent entrants, and needs at least 2 of them. "
+      + "Add entrants on the Roster tab, then come back.",
+  });
 
   const diffRow = mk("div", "setup-row");
   diffRow.appendChild(mk("span", "setup-label", "Difficulty"));
@@ -1600,24 +1881,19 @@ function importLadderFromFile() {
   input.click();
 }
 
-// A small confirm-before-delete modal, same overlay/card idiom as saveload.js's own goHome and
-// landingPicker.js's landing-pick-confirm — each of those gets its OWN class names rather than
-// literally sharing .home-confirm (see landingPicker.js's own comment), so this does too
-// (.comp-confirm/.comp-confirm-card in style.css).
-function confirmRemoveRosterEntry(name) {
-  const activeLedger = ensureLedger();
+// A small confirm modal, same overlay/card idiom as saveload.js's own goHome and landingPicker.js's
+// landing-pick-confirm — each of those gets its OWN class names rather than literally sharing
+// .home-confirm (see landingPicker.js's own comment), so this does too (.comp-confirm/
+// .comp-confirm-card in style.css). Shared by the Roster screen's Remove and (Phase 4) the
+// Gauntlet's Forfeit/Abandon, because "say what this will do before doing it" is the same dialog
+// every time — only its words and its one destructive action differ.
+function openCompConfirm({ title, body, confirmLabel, onConfirm }) {
   const overlay = mk("div", "comp-confirm");
   const card = mk("div", "comp-confirm-card");
   card.setAttribute("role", "dialog");
   card.setAttribute("aria-modal", "true");
   card.tabIndex = -1;
-
-  const h = mk("h3", null, `Remove "${name}"?`);
-  const played = hasRatingHistory(activeLedger, name);
-  const p = mk("p", null, played
-    ? `${name} has rating history. Removing it drops it from the Standings screen, but its recorded matches and ratings stay in the ledger.`
-    : `${name} hasn't played a rated match yet.`);
-  card.append(h, p);
+  card.append(mk("h3", null, title), mk("p", null, body));
 
   // Same close()-funnels-every-exit-path discipline as saveload.js's own goHome() confirm modal:
   // Cancel, Confirm, a backdrop click, AND Escape all have to detach the SAME window keydown
@@ -1634,14 +1910,9 @@ function confirmRemoveRosterEntry(name) {
   const cancelBtn = mk("button", "btn ghost", "Cancel");
   cancelBtn.type = "button";
   cancelBtn.addEventListener("click", close);
-  const confirmBtn = mk("button", "btn comp-danger-btn", "Remove");
+  const confirmBtn = mk("button", "btn comp-danger-btn", confirmLabel);
   confirmBtn.type = "button";
-  confirmBtn.addEventListener("click", () => {
-    close();
-    removeRosterEntry(activeLedger, name);
-    saveLedgerToStorage(activeLedger);
-    refreshCompView();
-  });
+  confirmBtn.addEventListener("click", () => { close(); onConfirm(); });
   actions.append(cancelBtn, confirmBtn);
   card.appendChild(actions);
 
@@ -1650,6 +1921,23 @@ function confirmRemoveRosterEntry(name) {
   window.addEventListener("keydown", onKey);
   wrapEl.appendChild(overlay);
   confirmBtn.focus();
+}
+
+function confirmRemoveRosterEntry(name) {
+  const activeLedger = ensureLedger();
+  const played = hasRatingHistory(activeLedger, name);
+  openCompConfirm({
+    title: `Remove "${name}"?`,
+    body: played
+      ? `${name} has rating history. Removing it drops it from the Standings screen, but its recorded matches and ratings stay in the ledger.`
+      : `${name} hasn't played a rated match yet.`,
+    confirmLabel: "Remove",
+    onConfirm: () => {
+      removeRosterEntry(activeLedger, name);
+      saveLedgerToStorage(activeLedger);
+      refreshCompView();
+    },
+  });
 }
 
 function renderRosterTable(container, roster) {
@@ -1798,6 +2086,491 @@ function renderStandingsScreen(container) {
   container.appendChild(wrap);
 }
 
+/* ============================================================
+   GAUNTLET SCREEN (docs/competitions-and-elo.md Phase 4) — the human against a field of AI roster
+   entrants, ONE LIVE match each, in field order. The one screen in this mode that leaves the
+   screen: every other tab runs simulations in a Worker and shows a table, this one boots a real
+   skirmish through boot.js and picks the run back up when the match is over.
+
+   THREE THINGS THIS SCREEN OWES THE PLAYER, all of them Phase 4 requirements rather than polish:
+     • THE COST, UP FRONT. Five opponents is five real matches — over three hours at Standard,
+       under two at Quick (which is why Quick is the default). gauntletEstimate says so before
+       Start is clickable.
+     • THE SEAT DISCLOSURE (D4). Stated in plain words wherever the human's rating or standing
+       shows: here on config, on the in-progress standing, on the final one, and on the game-over
+       screen after every match — carried by shapeGauntletSummary itself so a standing can't be
+       rendered without it.
+     • RESUMABILITY. The run lives in the ledger (competitionLedger.js), not in this module, so
+       entering this tab always reads it back from storage — after a page reload, and after the
+       navigation away into a live match and back, which is the normal case, not the edge one.
+   ============================================================ */
+
+// Its own config object, like tourneyConfig — the three screens are configured independently.
+// `difficulty`/`worlds` start null/empty and are defaulted lazily by renderCompetition(), for
+// exactly the TDZ reason compConfig.worlds already documents.
+const gauntletConfig = {
+  field: [],                                       // roster NAMES, in tick order — the play order
+  difficulty: null,
+  matchTimeLimit: GAUNTLET_DEFAULT_MATCH_SECONDS,  // Quick, the Phase 4 default (see buildGauntletStart)
+  worlds: [],
+  seedText: "",
+  humanDraft: { name: "", faction: "" },           // only used when there is no human entrant yet
+};
+
+const gauntletDifficulty = () => gauntletConfig.difficulty || compConfig.difficulty;
+
+// The human plays a real side, so their picker is setup.js's own playable list — ROSTER_FACTION_OPTIONS
+// minus the "Unaligned" entry an AI roster row may legitimately default to.
+const humanFactionOptions = () => ROSTER_FACTION_OPTIONS.filter(o => o.mult !== "neutral");
+
+function renderGauntletScreen(container) {
+  const activeLedger = ensureLedger();
+  // The ledger is the single source of "is there a run" — no module-level view flag to get out of
+  // step with it, which is what makes a reload (or a return from a live match) resume correctly.
+  if (activeLedger.gauntlet) renderGauntletRun(container, activeLedger);
+  else renderGauntletConfig(container, activeLedger);
+}
+
+/* ---------- gauntlet: config ---------- */
+
+function renderHumanEntrantCard(container, activeLedger) {
+  const you = humanEntry(activeLedger);
+  const card = mk("div", "comp-entrant comp-human-card");
+  card.appendChild(mk("h4", "comp-entrant-heading", "You"));
+
+  if (you) {
+    const row = shapeRosterRow(you);
+    card.appendChild(mk("p", "comp-human-name", row.name));
+    card.appendChild(mk("p", "setup-hint", `Playing as ${row.faction}. You are an ordinary roster entry with an ordinary rating — remove it on the Roster tab to rename yourself.`));
+    container.appendChild(card);
+    return;
+  }
+
+  card.appendChild(mk("p", "setup-hint",
+    "Name yourself. This joins the roster as a normal entrant flagged as the human, and is rated in the same bracketed table as everyone else."));
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "comp-name-input";
+  nameInput.placeholder = "Your name";
+  nameInput.maxLength = 40;
+  nameInput.value = gauntletConfig.humanDraft.name;
+  nameInput.addEventListener("input", () => { gauntletConfig.humanDraft.name = nameInput.value; });
+  card.appendChild(nameInput);
+
+  card.appendChild(mk("span", "setup-label comp-substrategy-label", "Faction"));
+  card.appendChild(optionGroup(gauntletConfig.humanDraft.faction, humanFactionOptions(), val => { gauntletConfig.humanDraft.faction = val; }));
+  card.appendChild(mk("p", "setup-hint", "Your own faction, exactly as in a skirmish — you play it in every match of the gauntlet."));
+  // Shown HERE rather than only at the foot of the screen: while there's no human entrant yet, this
+  // form is the only thing that can fail (Start is disabled without one), and an error about the
+  // name you just typed belongs next to the box you typed it in.
+  if (gauntletError) card.appendChild(mk("p", "comp-error", gauntletError));
+
+  const addBtn = mk("button", "btn", "+ Add me to the roster");
+  addBtn.type = "button";
+  addBtn.addEventListener("click", () => {
+    try {
+      addRosterEntry(activeLedger, {
+        name: gauntletConfig.humanDraft.name, faction: gauntletConfig.humanDraft.faction,
+        createdAt: Date.now(), human: true,
+      });
+      saveLedgerToStorage(activeLedger);
+      gauntletError = null;
+    } catch (err) {
+      gauntletError = err.message;
+    }
+    refreshCompView();
+  });
+  card.appendChild(addBtn);
+  container.appendChild(card);
+}
+
+function renderGauntletConfig(container, activeLedger) {
+  container.appendChild(mk("p", "setup-hint comp-intro",
+    "A Gauntlet is you against a field of AI entrants — ONE live match against each of them, in "
+    + "order, at one pinned difficulty. Every other format on this screen simulates its matches in "
+    + "the background; these you actually play. Your results are rated on the same ladder, in the "
+    + "same bracket, as everyone else's."));
+  container.appendChild(mk("p", "comp-disclosure", SEAT_DISCLOSURE));
+
+  const you = humanEntry(activeLedger);
+  renderHumanEntrantCard(container, activeLedger);
+
+  renderFieldBuilder(container, gauntletConfig, {
+    exclude: entry => entry.human === true,
+    minimum: 1,
+    tooFewHint: "A gauntlet needs at least one AI entrant to face. Add entrants on the Roster tab, then come back.",
+  });
+
+  const diffRow = mk("div", "setup-row");
+  diffRow.appendChild(mk("span", "setup-label", "Difficulty"));
+  diffRow.appendChild(optionGroup(gauntletDifficulty(), DIFFICULTY_OPTIONS, key => { gauntletConfig.difficulty = key; refreshCompView(); }));
+  container.appendChild(diffRow);
+  container.appendChild(mk("p", "setup-hint",
+    "Pinned for the WHOLE gauntlet — every opponent plays at it, and it is the ladder bracket the "
+    + "run is rated into (D2). It can't be changed once the gauntlet starts."));
+
+  const lenRow = mk("div", "setup-row");
+  lenRow.appendChild(mk("span", "setup-label", "Match length"));
+  lenRow.appendChild(optionGroup(gauntletConfig.matchTimeLimit, MATCH_LENGTH_OPTIONS, val => { gauntletConfig.matchTimeLimit = val; refreshCompView(); }));
+  container.appendChild(lenRow);
+
+  // World picker + Seed, but deliberately NOT renderSeedsRow's "Seeds / world": a gauntlet plays
+  // exactly one match per opponent, so there are no replicates to run — that row would offer a
+  // multiplier this format does not have.
+  renderWorldPicker(container, gauntletConfig,
+    "Worlds — pick one or more. Each match draws its world from this pool, so a wide pool makes the "
+    + "gauntlet a tour rather than the same map every time. The map's asymmetric halves alternate "
+    + "match by match; the SEATS never swap (see the seat note above).");
+  renderSeedRow(container, gauntletConfig);
+  container.appendChild(mk("p", "setup-hint",
+    "The seed fixes the whole schedule — which world and which map each match is played on — up "
+    + "front, so a run resumed days later replays the fixtures it always had."));
+
+  // THE COST, before Start is clickable: one live match per opponent, and what that means in real
+  // hours at this match length.
+  const ready = !!you && gauntletConfig.field.length > 0 && gauntletConfig.worlds.length > 0;
+  if (gauntletConfig.field.length > 0) {
+    const est = gauntletEstimate({ opponents: gauntletConfig.field.length, matchTimeLimit: gauntletConfig.matchTimeLimit });
+    const line = mk("p", "comp-estimate", est.text);
+    line.appendChild(mk("span", "comp-estimate-detail",
+      "One live match per opponent — you play every one of them yourself. A match can end sooner than its clock."));
+    container.appendChild(line);
+  }
+  if (!ready) {
+    container.appendChild(mk("p", "setup-hint",
+      !you ? "Add yourself above to start a gauntlet."
+        : gauntletConfig.field.length === 0 ? "Pick at least one opponent."
+          : "Pick at least one world."));
+  }
+
+  if (gauntletError && you) container.appendChild(mk("p", "comp-error", gauntletError));   // the no-human case shows it in the card above
+
+  const startBtn = mk("button", "btn" + (ready ? "" : " disabled"), "▶ Start Gauntlet");
+  startBtn.type = "button";
+  startBtn.disabled = !ready;
+  if (ready) startBtn.addEventListener("click", startGauntletRun);
+  container.appendChild(startBtn);
+}
+
+function startGauntletRun() {
+  gauntletError = null;
+  const activeLedger = ensureLedger();
+  const you = humanEntry(activeLedger);
+  try {
+    startGauntlet(activeLedger, {
+      ...buildGauntletStart({
+        field: gauntletConfig.field,
+        difficulty: gauntletDifficulty(),
+        matchTimeLimit: gauntletConfig.matchTimeLimit,
+        worlds: gauntletConfig.worlds,
+        // Resolved HERE, in the DOM layer, exactly like startDuel/startTournament — a blank Seed
+        // box means "roll one", which is a Math.random call the pure half must never make.
+        seedBase: resolveSeedBase(gauntletConfig.seedText),
+        humanName: you && you.name,
+      }),
+      at: Date.now(),
+    });
+    saveLedgerToStorage(activeLedger);
+  } catch (err) {
+    gauntletError = err.message;
+  }
+  refreshCompView();
+}
+
+/* ---------- gauntlet: the run (in progress, and finished) ---------- */
+
+function renderGauntletFixtureTable(container, summary) {
+  const wrap = mk("div", "comp-table-wrap");
+  const table = document.createElement("table");
+  table.className = "comp-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["#", "Opponent", "World", "Result", "Margin", "Rating"].forEach(h => headRow.appendChild(mk("th", null, h)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  summary.rows.forEach(row => {
+    const tr = document.createElement("tr");
+    tr.className = "comp-fixture-row is-" + row.status;
+    tr.appendChild(mk("td", null, String(row.number)));
+    tr.appendChild(mk("td", null, row.opponent));
+    tr.appendChild(mk("td", null, row.worldName));
+    tr.appendChild(mk("td", null, row.statusLabel));
+    tr.appendChild(mk("td", null, row.played ? String(row.margin) : "—"));
+    tr.appendChild(mk("td", null, row.change == null ? "—" : `${row.ratingAfter} (${row.change > 0 ? "+" : ""}${row.change})`));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
+function confirmForfeitNextFixture(next) {
+  openCompConfirm({
+    title: `Forfeit match ${next.number} of ${next.total}?`,
+    // The Phase 4 rule, said out loud BEFORE it happens: a forfeit is a real, rated loss, not a
+    // skipped fixture.
+    body: `This records a LOSS to ${next.opponent} in the ${difficultyLabelFor(next.difficulty)} bracket — `
+      + "rated exactly like a match you played and lost. It cannot be undone.",
+    confirmLabel: "Forfeit — record a loss",
+    onConfirm: () => {
+      const activeLedger = ensureLedger();
+      try {
+        recordGauntletForfeit(activeLedger, { at: Date.now() });
+        saveLedgerToStorage(activeLedger);
+        gauntletError = null;
+      } catch (err) {
+        gauntletError = err.message;
+      }
+      refreshCompView();
+    },
+  });
+}
+
+function confirmAbandonGauntlet(summary) {
+  openCompConfirm({
+    title: summary.complete ? "Clear this gauntlet?" : "Abandon this gauntlet?",
+    body: summary.complete
+      ? "The run's results stay on the ladder — this only clears the finished run so you can start another."
+      : (summary.played
+        ? `The ${summary.played} match${summary.played === 1 ? "" : "es"} you already played keep their ratings; `
+        : "Nothing has been played yet, so nothing is rated; ")
+        + `the ${summary.remaining} you never played are NOT rated — nobody is credited for a match that didn't happen.`,
+    confirmLabel: summary.complete ? "Clear" : "Abandon",
+    onConfirm: () => {
+      const activeLedger = ensureLedger();
+      abandonGauntlet(activeLedger);
+      saveLedgerToStorage(activeLedger);
+      gauntletError = null;
+      refreshCompView();
+    },
+  });
+}
+
+function renderGauntletRun(container, activeLedger) {
+  const summary = shapeGauntletSummary(activeLedger);
+  const next = nextGauntletFixture(activeLedger);
+  const diffLabel = difficultyLabelFor(summary.difficulty);
+
+  container.appendChild(mk("h3", "cards-heading",
+    `${summary.complete ? "Gauntlet complete" : "Gauntlet in progress"} — ${summary.humanName} vs `
+    + `${plural(summary.total, "opponent")} · ${diffLabel} bracket`));
+
+  const standing = mk("p", "comp-note comp-note-good",
+    `${summary.played} of ${summary.total} played · ${summary.record} (W-L-D)`
+    + (summary.forfeits ? ` · ${plural(summary.forfeits, "forfeit")}` : "")
+    + (summary.complete ? "" : ` · ${summary.remaining} to play`));
+  container.appendChild(standing);
+
+  // The human's rating, then the seat disclosure IMMEDIATELY under it — D4's "one line where the
+  // human's rating is shown", not a line somewhere else on the page.
+  const eloRow = mk("div", "comp-elo-row");
+  const card = mk("div", "comp-elo-card");
+  card.appendChild(mk("span", "comp-elo-name", summary.humanName));
+  card.appendChild(mk("span", "comp-elo-value",
+    `${summary.rating.rating}${summary.rating.provisional ? "?" : ""} (${summary.netChange > 0 ? "+" : ""}${summary.netChange} this run)`));
+  card.appendChild(mk("span", "comp-elo-games",
+    `${plural(summary.rating.games, "game")} in the ${diffLabel} bracket${summary.rating.provisional ? " — provisional" : ""}`));
+  eloRow.appendChild(card);
+  container.appendChild(eloRow);
+  container.appendChild(mk("p", "comp-disclosure", summary.disclosure));
+
+  renderGauntletFixtureTable(container, summary);
+
+  if (gauntletError) container.appendChild(mk("p", "comp-error", gauntletError));
+
+  const actions = mk("div", "comp-actions");
+  if (next) {
+    container.appendChild(mk("p", "setup-hint",
+      `Next: ${next.label} · ${playTimeText(summary.matchTimeLimit)} match. You play the "player" seat; `
+      + `${next.opponent} plays at ${diffLabel}.`));
+    const play = mk("button", "btn", `▶ Play Next Match — vs ${next.opponent}`);
+    play.type = "button";
+    play.addEventListener("click", playNextGauntletMatch);
+    actions.appendChild(play);
+
+    const forfeit = mk("button", "btn comp-remove-btn", "Forfeit this match");
+    forfeit.type = "button";
+    forfeit.addEventListener("click", () => confirmForfeitNextFixture(next));
+    actions.appendChild(forfeit);
+  } else {
+    const seeStandings = mk("button", "btn", "View Standings");
+    seeStandings.type = "button";
+    seeStandings.addEventListener("click", () => { standingsDifficulty = summary.difficulty; compScreen = "standings"; refreshCompView(); });
+    actions.appendChild(seeStandings);
+  }
+
+  const abandon = mk("button", "btn comp-remove-btn", summary.complete ? "Clear — start a new gauntlet" : "Abandon gauntlet");
+  abandon.type = "button";
+  abandon.addEventListener("click", () => confirmAbandonGauntlet(summary));
+  actions.appendChild(abandon);
+  container.appendChild(actions);
+
+  if (summary.complete)
+    container.appendChild(mk("p", "setup-hint",
+      "Every match above is on the ladder already — the Standings screen shows you ranked against "
+      + "this bracket's AI entrants, with the same rating maths applied to all of them."));
+}
+
+/* ---------- gauntlet: booting a live match, and capturing its result ---------- */
+
+// Boot the next fixture as a real skirmish. Everything the match runs with comes from the SCHEDULE
+// (world/seed/swapAsym) and the run's pinned dials (difficulty/match length) — never from the setup
+// screen, and never freshly rolled (D6).
+function playNextGauntletMatch() {
+  gauntletError = null;
+  const activeLedger = ensureLedger();
+  const next = nextGauntletFixture(activeLedger);
+  if (!next) { gauntletError = "This gauntlet has no match left to play."; openGauntletScreen(); return; }
+  const opponent = activeLedger.roster.find(r => r.name === next.opponent);
+  const you = humanEntry(activeLedger);
+  if (!opponent) {
+    gauntletError = `"${next.opponent}" isn't on the roster any more — add that entrant back, or forfeit this match.`;
+    openGauntletScreen();
+    return;
+  }
+  if (!you || you.name !== next.humanName) {
+    gauntletError = `This gauntlet was started as "${next.humanName}", who is no longer the roster's human entrant.`;
+    openGauntletScreen();
+    return;
+  }
+  // One worker slot for the whole mode, and the live match needs the main thread: a duel or
+  // tournament still running is terminated here exactly as starting either one terminates the
+  // other, and its progress view is reset so it can't come back frozen.
+  if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+  if (compView === "progress") compView = "config";
+  if (tourneyView === "progress") tourneyView = "config";
+
+  startCompetitionMatch({
+    world: next.world, seed: next.seed, difficulty: next.difficulty,
+    matchTimeLimit: next.matchTimeLimit, swapAsym: next.swapAsym,
+    aiStrategy: opponent.strategy, aiArchetype: opponent.archetype,
+    playerFaction: you.faction,
+    // What boot.js parks on game.competition and hands back at game-over. The fixture's own
+    // identity (index + opponent + seed) rides along so captureCompetitionResult can refuse to
+    // record a result into a gauntlet that has moved on since this match started.
+    competition: { kind: "gauntlet", index: next.index, opponent: next.opponent, humanName: next.humanName, seed: next.seed },
+  });
+}
+
+/**
+ * Show the Gauntlet tab from wherever the player currently is — the tab row, the game-over screen
+ * of a match just played (which has to leave the match first, exactly as "Choose another
+ * battlefield" does), or a different menu screen entirely.
+ */
+export function openGauntletScreen() {
+  compScreen = "gauntlet";
+  compError = null;
+  compRosterError = null;
+  tourneyError = null;
+  setup.mode = "competition";
+  if (game.state) restartToMapSelect();      // leaves the live/finished match, then re-renders map-select
+  else if (wrapEl) refreshCompView();        // already on the competition screen
+  else renderMapSelect();                    // on some other menu screen
+}
+
+/**
+ * Record the just-finished live match into the gauntlet, and shape what the game-over screen shows
+ * about it (boot.js's own game-over hook is the only caller). Returns the plain block overlays.js
+ * renders — the rating change, the standing, the D4 disclosure, and the next fixture with the
+ * action that boots it — or null when this match wasn't a competition fixture after all.
+ *
+ * `game.competition` is CONSUMED here (cleared before anything else can throw), so one finished
+ * match can only ever be rated once however many times a game-over frame is re-entered.
+ * @param {object} state   the finished game state.
+ */
+export function captureCompetitionResult(state) {
+  const fixture = game.competition;
+  game.competition = null;
+  if (!fixture || fixture.kind !== "gauntlet") return null;
+
+  const activeLedger = ensureLedger();
+  const outcome = humanMatchOutcome(state);
+  const beat = outcome.winner === "human" ? `You beat ${fixture.opponent}`
+    : outcome.winner === "opponent" ? `${fixture.opponent} beat you`
+      : `You drew with ${fixture.opponent}`;
+  const matchesLeft = n => `${n} match${n === 1 ? "" : "es"}`;   // `plural` would say "matchs"
+
+  // The gauntlet must still be owing exactly this fixture. It normally is — but a ledger imported,
+  // abandoned or advanced in another tab while the match was being played is a real possibility,
+  // and recording into whatever fixture happens to be current now would rate the wrong pairing.
+  const pending = currentGauntletFixture(activeLedger);
+  const mismatch = !pending || pending.index !== fixture.index || pending.opponent !== fixture.opponent
+    || pending.seed !== fixture.seed;
+  if (mismatch) {
+    return {
+      title: "Gauntlet", outcome: beat,
+      error: "This match no longer matches the gauntlet in progress, so its result was not recorded.",
+      viewLabel: "Back to the Gauntlet", onView: openGauntletScreen,
+    };
+  }
+
+  const before = ratingLookup(activeLedger.ratingsByDifficulty[pending.difficulty], pending.humanName);
+  let error = null;
+  try {
+    // The ledger owns the write — the same recordGauntletMatch path a forfeit takes, into the same
+    // pinned bracket, through the same elo.js code every AI entrant's rating goes through (D1).
+    recordGauntletMatch(activeLedger, { ...outcome, at: Date.now() });
+    saveLedgerToStorage(activeLedger);
+  } catch (err) {
+    error = `The match finished, but the ladder couldn't be updated: ${err.message}`;
+  }
+  const after = ratingLookup(activeLedger.ratingsByDifficulty[pending.difficulty], pending.humanName);
+  const change = Math.round(after.rating) - Math.round(before.rating);
+  const summary = shapeGauntletSummary(activeLedger);
+  const next = nextGauntletFixture(activeLedger);
+
+  return {
+    title: `Gauntlet — match ${fixture.index + 1} of ${pending.total} · ${difficultyLabelFor(pending.difficulty)} bracket`,
+    outcome: beat + (outcome.margin ? ` — score margin ${Math.abs(outcome.margin)}` : ""),
+    ratingLine: error ? null
+      : `${pending.humanName}: ${Math.round(after.rating)}${after.games < PROVISIONAL_GAMES ? "?" : ""} `
+        + `(${change > 0 ? "+" : ""}${change}) after ${plural(after.games, "rated game")}`,
+    standing: summary
+      ? (summary.complete
+        ? `Gauntlet complete — ${summary.record} (W-L-D), ${summary.netChange > 0 ? "+" : ""}${summary.netChange} rating over the run`
+        : `Gauntlet standing: ${summary.record} (W-L-D) — ${matchesLeft(summary.remaining)} left`)
+      : null,
+    error,
+    disclosure: SEAT_DISCLOSURE,
+    nextLabel: next ? `▶ Play next — vs ${next.opponent} on ${next.worldName}` : null,
+    onNext: next ? playNextGauntletMatch : null,
+    viewLabel: next ? "Back to the Gauntlet" : "See the final standing",
+    onView: openGauntletScreen,
+  };
+}
+
+/**
+ * Forfeit the live competition match the player is ABANDONING by leaving the game (saveload.js's
+ * Home confirm is the only caller, and it says so before this runs — the Phase 4 rule is that
+ * abandoning is a rated loss, never a silently dropped result). Returns true if a forfeit was
+ * actually recorded.
+ */
+export function forfeitLiveCompetitionMatch() {
+  const fixture = game.competition;
+  game.competition = null;   // consumed, exactly like captureCompetitionResult's own first act
+  if (!fixture || fixture.kind !== "gauntlet") return false;
+  const activeLedger = ensureLedger();
+  const pending = currentGauntletFixture(activeLedger);
+  if (!pending || pending.index !== fixture.index || pending.opponent !== fixture.opponent) return false;
+  try {
+    recordGauntletForfeit(activeLedger, { at: Date.now() });
+    saveLedgerToStorage(activeLedger);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * The live competition fixture, for a caller that has to describe it before doing something to it
+ * (saveload.js's Home confirm) — null when the running game isn't a competition match at all.
+ */
+export function liveCompetitionFixture() {
+  return game.competition && game.competition.kind === "gauntlet" ? { ...game.competition } : null;
+}
+
 /* ---------- entry point, called from setup.js's renderMapSelect() ---------- */
 
 export function renderCompetition() {
@@ -1808,6 +2581,12 @@ export function renderCompetition() {
   if (tourneyConfig.worlds.length === 0) tourneyConfig.worlds = [MAP_CHOICES[0]];
   if (tourneyConfig.difficulty == null) tourneyConfig.difficulty = compConfig.difficulty;
   if (standingsDifficulty == null) standingsDifficulty = compConfig.difficulty;
+  // A gauntlet defaults to the WHOLE world roster, not one world like the two simulated formats:
+  // it plays one match per opponent and draws each fixture's world from the pool, so a full pool is
+  // what makes a run feel like a tour rather than five games on the same map.
+  if (gauntletConfig.worlds.length === 0) gauntletConfig.worlds = [...MAP_CHOICES];
+  if (gauntletConfig.difficulty == null) gauntletConfig.difficulty = compConfig.difficulty;
+  if (!gauntletConfig.humanDraft.faction) gauntletConfig.humanDraft.faction = setup.faction;
   wrapEl = mk("div", "comp-screen");
   mapSelectEl.appendChild(wrapEl);
   refreshCompView();

@@ -53,7 +53,10 @@ const RESOURCE_OPTIONS = [
 // finite override of DEFAULT_MATCH_TIME_LIMIT — never "unlimited" — so checkWinCondition's
 // terminal-state guarantee (a defensive stall can't stretch to infinity, CONTRIBUTING) always
 // holds. "Standard" is DEFAULT_MATCH_TIME_LIMIT itself, so picking it is byte-identical to today.
-const MATCH_LENGTH_OPTIONS = [
+// Exported: competition.js's Gauntlet screen offers the identical three lengths for its live
+// matches (docs/competitions-and-elo.md Phase 4) — reused rather than redefined, so a length can't
+// exist in one picker and not the other.
+export const MATCH_LENGTH_OPTIONS = [
   { label: "Quick", mult: 1200, note: "20 min" },
   { label: "Standard", mult: DEFAULT_MATCH_TIME_LIMIT, note: "40 min" },
   { label: "Marathon", mult: 3600, note: "60 min" },

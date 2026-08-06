@@ -19,6 +19,15 @@ export const game = {
   // Odyssey `state` is the active planet's state = galaxy.planets.get(activeId);
   // credits + the other planets live on the galaxy. Read at call time like the rest.
   galaxy: null,
+  // Which COMPETITION FIXTURE the running match belongs to, or null for an ordinary skirmish —
+  // `{ kind: "gauntlet", index, opponent, humanName }` (docs/competitions-and-elo.md Phase 4).
+  // Set by boot.js's startCompetitionMatch right after bootState (which clears it, exactly like
+  // `galaxy` above), read at game-over by competition.js's captureCompetitionResult — which
+  // records the result into the ledger and clears this again, so one finished match can only ever
+  // be rated once — and by saveload.js's Home confirm, which has to warn that leaving a live
+  // gauntlet match forfeits it. Never part of the sim or the persisted save: like `galaxy`, it
+  // says which run this state belongs to, not anything about the state itself.
+  competition: null,
   // Timestamp until which the supply readout flashes red after a blocked
   // production attempt: written by boot.js's frame-event pump, read by hud.js's
   // renderHUD. Kept here because it crosses that module boundary.

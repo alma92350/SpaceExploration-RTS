@@ -999,6 +999,38 @@ body.paused::after {
 
 .gameover-seed { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-top: 10px; }
 
+/* The competition block on the game-over screen (overlays.js renderCompetitionResult, Phase 4):
+   what a just-played gauntlet match did to the ladder, and what's next. Boxed off from the
+   victory/defeat copy above it because it's a different KIND of statement — the match's own verdict
+   versus the run's bookkeeping — while staying on the same screen, which is the whole point (a
+   player wants both at once). */
+.gameover-comp {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  max-width: 520px;
+  text-align: left;
+}
+.gameover-comp-title { font-size: 0.78rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+.gameover-comp-outcome { font-size: 1.05rem; font-weight: 700; color: var(--text); margin-top: 6px; }
+.gameover-comp-rating { font-size: 1.15rem; font-weight: 700; color: var(--gold); margin-top: 6px; }
+.gameover-comp-standing { font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+.gameover-comp-error { font-size: 0.82rem; color: var(--bad); margin-top: 8px; }
+/* The D4 seat-asymmetry disclosure: quiet, but genuinely legible — never a tooltip, and never
+   small enough to read as fine print nobody is meant to read. */
+.gameover-comp-note {
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--muted);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.gameover-comp-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.gameover-comp-actions .btn { width: auto; margin: 0; padding: 9px 16px; font-size: 0.85rem; }
+
 /* ---- Competition mode (competition.js): Quick Duel / Roster / Standings — reuses
    .setup/.opt-group/.opt-btn/.seed-input's own visual language throughout; these rules are only
    what's genuinely new: the tab row, the two-entrant layout, the roster picker/table, the confirm-
@@ -1295,6 +1327,38 @@ body.paused::after {
 .comp-bracket-seat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comp-bracket-check { color: var(--good, #4ade80); font-weight: 700; }
 .comp-bracket-score { align-self: flex-end; color: var(--muted); font-size: 0.7rem; }
+
+/* ---- Gauntlet (docs/competitions-and-elo.md Phase 4): the human against the field. Reuses the
+   comp- language above wholesale — the tab, the field checklist, the estimate line, the elo card,
+   the tables, the confirm modal — so only three genuinely new things live here. ---- */
+
+/* THE SEAT DISCLOSURE (D4). Deliberately NOT a .setup-hint: it sits directly under the human's own
+   rating and has to read as a qualification OF that number, so it gets its own left rule and a size
+   that is plainly meant to be read. Not a tooltip, by explicit design. */
+.comp-disclosure {
+  max-width: 640px;
+  margin: 0;
+  padding: 8px 0 8px 12px;
+  border-left: 2px solid var(--warn);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+/* The human's own entrant card in the config screen — the same .comp-entrant box, marked as the
+   one that is you. `flex: 0 0 auto` overrides .comp-entrant's own `1 1 260px`, which is sized for
+   life inside the Quick Duel screen's ROW of two cards: this card is a direct child of
+   .comp-screen's COLUMN flex instead, where that 260px basis is a height, not a width, and left
+   the card standing half-empty. */
+.comp-human-card { border-color: var(--accent); flex: 0 0 auto; }
+.comp-human-name { margin: 0 0 6px; font-size: 1.05rem; font-weight: 700; color: var(--text); }
+/* The fixture list: one row per opponent, coloured by what happened. A forfeit reads as a loss
+   (it is one) but keeps its own italic label, so schedule luck is never mistaken for a fight. */
+.comp-fixture-row.is-won td { color: var(--good, #4ade80); }
+.comp-fixture-row.is-lost td, .comp-fixture-row.is-forfeit td { color: var(--bad); }
+.comp-fixture-row.is-forfeit td:nth-child(4) { font-style: italic; }
+.comp-fixture-row.is-next { background: rgba(56, 189, 248, 0.10); }
+.comp-fixture-row.is-next td { color: var(--text); font-weight: 600; }
+.comp-fixture-row.is-pending td { color: var(--muted); }
 
 /* Attack-move armed: the crosshair cursor alone is easy to miss, so the battlefield
    also gets a warm inset outline that unmistakably says "the next click is an attack". */
