@@ -19,13 +19,13 @@ import {
   buildTournamentJob, seedFieldByRating, tournamentProgressLabel, tournamentStandingsRows,
   shapeTournamentStandings, shapeBracketView,
   SEAT_DISCLOSURE, gauntletEstimate, buildGauntletStart, shapeGauntletFixtures, nextGauntletFixture,
-  humanMatchOutcome, gauntletLadderTrail, shapeGauntletSummary,
+  humanMatchOutcome, gauntletLadderTrail, shapeGauntletSummary, mostRelevantBracket,
 } from "../competition.js";
 import { duelSeed } from "../tools/duelCore.js";
 import { INITIAL_RATING } from "../elo.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
 import {
-  createLedger, addRosterEntry, recordCompetition,
+  createLedger, addRosterEntry, recordCompetition, standingsFor,
   GAUNTLET_DEFAULT_MATCH_SECONDS, startGauntlet, recordGauntletMatch, recordGauntletForfeit,
 } from "../competitionLedger.js";
 import { buildSwissBracket, buildKnockoutBracket, knockoutMatchCount, swissRoundCount } from "../pairing.js";
@@ -992,4 +992,46 @@ test("shapeGauntletSummary reads a half-played run too — that is what a resume
   assert.equal(summary.rows[1].status, "next");
   assert.equal(summary.rows[1].change, null, "an unplayed fixture has no rating change to claim");
   assert.equal(shapeGauntletSummary(createLedger()), null, "no gauntlet, no summary");
+});
+
+/* ---------- mostRelevantBracket: opening Standings from the TAB lands somewhere real ---------- */
+
+test("mostRelevantBracket keeps the preferred bracket whenever that bracket already has results", () => {
+  const ledger = gauntletLedger(2, { difficulty: "hard" });
+  recordGauntletMatch(ledger, { winner: "human", margin: 10 });
+  // "hard" now has rated rows; a player already looking at hard stays on hard.
+  assert.equal(mostRelevantBracket("hard", ledger), "hard");
+});
+
+test("mostRelevantBracket falls to the gauntlet's own bracket rather than showing an empty table", () => {
+  // The real failure this fixes: finish a HARD gauntlet, click the Standings TAB (which carries
+  // whatever bracket was last viewed -- "medium" by default), and the screen reads "Nobody has
+  // played a rated match at this difficulty yet" while three rated games sit one bracket away.
+  const ledger = gauntletLedger(2, { difficulty: "hard" });
+  recordGauntletMatch(ledger, { winner: "human", margin: 10 });
+  assert.equal(standingsFor(ledger, "medium").length, 0, "fixture sanity: medium really is empty");
+  assert.equal(mostRelevantBracket("medium", ledger), "hard",
+    "an empty preferred bracket must yield to the bracket the player was actually playing in");
+});
+
+test("mostRelevantBracket returns the preferred bracket unchanged when NOTHING is rated anywhere", () => {
+  // With no results at all there is genuinely nothing to show, and silently hopping brackets would
+  // be worse than the honest empty-state -- so the preferred bracket comes back untouched.
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "Solo", strategy: "default" });
+  assert.equal(mostRelevantBracket("medium", ledger), "medium");
+});
+
+test("mostRelevantBracket is deterministic when several brackets have results and none is preferred", () => {
+  // Falls through DIFFICULTY_OPTIONS order rather than object key insertion order, so the same
+  // ledger always opens on the same bracket.
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "A", strategy: "default" });
+  addRosterEntry(ledger, { name: "B", strategy: "aggressive" });
+  const row = (aName, bName) => [{ aName, bName, winner: "a", margin: 5 }];
+  recordCompetition(ledger, { difficulty: "hard", aName: "A", bName: "B", rows: row("A", "B") });
+  recordCompetition(ledger, { difficulty: "easy", aName: "A", bName: "B", rows: row("A", "B") });
+  const first = mostRelevantBracket("medium", ledger);
+  assert.equal(first, mostRelevantBracket("medium", ledger), "same ledger, same answer, every time");
+  assert.ok(["easy", "hard"].includes(first), "and it is one of the brackets that actually has rows");
 });

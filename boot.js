@@ -136,6 +136,21 @@ export function startGame(planetId) {
 // sizeMult/resourceMult/popCap at engine defaults, so every rating already in the ladder was earned
 // on that map shape. Letting a player's leftover skirmish preferences (Gigantic, Abundant) shape
 // the matches that move THEIR rating in the same bracket would make the two numbers incomparable.
+//
+// BUT PINNING THOSE DOES NOT MAKE A HUMAN MATCH THE SAME SHAPE AS A SIMULATED ONE, and it would be
+// dishonest to imply it does. Three differences remain, by construction, and none of them can be
+// closed from here:
+//   • ONE match, not a worlds x seeds x 2 sweep — a human cannot play forty games (Phase 4's
+//     founding constraint), so a human rating rests on far fewer, noisier samples.
+//   • NO side-swap, because the human can only ever hold owner "player" (D4). That is the seat the
+//     13%-of-think-cycles edge is measured AGAINST, and it is the deviation the UI discloses.
+//   • The human HAS a faction and their simulated opponents do not — a self-play match has no
+//     faction dial at all (see aiFaction below), so a faction's passive traits appear on exactly
+//     one side of a human match and neither side of every other rated match in the bracket.
+// The honest framing, and the one the screen states: a human rating is a rating in the SAME table,
+// earned under a documented and bounded set of differences — not a number produced by an identical
+// process. Do not add a compensating fudge for any of this; see D4 on why a correction nobody can
+// derive is worse than a difference everybody can read.
 export function startCompetitionMatch(fixture) {
   const { world, seed, difficulty, matchTimeLimit, swapAsym, aiStrategy, aiArchetype, playerFaction, competition } = fixture;
   sound.unlockAudio();   // a real user gesture (the Play button), same point setup.js's map cards unlock audio

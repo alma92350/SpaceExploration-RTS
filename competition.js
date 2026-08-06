@@ -847,6 +847,27 @@ function ensureLedger() {
   return ledger;
 }
 
+/**
+ * Which difficulty bracket the Standings screen should open on, given the one it would otherwise
+ * show. Returns `preferred` whenever that bracket already has rated results — a player who was
+ * just looking at Hard keeps looking at Hard. Otherwise it falls to the bracket the player is most
+ * likely to have meant: an in-progress or just-finished gauntlet's own bracket first (that is the
+ * run they were playing), then any bracket that actually has standings, in DIFFICULTY_OPTIONS
+ * order so the choice is deterministic rather than dependent on object key insertion. With no
+ * rated results anywhere, `preferred` comes back unchanged and the screen shows its ordinary
+ * empty-state — there is genuinely nothing to show, and silently hopping brackets would be worse.
+ * @param {string} preferred @param {object} [led] the ledger to read (defaults to the live one)
+ * @returns {string}
+ */
+export function mostRelevantBracket(preferred, led = ensureLedger()) {
+  const populated = d => standingsFor(led, d).length > 0;
+  if (preferred && populated(preferred)) return preferred;
+  const run = gauntletProgress(led);
+  if (run && run.difficulty && populated(run.difficulty)) return run.difficulty;
+  const found = DIFFICULTY_OPTIONS.map(o => o.mult).find(populated);
+  return found || preferred;
+}
+
 let standingsDifficulty = null;   // lazily defaulted to compConfig.difficulty by renderCompetition() below
 let compRosterError = null;       // a validation/import error, shown on the Roster screen
 // The Roster screen's own "add a new entry directly" form state (task's own point 2 — not only
@@ -924,6 +945,13 @@ function renderCompTabs(container) {
     btn.textContent = t.label;
     btn.addEventListener("click", () => {
       if (compScreen === t.key) return;
+      // Opening Standings from the TAB (rather than from a results screen's own "See Standings"
+      // button, which sets the bracket it just played) used to land on whatever bracket was last
+      // viewed — Medium by default. So finishing a Hard gauntlet and clicking the tab showed an
+      // empty table reading "Nobody has played a rated match at this difficulty yet", with the
+      // rated games sitting one bracket away and nothing saying so. Land on a bracket that
+      // actually has results instead, preferring the one the player is most likely to mean.
+      if (t.key === "standings") standingsDifficulty = mostRelevantBracket(standingsDifficulty);
       compScreen = t.key;
       compError = null;
       compRosterError = null;
@@ -977,9 +1005,14 @@ function renderEntrantCard(container, key, label) {
   card.appendChild(optionGroup(entrant.mode, ENTRANT_MODE_OPTIONS, val => { entrant.mode = val; refreshCompView(); }));
 
   if (entrant.mode === "roster") {
-    const roster = ensureLedger().roster;
+    // The human's own row is not offered: a Quick Duel is SIMULATED by the Worker, so picking it
+    // would rate the human on a match they never played, driven by a scripted controller that
+    // isn't them (same reasoning as the Tournament field builder and the Gauntlet — see
+    // renderTournamentConfig's own note). Their commander competes in the Gauntlet, where a real
+    // match is actually played.
+    const roster = ensureLedger().roster.filter(entry => entry.human !== true);
     if (roster.length === 0) {
-      card.appendChild(mk("p", "setup-hint", "No roster entries yet — switch to New Entrant to create one."));
+      card.appendChild(mk("p", "setup-hint", "No AI roster entries yet — switch to New Entrant to create one."));
     } else {
       const select = document.createElement("select");
       select.className = "comp-roster-select";
@@ -1453,9 +1486,17 @@ function renderTournamentConfig(container) {
   container.appendChild(formatRow);
 
   renderFieldBuilder(container, tourneyConfig, {
+    // The human is excluded here for the same reason the Gauntlet excludes them, and it matters
+    // MORE here: a tournament pairing is SIMULATED. Letting the human's roster row into the field
+    // would have the Worker play their name with a scripted AI controller and fold the result into
+    // their rating — a rating changing from a match they never played, earned by a strategy that
+    // isn't them. That silently breaks the one property this whole feature rests on (D1: a rating
+    // means one thing). The human competes through the Gauntlet, where they actually play.
+    exclude: entry => entry.human === true,
     minimum: 2,
-    tooFewHint: "A tournament runs on named, persistent entrants, and needs at least 2 of them. "
-      + "Add entrants on the Roster tab, then come back.",
+    tooFewHint: "A tournament runs on named, persistent AI entrants, and needs at least 2 of them. "
+      + "Add entrants on the Roster tab, then come back. (Your own commander plays in the Gauntlet, "
+      + "not here — a tournament pairing is simulated, so it can't be you.)",
   });
 
   const diffRow = mk("div", "setup-row");
