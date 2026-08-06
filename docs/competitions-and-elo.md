@@ -503,6 +503,101 @@ row never claims `seatSwapped: true`.
 (you vs the field) is the smallest complete one and the most natural "how good am I" answer. Swiss and
 knockout with a human in the field follow only once Gauntlet is played and liked.
 
+**Status: done.** Landed across two stages on this branch, Gauntlet only (the named risk above,
+respected: no human-inclusive Swiss or knockout).
+
+Stage one: `competitionLedger.js`'s own half — `human` on a `RosterEntry` (at most one, enforced at
+both the interactive seam and the import boundary) plus `humanEntry`, and the whole persisted
+`gauntlet` field: `startGauntlet` / `currentGauntletFixture` / `recordGauntletMatch` /
+`recordGauntletForfeit` / `gauntletProgress` / `abandonGauntlet`, `GAUNTLET_DEFAULT_MATCH_SECONDS`,
+and `cleanGauntlet`'s sanitizer. `COMPETITION_VERSION` was deliberately **not** bumped — both fields
+are purely additive and their absence already means the right thing in every ledger written before
+them; that call is argued in full next to the constant itself. Stage two (this one) built the
+playable half:
+
+- **`boot.js`'s `startCompetitionMatch(fixture)`** — a near-copy of `startGame`, deliberately: same
+  `resolveSeed` / `difficultyDials` / `createGameState` / `bootState` chain, same loop, same HUD.
+  A gauntlet match **is** an ordinary skirmish that knows which fixture it belongs to. Everything
+  comes from the fixture (world, the schedule's own seed — never a fresh random one, D6 — pinned
+  difficulty, the opponent's strategy/archetype, match length, this fixture's `swapAsym` parity);
+  the human plays owner `"player"` with their own faction (D4). `sizeMult`/`resourceMult`/`popCap`
+  are **pinned** to the engine defaults `createSelfPlayState` leaves them at, so the matches that
+  move a human's rating are the same shape of match every AI rating in that bracket was earned on;
+  the opponent's faction still comes from the world's archetype, since a self-play duel has no
+  faction dial at all. The fixture rides on `game.competition` (session.js), cleared by `bootState`
+  exactly like `game.galaxy`.
+- **Result capture at the game-over hook.** `boot.js`'s existing `if (game.state.over && !announced)`
+  branch gained exactly one term: `competition: game.competition ? captureCompetitionResult(...) : null`,
+  passed through `showGameOver`'s opts. Every ordinary skirmish passes `null` and its game-over
+  screen is byte-identical to before. `competition.js`'s `captureCompetitionResult(state)` owns the
+  write (it holds the live ledger): it consumes `game.competition` first — so one finished match can
+  only ever be rated once — maps the terminal state through the pure `humanMatchOutcome`, refuses to
+  record if the ledger has since moved off that fixture, then rates it through the *same*
+  `recordGauntletMatch` a forfeit takes. `overlays.js` renders the block from plain data with its
+  actions injected as callbacks (`renderCompetitionResult`), so it still imports neither the session
+  nor `competition.js`. **No second overlay:** the player needs the victory/defeat verdict and what
+  it cost them read together, and a separate screen would either hide the first or repeat it.
+- **`competition.js`'s Gauntlet tab** (fifth tab, same `.comp-tabs` pattern), pure half first —
+  `SEAT_DISCLOSURE`, `gauntletEstimate`, `buildGauntletStart`, `shapeGauntletFixtures`,
+  `nextGauntletFixture`, `humanMatchOutcome`, `gauntletLadderTrail`, `shapeGauntletSummary` — all
+  exported and unit-tested with no DOM, the observer.js-style split Phases 1-3 established. The
+  screen: a config view (name yourself → a roster row flagged human, multi-select the AI field
+  through the *same* `renderFieldBuilder` the Tournament tab uses, one pinned difficulty, match
+  length **defaulting to Quick**, worlds, seed) that states the real cost before Start is clickable
+  — "4 live matches — one per opponent — up to about 1 h 20 min of real play" — because one live
+  match per opponent is what makes the format playable at all and the hours are the number that
+  actually decides whether a player starts; an in-progress view (standing, the human's rating, the
+  fixture table with each pairing won/lost/drawn/forfeited/next/pending, **Play Next Match**,
+  **Forfeit this match**, **Abandon gauntlet**); and a completion view (final standing, per-opponent
+  rating change replayed through `gauntletLadderTrail`, and a route to Standings).
+- **The disclosure (D4)** is one plain paragraph (`.comp-disclosure`, a left rule, not a tooltip)
+  wherever the human's rating or standing appears: the config screen, the in-progress standing
+  directly under the rating card, the final standing, and the game-over screen after every match —
+  carried by `shapeGauntletSummary`'s own return value so a standing cannot be rendered without it —
+  **and the Standings screen**, which is where the completion view's "View Standings" button routes
+  and the only table that ranks the human's rating *against* the AI ratings it is being compared
+  with. That table also **marks the human's own row** (a `you` pill, a tinted row): `standingsFor`
+  carries each roster entry's `human` flag into its standing and `shapeStandingsTable` passes it
+  through, so the screen knows both which row is the person and whether to state the note at all
+  (an all-AI bracket has no seat asymmetry to disclose).
+- **Resumability** is structural rather than bolted on: the run lives in the ledger, and the screen
+  reads it back on every entry, so a reload, a navigation into a live match, or a week away all
+  resume identically. There is no module-level "is a gauntlet running" flag to get out of step.
+- **Abandoning is always a rated forfeit, after a confirm.** The Gauntlet screen's Forfeit button
+  says "records a LOSS … rated exactly like a match you played and lost"; leaving a live match by the
+  topbar Home button re-words `saveload.js`'s own confirm to say the same and offers **Forfeit &
+  Exit** instead of Save & Exit — `game.competition` isn't part of the save, so a resumed autosave
+  would be a skirmish belonging to no run, which is worse than an honest forfeit.
+
+**Deviations from the sketch above.** `hud.js` was **not** touched — no fixture chip: the fixture is
+already named on the Gauntlet screen you leave from and on the game-over screen you arrive at, and
+the topbar already carries the seed chip and the faction chip. `session.js`, `setup.js` (which now
+exports `MATCH_LENGTH_OPTIONS`, reused rather than redefined), `saveload.js` (the Home confirm) and
+`style.css` are in the touched list beyond the four files named — the same "found while wiring"
+pattern Phases 1-3 record. One known, accepted gap: the periodic autosave still writes a live
+gauntlet match as an ordinary skirmish, so "Continue — resume autosave" can resume it *outside* the
+run; that costs nothing in the ledger (the fixture simply stays unplayed and can be replayed or
+forfeited) and suppressing it would mean teaching the save layer about competitions.
+
+**Files touched:** `boot.js`, `competition.js`, `overlays.js`, `saveload.js`, `session.js`,
+`setup.js`, `style.css`. **Tests:** `test/competition.test.js` (extended — the seat disclosure's
+content, the estimate's one-match-per-opponent arithmetic in real hours, `buildGauntletStart`
+including a start that really does drive `startGauntlet`, fixture-list shaping and its
+played/next/pending states, next-fixture resolution, `humanMatchOutcome`'s owner-id → gauntlet
+vocabulary mapping against a real `createGameState` state, and the ladder trail / completion
+summary). `npm test`: **2329/2329 green** (2311 baseline + 18 new, zero regressions).
+`npm run typecheck`: clean. Live-browser-verified (Playwright, **zero console messages and zero page
+errors across three full passes**): a 3-4 opponent gauntlet started and played through — a real
+skirmish booted from the fixture (canvas, HUD, both Command Centers, the scheduled world/seed on the
+seed chip), resolved by the ordinary score-at-clock rule for a loss and by elimination for a win,
+with the result landing in the ledger and on the game-over screen (rating −20 / +22, the next
+fixture, and a button that boots it); **a full page reload mid-gauntlet came back with both results,
+both ratings and the next fixture intact**; forfeits recorded through both paths (the screen's own
+button and the Home-button abandon) as rated losses with `winReason: "forfeit"`; every human history
+row carrying `human: true, seatSwapped: false` with `swapAsym` alternating false/true/false across
+the schedule; the human ranked in the same bracketed Standings table as the AI entrants; and an
+ordinary skirmish game-over confirmed unchanged (no competition block, ledger untouched).
+
 ### Phase 5 — Spectate, replay, season *(M)*
 
 - **Watch any AI-vs-AI pairing live.** Observer Mode already does 90% of this: `input.js` fully

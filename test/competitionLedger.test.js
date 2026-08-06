@@ -31,23 +31,28 @@ const row = (aName, bName, winner, margin = 0) => ({
 
 /* ---------- createLedger ---------- */
 
+// `gauntlet: null` and a roster entry's `human: false` are Phase 4's two additive fields (see
+// competitionLedger.js's own COMPETITION_VERSION comment for why they needed no version bump).
+// They're asserted on here — in the exact-shape tests — rather than only in
+// test/competitionGauntlet.test.js, because "the ledger's shape is exactly this" is what these
+// three cases exist to pin, and a field silently missing from them would be a real regression.
 test("createLedger returns an empty ledger with the current version", () => {
-  assert.deepEqual(createLedger(), { v: COMPETITION_VERSION, roster: [], ratingsByDifficulty: {}, history: [] });
+  assert.deepEqual(createLedger(), { v: COMPETITION_VERSION, roster: [], ratingsByDifficulty: {}, history: [], gauntlet: null });
 });
 
-/* ---------- roster CRUD ---------- */
+/* ---------- roster CRUD (the human flag and the one-human rule live in test/competitionGauntlet.test.js) ---------- */
 
 test("addRosterEntry adds a well-formed entry, mutating and returning the ledger", () => {
   const ledger = createLedger();
   const returned = addRosterEntry(ledger, { name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", createdAt: 1000 });
   assert.equal(returned, ledger, "addRosterEntry returns the SAME ledger it mutated");
-  assert.deepEqual(ledger.roster, [{ name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", createdAt: 1000 }]);
+  assert.deepEqual(ledger.roster, [{ name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate", createdAt: 1000, human: false }]);
 });
 
 test("addRosterEntry trims the name and coerces an unknown strategy/archetype/faction/createdAt to safe defaults", () => {
   const ledger = createLedger();
   addRosterEntry(ledger, { name: "  Odd  ", strategy: "not-a-real-strategy", archetype: "not-a-real-archetype", faction: "not-a-real-faction", createdAt: "soon" });
-  assert.deepEqual(ledger.roster[0], { name: "Odd", strategy: "default", archetype: null, faction: "neutral", createdAt: null });
+  assert.deepEqual(ledger.roster[0], { name: "Odd", strategy: "default", archetype: null, faction: "neutral", createdAt: null, human: false });
 });
 
 test("addRosterEntry rejects a missing or blank name, touching nothing", () => {
@@ -254,6 +259,22 @@ test("standingsFor sorts by rating descending, ties broken by name", () => {
   const ratings = standings.map(s => s.rating);
   assert.deepEqual(ratings, [...ratings].sort((a, b) => b - a), "standings must already be sorted rating-descending");
   assert.equal(standings[0].name, "Alpha", "Alpha won every game it played -- should be on top");
+});
+
+// D4: the Standings screen is the one place a human rating is read side by side with AI ratings, so
+// it has to be able to tell which row is the person -- to mark it, and to say the seat disclosure
+// next to it. That fact lives on the RosterEntry already; standingsFor is the read path, so it
+// carries it through rather than making every caller re-look-up the roster it just summarised.
+test("standingsFor carries each entrant's own human flag through to its row (D4)", () => {
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "Ada", human: true });
+  addRosterEntry(ledger, { name: "Beta" });
+  recordCompetition(ledger, { difficulty: "medium", aName: "Ada", bName: "Beta", rows: [row("Ada", "Beta", "a", 12)] });
+
+  const standings = standingsFor(ledger, "medium");
+  assert.equal(standings.find(s => s.name === "Ada").human, true);
+  assert.equal(standings.find(s => s.name === "Beta").human, false,
+    "an AI entrant's row must say human:false, not undefined -- the flag is the marker, so it is always present");
 });
 
 test("standingsFor flags provisional exactly at the games-below-ten boundary (PROVISIONAL_GAMES)", () => {

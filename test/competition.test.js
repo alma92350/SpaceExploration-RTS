@@ -18,12 +18,21 @@ import {
   TOURNAMENT_FORMAT_OPTIONS, SECONDS_PER_MATCH, tournamentPairingCount, tournamentEstimate,
   buildTournamentJob, seedFieldByRating, tournamentProgressLabel, tournamentStandingsRows,
   shapeTournamentStandings, shapeBracketView,
+  SEAT_DISCLOSURE, gauntletEstimate, buildGauntletStart, shapeGauntletFixtures, nextGauntletFixture,
+  humanMatchOutcome, gauntletLadderTrail, shapeGauntletSummary, mostRelevantBracket,
 } from "../competition.js";
 import { duelSeed } from "../tools/duelCore.js";
 import { INITIAL_RATING } from "../elo.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
-import { createLedger, addRosterEntry, recordCompetition } from "../competitionLedger.js";
+import {
+  createLedger, addRosterEntry, recordCompetition, standingsFor,
+  GAUNTLET_DEFAULT_MATCH_SECONDS, startGauntlet, recordGauntletMatch, recordGauntletForfeit,
+} from "../competitionLedger.js";
 import { buildSwissBracket, buildKnockoutBracket, knockoutMatchCount, swissRoundCount } from "../pairing.js";
+import { createGameState } from "../engine/state.js";
+import { mulberry32 } from "../engine/rng.js";
+import { playerScore } from "../engine/victory.js";
+import { planetName } from "../data.js";
 
 /* ---------- buildJob: deterministic job construction from a fixed entrant config ---------- */
 
@@ -359,10 +368,28 @@ test("shapeRosterRow falls back to the world-default placeholder for a reserved/
 /* ---------- shapeStandingsTable: formats standingsFor's own rows, never recomputes them ---------- */
 
 test("shapeStandingsTable formats standingsFor's own fields without recomputing any of them", () => {
-  const standings = [{ name: "Alpha", rating: 1234.6, games: 7, wins: 5, losses: 1, draws: 1, avgMargin: 12.34, provisional: true }];
+  const standings = [{ name: "Alpha", rating: 1234.6, games: 7, wins: 5, losses: 1, draws: 1, avgMargin: 12.34, provisional: true, human: false }];
   assert.deepEqual(shapeStandingsTable(standings), [
-    { name: "Alpha", rating: 1235, games: 7, record: "5-1-1", avgMargin: "12.3", provisional: true },
+    { name: "Alpha", rating: 1235, games: 7, record: "5-1-1", avgMargin: "12.3", provisional: true, human: false },
   ]);
+});
+
+// D4: without this the Standings screen -- the one screen that shows a human rating NEXT TO the AI
+// ratings it is being compared against, and the screen the gauntlet's own "View Standings" button
+// routes to -- cannot mark which row is the person, nor know to state the seat disclosure at all.
+test("shapeStandingsTable carries the human flag through so the Standings screen can mark the row (D4)", () => {
+  const standings = [
+    { name: "Ada", rating: 1239.2, games: 2, wins: 1, losses: 1, draws: 0, avgMargin: 3, provisional: true, human: true },
+    { name: "Grinder", rating: 1200, games: 2, wins: 1, losses: 1, draws: 0, avgMargin: -3, provisional: true, human: false },
+  ];
+  assert.deepEqual(shapeStandingsTable(standings).map(r => r.human), [true, false]);
+});
+
+// The flag is a marker the DOM layer branches on, so an older/hand-built row that never carried one
+// must read as "not the human" rather than as undefined leaking into a `.some(r => r.human)` test.
+test("shapeStandingsTable defaults a missing human flag to false rather than passing undefined on", () => {
+  const [row] = shapeStandingsTable([{ name: "Alpha", rating: 1200, games: 1, wins: 1, losses: 0, draws: 0, avgMargin: 1, provisional: true }]);
+  assert.equal(row.human, false);
 });
 
 test("shapeStandingsTable preserves standingsFor's own sort order (never re-sorts)", () => {
@@ -709,4 +736,302 @@ test("shapeBracketView reads names only -- it never assumes the worker shipped t
   const lean = JSON.parse(JSON.stringify(bracket));
   for (const r of lean.rounds) for (const m of r.matches) if (m.result) delete m.result.rows;
   assert.deepEqual(shapeBracketView(lean), shapeBracketView(bracket));
+});
+
+/* ============================================================
+   PHASE 4 (docs/competitions-and-elo.md, D4/D6) — THE GAUNTLET's pure half: the config -> start
+   construction competitionLedger.js's own startGauntlet consumes, the fixture-list shaping the
+   in-progress screen renders, next-fixture resolution, the live match's own outcome mapping
+   (state.winner -> the gauntlet's "human"/"opponent"/"draw" vocabulary), and the completion
+   summary with its per-opponent rating change.
+
+   Same "no DOM, no Worker, no real match" discipline as everything above: every ledger below is a
+   real one built through competitionLedger.js's own exports, and the one function that reads a
+   game STATE is fed a real engine state built by createGameState — never a hand-shaped stub, since
+   the score margin it computes comes from engine/victory.js's own playerScore.
+   ============================================================ */
+
+const BOTS = n => Array.from({ length: n }, (_, i) => `Bot${i + 1}`);
+
+// A ledger with the human plus `n` AI entrants, and a gauntlet already started over all of them.
+function gauntletLedger(n = 3, opts = {}) {
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "You", human: true, faction: "frontier" });
+  for (const name of BOTS(n)) addRosterEntry(ledger, { name, strategy: "aggressive" });
+  startGauntlet(ledger, {
+    field: BOTS(n), difficulty: "medium", matchTimeLimit: 1200, seedBase: 99,
+    worlds: ["ferros", "korrath"], ...opts,
+  });
+  return ledger;
+}
+
+/* ---------- D4: the seat-asymmetry disclosure is a real, stated sentence, not a tooltip ---------- */
+
+test("SEAT_DISCLOSURE states all three facts of D4: the seat, the missing side-swap, and which side the edge favours", () => {
+  assert.equal(typeof SEAT_DISCLOSURE, "string");
+  assert.match(SEAT_DISCLOSURE, /"player"/, "it must name the seat the human always plays");
+  assert.match(SEAT_DISCLOSURE, /side-?swap/i, "it must say side-swap cannot balance it");
+  assert.match(SEAT_DISCLOSURE, /"ai"/, "it must name the seat the known edge favours");
+  assert.ok(SEAT_DISCLOSURE.length > 80, "one plain line of real disclosure, not a three-word label");
+});
+
+/* ---------- the up-front cost: ONE live match per opponent, and what that means in real time ---------- */
+
+test("gauntletEstimate prices a gauntlet as one LIVE match per opponent, in real wall-clock play time", () => {
+  const quick = gauntletEstimate({ opponents: 5, matchTimeLimit: 1200 });
+  assert.equal(quick.matches, 5, "one match per opponent — never worlds x seeds x sides, which is what makes this playable");
+  assert.equal(quick.seconds, 5 * 1200);
+  assert.match(quick.timeText, /1 h 40 min/);
+  assert.match(quick.text, /5 live matches/);
+
+  const standard = gauntletEstimate({ opponents: 5, matchTimeLimit: 2400 });
+  assert.ok(standard.seconds > 3 * 3600, "the same field at Standard really is over three hours — the config screen has to say so");
+  assert.match(standard.timeText, /3 h 20 min/);
+});
+
+test("gauntletEstimate defaults an unset match length to Quick, and reads a single opponent in the singular", () => {
+  assert.equal(gauntletEstimate({ opponents: 3 }).seconds, 3 * GAUNTLET_DEFAULT_MATCH_SECONDS);
+  assert.match(gauntletEstimate({ opponents: 1, matchTimeLimit: 1200 }).text, /1 live match\b/);
+  assert.equal(gauntletEstimate({}).matches, 0, "no opponents picked yet is 0 matches, not a crash");
+});
+
+/* ---------- config -> start-state construction ---------- */
+
+const startCfg = (over = {}) => ({
+  field: BOTS(3), difficulty: "hard", matchTimeLimit: 1200,
+  worlds: ["ferros", "korrath"], seedBase: 7, humanName: "You", ...over,
+});
+
+test("buildGauntletStart shapes exactly the opts competitionLedger.js's startGauntlet consumes, deterministically", () => {
+  const a = buildGauntletStart(startCfg());
+  assert.deepEqual(a, {
+    field: ["Bot1", "Bot2", "Bot3"], difficulty: "hard", matchTimeLimit: 1200,
+    worlds: ["ferros", "korrath"], seedBase: 7,
+  });
+  assert.deepEqual(buildGauntletStart(startCfg()), a, "same config in, byte-identical start opts out");
+});
+
+test("buildGauntletStart's output really does start a gauntlet — the two halves are wired to each other, not merely similar", () => {
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "You", human: true });
+  for (const name of BOTS(3)) addRosterEntry(ledger, { name });
+  startGauntlet(ledger, { ...buildGauntletStart(startCfg()), at: 1234 });
+  assert.deepEqual(ledger.gauntlet.field, BOTS(3));
+  assert.equal(ledger.gauntlet.difficulty, "hard");
+  assert.equal(ledger.gauntlet.matchTimeLimit, 1200);
+  assert.equal(ledger.gauntlet.schedule.length, 3);
+  assert.ok(ledger.gauntlet.schedule.every(f => f.world === "ferros" || f.world === "korrath"),
+    "the world pool the config screen picked is the pool the schedule drew from");
+});
+
+test("buildGauntletStart defaults the match length to Quick — the Phase 4 brief's own default", () => {
+  assert.equal(buildGauntletStart({ ...startCfg(), matchTimeLimit: undefined }).matchTimeLimit, GAUNTLET_DEFAULT_MATCH_SECONDS);
+  assert.equal(GAUNTLET_DEFAULT_MATCH_SECONDS, 1200);
+});
+
+test("buildGauntletStart rejects an empty field, a duplicate opponent, the human themself, and an empty world pool", () => {
+  assert.throws(() => buildGauntletStart({ ...startCfg(), field: [] }), /at least one opponent/i);
+  assert.throws(() => buildGauntletStart({ ...startCfg(), field: ["Bot1", "Bot1"] }), /twice/i);
+  assert.throws(() => buildGauntletStart({ ...startCfg(), field: ["Bot1", "You"] }), /yourself/i);
+  assert.throws(() => buildGauntletStart({ ...startCfg(), worlds: [] }), /world/i);
+});
+
+/* ---------- the fixture list: what the in-progress screen renders ---------- */
+
+test("shapeGauntletFixtures gives one row per fixture, in play order, with the world named for display", () => {
+  const rows = shapeGauntletFixtures(gauntletLedger(3));
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map(r => r.number), [1, 2, 3]);
+  assert.deepEqual(rows.map(r => r.opponent), BOTS(3));
+  for (const row of rows) {
+    assert.equal(row.worldName, planetName(row.world), "the world is resolved to its real display name, never a raw id");
+    assert.equal(typeof row.swapAsym, "boolean");
+  }
+  assert.deepEqual(shapeGauntletFixtures(createLedger()), [], "no gauntlet, no fixtures");
+});
+
+test("shapeGauntletFixtures marks each fixture played/won/lost/forfeited, the one that's next, and the ones still pending", () => {
+  const ledger = gauntletLedger(4);
+  assert.deepEqual(shapeGauntletFixtures(ledger).map(r => r.status), ["next", "pending", "pending", "pending"]);
+
+  recordGauntletMatch(ledger, { winner: "human", margin: 21 });
+  recordGauntletMatch(ledger, { winner: "opponent", margin: -9 });
+  recordGauntletForfeit(ledger, {});
+
+  const rows = shapeGauntletFixtures(ledger);
+  assert.deepEqual(rows.map(r => r.status), ["won", "lost", "forfeit", "next"]);
+  assert.deepEqual(rows.map(r => r.statusLabel), ["Won", "Lost", "Forfeited", "Next up"]);
+  assert.deepEqual(rows.map(r => r.played), [true, true, true, false]);
+  assert.deepEqual(rows.map(r => r.current), [false, false, false, true]);
+  assert.equal(rows[0].margin, 21, "a played fixture carries its own score margin, human-relative");
+  assert.equal(rows[3].margin, null, "an unplayed one has no margin to show");
+});
+
+test("shapeGauntletFixtures reads a DRAW as its own status, never as a loss", () => {
+  const ledger = gauntletLedger(2);
+  recordGauntletMatch(ledger, { winner: "draw", margin: 0 });
+  assert.equal(shapeGauntletFixtures(ledger)[0].status, "drawn");
+});
+
+/* ---------- next-fixture resolution: what Play Next Match actually boots ---------- */
+
+test("nextGauntletFixture resolves everything a live match needs to boot, plus its own display label", () => {
+  const ledger = gauntletLedger(3);
+  const next = nextGauntletFixture(ledger);
+  assert.equal(next.index, 0);
+  assert.equal(next.number, 1);
+  assert.equal(next.total, 3);
+  assert.equal(next.opponent, "Bot1");
+  assert.equal(next.humanName, "You");
+  assert.equal(next.difficulty, "medium", "the gauntlet's ONE pinned difficulty rides along (D2)");
+  assert.equal(next.matchTimeLimit, 1200);
+  assert.equal(next.seed, ledger.gauntlet.schedule[0].seed, "the seed comes from the SCHEDULE, never freshly rolled (D6)");
+  assert.equal(next.world, ledger.gauntlet.schedule[0].world);
+  assert.equal(next.swapAsym, false);
+  assert.equal(next.worldName, planetName(next.world));
+  assert.match(next.label, /Bot1/);
+  assert.match(next.label, /1 of 3/);
+});
+
+test("nextGauntletFixture advances exactly one fixture per recorded result, and is null once the run is done", () => {
+  const ledger = gauntletLedger(2);
+  assert.equal(nextGauntletFixture(createLedger()), null, "no gauntlet, no next fixture");
+  recordGauntletMatch(ledger, { winner: "human" });
+  assert.equal(nextGauntletFixture(ledger).opponent, "Bot2");
+  assert.equal(nextGauntletFixture(ledger).swapAsym, true, "the map's asym halves alternate by match index (D4's one available correction)");
+  recordGauntletMatch(ledger, { winner: "human" });
+  assert.equal(nextGauntletFixture(ledger), null, "a finished gauntlet has no next match to offer");
+});
+
+/* ---------- result capture: a finished game state -> the gauntlet's own vocabulary ---------- */
+
+function finishedState(winner, winReason = "elimination") {
+  const state = createGameState({ planetId: "ferros", seed: 5, rng: mulberry32(5) });
+  state.over = true;
+  state.winner = winner;
+  state.winReason = winReason;
+  state.time = 612.5;
+  return state;
+}
+
+test("humanMatchOutcome maps the ENGINE's owner ids into the gauntlet's own human/opponent/draw vocabulary", () => {
+  assert.equal(humanMatchOutcome(finishedState("player")).winner, "human",
+    "the human is always owner \"player\" (D4) — a player win is a human win");
+  assert.equal(humanMatchOutcome(finishedState("ai")).winner, "opponent");
+  assert.equal(humanMatchOutcome(finishedState(null, null)).winner, "draw", "no winner at all is a draw, not a crash");
+  for (const winner of ["player", "ai", null])
+    assert.ok(["human", "opponent", "draw"].includes(humanMatchOutcome(finishedState(winner)).winner),
+      "recordGauntletMatch only accepts its own three words — an owner id must never leak through");
+});
+
+test("humanMatchOutcome reports the score margin from the HUMAN's own side, plus the match's time and reason", () => {
+  const state = finishedState("player", "timeout-score");
+  const out = humanMatchOutcome(state);
+  assert.equal(out.margin, +(playerScore(state, "player") - playerScore(state, "ai")).toFixed(1),
+    "margin is the human's score minus the opponent's — the same aName-relative convention every ledger row uses");
+  assert.equal(out.time, 612.5);
+  assert.equal(out.winReason, "timeout-score");
+  assert.equal(humanMatchOutcome(finishedState("ai", null)).winReason, null, "a missing reason stays null, never undefined");
+});
+
+test("humanMatchOutcome's result is accepted verbatim by recordGauntletMatch", () => {
+  const ledger = gauntletLedger(2);
+  recordGauntletMatch(ledger, { ...humanMatchOutcome(finishedState("player")), at: 1 });
+  assert.equal(ledger.gauntlet.results[0].winner, "human");
+  assert.equal(ledger.history[0].rows[0].seatSwapped, false, "and lands as a disclosed, non-side-swapped human row (D4)");
+});
+
+/* ---------- the completion summary, and the per-opponent rating change ---------- */
+
+test("gauntletLadderTrail reports the human's rating before and after EACH gauntlet match, in play order", () => {
+  const ledger = gauntletLedger(3);
+  recordGauntletMatch(ledger, { winner: "human", margin: 10 });
+  recordGauntletMatch(ledger, { winner: "opponent", margin: -4 });
+
+  const trail = gauntletLadderTrail(ledger);
+  assert.deepEqual(trail.map(t => t.index), [0, 1]);
+  assert.deepEqual(trail.map(t => t.opponent), ["Bot1", "Bot2"]);
+  assert.equal(trail[0].before.rating, INITIAL_RATING, "the human starts the run at the ordinary starting rating");
+  assert.ok(trail[0].change > 0, "beating Bot1 moved the rating up");
+  assert.ok(trail[1].change < 0, "losing to Bot2 moved it back down");
+  assert.equal(trail[1].before.rating, trail[0].after.rating,
+    "each match starts from where the previous one left off — Elo is order-dependent (D6)");
+  assert.deepEqual(gauntletLadderTrail(createLedger()), []);
+});
+
+test("shapeGauntletSummary is the whole run: the standing, the record, every fixture's rating change, and the disclosure", () => {
+  const ledger = gauntletLedger(3);
+  recordGauntletMatch(ledger, { winner: "human", margin: 15 });
+  recordGauntletMatch(ledger, { winner: "opponent", margin: -6 });
+  recordGauntletForfeit(ledger, {});
+
+  const summary = shapeGauntletSummary(ledger);
+  assert.equal(summary.humanName, "You");
+  assert.equal(summary.difficulty, "medium");
+  assert.equal(summary.complete, true);
+  assert.equal(summary.record, "1-2-0", "a forfeit is a loss like any other — it is rated, not dropped");
+  assert.equal(summary.forfeits, 1);
+  assert.deepEqual(summary.rows.map(r => r.status), ["won", "lost", "forfeit"]);
+  assert.equal(summary.rows[0].change > 0, true);
+  assert.ok(summary.rows.every(r => Number.isFinite(r.change)), "every played fixture reports its own rating change");
+  assert.equal(summary.rating.games, 3, "three rated matches, in the gauntlet's own bracket");
+  assert.equal(summary.disclosure, SEAT_DISCLOSURE, "the seat disclosure travels WITH the standing it qualifies (D4)");
+
+  const net = summary.rows.reduce((sum, r) => sum + (r.change || 0), 0);
+  assert.equal(summary.netChange, net, "the run's net change is exactly the sum of its matches' changes");
+});
+
+test("shapeGauntletSummary reads a half-played run too — that is what a resumed gauntlet shows", () => {
+  const ledger = gauntletLedger(4);
+  recordGauntletMatch(ledger, { winner: "human", margin: 2 });
+  const summary = shapeGauntletSummary(ledger);
+  assert.equal(summary.complete, false);
+  assert.equal(summary.played, 1);
+  assert.equal(summary.remaining, 3);
+  assert.equal(summary.record, "1-0-0");
+  assert.equal(summary.rows[1].status, "next");
+  assert.equal(summary.rows[1].change, null, "an unplayed fixture has no rating change to claim");
+  assert.equal(shapeGauntletSummary(createLedger()), null, "no gauntlet, no summary");
+});
+
+/* ---------- mostRelevantBracket: opening Standings from the TAB lands somewhere real ---------- */
+
+test("mostRelevantBracket keeps the preferred bracket whenever that bracket already has results", () => {
+  const ledger = gauntletLedger(2, { difficulty: "hard" });
+  recordGauntletMatch(ledger, { winner: "human", margin: 10 });
+  // "hard" now has rated rows; a player already looking at hard stays on hard.
+  assert.equal(mostRelevantBracket("hard", ledger), "hard");
+});
+
+test("mostRelevantBracket falls to the gauntlet's own bracket rather than showing an empty table", () => {
+  // The real failure this fixes: finish a HARD gauntlet, click the Standings TAB (which carries
+  // whatever bracket was last viewed -- "medium" by default), and the screen reads "Nobody has
+  // played a rated match at this difficulty yet" while three rated games sit one bracket away.
+  const ledger = gauntletLedger(2, { difficulty: "hard" });
+  recordGauntletMatch(ledger, { winner: "human", margin: 10 });
+  assert.equal(standingsFor(ledger, "medium").length, 0, "fixture sanity: medium really is empty");
+  assert.equal(mostRelevantBracket("medium", ledger), "hard",
+    "an empty preferred bracket must yield to the bracket the player was actually playing in");
+});
+
+test("mostRelevantBracket returns the preferred bracket unchanged when NOTHING is rated anywhere", () => {
+  // With no results at all there is genuinely nothing to show, and silently hopping brackets would
+  // be worse than the honest empty-state -- so the preferred bracket comes back untouched.
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "Solo", strategy: "default" });
+  assert.equal(mostRelevantBracket("medium", ledger), "medium");
+});
+
+test("mostRelevantBracket is deterministic when several brackets have results and none is preferred", () => {
+  // Falls through DIFFICULTY_OPTIONS order rather than object key insertion order, so the same
+  // ledger always opens on the same bracket.
+  const ledger = createLedger();
+  addRosterEntry(ledger, { name: "A", strategy: "default" });
+  addRosterEntry(ledger, { name: "B", strategy: "aggressive" });
+  const row = (aName, bName) => [{ aName, bName, winner: "a", margin: 5 }];
+  recordCompetition(ledger, { difficulty: "hard", aName: "A", bName: "B", rows: row("A", "B") });
+  recordCompetition(ledger, { difficulty: "easy", aName: "A", bName: "B", rows: row("A", "B") });
+  const first = mostRelevantBracket("medium", ledger);
+  assert.equal(first, mostRelevantBracket("medium", ledger), "same ledger, same answer, every time");
+  assert.ok(["easy", "hard"].includes(first), "and it is one of the brackets that actually has rows");
 });

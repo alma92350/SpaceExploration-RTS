@@ -407,6 +407,16 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
     gameOverEl.appendChild(seedLine);
   }
 
+  // A COMPETITION fixture's outcome (docs/competitions-and-elo.md Phase 4), when this match was
+  // one: what it did to the ladder, the seat disclosure that qualifies that rating (D4), and the
+  // next fixture with a button that boots it. Absent — the case for every ordinary skirmish — this
+  // whole block is skipped and the screen is exactly what it always was.
+  //
+  // Rendered from a PLAIN DATA OBJECT with its actions injected as callbacks, the same param-driven
+  // discipline the rest of this function already holds to (see its header): overlays.js still needs
+  // neither the session, nor setup.js, nor competition.js to show a competition result.
+  if (opts.competition) renderCompetitionResult(opts.competition);
+
   const again = document.createElement("button");
   again.className = "btn";
   again.style.width = "auto";
@@ -418,6 +428,51 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
     onRestart();
   });
   gameOverEl.appendChild(again);
+}
+
+/**
+ * The competition block inside showGameOver above — deliberately part of THAT screen rather than a
+ * second overlay of its own: what the player needs after a gauntlet match is the ordinary
+ * victory/defeat verdict AND what it cost or earned them, read together. A separate screen would
+ * either hide the win/loss copy or repeat it.
+ * @param {{ title?: string, outcome?: string, ratingLine?: string, error?: string,
+ *   disclosure?: string, standing?: string, nextLabel?: string, onNext?: Function,
+ *   viewLabel?: string, onView?: Function }} comp
+ */
+function renderCompetitionResult(comp) {
+  const box = document.createElement("div");
+  box.className = "gameover-comp";
+  const line = (text, cls) => {
+    if (!text) return;
+    const el = document.createElement("div");
+    el.className = cls;
+    el.textContent = text;   // textContent, never innerHTML: an entrant name is free-typed input
+    box.appendChild(el);
+  };
+  line(comp.title, "gameover-comp-title");
+  line(comp.outcome, "gameover-comp-outcome");
+  line(comp.ratingLine, "gameover-comp-rating");
+  line(comp.standing, "gameover-comp-standing");
+  line(comp.error, "gameover-comp-error");
+  line(comp.disclosure, "gameover-comp-note");
+
+  const actions = document.createElement("div");
+  actions.className = "gameover-comp-actions";
+  const act = (label, fn, cls) => {
+    if (!label || !fn) return;
+    const b = document.createElement("button");
+    b.className = "btn" + (cls ? " " + cls : "");
+    b.textContent = label;
+    // Hiding the overlay here (not inside the callback) keeps every exit from this screen
+    // consistent with the "Choose another battlefield" button just below it.
+    b.addEventListener("click", () => { gameOverEl.classList.add("hidden"); fn(); });
+    actions.appendChild(b);
+  };
+  act(comp.nextLabel, comp.onNext, "primary");
+  act(comp.viewLabel, comp.onView);
+  if (actions.children.length) box.appendChild(actions);
+
+  gameOverEl.appendChild(box);
 }
 
 // The mission-end screen for a scenario (engine/scenarios.js) — its own screen

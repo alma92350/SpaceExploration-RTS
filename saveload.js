@@ -25,6 +25,7 @@ import { serializeGame, serializeGameString, deserializeGame, serializeGalaxy, s
 import { bootState, bootGalaxy, restartToMapSelect, pauseLoop, resumeLoop } from "./boot.js";
 import { isGalaxySave, resumableMode } from "./saveShape.js";
 import { showGalaxyToast } from "./overlays.js";
+import { liveCompetitionFixture, forfeitLiveCompetitionMatch } from "./competition.js";
 import * as sound from "./sound.js";
 
 const SAVE_KEY = "stellarfrontier.save.v1";
@@ -216,6 +217,14 @@ function flashButton(btn, msg) {
 // pick it up. A lightweight modal built on the fly (Cancel / backdrop / Esc dismiss it).
 function goHome() {
   const scenario = !!(game.state && game.state.scenario);
+  // A live COMPETITION fixture (docs/competitions-and-elo.md Phase 4) is the third case, and it
+  // changes what leaving MEANS: abandoning a gauntlet match records a forfeit — a rated loss —
+  // rather than silently dropping the fixture, and the player has to be told that before it
+  // happens, which is exactly what this dialog is for. It is also deliberately NOT offered a
+  // "Save & Exit": game.competition isn't part of the save, so a resumed autosave would be an
+  // ordinary skirmish that no longer belongs to any run, which is a worse outcome than an honest
+  // forfeit.
+  const fixture = liveCompetitionFixture();
 
   const overlay = document.createElement("div");
   overlay.className = "home-confirm";
@@ -228,12 +237,15 @@ function goHome() {
   card.tabIndex = -1;   // focusable as a fallback landing spot if there's ever no button to focus
   const h = document.createElement("h2");
   h.id = "home-confirm-title";
-  h.textContent = scenario ? "Leave the mission?" : "Return to the menu?";
+  h.textContent = fixture ? "Forfeit this gauntlet match?" : scenario ? "Leave the mission?" : "Return to the menu?";
   card.setAttribute("aria-labelledby", h.id);
   const p = document.createElement("p");
-  p.textContent = scenario
-    ? "A scenario can't be saved — leaving abandons this run."
-    : "Your progress autosaves — Save & Exit checkpoints it now so you can Continue later.";
+  p.textContent = fixture
+    ? `Leaving now records a LOSS to ${fixture.opponent} in your gauntlet, rated exactly like a match you played and lost. `
+      + "A competition match can't be saved and resumed."
+    : scenario
+      ? "A scenario can't be saved — leaving abandons this run."
+      : "Your progress autosaves — Save & Exit checkpoints it now so you can Continue later.";
   const actions = document.createElement("div");
   actions.className = "home-actions";
   card.append(h, p, actions);
@@ -259,11 +271,12 @@ function goHome() {
   // Save & Exit only leaves once the checkpoint actually lands. If localStorage is
   // unavailable (quota / private mode) we DON'T pretend it saved and exit into a lost
   // game — we fall back to a file download and keep the player in-game so nothing is lost.
-  if (!scenario) act("Save & Exit", () => {
+  if (!scenario && !fixture) act("Save & Exit", () => {
     if (autoSave()) restartToMapSelect();
     else saveToFile();
   }, "primary");
-  act(scenario ? "Leave" : "Exit without Saving", () => restartToMapSelect(), scenario ? "primary" : "");
+  if (fixture) act("Forfeit & Exit", () => { forfeitLiveCompetitionMatch(); restartToMapSelect(); }, "primary");
+  else act(scenario ? "Leave" : "Exit without Saving", () => restartToMapSelect(), scenario ? "primary" : "");
   act("Cancel", () => {}, "ghost");
 
   overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
