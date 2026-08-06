@@ -20,12 +20,16 @@ import {
   shapeTournamentStandings, shapeBracketView,
   SEAT_DISCLOSURE, gauntletEstimate, buildGauntletStart, shapeGauntletFixtures, nextGauntletFixture,
   humanMatchOutcome, gauntletLadderTrail, shapeGauntletSummary, mostRelevantBracket,
+  EXHIBITION_NOTE, buildWatchConfig, spectatedMatchOutcome,
+  REPLAY_NOTE, replayableMatch, buildReplayConfig, replayVerdict, shapeHistoryMatches,
 } from "../competition.js";
-import { duelSeed } from "../tools/duelCore.js";
+import { duelSeed, pinnedDuelDials } from "../tools/duelCore.js";
+import { createSelfPlayState, tickSelfPlay, runSelfPlayMatch } from "../tools/selfplay.js";
+import { runCompetitionJob } from "../competitionWorker.js";
 import { INITIAL_RATING } from "../elo.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
 import {
-  createLedger, addRosterEntry, recordCompetition, standingsFor,
+  createLedger, addRosterEntry, removeRosterEntry, recordCompetition, standingsFor,
   GAUNTLET_DEFAULT_MATCH_SECONDS, startGauntlet, recordGauntletMatch, recordGauntletForfeit,
 } from "../competitionLedger.js";
 import { buildSwissBracket, buildKnockoutBracket, knockoutMatchCount, swissRoundCount } from "../pairing.js";
@@ -1034,4 +1038,331 @@ test("mostRelevantBracket is deterministic when several brackets have results an
   const first = mostRelevantBracket("medium", ledger);
   assert.equal(first, mostRelevantBracket("medium", ledger), "same ledger, same answer, every time");
   assert.ok(["easy", "hard"].includes(first), "and it is one of the brackets that actually has rows");
+});
+
+/* ============================================================
+   WATCHING A MATCH LIVE (docs/competitions-and-elo.md Phase 5) — the pure half: the config a
+   watched match is booted from, and the exhibition framing that says it isn't rated.
+   ============================================================ */
+
+const watchJob = () => buildJob({
+  entrantA: { name: "Alpha", strategy: "aggressive", archetype: "rusher" },
+  entrantB: { name: "Beta", strategy: "economic", archetype: "economist" },
+  difficulty: "hard",
+  worlds: ["korrath", "ferros"],
+  seeds: 2,
+  seedBase: 42,
+});
+
+test("buildWatchConfig seats the entrants exactly the way the simulated path does", () => {
+  const job = watchJob();
+  const cfg = buildWatchConfig(job);
+
+  // tools/duelCore.js's runDuelMatch: entrant A owns "player", entrant B owns "ai". A watched
+  // match has to agree, or "who won" would be reported for the wrong entrant.
+  assert.equal(cfg.aName, "Alpha");
+  assert.equal(cfg.bName, "Beta");
+  assert.equal(cfg.playerAi.strategy, "aggressive");
+  assert.equal(cfg.playerAi.archetype, "rusher");
+  assert.equal(cfg.ai.strategy, "economic");
+  assert.equal(cfg.ai.archetype, "economist");
+});
+
+test("buildWatchConfig pins ONE difficulty dial set onto both seats, like every rated match", () => {
+  const cfg = buildWatchConfig(watchJob());
+  const dials = pinnedDuelDials("hard");
+  for (const seat of [cfg.ai, cfg.playerAi]) {
+    assert.equal(seat.difficulty, dials.difficulty);
+    assert.equal(seat.apm, dials.apm);
+    assert.equal(seat.micro, dials.micro);
+  }
+});
+
+test("buildWatchConfig draws the SAME world/seed/asym the worker would have run for that replicate", () => {
+  const job = watchJob();
+  const first = buildWatchConfig(job);
+  assert.equal(first.world, "korrath", "the first picked world by default");
+  assert.equal(first.seed, matchSeedFor(job, "korrath", 0), "the schedule's own seed, not a fresh roll");
+  assert.equal(first.seed, duelSeed(42, "korrath", "hard", "Alpha", "Beta", 0));
+  assert.equal(first.swapAsym, false, "replicate 0 keeps the map's own halves");
+
+  const second = buildWatchConfig(job, { world: "ferros", rep: 1 });
+  assert.equal(second.world, "ferros");
+  assert.equal(second.seed, matchSeedFor(job, "ferros", 1));
+  assert.equal(second.swapAsym, true, "replicate parity flips the asym halves, same rule as the worker");
+});
+
+test("buildWatchConfig refuses a world the job never scheduled", () => {
+  assert.throws(() => buildWatchConfig(watchJob(), { world: "not-a-world" }), /world/i);
+});
+
+test("buildWatchConfig's opts build a real self-play state that both AIs actually drive", () => {
+  const cfg = buildWatchConfig(watchJob());
+  const state = createSelfPlayState({
+    planetId: cfg.world, seed: cfg.seed, swapAsym: cfg.swapAsym,
+    matchTimeLimit: cfg.matchTimeLimit, ai: cfg.ai, playerAi: cfg.playerAi,
+  });
+  assert.ok(state.playerAi, "the SECOND controller exists — this is what makes both seats AI-driven");
+  assert.equal(state.playerAi.strategy, "aggressive");
+  assert.equal(state.ai.strategy, "economic");
+  // Both controllers really do act: run a slice and check each side has ordered something.
+  for (let i = 0; i < 600; i++) tickSelfPlay(state);
+  const owners = new Set([...state.units.values()].map(u => u.owner));
+  assert.ok(owners.has("player") && owners.has("ai"), "both seats field units");
+});
+
+test("EXHIBITION_NOTE states plainly that a watched match changes no rating", () => {
+  assert.match(EXHIBITION_NOTE, /exhibition/i);
+  assert.match(EXHIBITION_NOTE, /not|no/i);
+  assert.match(EXHIBITION_NOTE, /rating|rated|ladder/i);
+  // The REASON has to be there too, not just the claim — a single unswapped match is not the
+  // side-swapped, multi-seed pairing every rated row in this system is built from.
+  assert.match(EXHIBITION_NOTE, /swap/i);
+});
+
+test("spectatedMatchOutcome names the WINNING ENTRANT, never \"you\"", () => {
+  const state = createGameState({ planetId: "ferros", seed: 5, rng: mulberry32(5) });
+  const watch = { aName: "Alpha", bName: "Beta" };
+
+  state.over = true; state.winner = "player"; state.winReason = "elimination";
+  const aWon = spectatedMatchOutcome(state, watch);
+  assert.equal(aWon.winnerName, "Alpha");
+  assert.match(aWon.verdict, /Alpha/);
+  assert.doesNotMatch(aWon.verdict, /\b(you|your|victory|defeat)\b/i,
+    "nobody watching a match won or lost it");
+
+  state.winner = "ai";
+  assert.equal(spectatedMatchOutcome(state, watch).winnerName, "Beta");
+
+  state.winner = null;
+  const drawn = spectatedMatchOutcome(state, watch);
+  assert.equal(drawn.winnerName, null);
+  assert.match(drawn.verdict, /draw/i);
+});
+
+test("spectatedMatchOutcome carries both entrants' scores, A-relative like every duel row", () => {
+  const state = createGameState({ planetId: "ferros", seed: 5, rng: mulberry32(5) });
+  state.over = true; state.winner = "player";
+  const out = spectatedMatchOutcome(state, { aName: "Alpha", bName: "Beta" });
+  assert.equal(out.aScore, +playerScore(state, "player").toFixed(1));
+  assert.equal(out.bScore, +playerScore(state, "ai").toFixed(1));
+  assert.equal(out.margin, +(out.aScore - out.bScore).toFixed(1));
+  assert.equal(out.exhibition, true, "the block itself is flagged as unrated");
+});
+
+/* ============================================================
+   REPLAYING A FINISHED MATCH (docs/competitions-and-elo.md Phase 5) — a recorded ledger row
+   carries its world, its exact seed, its map half and both entrants' configs, so replaying is not
+   a recording/playback system at all: it is RE-RUNNING the same deterministic simulation from the
+   same inputs (D6).
+
+   THE PROPERTY THIS SECTION EXISTS TO PROVE, rather than assume, is at the bottom: a replay
+   reproduces the recorded winner AND score margin EXACTLY. Everything above it is the shaping that
+   has to be right for that property to be provable at all — most of all the SEATING, because a
+   recorded row is always reported A-relative while the match it describes was played in one of two
+   directions, and replaying the wrong direction is a different match between the same two names.
+   ============================================================ */
+
+// A ledger holding two DELIBERATELY DIFFERENT entrants (different strategy and different
+// archetype) plus one recorded two-row duel — one row per direction, exactly as the worker posts
+// them. The asymmetry is the point: a seating bug reproduces silently in a mirror matchup.
+const REPLAY_A = { name: "Blitz", strategy: "aggressive", archetype: "rusher", faction: "syndicate" };
+const REPLAY_B = { name: "Bulwark", strategy: "economic", archetype: "economist", faction: "miners" };
+
+function replayLedger(rows) {
+  const ledger = createLedger();
+  addRosterEntry(ledger, REPLAY_A);
+  addRosterEntry(ledger, REPLAY_B);
+  if (rows) recordCompetition(ledger, { at: 100, difficulty: "medium", aName: REPLAY_A.name, bName: REPLAY_B.name, rows });
+  return ledger;
+}
+
+// One recorded row, in the worker's own shape. `direction` decides which entrant actually held
+// owner "player": "bAsAi" is A, "aAsAi" is B (competitionWorker.js's own two directions).
+const recordedRow = (overrides = {}) => ({
+  world: "ferros", seed: 12345, difficulty: "medium", swapAsym: false,
+  aName: REPLAY_A.name, aStrategy: "aggressive", bName: REPLAY_B.name, bStrategy: "economic",
+  aDifficulty: "medium", bDifficulty: "medium", aApm: 65, bApm: 65, aMicro: false, bMicro: false,
+  winner: "a", winReason: "elimination", time: 700,
+  aScore: 90, bScore: 30, margin: 60, direction: "bAsAi",
+  ...overrides,
+});
+
+test("buildReplayConfig rebuilds the recorded match's world, seed and map half — never a fresh roll", () => {
+  const row = recordedRow();
+  const cfg = buildReplayConfig(row, replayLedger([row]));
+  assert.equal(cfg.world, "ferros");
+  assert.equal(cfg.seed, 12345);
+  assert.equal(cfg.swapAsym, false);
+  assert.equal(cfg.difficulty, "medium");
+
+  const swapped = buildReplayConfig(recordedRow({ swapAsym: true }), replayLedger([recordedRow()]));
+  assert.equal(swapped.swapAsym, true, "the map half is part of what was recorded, not re-derived from parity");
+});
+
+test("buildReplayConfig seats each entrant where the RECORDED DIRECTION actually put it", () => {
+  const ledger = replayLedger([recordedRow()]);
+
+  // Direction 1: entrant A held owner "player" — runDuelMatch's own fixed mapping.
+  const forward = buildReplayConfig(recordedRow({ direction: "bAsAi" }), ledger);
+  assert.equal(forward.aName, "Blitz", "aName is whoever held owner \"player\"");
+  assert.equal(forward.bName, "Bulwark");
+  assert.equal(forward.playerAi.strategy, "aggressive");
+  assert.equal(forward.playerAi.archetype, "rusher");
+  assert.equal(forward.ai.strategy, "economic");
+  assert.equal(forward.ai.archetype, "economist");
+
+  // Direction 2: the row was recorded A-relative, but entrant B is the one that held "player".
+  const flipped = buildReplayConfig(recordedRow({ direction: "aAsAi" }), ledger);
+  assert.equal(flipped.aName, "Bulwark", "the flipped direction really did seat B as owner \"player\"");
+  assert.equal(flipped.bName, "Blitz");
+  assert.equal(flipped.playerAi.strategy, "economic");
+  assert.equal(flipped.playerAi.archetype, "economist");
+  assert.equal(flipped.ai.strategy, "aggressive");
+  assert.equal(flipped.ai.archetype, "rusher");
+});
+
+test("buildReplayConfig states the recorded outcome from the SEAT's point of view, so a replay can be compared directly", () => {
+  const ledger = replayLedger([recordedRow()]);
+
+  const forward = buildReplayConfig(recordedRow({ winner: "a", margin: 60 }), ledger);
+  assert.equal(forward.recorded.winnerName, "Blitz");
+  assert.equal(forward.recorded.margin, 60);
+  assert.equal(forward.recorded.aScore, 90);
+  assert.equal(forward.recorded.bScore, 30);
+
+  // Same row, other direction: "a won" still means Blitz won, but Blitz sat in the "ai" seat, so
+  // seat-relative the margin is negated and the winner is the B-seat name.
+  const flipped = buildReplayConfig(recordedRow({ direction: "aAsAi", winner: "a", margin: 60 }), ledger);
+  assert.equal(flipped.recorded.winnerName, "Blitz", "who won is a fact about the ENTRANT, not the seat");
+  assert.equal(flipped.recorded.margin, -60, "…but the margin is stated the way the replay will measure it");
+  assert.equal(flipped.recorded.aScore, 30);
+  assert.equal(flipped.recorded.bScore, 90);
+
+  const drawn = buildReplayConfig(recordedRow({ winner: "draw", margin: 0 }), ledger);
+  assert.equal(drawn.recorded.winnerName, null);
+});
+
+test("buildReplayConfig pins ONE difficulty dial set onto both seats, exactly as the recorded match ran", () => {
+  const cfg = buildReplayConfig(recordedRow({ difficulty: "hard" }), replayLedger([recordedRow()]));
+  const dials = pinnedDuelDials("hard");
+  for (const seat of [cfg.ai, cfg.playerAi]) {
+    assert.equal(seat.difficulty, dials.difficulty);
+    assert.equal(seat.apm, dials.apm);
+    assert.equal(seat.micro, dials.micro);
+  }
+});
+
+test("replayableMatch refuses a match a HUMAN played — a person is not a seeded input (D6)", () => {
+  const ledger = replayLedger([recordedRow()]);
+  const humanRow = recordedRow({ human: true, seatSwapped: false });
+  const verdict = replayableMatch(humanRow, ledger);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /human|played|person/i);
+  assert.throws(() => buildReplayConfig(humanRow, ledger), /human|played|person/i);
+});
+
+test("replayableMatch refuses a match whose entrant is no longer on the roster — its archetype is unrecoverable", () => {
+  const ledger = replayLedger([recordedRow()]);
+  removeRosterEntry(ledger, "Bulwark");
+  const verdict = replayableMatch(recordedRow(), ledger);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /Bulwark/);
+  assert.match(verdict.reason, /roster/i);
+});
+
+test("replayableMatch refuses a row whose world or seed isn't real", () => {
+  const ledger = replayLedger([recordedRow()]);
+  assert.equal(replayableMatch(recordedRow({ world: "not-a-world" }), ledger).ok, false);
+  assert.equal(replayableMatch(recordedRow({ seed: "soon" }), ledger).ok, false);
+  assert.equal(replayableMatch(recordedRow(), ledger).ok, true, "…and accepts a real one");
+});
+
+test("REPLAY_NOTE states plainly that a replay re-rates nothing — the match is already counted", () => {
+  assert.match(REPLAY_NOTE, /replay/i);
+  assert.match(REPLAY_NOTE, /rating|rated|ladder/i);
+  assert.match(REPLAY_NOTE, /already/i);
+});
+
+test("replayVerdict reports whether the re-run reproduced the recorded result, and says so honestly when it didn't", () => {
+  const recorded = { winnerName: "Blitz", margin: 60 };
+  const same = replayVerdict({ winnerName: "Blitz", margin: 60 }, recorded);
+  assert.equal(same.reproduced, true);
+  assert.match(same.line, /reproduc/i);
+
+  const otherWinner = replayVerdict({ winnerName: "Bulwark", margin: -12 }, recorded);
+  assert.equal(otherWinner.reproduced, false);
+  assert.match(otherWinner.line, /Blitz/, "a divergence has to name what was RECORDED, not only what just happened");
+
+  const otherMargin = replayVerdict({ winnerName: "Blitz", margin: 59.9 }, recorded);
+  assert.equal(otherMargin.reproduced, false, "the margin is part of the claim, not just the winner");
+});
+
+test("shapeHistoryMatches lists the ledger's recorded matches newest-first, each with its own replayability", () => {
+  const ledger = replayLedger([recordedRow(), recordedRow({ direction: "aAsAi", winner: "b", margin: -20 })]);
+  recordCompetition(ledger, {
+    at: 200, difficulty: "hard", aName: REPLAY_A.name, bName: REPLAY_B.name,
+    rows: [recordedRow({ world: "korrath", seed: 7, difficulty: "hard", winner: "b", margin: -5 })],
+  });
+
+  const shaped = shapeHistoryMatches(ledger);
+  assert.equal(shaped.length, 3);
+  assert.equal(shaped[0].world, "korrath", "the most recently recorded competition comes first");
+  assert.equal(shaped[0].difficulty, "hard");
+  assert.equal(shaped[0].winner, "Bulwark", "the winner reads as an entrant NAME, never \"a\"/\"b\"");
+  assert.equal(shaped[0].replayable, true);
+  assert.equal(shaped[0].entryIndex, 1);
+  assert.equal(shaped[0].rowIndex, 0);
+  assert.ok(shaped.every(m => typeof m.side === "string" && m.side.length), "each row says which entrant held which seat");
+
+  assert.deepEqual(shapeHistoryMatches(ledger, { limit: 2 }).length, 2, "the list is capped for display");
+  assert.deepEqual(shapeHistoryMatches(createLedger()), [], "an empty ledger shapes to an empty list, never a throw");
+});
+
+test("shapeHistoryMatches marks a match it cannot replay, with the reason, instead of hiding it", () => {
+  const ledger = replayLedger([recordedRow({ human: true })]);
+  const shaped = shapeHistoryMatches(ledger);
+  assert.equal(shaped.length, 1, "an unreplayable match is still part of the record");
+  assert.equal(shaped[0].replayable, false);
+  assert.match(shaped[0].reason, /human|played|person/i);
+});
+
+/* ---------- THE PROPERTY ITSELF: a replay really does reproduce what was recorded ----------
+   This runs FOUR real matches (two recorded, two replayed) through the same headless path the
+   Worker uses, so it costs a few seconds — deliberately, because it is the only assertion in this
+   repo that actually PROVES the determinism claim D6 makes rather than restating it. The two
+   entrants differ in strategy AND archetype, so replaying the wrong SEAT would show up as a
+   different result rather than reproducing by symmetry. */
+
+test("a replay reproduces the recorded winner and score margin EXACTLY, in both recorded directions", () => {
+  const job = buildJob({
+    entrantA: REPLAY_A, entrantB: REPLAY_B,
+    difficulty: "medium", worlds: ["ferros"], seeds: 1, seedBase: 4242,
+  });
+  const { rows } = runCompetitionJob(job);
+  assert.equal(rows.length, 2, "fixture sanity: one duel is both directions of one (world, replicate)");
+
+  const ledger = replayLedger(rows);
+  assert.equal(ledger.history.length, 1);
+
+  for (const row of ledger.history[0].rows) {
+    const cfg = buildReplayConfig(row, ledger);
+    // Exactly what boot.js's startSpectatedMatch feeds createSelfPlayState — same constructor,
+    // same fields, so this is the shipped replay path, not a parallel re-implementation of it.
+    const state = createSelfPlayState({
+      planetId: cfg.world, seed: cfg.seed, swapAsym: cfg.swapAsym,
+      matchTimeLimit: cfg.matchTimeLimit, ai: cfg.ai, playerAi: cfg.playerAi,
+    });
+    runSelfPlayMatch(state);
+    const outcome = spectatedMatchOutcome(state, cfg);
+
+    assert.equal(outcome.winnerName, cfg.recorded.winnerName,
+      `replaying the ${row.direction} row must reproduce its recorded winner`);
+    assert.equal(outcome.margin, cfg.recorded.margin,
+      `replaying the ${row.direction} row must reproduce its recorded score margin exactly`);
+    assert.equal(outcome.aScore, cfg.recorded.aScore);
+    assert.equal(outcome.bScore, cfg.recorded.bScore);
+    assert.equal(outcome.winReason, cfg.recorded.winReason, "…down to WHY the match ended");
+    assert.equal(replayVerdict(outcome, cfg.recorded).reproduced, true);
+  }
 });

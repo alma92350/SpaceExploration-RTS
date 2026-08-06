@@ -366,7 +366,11 @@ const WIN_REASON_COPY = {
 // score breakdown below) are optional: an Odyssey game-over never sets either, and a caller that
 // predates this feature simply gets the old conquest-copy default.
 export function showGameOver(winner, seed, onRestart, opts = {}) {
-  if (winner === "player") sound.playVictory(); else sound.playDefeat();
+  // A SPECTATED AI-vs-AI match (docs/competitions-and-elo.md Phase 5) has no "you" in it: the
+  // human watched two AI entrants play. Neither the fanfare nor the funeral is right, so it gets
+  // silence and its own verdict line below — every other caller is byte-identical to before.
+  if (opts.spectate) { /* no verdict sound: the watcher neither won nor lost this */ }
+  else if (winner === "player") sound.playVictory(); else sound.playDefeat();
 
   gameOverEl.classList.remove("hidden");
   gameOverEl.innerHTML = "";
@@ -375,7 +379,9 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
   // wipeout sends a relief colony ship instead). So an Odyssey game-over is always a surrender.
   // Skirmish/scenario keep the win-or-lose copy, now branched on WHY it ended.
   const msg = document.createElement("div");
-  msg.textContent = opts.odyssey
+  msg.textContent = opts.spectate
+    ? opts.spectate.verdict   // "<entrant> wins…" — named, never "Victory"/"Defeat" (see above)
+    : opts.odyssey
     ? (opts.surrendered
         ? "Surrendered — you lay down your flag. The frontier falls quiet."
         : "The Odyssey has ended.")
@@ -390,7 +396,10 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
   // answerable on screen, not just asserted. Conquest (winReason "elimination") shows none: the
   // score math had nothing to do with that outcome. Shown from the human player's own numbers,
   // alongside the enemy's final score for direct comparison.
-  if (!opts.odyssey && opts.state && (opts.winReason === "mutual-wipe-score" || opts.winReason === "timeout-score")) {
+  // …and never for a spectated match: this breakdown is written from "your"/"enemy"'s point of
+  // view, which has no referent when the human played neither seat. The spectate block below
+  // carries both entrants' scores side by side instead, named.
+  if (!opts.odyssey && !opts.spectate && opts.state && (opts.winReason === "mutual-wipe-score" || opts.winReason === "timeout-score")) {
     const bd = scoreBreakdown(opts.state, "player");
     const enemyScore = playerScore(opts.state, "ai");
     const breakdown = document.createElement("div");
@@ -416,6 +425,11 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
   // discipline the rest of this function already holds to (see its header): overlays.js still needs
   // neither the session, nor setup.js, nor competition.js to show a competition result.
   if (opts.competition) renderCompetitionResult(opts.competition);
+  // A watched match's own block — the two entrants' scores, the exhibition-only disclosure, and a
+  // route back to the Competition screen. Rendered through the SAME plain-data block renderer:
+  // the two blocks say different things but have identical structure, and a second near-copy of
+  // it would be the thing that drifts.
+  else if (opts.spectate && opts.spectate.block) renderCompetitionResult(opts.spectate.block);
 
   const again = document.createElement("button");
   again.className = "btn";
@@ -434,7 +448,8 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
  * The competition block inside showGameOver above — deliberately part of THAT screen rather than a
  * second overlay of its own: what the player needs after a gauntlet match is the ordinary
  * victory/defeat verdict AND what it cost or earned them, read together. A separate screen would
- * either hide the win/loss copy or repeat it.
+ * either hide the win/loss copy or repeat it. Also renders a SPECTATED match's exhibition block
+ * (Phase 5), which has the same shape — a title, an outcome line, a note, and a way back.
  * @param {{ title?: string, outcome?: string, ratingLine?: string, error?: string,
  *   disclosure?: string, standing?: string, nextLabel?: string, onNext?: Function,
  *   viewLabel?: string, onView?: Function }} comp

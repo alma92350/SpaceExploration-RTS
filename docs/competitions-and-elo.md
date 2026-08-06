@@ -616,6 +616,263 @@ ordinary skirmish game-over confirmed unchanged (no competition block, ledger un
 **Tests:** observer entry works without a galaxy; a spectated match issues no player orders; a replay
 of a recorded match reproduces its recorded winner and score margin exactly.
 
+**Status: DONE — all four bullets.** The spectate half landed first (watch a pairing live, with
+speed control); replay-from-the-ledger and Season landed on top of it, and the replay work turned up
+a real determinism bug in the spectate half that is written up below rather than quietly fixed.
+
+- **Observer Mode generalised, by relaxing exactly one guard.** `enterObserverMode`'s
+  `if (!game.galaxy …) return` became `if (!game.galaxy && !game.spectateMatch) return`, and
+  `game.spectateId` falls back to `game.state.planetId` when there is no galaxy. Everything else —
+  the whole camera path, `input.js`'s seven delegation points, `observedState()`'s existing
+  `game.state` fallback, `boot.js`'s render swap — was already general and is untouched. **Where
+  Observer Mode is OFFERED is still exactly two places:** an Odyssey, and a match the human is not
+  playing. An ordinary player-vs-AI skirmish is still refused, because revealing its fog would just
+  be a cheat, and the Odyssey tests are the safety net that the galaxy path didn't move.
+- **`observerStats` degrades honestly rather than crashing or lying.** `aiDevelopment` was *checked*,
+  not assumed: it needs no `state.diplomacy` at all (it counts owner "ai"'s finished economic
+  buildings plus its researched techs, both present on any skirmish state), so nothing there needed
+  a crash guard. What it *is* is the Odyssey's development-curve metric for the one neighbour AI —
+  meaningless for one seat of a two-entrant duel — so it now reports `null` without diplomacy and
+  the panel omits it, alongside Stance. In its place `observerStats` gained `seats`: army,
+  buildings, supply and resources **per owner**, off `state.owners`. The watched-match panel renders
+  those two blocks under the entrants' own names instead of "AI army"/"Player forces", which would
+  have named the human as a combatant in a match they aren't in. Every pre-existing owner-"ai" field
+  keeps its exact meaning, so the Odyssey panel is byte-identical.
+- **A watched match is EXHIBITION ONLY, and the UI says so in three places.** This was a real
+  decision, argued at `competition.js`'s `EXHIBITION_NOTE`: every rated result in this system is a
+  *pairing* — side-swapped, multi-seed, replicate-parity `swapAsym` — precisely because a single
+  unswapped match is confounded by the seat edge `tools/selfplay.js` measures and by the map's own
+  asymmetric halves. A watched match is one match, one direction, one map half, so rating it would
+  mix a differently-earned number into the same bracket (D2) with nothing on the Standings screen
+  able to tell them apart. So it moves no rating, writes no history row, and does not even add a
+  drafted entrant to the roster — watching costs nothing, literally. Disclosed under the Watch
+  button, on the spectate bar for the whole match, and again on the game-over screen (the same
+  discipline Phase 1 held to when its Elo wasn't saved).
+- **What you watch is what the Worker would have run.** `buildWatchConfig(job)` shapes one match out
+  of the *same* `buildJob` the simulated path uses: the same `duelSeed`-derived seed (via
+  `matchSeedFor`, never a fresh roll), the same replicate-parity `swapAsym`, one `pinnedDuelDials`
+  set on **both** seats, each entrant's own strategy/archetype on its own seat, and
+  runDuelMatch's own seating (A owns `"player"`, B owns `"ai"`). `boot.js`'s `startSpectatedMatch`
+  feeds exactly that to `createSelfPlayState`, and the loop's update calls `tickSelfPlay` instead of
+  `tick` — one `else if` on `game.spectateMatch`, no forked `bootState`.
+- **Speed control scales sim time, never the timestep.** `engine/loop.js`'s `createLoop` gained a
+  `speed` option (number *or* live getter) that multiplies the real delta feeding the accumulator:
+  `update(dtFixed)` stays byte-for-byte what it was, and only *how many* identical steps a real
+  second runs changes — the fixed step is what makes replay determinism true, so it must not move.
+  It also lands the overload where the existing design already handles it: past `MAX_SUBSTEPS` the
+  loop degrades to slow motion instead of spiralling. 8x is the top rung for that reason (at 60 Hz
+  it needs ~1.3 of the 5 substeps a frame allows — it was ~2.7 before the sim-rate fix below;
+  16x would sit near the cap on a 30 fps machine and under-deliver).
+- **The human genuinely cannot play.** `input.js` already refused every mouse/wheel/key path while
+  observing; three remaining side doors were closed. The topbar idle-worker/idle-production chips
+  and the selection panel's own "Idle Worker"/"Select Army" buttons call `input`/engine commands
+  *directly*, bypassing that guard — they're hidden/replaced while spectating. And
+  `requestExitObserverMode` (the player-facing O/Esc/button exit, as distinct from the unconditional
+  teardown `boot.js` runs) refuses for a watched match: leaving Observer Mode there would hand the
+  human one of the two entrants' armies mid-match. The spectate bar's **Leave** is the way out.
+- **Leaving is clean, and nothing is left dangling.** `restartToMapSelect` clears
+  `spectateMatch`/`spectateSpeed` next to its existing `competition` clear and repaints the observer
+  UI once (the render loop that normally hides those elements has just been stopped).
+  `saveShape.js`'s `resumableMode` refuses to checkpoint a watched match at all — the "player" seat
+  is AI-driven by a *session* flag no save carries, so a resumed autosave would come back as a
+  skirmish with an unmanned seat — and Save/Load are hidden to match. The always-visible **⌂ Home**
+  confirm is the third door to the same place, so it branches on `spectateMatch` exactly the way
+  Phase 4's taught it to branch on a live fixture: **Leave** (the launcher's own `onLeave`, the same
+  route the spectate bar takes), no *Save & Exit*, and copy that doesn't promise a checkpoint nothing
+  will write. Without that branch it fell back to the ordinary skirmish copy and *Save & Exit*
+  downloaded the exhibition match as a plain skirmish save — one that loads back handing the human
+  full command of an entrant's army — without even leaving.
+
+#### Replay — and the determinism bug it found
+
+- **A replay is not a recording.** A stored history row already carries its world, its exact seed,
+  its `swapAsym` half, its pinned difficulty and both entrants' strategies; the roster carries each
+  entrant's archetype. That is the complete input to `createSelfPlayState`, so
+  `competition.js`'s **`buildReplayConfig(row, ledger)`** rebuilds the match and `startSpectatedMatch`
+  runs it — the same spectator, the same speed control, the same Observer Mode. Nothing is captured,
+  nothing is stored, and replaying a year-old row costs exactly what the match cost.
+- **THE SEATING, not the labelling, is what gets rebuilt.** Every row is reported A-relative, but
+  each was played in one of two directions (`competitionWorker.js` runs both). `"bAsAi"` is
+  `runDuelMatch`'s own mapping (A owns `"player"`); `"aAsAi"` is the reverse, relabelled back by the
+  worker's `flipRow`. `buildReplayConfig` un-does that relabelling and restates the recorded outcome
+  **seat-relative** (`cfg.recorded`), which is what lets `spectatedMatchOutcome` — unchanged, and
+  shared with the watched path — be compared against it directly.
+- **DETERMINISM HELD, but only after a real bug was fixed, and the bug was in the spectate half this
+  document already called done.** `tools/selfplay.js`'s fixed step is `0.1` and was commented "same
+  as the game loop (engine/loop.js)". **It is not**: `createLoop`'s default is 20 Hz, i.e. `0.05`. A
+  fixed step is not a tuning knob — the same seed advanced in different-sized steps runs a different
+  number of ticks, hits its think cycles at different moments and accumulates floats in a different
+  order. Measured on ferros/medium from one seed: `dt 0.1` ended `"ai"` by elimination at 1138 s,
+  `dt 0.05` ended `"player"` by elimination at 1686 s — **opposite winners**. So a watched match was
+  never actually the match the Worker would have simulated, only the same *configuration* of one, and
+  a replay would have reproduced nothing. The fix is surgical: `SELFPLAY_DT`/`SELFPLAY_HZ` are now
+  exported, `bootState` takes a **`selfPlay`** option, and `startSpectatedMatch` passes it so a
+  watched-or-replayed match's loop runs at the self-play step. Ordinary play is untouched at 20 Hz,
+  and `test/boot.test.js` drives the real loop by hand to prove both halves of that.
+- **A second, smaller mismatch, found the same way.** `spectatedMatchOutcome` computed its margin as
+  `round(aScore) - round(bScore)`, while every recorded row computes `round(aScore - bScore)`
+  (`runDuelMatch`). Double-rounding put the two up to 0.1 apart, so the identical match reported a
+  different margin depending on whether it was simulated or watched — invisible until a replay
+  compares the two numbers, and then it reads as a determinism failure that isn't one. Now rounded
+  once, off the raw scores, exactly like the row.
+- **With both fixed, replay reproduces exactly** — winner, margin, both scores and `winReason`, in
+  both recorded directions, headlessly *and* in a real browser. See the verification paragraph below.
+- **Refusals are explicit, and each is a refusal rather than a best-effort replay.** `replayableMatch`
+  turns down a **human** row (D6: a person is not a seeded input, so re-running the seed would
+  simulate somebody else in their seat and call it the same match), a row naming an entrant **no
+  longer on the roster** (archetype is an *input* dial `runDuelMatch` deliberately doesn't echo onto
+  its row — `test/duelCore.test.js` pins that shape — so the roster is where it lives; roster entries
+  are add/remove only, never edited in place, which is what makes that lookup exact), and a row with
+  no real world or seed. An un-replayable match is still **listed** with the reason on hover, not
+  hidden — it happened.
+- **Where the button lives:** on every row of the Quick Duel results table (the results view the
+  brief points at), and on a new **Recent matches** list on the Standings screen built from
+  `shapeHistoryMatches(ledger)` — the ledger's own record, so a match recorded three sessions ago is
+  still replayable after a reload or an import. A replay **writes nothing**: no rating, no history
+  row, no `game.competition`. The reason is sharper than the watched match's — this result is
+  *already* counted, and re-recording it would count one match twice.
+- **The verdict is on screen.** The game-over screen states whether the re-run reproduced the
+  recorded result (`replayVerdict`), and a divergence takes the **error** slot rather than a quiet
+  line: it would mean the simulation is not the deterministic thing this whole system is built on,
+  and the player should be the first to know, not the last.
+
+#### Season
+
+- **`archiveSeason(ledger, {label, at})`** files the live `ratingsByDifficulty` + `history` under a
+  label with an injected finish time (never a clock read — this module stays pure), then resets both
+  and **keeps the roster**. That asymmetry is the feature: an entrant is an identity the player built,
+  a rating is a claim about one stretch of play. Wiping the identities too would make "new season"
+  indistinguishable from "delete everything", and nobody would press it.
+- **Refused, touching nothing, in two cases:** an empty ladder ("nothing to archive yet"), and a
+  gauntlet **still in progress** — that run is one run at one pinned bracket, and splitting it across
+  a season boundary would rate half of it into a table its own standing was never computed against. A
+  **finished** gauntlet is the opposite case and is cleared with the season it was played in.
+- **`seasonSummary({ratingsByDifficulty, history})`** is the plain summary the brief asks for — how
+  many matches were played, by how many entrants, and who topped each bracket (in `DIFFICULTY_OPTIONS`
+  order, never object-key order). It is shown in the archive confirm *before* the reset, and again on
+  the archived season afterwards. **It is always derived and never stored-and-trusted:** `cleanSeason`
+  re-computes it on every import, so a hand-edited ladder cannot put a champion on screen who never
+  won a match. Same discipline as `cleanGauntlet`'s `nextIndex: results.length`.
+- **`seasonStandings(ledger, index, difficulty)`** renders a closed season through
+  `standingsFor` itself (whose `@param` widened to a small `StandingsSource` typedef) rather than a
+  parallel formatter — but derives its row list from the **season's own ratings table**, not the
+  current roster: a closed season's table is what it *finished* as, and removing someone today cannot
+  retroactively un-play their matches.
+- **Hardening follows this file's existing idioms rather than inventing weaker ones.** A season's
+  ratings and history are cleaned by the *same* `cleanRatingsByDifficulty`/`cleanHistory` the live
+  ledger uses; the structural gate already walks into `seasons`, so a `__proto__`/`constructor`/
+  `prototype` key there throws like anywhere else (tested with the prove-nothing-was-polluted
+  assertions this file uses everywhere); labels are trimmed/capped/defaulted rather than trusted; a
+  season that cleans away to nothing is dropped whole, exactly as `cleanHistoryEntry` drops an empty
+  husk. A season is **inert** — nothing ever writes through it — so per-field coercion is the right
+  severity here, unlike `cleanGauntlet`'s drop-the-whole-run rule; that difference is argued at
+  `cleanSeason`.
+- **COMPETITION_VERSION was NOT bumped, deliberately** (CONTRIBUTING.md rule 3), and the reasoning is
+  recorded next to Phase 4's own in `competitionLedger.js`. `seasons` is purely additive: its absence
+  in an existing ledger means "this ladder has always been one season", which is exactly true, and
+  `ratingsByDifficulty`/`history` still mean what they meant when there was only one season. No stored
+  ledger deserializes into something *wrong*, which is the actual test for a bump — and the gate has
+  no migration step, so bumping would make every ladder ever saved unloadable in exchange for no
+  safety at all. (Replay adds no stored field whatsoever.)
+
+**Deviations from the sketch above.** `input.js` needed no new spectator guard beyond swapping its
+Esc handler onto `requestExitObserverMode` — the seven delegation points listed in this section were
+already sufficient. Beyond the file list: `session.js`, `observerPanel.js`, `hud.js`,
+`hudSelection.js`, `overlays.js`, `saveShape.js`, `dom.js`, `index.html`, `engine/loop.js`,
+`competitionLedger.js` and `tools/selfplay.js` — the same "found while wiring" pattern Phases 1-4
+record. No Watch button was added to a tournament pairing: a Swiss/knockout pairing's seed base is
+folded per round *inside* `pairing.js` and isn't known until the schedule runs. Replay covers that
+case instead, and better: a tournament's pairings all land in `history` as ordinary rows, so every
+one of them is replayable from the Standings screen once it has been played. The **"decay ratings on
+a schedule"** half of the Season bullet was dropped on purpose: decay is a policy that silently
+rewrites numbers a player earned, and an explicit archive-and-restart says the same thing honestly
+with a button. Two bugs found along the way (the sim-rate mismatch and the double-rounded margin) are
+written up under Replay above rather than folded in silently — both were pre-existing, and the first
+one means the Phase 5 spectate claim "what you watch is what the Worker would have run" was only true
+of the *configuration* until this stage.
+
+**Files touched.** *Spectate:* `observer.js`, `observerPanel.js`, `boot.js`, `competition.js`,
+`engine/loop.js`, `session.js`, `saveShape.js`, `hud.js`, `hudSelection.js`, `overlays.js`,
+`input.js`, `dom.js`, `index.html`, `style.css`. *Replay + Season, on top:* `competitionLedger.js`
+(`seasonSummary`/`archiveSeason`/`seasonStandings`/`MAX_SEASON_LABEL`, `cleanSeason`/`cleanSeasons`,
+the `StandingsSource` typedef, the version-bump note), `competition.js` (`REPLAY_NOTE`,
+`replayableMatch`, `buildReplayConfig`, `replayVerdict`, `shapeHistoryMatches`, plus the Standings
+screen's match-history and Seasons blocks, the results table's Replay column, `openStandingsScreen`/
+`openDuelResultsScreen`, and the `spectatedMatchOutcome` margin fix), `tools/selfplay.js`
+(`SELFPLAY_DT`/`SELFPLAY_HZ` exported, the wrong "same as the game loop" comment corrected),
+`boot.js` (`bootState`'s `selfPlay` option → the loop's `hz`; `startSpectatedMatch` carries
+`recorded`), `observerPanel.js` (the bar/banner say REPLAY and name the result being reproduced),
+`observer.js` (the stale substep arithmetic), `style.css`.
+
+**Tests:** `test/observer.test.js` (extended — entering without a galaxy,
+the ordinary-skirmish refusal, the watched-match exit refusal vs. the Odyssey's ordinary toggle, the
+speed ladder, and `observerStats`' two-seat/degraded-development shaping against a real
+`createSelfPlayState` state); `test/loop.test.js` (extended — speed multiplies step COUNT not step
+SIZE, live getters, slow-motion degradation past the cap, and an invalid speed falling back to 1x);
+`test/competition.test.js` (extended — `buildWatchConfig`'s seating/dial-pinning/seed derivation
+against the worker's own `duelSeed`, that its opts build a state both AIs really drive,
+`EXHIBITION_NOTE`'s content, and `spectatedMatchOutcome` naming the winning entrant rather than
+"you"); `test/save-shape.test.js` (extended — a spectated match is never checkpointed).
+
+*Replay + Season tests, written red-first from the requirement:* `test/competition.test.js`
+(`buildReplayConfig`'s world/seed/asym rebuild, its seating in **both** recorded directions, its
+seat-relative restatement of the recorded outcome, its dial pinning; `replayableMatch`'s three
+refusals; `REPLAY_NOTE`'s content; `replayVerdict`'s reproduced/diverged reporting;
+`shapeHistoryMatches`' ordering, cap, addressing and un-replayable marking — and, at the bottom,
+**the property itself**: a real two-direction duel run through `runCompetitionJob`, recorded through
+`recordCompetition`, then replayed headlessly through the shipped `buildReplayConfig` →
+`createSelfPlayState` → `spectatedMatchOutcome` path, asserting winner, margin, both scores and
+`winReason` reproduce exactly. The two entrants differ in strategy *and* archetype on purpose, so a
+seat mistake can't reproduce by symmetry); `test/competitionLedger.test.js` (`seasonSummary`'s
+counts/champions/ordering; archive files-and-resets; **the roster survives while ratings restart**;
+the archived copy is detached; label defaulting/truncation; both refusals, each proving the ledger
+was untouched; a finished gauntlet cleared with its season; `seasonStandings` including an entrant
+since removed from the roster; a full archive → export → import round trip; and the hostile-payload
+set — a forbidden key inside a season rejected with `Object.prototype` proved clean, a non-array
+`seasons` coerced, a **fabricated summary re-derived** rather than believed, junk/husk/unknown-bracket
+seasons dropped, labels and finish times coerced); `test/loop.test.js` (the loop at the self-play
+step, `SELFPLAY_DT`/`SELFPLAY_HZ` agreeing, 8x inside `MAX_SUBSTEPS` at that step);
+`test/boot.test.js` (**driving the real rAF loop by hand**: a spectated match advances in exactly
+`SELFPLAY_DT` steps, and an ordinary skirmish still runs its own faster step — the regression guard
+that this didn't slow normal play down).
+
+`npm test`: **2395/2395 green** (2360 baseline + 35 new, zero regressions across Phases 0-5).
+`npm run typecheck`: clean.
+
+**Live-browser-verified** (Playwright, **zero console messages and zero page errors across four full
+passes**). *Replay:* a real Blitz(aggressive/Rusher)-vs-Bulwark(economic/Economist) duel run from the
+Quick Duel screen, both recorded rows replayed from the ledger — the `bAsAi` row ending on
+"**Reproduced the recorded result exactly — Blitz by 1812.2**" against a recorded `margin=1812.2`,
+and the `aAsAi` row (seated Bulwark-vs-Blitz, as it was actually played) on "**Reproduced the
+recorded result exactly — Blitz by 1654.7**" against a recorded `margin=1654.7`; the spectate bar
+reading `⟲ REPLAY · … · recorded: Blitz by 1812.2` and the banner `👁 REPLAYING Korrath` throughout;
+both seats visibly building and fighting with fog revealed; 1x → 8x measured on the match clock
+(3 s of sim per 3 s real at 1x, 24 s at 8x); Save/Load hidden; and **localStorage byte-identical
+before and after the replay**. *Season:* archiving "Opening Season" from the Standings screen after a
+confirm that previewed its own summary ("2 matches played by 2 entrants. Blitz tops the Medium
+bracket at 1238"), leaving `ratingsByDifficulty: {}` and an empty history while the **roster survived
+intact** (`Blitz/aggressive/rusher, Bulwark/economic/economist` still on the Roster screen); the
+closed season still viewable with its full final table; a **full page reload** bringing back both the
+season list and the live-but-empty ladder; a second season stacking with a defaulted "Season 2"
+label; the archive **refused** on screen ("a gauntlet is still in progress — finish or abandon it
+before starting a new season") with ratings, history and the run all provably untouched; a Gauntlet's
+own human match listed in the history but marked "played live" with D6's reason on hover and no
+Replay button offered; and an in-page `importLedgerJSON` round trip of the live ladder coming back
+byte-equal while a hostile `__proto__`-inside-a-season payload was rejected with `Object.prototype`
+still clean. *Regression:* an ordinary skirmish unchanged — Observer button hidden, `O` inert, Save/
+Load present, and its clock advancing at the ordinary rate. Earlier spectate-only passes remain
+valid: a watched duel booted from the Quick Duel screen with both seats
+visibly playing (independent build orders, both armies growing, red and blue units engaging in
+midfield with fog revealed); every speed rung measured against the match clock (1x → 3 s of sim per
+3 s real, 2x → 7 s, 4x → 12 s, 8x → 24 s); a full match run to the 40-minute clock in 306 s of real
+time at 8x, ending on "Bulwark wins the exhibition match" with both scores, the margin, the reason,
+and the exhibition disclosure — and an empty Standings/Roster/localStorage afterwards; clicks,
+right-clicks, Q/A, O and Esc all refused mid-match; Leave and the game-over button both returning to
+the Quick Duel tab with the banner, bar, panel and Observe button all torn down; an ordinary
+skirmish still refusing Observer Mode (button hidden, O does nothing) while keeping its own Save/
+Load and idle chips; and an Odyssey entering Observer Mode with its original banner, stance line and
+development score intact, exiting on O and on Esc exactly as before.
+
 ---
 
 ## 5. Traps specific to this codebase
@@ -684,3 +941,25 @@ Phase 3 is the depth behind it.
 
 **Phase 5 is polish**, but "watch the final" is the cheapest spectacle in this entire plan, because
 Observer Mode is one `if` away from already supporting it.
+
+---
+
+## 8. Closing note — the plan has landed
+
+**All six phases (0 through 5) are built and shipped.** The developer tool this document opened by
+describing is now a game feature: the player builds a named roster, runs Quick Duels and
+round-robin/Swiss/knockout tournaments in a Worker, enters the field themselves in a Gauntlet, watches
+any pairing live at 1x-8x, replays any finished match from the ladder's own record, and closes a
+season to start a fresh one — all on one bracketed, persistent, exportable Elo ladder.
+
+Two things are worth recording now that it is done. First, **every decision D1-D8 survived
+implementation** and each is cited at the code that honours it; none had to be walked back, though
+Phase 5 dropped rating *decay* in favour of an explicit archive (argued in its own section) and every
+phase records its deviations rather than quietly diverging. Second, **the fairness machinery is what
+made the rest cheap**: side-swapping, replicate-parity `swapAsym`, one pinned dial set per match and
+`duelSeed`'s sorted hash were all built before any of this, and because a recorded row therefore
+carries its own complete inputs, replay turned out to be a re-run rather than a recording system.
+The one real surprise was that determinism had to be *verified* rather than assumed — the sim-rate
+mismatch Phase 5 found had been silently wrong since the spectate work, and only a test that
+re-simulated a recorded row and compared it exposed it. The deferred list in §6 is still deferred,
+and still for the reasons given there.

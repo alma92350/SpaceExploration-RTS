@@ -15,7 +15,7 @@ import { recipeOf } from "./engine/industry.js";
 import { isVisibleAt, isNodeDiscovered } from "./engine/fog.js";
 import { createCamera, screenToWorld, zoomAt, panCamera, clampCamera, pinchZoomPan } from "./camera.js";
 import * as sound from "./sound.js";
-import { toggleObserverMode, exitObserverMode, cycleObserverBase,
+import { toggleObserverMode, requestExitObserverMode, cycleObserverBase,
          observerWheelZoom, observerDragStart, observerDragMove, observerDragEnd, tickObserverCamera } from "./observer.js";
 
 const CLICK_THRESHOLD = 4;
@@ -690,16 +690,20 @@ export function attachInput(canvas, state, onChange) {
     const t = e.target;
     if (t && t !== document.body && t !== canvas && typeof t.closest === "function"
         && t.closest("button, input, textarea, select, [tabindex]")) return;
-    // O toggles Observer Mode from either side (a no-op outside Odyssey — see
-    // observer.js's enterObserverMode), so it must be checked before the "swallow everything
-    // else while observing" branch right below, or there'd be no way back out via the keyboard.
+    // O toggles Observer Mode from either side (a no-op outside an Odyssey or a WATCHED AI-vs-AI
+    // match — see observer.js's enterObserverMode, which refuses an ordinary skirmish because
+    // revealing its fog would just be a cheat), so it must be checked before the "swallow
+    // everything else while observing" branch right below, or there'd be no way back out via the
+    // keyboard.
     if (k === "o") { toggleObserverMode(); onChange(); return; }
     if (game.observerMode) {
       // Space repurposes to cycling every base on the spectated world (any owner) instead of
       // just the player's own; every other order/build/group hotkey below assumes `state` is
       // what's on screen, which isn't true while spectating a different world — swallow them.
       if (k === " ") { e.preventDefault(); cycleObserverBase(); onChange(); return; }
-      if (k === "escape") { exitObserverMode(); onChange(); return; }
+      // requestExitObserverMode, not the raw exit: a WATCHED match refuses it (see that function's
+      // own comment — there's no seat to hand back to), the Odyssey behaves exactly as before.
+      if (k === "escape") { requestExitObserverMode(); onChange(); return; }
       return;
     }
     // Match on e.code, not e.key: with Shift held the number row's e.key becomes

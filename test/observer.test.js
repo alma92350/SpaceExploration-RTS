@@ -17,9 +17,12 @@ globalThis.window = { addEventListener() {}, removeEventListener() {} };
 const { game } = await import("../session.js");
 const { createGalaxy } = await import("../engine/galaxy.js");
 const { makeBuilding, makeUnit } = await import("../engine/state.js");
+const { createSelfPlayState } = await import("../tools/selfplay.js");
 const {
   observedState, enterObserverMode, exitObserverMode, toggleObserverMode,
   spectateWorld, cycleObserverBase, findBases, observerStats,
+  SPECTATE_SPEEDS, clampSpectateSpeed, nextSpectateSpeed, setSpectateSpeed,
+  requestExitObserverMode,
 } = await import("../observer.js");
 
 function resetGame() {
@@ -29,6 +32,8 @@ function resetGame() {
   game.observerMode = false;
   game.spectateId = null;
   game.observerCamera = null;
+  game.spectateMatch = null;
+  game.spectateSpeed = 1;
 }
 
 /* ---------- observedState / enter / exit / toggle ---------- */
@@ -42,10 +47,112 @@ test("observedState() returns game.state while observerMode is off", () => {
   resetGame();
 });
 
-test("enterObserverMode is a no-op without a galaxy — no crash, mode stays off", () => {
+test("enterObserverMode is a no-op with nothing to observe — no crash, mode stays off", () => {
   resetGame();
   enterObserverMode();
   assert.equal(game.observerMode, false);
+  resetGame();
+});
+
+/* ---------- spectating a SKIRMISH (docs/competitions-and-elo.md Phase 5) ---------- */
+
+// A watched AI-vs-AI match is exactly the state tools/duelCore.js's runDuelMatch builds, so the
+// tests below spectate the real thing rather than a hand-rolled stand-in.
+function watchedMatchState() {
+  return createSelfPlayState({ planetId: "ferros", seed: 7 });
+}
+
+test("enterObserverMode works for a SPECTATED match with no galaxy at all", () => {
+  resetGame();
+  const state = watchedMatchState();
+  game.state = state;
+  game.spectateMatch = { aName: "Alpha", bName: "Beta" };
+
+  enterObserverMode();
+
+  assert.equal(game.observerMode, true, "a watched match can be observed without an Odyssey");
+  assert.equal(game.spectateId, state.planetId, "spectating the one world the match is on");
+  assert.ok(game.observerCamera, "an observer camera was created");
+  assert.equal(observedState(), state, "observedState falls back to the match's own state");
+  resetGame();
+});
+
+test("enterObserverMode still REFUSES an ordinary skirmish the human is playing (no fog cheat)", () => {
+  resetGame();
+  game.state = watchedMatchState();   // a live match, but not a spectated one and not an Odyssey
+  enterObserverMode();
+  assert.equal(game.observerMode, false, "Observer Mode is for a match you are NOT playing");
+  assert.equal(game.observerCamera, null);
+  resetGame();
+});
+
+test("exitObserverMode leaves a spectated match cleanly", () => {
+  resetGame();
+  game.state = watchedMatchState();
+  game.spectateMatch = { aName: "Alpha", bName: "Beta" };
+  enterObserverMode();
+  exitObserverMode();
+  assert.equal(game.observerMode, false);
+  assert.equal(game.spectateId, null);
+  assert.equal(game.observerCamera, null);
+  resetGame();
+});
+
+test("you cannot STOP observing a watched match — that would hand you an AI's army mid-match", () => {
+  resetGame();
+  game.state = watchedMatchState();
+  game.spectateMatch = { aName: "Alpha", bName: "Beta" };
+  enterObserverMode();
+
+  assert.equal(requestExitObserverMode(), false, "the O key / Esc / the topbar button are refused");
+  assert.equal(game.observerMode, true, "still observing");
+  toggleObserverMode();
+  assert.equal(game.observerMode, true, "…and the toggle can't sneak past it either");
+
+  // The unconditional teardown call is a DIFFERENT thing and must still work: boot.js's
+  // bootState/restartToMapSelect call it while leaving, before the spectate flag itself is cleared.
+  exitObserverMode();
+  assert.equal(game.observerMode, false, "teardown is never blocked");
+  resetGame();
+});
+
+test("in the Odyssey, exiting Observer Mode is still an ordinary player choice", () => {
+  resetGame();
+  const g = createGalaxy({ seed: 1 });
+  game.galaxy = g;
+  game.state = g.planets.get(g.activeId);
+  enterObserverMode();
+  assert.equal(requestExitObserverMode(), true);
+  assert.equal(game.observerMode, false, "the Odyssey path is untouched — O still toggles both ways");
+  resetGame();
+});
+
+/* ---------- spectate speed control ---------- */
+
+test("SPECTATE_SPEEDS is the 1x/2x/4x/8x ladder, ascending", () => {
+  assert.deepEqual(SPECTATE_SPEEDS, [1, 2, 4, 8]);
+});
+
+test("clampSpectateSpeed only ever yields a real rung — anything else falls back to 1x", () => {
+  for (const s of SPECTATE_SPEEDS) assert.equal(clampSpectateSpeed(s), s);
+  for (const bad of [0, -4, 3, 16, NaN, Infinity, null, undefined, "4", {}])
+    assert.equal(clampSpectateSpeed(bad), 1, `${String(bad)} is not a rung`);
+});
+
+test("nextSpectateSpeed cycles the ladder and wraps back to 1x", () => {
+  assert.equal(nextSpectateSpeed(1), 2);
+  assert.equal(nextSpectateSpeed(2), 4);
+  assert.equal(nextSpectateSpeed(4), 8);
+  assert.equal(nextSpectateSpeed(8), 1, "8x wraps back round");
+  assert.equal(nextSpectateSpeed(99), 2, "an off-ladder value is treated as 1x, so the next is 2x");
+});
+
+test("setSpectateSpeed writes a clamped speed onto the session", () => {
+  resetGame();
+  setSpectateSpeed(4);
+  assert.equal(game.spectateSpeed, 4);
+  setSpectateSpeed(7);
+  assert.equal(game.spectateSpeed, 1, "an off-ladder request never leaves a bogus multiplier live");
   resetGame();
 });
 
@@ -225,4 +332,41 @@ test("observerStats reads null stance/hostility for a state with no diplomacy ob
   assert.equal(s.stance, null);
   assert.equal(s.stanceLabel, null);
   assert.equal(s.hostility, null);
+});
+
+test("observerStats keeps the Odyssey development score, and DROPS it on a diplomacy-less skirmish", () => {
+  // aiDevelopment (engine/diplomacy.js) doesn't need state.diplomacy to RUN — it counts owner
+  // "ai"'s finished economic buildings plus its researched techs. But it is the Odyssey's own
+  // development-curve metric for the one neighbour AI, and a spectated duel has two entrants and
+  // no neighbour: reporting it there would be a confident number about half the match. It degrades
+  // to null rather than to a wrong-but-plausible integer.
+  const g = createGalaxy({ seed: 1 });
+  const odyssey = g.planets.get(g.activeId);
+  assert.equal(typeof observerStats(odyssey).development, "number",
+    "the Odyssey path is untouched — every galaxy world carries diplomacy");
+
+  const skirmish = createSelfPlayState({ planetId: "ferros", seed: 3 });
+  assert.equal(skirmish.diplomacy, undefined, "sanity: a skirmish state has no diplomacy at all");
+  assert.equal(observerStats(skirmish).development, null);
+});
+
+test("observerStats reports BOTH seats for a spectated match, not just owner \"ai\"", () => {
+  const state = createSelfPlayState({ planetId: "ferros", seed: 3 });
+  const s = observerStats(state);
+
+  assert.ok(Array.isArray(s.seats), "a per-seat breakdown exists");
+  assert.deepEqual(s.seats.map(seat => seat.owner), state.owners,
+    "one entry per owner, in the state's own canonical owner order");
+  for (const seat of s.seats) {
+    assert.equal(typeof seat.supplyUsed, "number");
+    assert.equal(typeof seat.supplyCap, "number");
+    assert.ok(seat.units && seat.buildings, "each seat carries its own army/building tallies");
+    assert.ok(Object.keys(seat.resources).length > 0, "…and its own economy, not the other seat's");
+  }
+  // The pre-existing owner-"ai" fields keep meaning exactly what they did (the Odyssey panel
+  // reads them), so generalising the panel never changed the Odyssey's own numbers.
+  const ai = s.seats.find(seat => seat.owner === "ai");
+  assert.equal(ai.supplyUsed, s.supplyUsed);
+  assert.equal(ai.supplyCap, s.supplyCap);
+  assert.deepEqual(ai.resources, s.resources);
 });

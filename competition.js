@@ -5,6 +5,12 @@
    competitionWorker.js — never a playable game. This mode never touches boot.js, game.state, the
    canvas, or the HUD: it runs a background simulation and shows a results screen, nothing else.
 
+   PHASE 5: a Quick Duel can also be WATCHED — one match of it, booted into the real game loop with
+   both seats AI-driven (boot.js's startSpectatedMatch → tools/selfplay.js's tickSelfPlay) and
+   Observer Mode on, so fog is revealed and the human issues no orders. A watched match is
+   EXHIBITION ONLY and changes no rating; that decision, and why it isn't a close call, is argued in
+   full at EXHIBITION_NOTE below. Its pure half sits with the rest ("WATCHING A MATCH LIVE").
+
    PHASE 3: the Tournament tab — round-robin, Swiss or a knockout bracket over a multi-selected
    field of roster entries, scheduled by pairing.js inside the same Worker, with an up-front
    match-count/time estimate, round-by-round progress, live standings or a bracket view, and every
@@ -59,12 +65,12 @@ import { STRATEGY_OPTIONS, optionGroup, MAP_CHOICES, MATCH_LENGTH_OPTIONS, setup
 // imports this module in return (for captureCompetitionResult) — both files are already inside
 // test/static-integrity.test.js's documented UI cluster, so this closes no new cycle; every use
 // below is at CALL time, never at module scope, so neither side can read the other in its TDZ.
-import { startCompetitionMatch, restartToMapSelect } from "./boot.js";
+import { startCompetitionMatch, startSpectatedMatch, restartToMapSelect } from "./boot.js";
 import { DIFFICULTY_OPTIONS } from "./engine/aiDifficulty.js";
-import { archetypeFor, ARCHETYPES } from "./engine/aiArchetypes.js";
+import { archetypeFor, ARCHETYPES, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { planetName } from "./data.js";
-import { duelSeed } from "./tools/duelCore.js";
+import { duelSeed, pinnedDuelDials } from "./tools/duelCore.js";
 import { swissRoundCount, tournamentRoundPlan, tallyStandings } from "./pairing.js";
 import { INITIAL_RATING, PROVISIONAL_GAMES, applySeries, applyResult } from "./elo.js";
 import { playerScore } from "./engine/victory.js";
@@ -73,6 +79,7 @@ import {
   exportLedger, importLedgerJSON, loadLedgerFromStorage, saveLedgerToStorage,
   GAUNTLET_DEFAULT_MATCH_SECONDS, humanEntry, startGauntlet, currentGauntletFixture,
   recordGauntletMatch, recordGauntletForfeit, gauntletProgress, abandonGauntlet,
+  seasonSummary, archiveSeason, seasonStandings, MAX_SEASON_LABEL,
 } from "./competitionLedger.js";
 
 /* ============================================================
@@ -787,6 +794,341 @@ export function shapeGauntletSummary(ledger) {
 }
 
 /* ============================================================
+   WATCHING A MATCH LIVE (docs/competitions-and-elo.md Phase 5) — the pure half: the config one
+   watched match is booted from, the exhibition framing, and the game-over block it ends on.
+
+   THE DECISION THIS SECTION MAKES, DELIBERATELY: A WATCHED MATCH IS EXHIBITION ONLY. It does not
+   move any rating, and it writes nothing to the ledger — not a rating, not a history row, not even
+   a roster entry for an entrant drafted purely to watch. Why, stated once so nobody has to
+   re-litigate it at the button:
+
+     • Every rated result in this system is a PAIRING, not a match. tools/ailab.js's runSwappedDuel,
+       competitionWorker.js's own loop, and every tournament pairing all run each (world, seed)
+       replicate BOTH WAYS and alternate the map's asym halves by replicate parity, precisely
+       because a single unswapped match is confounded by seat and map asymmetry — and the seat edge
+       here is measured, real and one-directional (tools/selfplay.js's own header: the "ai" seat
+       reads state the "player" seat already mutated on ~13% of think cycles). A watched match is
+       exactly one match, one direction, one map half.
+     • So rating it would put a differently-earned number into the same bracketed table (D2) as
+       numbers earned the careful way, and nothing on the Standings screen could tell them apart.
+     • The cheap-looking alternative — "watch it, and count it, it's still a real match" — is how a
+       ladder quietly becomes meaningless.
+
+   The other half of being deliberate is SAYING SO, on screen, where the button is and again when
+   the match ends — the same discipline Phase 1 held to when its Elo wasn't saved yet.
+
+   Watching is therefore free in both directions: run the same pairing for real afterwards and the
+   rated result is unaffected by how many times you watched it.
+   ============================================================ */
+
+// The disclosure, in one plain sentence-set, shown next to the Watch button and again on the
+// watched match's own game-over screen. A constant, not markup and not a tooltip — the same
+// reasoning SEAT_DISCLOSURE gives above, and the only shape a Node test can assert the CONTENT of.
+export const EXHIBITION_NOTE =
+  "Exhibition only — a watched match does NOT change any rating, and records nothing on the "
+  + "ladder. It is a single match in one direction on one map half; every rated result here is a "
+  + "side-swapped, multi-seed pairing, so counting one watched game would mix a differently-earned "
+  + "number into the same bracket. Run the duel for real to move the ladder.";
+
+/**
+ * One match out of a duel job -> exactly the config boot.js's startSpectatedMatch feeds
+ * tools/selfplay.js's createSelfPlayState. The whole point is that this is the SAME configuration
+ * competitionWorker.js would have simulated for that (world, replicate): the same duelSeed-derived
+ * seed (via matchSeedFor above, never a fresh roll), the same replicate-parity swapAsym, the same
+ * ONE pinnedDuelDials set on BOTH seats (the duel's whole fairness point), and each entrant's own
+ * strategy/archetype riding its own seat.
+ *
+ * SEATING follows tools/duelCore.js's runDuelMatch exactly — entrant A owns "player", entrant B
+ * owns "ai" — which is what makes "A won" mean the same thing on a watched match's game-over
+ * screen as in a simulated row. That is direction 1 ("bAsAi") of the worker's own pair; a watched
+ * match is deliberately just the one direction, which is precisely why it isn't rated (see above).
+ * @param {object} job                a job from buildJob above.
+ * @param {{ world?: string, rep?: number }} [pick]  which scheduled match to watch; defaults to the
+ *   first world's first replicate.
+ * @returns {{ world: string, seed: number, swapAsym: boolean, matchTimeLimit: number|undefined,
+ *   difficulty: string, aName: string, bName: string, ai: object, playerAi: object }}
+ */
+export function buildWatchConfig(job, { world, rep = 0 } = {}) {
+  const pickWorld = world || job.worlds[0];
+  if (!job.worlds.includes(pickWorld)) throw new Error(`"${pickWorld}" isn't one of this duel's worlds`);
+  const replicate = Math.max(0, Math.floor(rep) || 0);
+  const dials = pinnedDuelDials(job.difficulty);
+  return {
+    world: pickWorld,
+    seed: matchSeedFor(job, pickWorld, replicate),
+    swapAsym: replicate % 2 === 1,   // replicate parity — the same rule competitionWorker.js uses
+    matchTimeLimit: job.matchTimeLimit,
+    difficulty: dials.difficulty,
+    aName: job.entrantA.name,
+    bName: job.entrantB.name,
+    // Both seats read from ONE dials object, exactly like runDuelMatch's own two lines.
+    playerAi: { ...dials, strategy: job.entrantA.strategy, archetype: job.entrantA.archetype },
+    ai: { ...dials, strategy: job.entrantB.strategy, archetype: job.entrantB.archetype },
+  };
+}
+
+/**
+ * A finished watched match's terminal state -> the outcome, in the ENTRANTS' own names. The human
+ * played neither seat, so there is no victory and no defeat here — only which entrant won. Scores
+ * are A-relative, the same convention tools/duelCore.js's runDuelMatch row uses, so a watched
+ * match's margin reads exactly like a simulated one's.
+ * @param {{ winner: string|null, winReason: string|null }} state  a finished game state.
+ * @param {{ aName: string, bName: string }} watch
+ */
+export function spectatedMatchOutcome(state, { aName, bName }) {
+  // Entrant A holds owner "player" (buildWatchConfig / buildReplayConfig).
+  const rawA = playerScore(state, "player"), rawB = playerScore(state, "ai");
+  const winnerName = state.winner === "player" ? aName : state.winner === "ai" ? bName : null;
+  return {
+    winnerName,
+    verdict: winnerName ? `${winnerName} wins the exhibition match.` : "The exhibition match ended in a draw.",
+    aName, bName,
+    aScore: +rawA.toFixed(1), bScore: +rawB.toFixed(1),
+    // Rounded ONCE, off the raw scores — byte-for-byte tools/duelCore.js's runDuelMatch, which is
+    // what every recorded row's margin is. Rounding each score first and subtracting the rounded
+    // pair (which this used to do) double-rounds and lands up to 0.1 away, so the identical match
+    // reported a different margin depending on whether it was simulated or watched. Harmless-looking
+    // until Phase 5's replay compares the two numbers directly — then it reads as a determinism
+    // failure that isn't one, which is worse than a wrong digit.
+    margin: +(rawA - rawB).toFixed(1),
+    winReason: typeof state.winReason === "string" ? state.winReason : null,
+    exhibition: true,
+  };
+}
+
+/* ============================================================
+   REPLAYING A FINISHED MATCH (docs/competitions-and-elo.md Phase 5) — the pure half: deciding
+   whether a recorded row CAN be replayed, rebuilding the exact match it describes, and judging
+   whether the re-run actually reproduced it.
+
+   THIS IS NOT A RECORDING/PLAYBACK SYSTEM, and that is the whole point. A recorded ledger row
+   already carries its world, its exact seed, its map half, both entrants' strategies and the one
+   pinned difficulty dial set they shared; the roster carries each entrant's archetype. That is the
+   complete input to createSelfPlayState, so "replay" is just RE-RUNNING the same deterministic
+   simulation from the same inputs and watching it through the spectator (D6). Nothing is stored, no
+   frames are captured, and a replay of a ten-year-old row costs exactly what the match cost.
+
+   TWO THINGS THAT ARE EASY TO GET WRONG HERE, both of which have their own tests:
+
+   • THE SEAT. Every row is reported A-relative (entrant A's names, A's scores, A-relative margin),
+     but each row was actually played in one of two DIRECTIONS — competitionWorker.js runs each
+     (world, replicate) both ways. "bAsAi" is runDuelMatch's own fixed mapping (A owns "player");
+     "aAsAi" is the reverse, relabelled back onto A by the worker's flipRow. Replaying the wrong
+     direction is a different match between the same two names, so buildReplayConfig below rebuilds
+     the SEATING, not the labelling, and restates the recorded outcome seat-relative so the re-run
+     can be compared to it directly.
+
+   • THE FIXED STEP. A recorded row was simulated at tools/selfplay.js's own SELFPLAY_DT. The
+     ordinary game loop runs at a different step, and a fixed step is the simulation, not a tuning
+     knob — the same seed advanced in different-sized steps is a different game (measured: opposite
+     winners; see SELFPLAY_DT's own comment). That is boot.js's half of this, via bootState's
+     `selfPlay` option, but it is named here because it is the reason replay determinism actually
+     holds rather than nearly holding.
+
+   AND A REPLAY RE-RATES NOTHING. It is the same match, already counted — re-recording it would
+   double-count a result that only happened once. There is deliberately no path from here into
+   recordCompetition, exactly as there is none for a watched match.
+   ============================================================ */
+
+// Said next to every Replay button and again when a replay ends. Same shape and same reasoning as
+// EXHIBITION_NOTE above: a constant, not a tooltip, so a Node test can assert its CONTENT.
+export const REPLAY_NOTE =
+  "A replay re-runs this match from its recorded seed and both entrants' configs — the same "
+  + "deterministic simulation, not a captured video. It changes no rating and records nothing new: "
+  + "this result is already counted on the ladder.";
+
+// The worlds a match can actually be booted on — engine/aiArchetypes.js's own PLANET_ARCHETYPE
+// keys, the same list competitionLedger.js validates a gauntlet fixture's world against, and for
+// the same reason it reads them there rather than from setup.js (a world cannot exist in one list
+// and not the other).
+const REPLAYABLE_WORLDS = new Set(Object.keys(PLANET_ARCHETYPE));
+
+/**
+ * Can this recorded history row be re-run? `{ ok: true }`, or `{ ok: false, reason }` with a
+ * plain-language reason the UI shows verbatim instead of a disabled button that explains nothing.
+ *
+ * THE REFUSALS, and why each is a refusal rather than a best-effort replay:
+ *   • A HUMAN row. D6 is explicit that a human is not a seeded input; re-running the seed would
+ *     simulate an AI playing the human's seat and call the result the same match. That is not a
+ *     replay, it is a different match wearing its name.
+ *   • AN ENTRANT NO LONGER ON THE ROSTER. The archetype an entrant played with lives on its roster
+ *     row, not on the match row (runDuelMatch takes archetype as an INPUT dial and deliberately
+ *     doesn't echo it back — test/duelCore.test.js pins that row shape). Roster entries are
+ *     add/remove only, never edited in place, so a name still on the roster carries exactly the
+ *     archetype it played with; a name that is gone carries nothing, and guessing "probably no
+ *     override" would silently produce a different match.
+ *   • A ROW WITH NO REAL WORLD OR SEED. Nothing to re-run.
+ * @param {object} row       a competitionWorker.js-shaped row, as stored in ledger.history
+ * @param {{ roster?: Array<{name: string, archetype: string|null}> }} ledger
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+export function replayableMatch(row, ledger) {
+  if (!row || typeof row !== "object") return { ok: false, reason: "There is no recorded match here to replay." };
+  if (row.human)
+    return { ok: false, reason: "This is a match you played yourself, and a human isn't a seeded input — re-running the seed would simulate somebody else in your seat, not replay your match (D6)." };
+  if (typeof row.world !== "string" || !REPLAYABLE_WORLDS.has(row.world))
+    return { ok: false, reason: `This match records no world this game can boot (${String(row.world)}).` };
+  if (!Number.isFinite(row.seed))
+    return { ok: false, reason: "This match records no seed, so there is nothing to re-run." };
+  const roster = (ledger && ledger.roster) || [];
+  for (const name of [row.aName, row.bName]) {
+    if (typeof name !== "string" || !name) return { ok: false, reason: "This match doesn't name both entrants." };
+    if (!roster.some(r => r.name === name))
+      return { ok: false, reason: `"${name}" is no longer on the roster, so the archetype it played with can't be recovered — a replay would be a different match.` };
+  }
+  return { ok: true };
+}
+
+/**
+ * A recorded history row -> exactly the config boot.js's startSpectatedMatch feeds
+ * createSelfPlayState, plus the recorded outcome restated SEAT-relative so the re-run can be
+ * compared against it directly. Throws replayableMatch's own reason for a row that can't be
+ * replayed, so a caller that skipped the check still can't boot a bogus match.
+ *
+ * `aName`/`bName` are the entrants that held owner "player"/"ai" IN THE RECORDED MATCH — the same
+ * meaning buildWatchConfig gives them, which is what lets spectatedMatchOutcome, the spectate bar
+ * and the game-over screen serve both paths unchanged.
+ * @param {object} row
+ * @param {{ roster?: Array<{name: string, archetype: string|null}> }} ledger
+ * @returns {{ world: string, seed: number, swapAsym: boolean, matchTimeLimit: number|undefined,
+ *   difficulty: string, aName: string, bName: string, ai: object, playerAi: object,
+ *   recorded: { winnerName: string|null, margin: number, aScore: number, bScore: number, winReason: string|null } }}
+ */
+export function buildReplayConfig(row, ledger) {
+  const check = replayableMatch(row, ledger);
+  if (!check.ok) throw new Error(check.reason);
+
+  // "aAsAi" is the worker's SECOND direction: entrant B held owner "player", and the row was
+  // relabelled back onto A afterwards. Everything below un-does exactly that relabelling.
+  const flipped = row.direction === "aAsAi";
+  const seatA = flipped ? row.bName : row.aName;
+  const seatB = flipped ? row.aName : row.bName;
+  // Validated against the real strategy table, not merely defaulted when absent. A history row is
+  // untrusted input — competitionLedger.js's cleanHistoryRow coerces aName/bName and leaves the
+  // rest as it found it, so a hand-edited or imported ladder can carry any string here. The engine
+  // would survive it (strategyFor falls back to STRATEGIES.default for an unknown key), but the
+  // replay would then silently run a DIFFERENT match than the row describes and report the
+  // mismatch as a divergence — a determinism failure that isn't one, which is exactly the wrong
+  // thing for the one feature whose whole promise is "this reproduces what was recorded". Mirrors
+  // archetypeOf's own Object.hasOwn check just below; the two are the same hazard.
+  const knownStrategy = s =>
+    (typeof s === "string" && STRATEGY_OPTIONS.some(o => o.mult === s)) ? s : "default";
+  const seatAStrategy = knownStrategy(flipped ? row.bStrategy : row.aStrategy);
+  const seatBStrategy = knownStrategy(flipped ? row.aStrategy : row.bStrategy);
+  const archetypeOf = name => {
+    const entry = ((ledger && ledger.roster) || []).find(r => r.name === name);
+    return (entry && typeof entry.archetype === "string" && Object.hasOwn(ARCHETYPES, entry.archetype)) ? entry.archetype : null;
+  };
+  // -0 is not 0 to a strict comparison, and a drawn match's margin is exactly 0 — so a negation
+  // that can produce -0 would make a perfectly reproduced draw read as a divergence.
+  const seatSigned = n => {
+    const v = Number.isFinite(n) ? (flipped ? -n : n) : 0;
+    return v === 0 ? 0 : v;
+  };
+  const dials = pinnedDuelDials(row.difficulty);
+
+  return {
+    world: row.world,
+    seed: row.seed,
+    swapAsym: row.swapAsym === true,
+    // A Quick Duel / tournament job never sets a match length, so a recorded row carrying none is
+    // exactly right: the match ran at engine/victory.js's own default and the replay must too.
+    // Honoured when present so a row that does record one replays at that length rather than the
+    // default (which would be a different match).
+    matchTimeLimit: Number.isFinite(row.matchTimeLimit) ? row.matchTimeLimit : undefined,
+    difficulty: dials.difficulty,
+    aName: seatA,
+    bName: seatB,
+    // ONE dials object read for both seats, exactly as the recorded match ran it.
+    playerAi: { ...dials, strategy: seatAStrategy, archetype: archetypeOf(seatA) },
+    ai: { ...dials, strategy: seatBStrategy, archetype: archetypeOf(seatB) },
+    recorded: {
+      // Who won is a fact about the ENTRANT and is read straight off the A-relative row…
+      winnerName: row.winner === "draw" ? null : row.winner === "a" ? row.aName : row.bName,
+      // …while the scores and margin are restated the way the re-run will measure them.
+      margin: seatSigned(row.margin),
+      aScore: flipped ? row.bScore : row.aScore,
+      bScore: flipped ? row.aScore : row.bScore,
+      winReason: typeof row.winReason === "string" ? row.winReason : null,
+    },
+  };
+}
+
+/**
+ * Did the re-run reproduce what was recorded? Compares the two facts a replay actually promises —
+ * the winner and the score margin — and produces the line the game-over screen shows.
+ *
+ * A DIVERGENCE IS REPORTED, NOT HIDDEN. If the sim ever stops being deterministic under this path
+ * (a stray clock read, a changed fixed step, an iteration-order regression), the player is the
+ * first person to see it, in plain words, on the screen where the claim was made. Quietly showing
+ * whatever just happened would turn a real bug into a shrug.
+ * @param {{ winnerName: string|null, margin: number }} outcome   spectatedMatchOutcome's own shape
+ * @param {{ winnerName: string|null, margin: number }} recorded  buildReplayConfig's `recorded`
+ * @returns {{ reproduced: boolean, line: string }}
+ */
+export function replayVerdict(outcome, recorded) {
+  const said = r => (r.winnerName ? `${r.winnerName} by ${Math.abs(r.margin)}` : `a draw (margin ${Math.abs(r.margin)})`);
+  const reproduced = outcome.winnerName === recorded.winnerName && outcome.margin === recorded.margin;
+  return {
+    reproduced,
+    line: reproduced
+      ? `Reproduced the recorded result exactly — ${said(recorded)}.`
+      : `DIVERGED from the recorded result. Recorded: ${said(recorded)}. This run: ${said(outcome)}.`,
+  };
+}
+
+// How many recorded matches the history list shows by default. A ladder accumulates thousands of
+// rows over time (one tournament is hundreds), and a Standings screen that rebuilds all of them on
+// every render would be both unreadable and slow; the most recent competitions are what a "replay
+// that one" affordance is actually for.
+const HISTORY_MATCH_LIMIT = 24;
+
+/**
+ * The ledger's recorded matches, shaped for a history table with a Replay button per row: newest
+ * COMPETITION first (a duel/tournament pairing/gauntlet fixture is one history entry), rows within
+ * one competition kept in the order they were played, capped at `limit`.
+ *
+ * Each item carries its own `{entryIndex, rowIndex}` address into the ledger rather than a copy of
+ * the row, so the click handler re-reads the live ledger instead of replaying a snapshot that a
+ * roster edit or an import may have invalidated since the table was drawn. `replayable`/`reason`
+ * come from replayableMatch, so an unreplayable match is still LISTED — it happened — with the
+ * reason it can't be re-run, rather than vanishing from the record.
+ * @param {{ history?: Array<{at: number|null, difficulty: string, rows: object[]}>, roster?: object[] }} ledger
+ * @param {{ limit?: number }} [opts]
+ */
+export function shapeHistoryMatches(ledger, { limit = HISTORY_MATCH_LIMIT } = {}) {
+  const history = (ledger && ledger.history) || [];
+  const out = [];
+  for (let entryIndex = history.length - 1; entryIndex >= 0; entryIndex--) {
+    const entry = history[entryIndex];
+    const rows = (entry && entry.rows) || [];
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      if (out.length >= limit) return out;
+      const row = rows[rowIndex];
+      const check = replayableMatch(row, ledger);
+      out.push({
+        entryIndex, rowIndex,
+        at: Number.isFinite(entry.at) ? entry.at : null,
+        difficulty: entry.difficulty,
+        world: row.world,
+        seed: row.seed,
+        aName: row.aName, bName: row.bName,
+        // The same wording shapeResultsTable uses, so one match reads identically in the duel
+        // results table and in the history list.
+        side: row.direction === "aAsAi" ? `${row.aName} as AI` : `${row.bName} as AI`,
+        winner: row.winner === "draw" ? "Draw" : row.winner === "a" ? row.aName : row.bName,
+        margin: row.margin,
+        winReason: row.winReason || "-",
+        human: row.human === true,
+        replayable: check.ok,
+        reason: check.ok ? null : check.reason,
+      });
+    }
+  }
+  return out;
+}
+
+/* ============================================================
    DOM RENDERING — guarded the dom.js way: every entry point below either checks `mapSelectEl`
    itself or is only ever reached from one that did, so this whole section is inert (never throws)
    under Node with no DOM. See test/static-integrity.test.js's C10 check.
@@ -870,6 +1212,13 @@ export function mostRelevantBracket(preferred, led = ensureLedger()) {
 
 let standingsDifficulty = null;   // lazily defaulted to compConfig.difficulty by renderCompetition() below
 let compRosterError = null;       // a validation/import error, shown on the Roster screen
+// Phase 5, both on the Standings screen: which ARCHIVED season is being viewed (null = the live
+// ladder), the label typed into the archive form, and that screen's own error slot. `viewingSeason`
+// is an INDEX into ledger.seasons rather than a copy, so an import/archive that happens while it's
+// set can never leave a detached season on screen — every render re-reads the live ledger.
+let viewingSeason = null;
+let seasonLabelDraft = "";
+let standingsError = null;
 // The Roster screen's own "add a new entry directly" form state (task's own point 2 — not only
 // reachable via a duel's New Entrant path). Rebuilt fresh after every successful add so the form
 // doesn't carry a stale name into the next entry.
@@ -951,12 +1300,16 @@ function renderCompTabs(container) {
       // empty table reading "Nobody has played a rated match at this difficulty yet", with the
       // rated games sitting one bracket away and nothing saying so. Land on a bracket that
       // actually has results instead, preferring the one the player is most likely to mean.
-      if (t.key === "standings") standingsDifficulty = mostRelevantBracket(standingsDifficulty);
+      if (t.key === "standings") {
+        standingsDifficulty = mostRelevantBracket(standingsDifficulty);
+        viewingSeason = null;   // a fresh visit opens on the LIVE ladder, never on a season last browsed
+      }
       compScreen = t.key;
       compError = null;
       compRosterError = null;
       tourneyError = null;
       gauntletError = null;
+      standingsError = null;
       refreshCompView();
     });
     row.appendChild(btn);
@@ -1149,6 +1502,19 @@ function renderConfigView(container) {
   runBtn.type = "button";
   runBtn.addEventListener("click", startDuel);
   container.appendChild(runBtn);
+
+  // WATCH ONE MATCH LIVE (Phase 5). Sits below Run Duel and is visibly the lesser of the two: Run
+  // Duel is what moves the ladder, and the note under this button says outright that watching does
+  // not — stated where the decision is taken, not only after the match (where it is stated again).
+  const watchBtn = mk("button", "btn ghost comp-watch-btn", "👁 Watch One Match Live");
+  watchBtn.type = "button";
+  watchBtn.disabled = compConfig.worlds.length === 0;
+  if (!watchBtn.disabled) watchBtn.addEventListener("click", watchDuel);
+  container.appendChild(watchBtn);
+  container.appendChild(mk("p", "comp-disclosure comp-watch-note",
+    `Plays match 1 of this duel — ${planetName(compConfig.worlds[0] || MAP_CHOICES[0])}, the same seed and `
+    + `dials the simulation would use — in the real game at 1x-8x speed, with fog revealed and no `
+    + `orders of your own. ${EXHIBITION_NOTE}`));
 }
 
 /* ---------- progress view ---------- */
@@ -1192,21 +1558,35 @@ function eloCard(name, delta) {
   return card;
 }
 
-function buildResultsTable(rows) {
+// `replayBack` (Phase 5): where a Replay launched from this table should return to. Passed rather
+// than assumed so the same table can serve the Quick Duel results view (back to Quick Duel) and
+// any future caller; omitted, the table renders exactly as it did before replay existed.
+function buildResultsTable(rows, replayBack) {
   const shaped = shapeResultsTable(rows);
   const table = document.createElement("table");
   table.className = "comp-table";
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  ["World", "Seed", "Side", "Swap", "Winner", "Reason", "Time (s)", "Margin"].forEach(h => headRow.appendChild(mk("th", null, h)));
+  const heads = ["World", "Seed", "Side", "Swap", "Winner", "Reason", "Time (s)", "Margin"];
+  if (replayBack) heads.push("");
+  heads.forEach(h => headRow.appendChild(mk("th", null, h)));
   thead.appendChild(headRow);
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  shaped.forEach(r => {
+  shaped.forEach((r, i) => {
     const tr = document.createElement("tr");
     [planetName(r.world), r.seed, r.side, r.swap ? "yes" : "no", r.winner, r.reason, r.time, r.margin]
       .forEach(v => tr.appendChild(mk("td", null, String(v))));
+    if (replayBack) {
+      const actionsTd = document.createElement("td");
+      const btn = mk("button", "btn comp-replay-btn", "▶ Replay");
+      btn.type = "button";
+      btn.title = `Re-run this match from seed ${r.seed} and watch it. Changes no rating — it is already counted.`;
+      btn.addEventListener("click", () => startReplay(rows[i], replayBack));
+      actionsTd.appendChild(btn);
+      tr.appendChild(actionsTd);
+    }
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -1232,8 +1612,12 @@ function renderResultsView(container) {
   }
 
   const tableWrap = mk("div", "comp-table-wrap");
-  tableWrap.appendChild(buildResultsTable(rows));
+  // Every row here is a FINISHED match that was just recorded, so each gets a Replay button —
+  // this is the results view the Phase 5 brief points at, and returning here (not to the config
+  // view) is what makes "replay another one" a single click. See REPLAY_NOTE for what it costs.
+  tableWrap.appendChild(buildResultsTable(rows, openDuelResultsScreen));
   container.appendChild(tableWrap);
+  container.appendChild(mk("p", "setup-hint", REPLAY_NOTE));
 
   const actions = mk("div", "comp-actions");
   const again = mk("button", "btn", "Run Another Duel");
@@ -2096,8 +2480,191 @@ function renderRosterScreen(container) {
 
 /* ---------- standings screen ---------- */
 
+// A stored wall-clock ms -> a short, local, human date. Only ever used for DISPLAY of an
+// already-recorded timestamp (never to make one — those are injected at the write, see
+// competitionLedger.js's own purity note), so it is safely a DOM-layer helper.
+function shortDate(at) {
+  if (!Number.isFinite(at)) return "—";
+  const d = new Date(at);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * The RECORDED-MATCHES list, with a Replay button per row (docs/competitions-and-elo.md Phase 5).
+ * This is where finished matches are visible after the session that ran them is gone — the Quick
+ * Duel results table shows the duel you just ran; this shows the ladder's whole record, reloads and
+ * imports included, which is what makes "replay a finished match" mean something a week later.
+ */
+function renderMatchHistory(container, activeLedger) {
+  const matches = shapeHistoryMatches(activeLedger);
+  container.appendChild(mk("h4", "comp-entrant-heading", "Recent matches"));
+  if (matches.length === 0) {
+    container.appendChild(mk("p", "setup-hint", "No matches recorded yet — run a duel or a tournament."));
+    return;
+  }
+  container.appendChild(mk("p", "setup-hint", REPLAY_NOTE));
+
+  const wrap = mk("div", "comp-table-wrap");
+  const table = document.createElement("table");
+  table.className = "comp-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["When", "Bracket", "World", "Seed", "Side", "Winner", "Margin", ""].forEach(h => headRow.appendChild(mk("th", null, h)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  matches.forEach(m => {
+    const tr = document.createElement("tr");
+    [shortDate(m.at), difficultyLabelFor(m.difficulty), planetName(m.world), m.seed, m.side, m.winner, m.margin]
+      .forEach(v => tr.appendChild(mk("td", null, String(v))));
+    const actionsTd = document.createElement("td");
+    if (m.replayable) {
+      const btn = mk("button", "btn comp-replay-btn", "▶ Replay");
+      btn.type = "button";
+      btn.title = `Re-run this match from seed ${m.seed} on ${planetName(m.world)} and watch it. Changes no rating.`;
+      btn.addEventListener("click", () => replayLedgerMatch(m.entryIndex, m.rowIndex, openStandingsScreen));
+      actionsTd.appendChild(btn);
+    } else {
+      // Listed, not hidden: the match happened. The reason it can't be re-run is shown where the
+      // button would have been, rather than as a disabled control that explains nothing.
+      const note = mk("span", "comp-replay-refused", m.human ? "played live" : "not replayable");
+      note.title = m.reason;
+      actionsTd.appendChild(note);
+    }
+    tr.appendChild(actionsTd);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
+/**
+ * The SEASONS block (docs/competitions-and-elo.md Phase 5): the list of closed seasons, each
+ * viewable, plus the form that closes the current one. Archiving is confirmed first, and the
+ * confirm shows the summary it is about to record — who finished top and how much was played —
+ * because "reset my ladder" is exactly the click a player should see the consequences of.
+ */
+function renderSeasonsBlock(container, activeLedger) {
+  const seasons = activeLedger.seasons || [];
+  container.appendChild(mk("h4", "comp-entrant-heading", "Seasons"));
+  container.appendChild(mk("p", "setup-hint",
+    "Archiving files the current ratings and match history under a season label and starts the ladder "
+    + "over. The ROSTER is kept — every entrant stays, only their ratings restart. Past seasons stay "
+    + "viewable here, and ride the same export/import file as everything else."));
+
+  if (seasons.length) {
+    const wrap = mk("div", "comp-table-wrap");
+    const table = document.createElement("table");
+    table.className = "comp-table";
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    ["#", "Season", "Finished", "Matches", "Champions", ""].forEach(h => headRow.appendChild(mk("th", null, h)));
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    seasons.forEach((season, i) => {
+      const tr = document.createElement("tr");
+      if (viewingSeason === i) tr.className = "comp-season-row is-viewing";
+      const champions = season.summary.brackets.map(b => `${b.top} (${difficultyLabelFor(b.difficulty)} ${Math.round(b.topRating)})`).join(" · ") || "—";
+      [String(i + 1), season.label, shortDate(season.finishedAt), String(season.summary.matches), champions]
+        .forEach(v => tr.appendChild(mk("td", null, v)));
+      const actionsTd = document.createElement("td");
+      const btn = mk("button", "btn", viewingSeason === i ? "Viewing" : "View");
+      btn.type = "button";
+      btn.disabled = viewingSeason === i;
+      btn.addEventListener("click", () => { viewingSeason = i; standingsError = null; refreshCompView(); });
+      actionsTd.appendChild(btn);
+      tr.appendChild(actionsTd);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+  }
+
+  const summary = seasonSummary(activeLedger);
+  const row = mk("div", "setup-row");
+  row.appendChild(mk("span", "setup-label", "New season"));
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "comp-season-input";
+  input.placeholder = `Season ${seasons.length + 1}`;
+  input.maxLength = MAX_SEASON_LABEL;
+  input.value = seasonLabelDraft;
+  input.addEventListener("input", () => { seasonLabelDraft = input.value; });
+  row.appendChild(input);
+  const archiveBtn = mk("button", "btn", "🏁 Archive Season");
+  archiveBtn.type = "button";
+  archiveBtn.addEventListener("click", () => confirmArchiveSeason(summary));
+  row.appendChild(archiveBtn);
+  container.appendChild(row);
+
+  if (summary.matches === 0)
+    container.appendChild(mk("p", "setup-hint", "Nothing to archive yet — no rated match has been played this season."));
+}
+
+// The season summary, as the one plain sentence the confirm dialog and the post-archive note both
+// show. Built from seasonSummary's derived numbers, never re-counted here.
+function seasonSummaryText(summary) {
+  if (!summary.matches) return "No rated matches were played.";
+  const champions = summary.brackets.map(b => `${b.top} tops the ${difficultyLabelFor(b.difficulty)} bracket at ${Math.round(b.topRating)}`);
+  // `plural` would say "matchs" — the same exception captureCompetitionResult's own matchesLeft
+  // already carries, spelled the same way rather than teaching `plural` about English.
+  const matches = `${summary.matches} match${summary.matches === 1 ? "" : "es"}`;
+  return `${matches} played by ${plural(summary.entrants, "entrant")}. `
+    + (champions.length ? `${champions.join("; ")}.` : "");
+}
+
+function confirmArchiveSeason(summary) {
+  const label = seasonLabelDraft.trim() || `Season ${(ensureLedger().seasons || []).length + 1}`;
+  openCompConfirm({
+    title: `Archive "${label}"?`,
+    body: `${seasonSummaryText(summary)} Archiving files that under "${label}" and RESETS every rating and `
+      + "the match history. Your roster is kept — every entrant stays, unrated, ready for the new season. "
+      + "The archived season stays viewable here.",
+    confirmLabel: "Archive & start a new season",
+    onConfirm: () => {
+      const activeLedger = ensureLedger();
+      try {
+        archiveSeason(activeLedger, { label: seasonLabelDraft, at: Date.now() });
+        saveLedgerToStorage(activeLedger);
+        seasonLabelDraft = "";
+        standingsError = null;
+        // Land the player ON the season they just closed: it is the thing they were looking at, and
+        // the live table is now empty by design — dropping them onto an empty ladder with no
+        // explanation would read as data loss.
+        viewingSeason = activeLedger.seasons.length - 1;
+      } catch (err) {
+        standingsError = err.message;
+      }
+      refreshCompView();
+    },
+  });
+}
+
 function renderStandingsScreen(container) {
   const activeLedger = ensureLedger();
+  const seasons = activeLedger.seasons || [];
+  // A season index that no longer exists (an import replaced the ladder while it was being viewed)
+  // falls back to the live ladder rather than rendering nothing.
+  if (viewingSeason != null && !seasons[viewingSeason]) viewingSeason = null;
+  const season = viewingSeason != null ? seasons[viewingSeason] : null;
+
+  if (standingsError) container.appendChild(mk("p", "comp-error", standingsError));
+
+  if (season) {
+    const back = mk("button", "btn comp-back-btn", "← Back to the live ladder");
+    back.type = "button";
+    back.addEventListener("click", () => { viewingSeason = null; refreshCompView(); });
+    container.appendChild(back);
+    container.appendChild(mk("h3", "cards-heading", `${season.label} — final standings`));
+    container.appendChild(mk("p", "setup-hint",
+      `Closed ${shortDate(season.finishedAt)}. ${seasonSummaryText(season.summary)}`));
+  }
 
   const diffRow = mk("div", "setup-row");
   diffRow.appendChild(mk("span", "setup-label", "Bracket"));
@@ -2106,9 +2673,15 @@ function renderStandingsScreen(container) {
   container.appendChild(mk("p", "setup-hint",
     "Each difficulty is its own bracket (D2) — ratings are never blended across them."));
 
-  const standings = standingsFor(activeLedger, standingsDifficulty);
+  // A closed season reads back through seasonStandings (its own table, complete even where the
+  // roster has moved on); the live ladder reads through standingsFor exactly as it always did.
+  const standings = season ? seasonStandings(activeLedger, viewingSeason, standingsDifficulty)
+    : standingsFor(activeLedger, standingsDifficulty);
   if (standings.length === 0) {
-    container.appendChild(mk("p", "setup-hint", "Nobody has played a rated match at this difficulty yet."));
+    container.appendChild(mk("p", "setup-hint", season
+      ? "Nobody played a rated match at this difficulty during this season."
+      : "Nobody has played a rated match at this difficulty yet."));
+    renderStandingsExtras(container, activeLedger, season);
     return;
   }
 
@@ -2149,6 +2722,22 @@ function renderStandingsScreen(container) {
   // the human: on a pure AI bracket there is no seat asymmetry to disclose, and a note about "you"
   // beside a table you're not in would be noise.
   if (shaped.some(row => row.human)) container.appendChild(mk("p", "comp-disclosure", SEAT_DISCLOSURE));
+
+  renderStandingsExtras(container, activeLedger, season);
+}
+
+// The two Phase 5 blocks that sit under whichever table is showing. Called from BOTH of
+// renderStandingsScreen's exits (the empty-bracket one and the populated one) so archiving and
+// replaying are reachable from a bracket nobody has played yet — the most likely state right after
+// a season is archived, which is exactly when the season list has to still be on screen.
+//
+// The match history is deliberately the LIVE ladder's only: a closed season's rows are still in the
+// ledger and still replayable in principle, but a history list that silently changed meaning with
+// the table above it would be the confusing kind of clever. Viewing a season shows that season's
+// standings; replaying is done from the current record.
+function renderStandingsExtras(container, activeLedger, season) {
+  if (!season) renderMatchHistory(container, activeLedger);
+  renderSeasonsBlock(container, activeLedger);
 }
 
 /* ============================================================
@@ -2635,6 +3224,202 @@ export function forfeitLiveCompetitionMatch() {
  */
 export function liveCompetitionFixture() {
   return game.competition && game.competition.kind === "gauntlet" ? { ...game.competition } : null;
+}
+
+/* ---------- watching a match: launching one, and ending one ---------- */
+
+/**
+ * What a finished WATCHED match's game-over screen shows (boot.js's game-over hook is the only
+ * caller). Two parts: the headline `verdict` that replaces the ordinary Victory/Defeat copy — the
+ * human played neither seat, so neither word applies — and the plain-data `block` overlays.js
+ * renders below it, restating that this was exhibition-only and offering the way back.
+ *
+ * Records NOTHING. That is the whole decision (see EXHIBITION_NOTE's own section header): no
+ * ledger write, no rating, no history row. There is deliberately no code path from here into
+ * competitionLedger.js at all, so the disclosure on screen can't drift from what actually happened.
+ *
+ * A REPLAY (`watch.recorded` present, Phase 5) ends on the same screen with one thing added: the
+ * verdict on whether it reproduced the result it was replaying. That check is on screen, in plain
+ * words, because it is the claim the feature is built on — a divergence is a real finding about the
+ * simulation's determinism and the player should be the first to see it, not the last.
+ * @param {object} state    the finished game state.
+ * @param {{ aName: string, bName: string, world: string, seed: number, onLeave?: Function,
+ *   recorded?: { winnerName: string|null, margin: number } }} watch
+ */
+export function spectatedGameOverBlock(state, watch) {
+  const out = spectatedMatchOutcome(state, watch);
+  const leave = watch.onLeave || openDuelScreen;
+
+  if (watch.recorded) {
+    const verdict = replayVerdict(out, watch.recorded);
+    return {
+      verdict: out.verdict,
+      block: {
+        title: `Replay — ${out.aName} vs ${out.bName} on ${planetName(watch.world)} · seed ${watch.seed}`,
+        outcome: `${out.aName} ${out.aScore} — ${out.bScore} ${out.bName}`
+          + (out.winReason ? ` · decided by ${out.winReason}` : "")
+          + ` · margin ${Math.abs(out.margin)}`,
+        // A reproduction reads as an ordinary result line; a DIVERGENCE takes the error slot, which
+        // is styled to be noticed — it means the sim is not the deterministic thing this whole
+        // system is built on, and a quiet line would bury it.
+        ratingLine: verdict.reproduced ? verdict.line : null,
+        error: verdict.reproduced ? null : verdict.line,
+        disclosure: REPLAY_NOTE,
+        viewLabel: "← Back",
+        onView: leave,
+      },
+    };
+  }
+
+  return {
+    verdict: out.verdict,
+    block: {
+      title: `Exhibition — ${out.aName} vs ${out.bName} on ${planetName(watch.world)}`,
+      outcome: `${out.aName} ${out.aScore} — ${out.bScore} ${out.bName}`
+        + (out.winReason ? ` · decided by ${out.winReason}` : "")
+        + ` · margin ${Math.abs(out.margin)}`,
+      disclosure: EXHIBITION_NOTE,
+      viewLabel: "← Back to Quick Duel",
+      onView: leave,
+    },
+  };
+}
+
+/**
+ * Show the Quick Duel tab from wherever the player currently is — the spectate bar's Leave button,
+ * a watched match's game-over screen (which has to leave the match first, exactly as "Choose
+ * another battlefield" does), or another menu screen. Mirrors openGauntletScreen above.
+ */
+// Back to the Quick Duel RESULTS table (as opposed to openDuelScreen's config view) — where a
+// replay launched from that table came from. `lastDone` is module state that survives the trip
+// into a live match and back, so the table is still there; if it somehow isn't, this degrades to
+// the config view rather than rendering an empty results screen.
+export function openDuelResultsScreen() {
+  if (lastDone && activeJob) {
+    compScreen = "duel";
+    compView = "results";
+    compError = null;
+    setup.mode = "competition";
+    if (game.state) restartToMapSelect();
+    else if (wrapEl) refreshCompView();
+    else renderMapSelect();
+    return;
+  }
+  openDuelScreen();
+}
+
+export function openDuelScreen() {
+  compScreen = "duel";
+  compView = "config";
+  compError = null;
+  compRosterError = null;
+  tourneyError = null;
+  gauntletError = null;
+  setup.mode = "competition";
+  if (game.state) restartToMapSelect();      // leaves the live/finished match, then re-renders map-select
+  else if (wrapEl) refreshCompView();        // already on the competition screen
+  else renderMapSelect();                    // on some other menu screen
+}
+
+/**
+ * Show the Standings tab from wherever the player currently is — a replay's own "back" route, and
+ * where the match history and the season list live. Mirrors openDuelScreen/openGauntletScreen.
+ */
+export function openStandingsScreen() {
+  compScreen = "standings";
+  compError = null;
+  compRosterError = null;
+  tourneyError = null;
+  gauntletError = null;
+  setup.mode = "competition";
+  if (game.state) restartToMapSelect();      // leaves the live/finished match, then re-renders map-select
+  else if (wrapEl) refreshCompView();        // already on the competition screen
+  else renderMapSelect();                    // on some other menu screen
+}
+
+/**
+ * REPLAY one recorded match (docs/competitions-and-elo.md Phase 5) — the Replay buttons on the
+ * Standings screen's match history and on the Quick Duel results table are the only callers.
+ *
+ * Addressed by `{entryIndex, rowIndex}` into the LIVE ledger rather than by a row object captured
+ * when the table was drawn: an import or a roster edit between drawing the button and clicking it
+ * must be seen, not replayed around. buildReplayConfig re-checks replayability and throws its own
+ * reason, which is shown rather than swallowed.
+ *
+ * WRITES NOTHING, for a sharper reason than a watched match does: this match is ALREADY on the
+ * ladder. Re-recording it would count one result twice. There is no path from here into
+ * recordCompetition, and `game.competition` stays null so boot.js's game-over hook can't rate it
+ * either.
+ * @param {number} entryIndex @param {number} rowIndex @param {Function} back  where Leave/game-over returns to
+ */
+function replayLedgerMatch(entryIndex, rowIndex, back) {
+  const entry = (ensureLedger().history || [])[entryIndex];
+  startReplay(entry && (entry.rows || [])[rowIndex], back);
+}
+
+// Replay a row the caller already holds — the Quick Duel results table's own rows, which ARE the
+// rows just recorded. No index indirection is needed (or wanted) there: the table is showing this
+// exact duel, so replaying what it shows is right even if the ledger has been imported over since.
+function startReplay(row, back) {
+  standingsError = null;
+  compError = null;
+  const activeLedger = ensureLedger();
+  let cfg;
+  try {
+    cfg = buildReplayConfig(row, activeLedger);
+  } catch (err) {
+    standingsError = `That match can't be replayed: ${err.message}`;
+    compError = standingsError;
+    refreshCompView();
+    return;
+  }
+  // One worker slot for the whole mode, and a live match needs the main thread — the same
+  // termination watchDuel and playNextGauntletMatch both do before booting their own live match.
+  if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+  if (compView === "progress") compView = "config";
+  if (tourneyView === "progress") tourneyView = "config";
+
+  startSpectatedMatch({ ...cfg, onLeave: back });
+}
+
+/**
+ * Boot the currently-configured Quick Duel as ONE live, watched match (the config view's Watch
+ * button). Resolves both entrant pickers and validates the config through the SAME
+ * resolveEntrantPick/buildJob path startDuel uses — so a watched match can't be configured in a way
+ * a run one couldn't be — then hands buildWatchConfig's opts to boot.js.
+ *
+ * DELIBERATELY WRITES NOTHING, not even a roster row. startDuel commits a "New Entrant" draft to
+ * the roster the instant the duel is about to run, because that duel is about to write RATINGS
+ * under that name and the ladder is keyed by name. A watched match writes no ratings, so there is
+ * nothing for a persistent identity to anchor; leaving the roster untouched keeps "watching costs
+ * nothing" literally true. Draft an entrant, watch it, decide against it — the roster never knew.
+ */
+function watchDuel() {
+  compError = null;
+  const activeLedger = ensureLedger();
+  let job;
+  try {
+    job = buildJob({
+      entrantA: resolveEntrantPick(compConfig.entrantA, activeLedger),
+      entrantB: resolveEntrantPick(compConfig.entrantB, activeLedger),
+      difficulty: compConfig.difficulty,
+      worlds: compConfig.worlds,
+      seeds: compConfig.seeds,
+      seedBase: resolveSeedBase(compConfig.seedText),
+    });
+  } catch (err) {
+    compError = err.message;
+    refreshCompView();
+    return;
+  }
+  // One worker slot for the whole mode, and a live match needs the main thread — the same
+  // termination playNextGauntletMatch does before booting its own live match.
+  if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+  if (compView === "progress") compView = "config";
+  if (tourneyView === "progress") tourneyView = "config";
+
+  const watch = buildWatchConfig(job);
+  startSpectatedMatch({ ...watch, onLeave: openDuelScreen });
 }
 
 /* ---------- entry point, called from setup.js's renderMapSelect() ---------- */
