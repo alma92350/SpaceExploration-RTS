@@ -1,0 +1,22 @@
+{
+  "name": "evolved",
+  "strategy": "evolved",
+  "overrides": {
+    "strategies": {
+      "evolved": {
+        "attackTimeoutMult": 0.55,
+        "armyAttackSizeMult": 0.628,
+        "garrisonMult": 0.374,
+        "neverInitiates": true,
+        "workerTargetMult": 2,
+        "warFootingMult": 3.162,
+        "warFootingTime": 54.077,
+        "turretCountMult": 1.051,
+        "matchEnemyForce": false,
+        "matchBuffer": 1.264,
+        "matchFloor": 10
+      }
+    }
+  },
+  "_hypothesis": "Evolved: population 12 x 6 generations, fitness = duel Elo (medium/hard, agg min) on korrath/ferros/vesper, seed 1."
+}
