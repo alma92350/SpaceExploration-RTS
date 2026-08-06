@@ -20,8 +20,10 @@ import {
   shapeTournamentStandings, shapeBracketView,
   SEAT_DISCLOSURE, gauntletEstimate, buildGauntletStart, shapeGauntletFixtures, nextGauntletFixture,
   humanMatchOutcome, gauntletLadderTrail, shapeGauntletSummary, mostRelevantBracket,
+  EXHIBITION_NOTE, buildWatchConfig, spectatedMatchOutcome,
 } from "../competition.js";
-import { duelSeed } from "../tools/duelCore.js";
+import { duelSeed, pinnedDuelDials } from "../tools/duelCore.js";
+import { createSelfPlayState, tickSelfPlay } from "../tools/selfplay.js";
 import { INITIAL_RATING } from "../elo.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
 import {
@@ -1034,4 +1036,114 @@ test("mostRelevantBracket is deterministic when several brackets have results an
   const first = mostRelevantBracket("medium", ledger);
   assert.equal(first, mostRelevantBracket("medium", ledger), "same ledger, same answer, every time");
   assert.ok(["easy", "hard"].includes(first), "and it is one of the brackets that actually has rows");
+});
+
+/* ============================================================
+   WATCHING A MATCH LIVE (docs/competitions-and-elo.md Phase 5) — the pure half: the config a
+   watched match is booted from, and the exhibition framing that says it isn't rated.
+   ============================================================ */
+
+const watchJob = () => buildJob({
+  entrantA: { name: "Alpha", strategy: "aggressive", archetype: "rusher" },
+  entrantB: { name: "Beta", strategy: "economic", archetype: "economist" },
+  difficulty: "hard",
+  worlds: ["korrath", "ferros"],
+  seeds: 2,
+  seedBase: 42,
+});
+
+test("buildWatchConfig seats the entrants exactly the way the simulated path does", () => {
+  const job = watchJob();
+  const cfg = buildWatchConfig(job);
+
+  // tools/duelCore.js's runDuelMatch: entrant A owns "player", entrant B owns "ai". A watched
+  // match has to agree, or "who won" would be reported for the wrong entrant.
+  assert.equal(cfg.aName, "Alpha");
+  assert.equal(cfg.bName, "Beta");
+  assert.equal(cfg.playerAi.strategy, "aggressive");
+  assert.equal(cfg.playerAi.archetype, "rusher");
+  assert.equal(cfg.ai.strategy, "economic");
+  assert.equal(cfg.ai.archetype, "economist");
+});
+
+test("buildWatchConfig pins ONE difficulty dial set onto both seats, like every rated match", () => {
+  const cfg = buildWatchConfig(watchJob());
+  const dials = pinnedDuelDials("hard");
+  for (const seat of [cfg.ai, cfg.playerAi]) {
+    assert.equal(seat.difficulty, dials.difficulty);
+    assert.equal(seat.apm, dials.apm);
+    assert.equal(seat.micro, dials.micro);
+  }
+});
+
+test("buildWatchConfig draws the SAME world/seed/asym the worker would have run for that replicate", () => {
+  const job = watchJob();
+  const first = buildWatchConfig(job);
+  assert.equal(first.world, "korrath", "the first picked world by default");
+  assert.equal(first.seed, matchSeedFor(job, "korrath", 0), "the schedule's own seed, not a fresh roll");
+  assert.equal(first.seed, duelSeed(42, "korrath", "hard", "Alpha", "Beta", 0));
+  assert.equal(first.swapAsym, false, "replicate 0 keeps the map's own halves");
+
+  const second = buildWatchConfig(job, { world: "ferros", rep: 1 });
+  assert.equal(second.world, "ferros");
+  assert.equal(second.seed, matchSeedFor(job, "ferros", 1));
+  assert.equal(second.swapAsym, true, "replicate parity flips the asym halves, same rule as the worker");
+});
+
+test("buildWatchConfig refuses a world the job never scheduled", () => {
+  assert.throws(() => buildWatchConfig(watchJob(), { world: "not-a-world" }), /world/i);
+});
+
+test("buildWatchConfig's opts build a real self-play state that both AIs actually drive", () => {
+  const cfg = buildWatchConfig(watchJob());
+  const state = createSelfPlayState({
+    planetId: cfg.world, seed: cfg.seed, swapAsym: cfg.swapAsym,
+    matchTimeLimit: cfg.matchTimeLimit, ai: cfg.ai, playerAi: cfg.playerAi,
+  });
+  assert.ok(state.playerAi, "the SECOND controller exists — this is what makes both seats AI-driven");
+  assert.equal(state.playerAi.strategy, "aggressive");
+  assert.equal(state.ai.strategy, "economic");
+  // Both controllers really do act: run a slice and check each side has ordered something.
+  for (let i = 0; i < 600; i++) tickSelfPlay(state);
+  const owners = new Set([...state.units.values()].map(u => u.owner));
+  assert.ok(owners.has("player") && owners.has("ai"), "both seats field units");
+});
+
+test("EXHIBITION_NOTE states plainly that a watched match changes no rating", () => {
+  assert.match(EXHIBITION_NOTE, /exhibition/i);
+  assert.match(EXHIBITION_NOTE, /not|no/i);
+  assert.match(EXHIBITION_NOTE, /rating|rated|ladder/i);
+  // The REASON has to be there too, not just the claim — a single unswapped match is not the
+  // side-swapped, multi-seed pairing every rated row in this system is built from.
+  assert.match(EXHIBITION_NOTE, /swap/i);
+});
+
+test("spectatedMatchOutcome names the WINNING ENTRANT, never \"you\"", () => {
+  const state = createGameState({ planetId: "ferros", seed: 5, rng: mulberry32(5) });
+  const watch = { aName: "Alpha", bName: "Beta" };
+
+  state.over = true; state.winner = "player"; state.winReason = "elimination";
+  const aWon = spectatedMatchOutcome(state, watch);
+  assert.equal(aWon.winnerName, "Alpha");
+  assert.match(aWon.verdict, /Alpha/);
+  assert.doesNotMatch(aWon.verdict, /\b(you|your|victory|defeat)\b/i,
+    "nobody watching a match won or lost it");
+
+  state.winner = "ai";
+  assert.equal(spectatedMatchOutcome(state, watch).winnerName, "Beta");
+
+  state.winner = null;
+  const drawn = spectatedMatchOutcome(state, watch);
+  assert.equal(drawn.winnerName, null);
+  assert.match(drawn.verdict, /draw/i);
+});
+
+test("spectatedMatchOutcome carries both entrants' scores, A-relative like every duel row", () => {
+  const state = createGameState({ planetId: "ferros", seed: 5, rng: mulberry32(5) });
+  state.over = true; state.winner = "player";
+  const out = spectatedMatchOutcome(state, { aName: "Alpha", bName: "Beta" });
+  assert.equal(out.aScore, +playerScore(state, "player").toFixed(1));
+  assert.equal(out.bScore, +playerScore(state, "ai").toFixed(1));
+  assert.equal(out.margin, +(out.aScore - out.bScore).toFixed(1));
+  assert.equal(out.exhibition, true, "the block itself is flagged as unrated");
 });

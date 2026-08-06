@@ -616,6 +616,100 @@ ordinary skirmish game-over confirmed unchanged (no competition block, ledger un
 **Tests:** observer entry works without a galaxy; a spectated match issues no player orders; a replay
 of a recorded match reproduces its recorded winner and score margin exactly.
 
+**Status: the SPECTATE half is done** (the first two bullets — watch a pairing live, with speed
+control). Replay-from-the-ledger and Season are **not** built and stay open.
+
+- **Observer Mode generalised, by relaxing exactly one guard.** `enterObserverMode`'s
+  `if (!game.galaxy …) return` became `if (!game.galaxy && !game.spectateMatch) return`, and
+  `game.spectateId` falls back to `game.state.planetId` when there is no galaxy. Everything else —
+  the whole camera path, `input.js`'s seven delegation points, `observedState()`'s existing
+  `game.state` fallback, `boot.js`'s render swap — was already general and is untouched. **Where
+  Observer Mode is OFFERED is still exactly two places:** an Odyssey, and a match the human is not
+  playing. An ordinary player-vs-AI skirmish is still refused, because revealing its fog would just
+  be a cheat, and the Odyssey tests are the safety net that the galaxy path didn't move.
+- **`observerStats` degrades honestly rather than crashing or lying.** `aiDevelopment` was *checked*,
+  not assumed: it needs no `state.diplomacy` at all (it counts owner "ai"'s finished economic
+  buildings plus its researched techs, both present on any skirmish state), so nothing there needed
+  a crash guard. What it *is* is the Odyssey's development-curve metric for the one neighbour AI —
+  meaningless for one seat of a two-entrant duel — so it now reports `null` without diplomacy and
+  the panel omits it, alongside Stance. In its place `observerStats` gained `seats`: army,
+  buildings, supply and resources **per owner**, off `state.owners`. The watched-match panel renders
+  those two blocks under the entrants' own names instead of "AI army"/"Player forces", which would
+  have named the human as a combatant in a match they aren't in. Every pre-existing owner-"ai" field
+  keeps its exact meaning, so the Odyssey panel is byte-identical.
+- **A watched match is EXHIBITION ONLY, and the UI says so in three places.** This was a real
+  decision, argued at `competition.js`'s `EXHIBITION_NOTE`: every rated result in this system is a
+  *pairing* — side-swapped, multi-seed, replicate-parity `swapAsym` — precisely because a single
+  unswapped match is confounded by the seat edge `tools/selfplay.js` measures and by the map's own
+  asymmetric halves. A watched match is one match, one direction, one map half, so rating it would
+  mix a differently-earned number into the same bracket (D2) with nothing on the Standings screen
+  able to tell them apart. So it moves no rating, writes no history row, and does not even add a
+  drafted entrant to the roster — watching costs nothing, literally. Disclosed under the Watch
+  button, on the spectate bar for the whole match, and again on the game-over screen (the same
+  discipline Phase 1 held to when its Elo wasn't saved).
+- **What you watch is what the Worker would have run.** `buildWatchConfig(job)` shapes one match out
+  of the *same* `buildJob` the simulated path uses: the same `duelSeed`-derived seed (via
+  `matchSeedFor`, never a fresh roll), the same replicate-parity `swapAsym`, one `pinnedDuelDials`
+  set on **both** seats, each entrant's own strategy/archetype on its own seat, and
+  runDuelMatch's own seating (A owns `"player"`, B owns `"ai"`). `boot.js`'s `startSpectatedMatch`
+  feeds exactly that to `createSelfPlayState`, and the loop's update calls `tickSelfPlay` instead of
+  `tick` — one `else if` on `game.spectateMatch`, no forked `bootState`.
+- **Speed control scales sim time, never the timestep.** `engine/loop.js`'s `createLoop` gained a
+  `speed` option (number *or* live getter) that multiplies the real delta feeding the accumulator:
+  `update(dtFixed)` stays byte-for-byte what it was, and only *how many* identical steps a real
+  second runs changes — the fixed step is what makes replay determinism true, so it must not move.
+  It also lands the overload where the existing design already handles it: past `MAX_SUBSTEPS` the
+  loop degrades to slow motion instead of spiralling. 8x is the top rung for that reason (at 60 Hz
+  it needs ~2.7 of the 5 substeps a frame allows; 16x would sit at the cap and under-deliver).
+- **The human genuinely cannot play.** `input.js` already refused every mouse/wheel/key path while
+  observing; three remaining side doors were closed. The topbar idle-worker/idle-production chips
+  and the selection panel's own "Idle Worker"/"Select Army" buttons call `input`/engine commands
+  *directly*, bypassing that guard — they're hidden/replaced while spectating. And
+  `requestExitObserverMode` (the player-facing O/Esc/button exit, as distinct from the unconditional
+  teardown `boot.js` runs) refuses for a watched match: leaving Observer Mode there would hand the
+  human one of the two entrants' armies mid-match. The spectate bar's **Leave** is the way out.
+- **Leaving is clean, and nothing is left dangling.** `restartToMapSelect` clears
+  `spectateMatch`/`spectateSpeed` next to its existing `competition` clear and repaints the observer
+  UI once (the render loop that normally hides those elements has just been stopped).
+  `saveShape.js`'s `resumableMode` refuses to checkpoint a watched match at all — the "player" seat
+  is AI-driven by a *session* flag no save carries, so a resumed autosave would come back as a
+  skirmish with an unmanned seat — and Save/Load are hidden to match.
+
+**Deviations from the sketch above.** `input.js` needed no new spectator guard beyond swapping its
+Esc handler onto `requestExitObserverMode` — the seven delegation points listed in this section were
+already sufficient. Beyond the file list: `session.js`, `observerPanel.js`, `hud.js`,
+`hudSelection.js`, `overlays.js`, `saveShape.js`, `dom.js`, `index.html` and `engine/loop.js` — the
+same "found while wiring" pattern Phases 1-4 record. No Watch button was added to a tournament
+pairing: a Swiss/knockout pairing's seed base is folded per round *inside* `pairing.js` and isn't
+known until the schedule runs, so it is not the cheap addition the brief allowed for. The natural
+cheap version of it is the **replay** bullet — a finished pairing's rows already carry their world
+and seed — which is deferred with the rest of that bullet rather than half-built here.
+
+**Files touched:** `observer.js`, `observerPanel.js`, `boot.js`, `competition.js`, `engine/loop.js`,
+`session.js`, `saveShape.js`, `hud.js`, `hudSelection.js`, `overlays.js`, `input.js`, `dom.js`,
+`index.html`, `style.css`. **Tests:** `test/observer.test.js` (extended — entering without a galaxy,
+the ordinary-skirmish refusal, the watched-match exit refusal vs. the Odyssey's ordinary toggle, the
+speed ladder, and `observerStats`' two-seat/degraded-development shaping against a real
+`createSelfPlayState` state); `test/loop.test.js` (extended — speed multiplies step COUNT not step
+SIZE, live getters, slow-motion degradation past the cap, and an invalid speed falling back to 1x);
+`test/competition.test.js` (extended — `buildWatchConfig`'s seating/dial-pinning/seed derivation
+against the worker's own `duelSeed`, that its opts build a state both AIs really drive,
+`EXHIBITION_NOTE`'s content, and `spectatedMatchOutcome` naming the winning entrant rather than
+"you"); `test/save-shape.test.js` (extended — a spectated match is never checkpointed).
+`npm test`: **2360/2360 green** (2329 baseline + 31 new, zero regressions). `npm run typecheck`:
+clean. Live-browser-verified (Playwright, **zero console messages and zero page errors across five
+full passes**): a watched Blitz-vs-Bulwark duel booted from the Quick Duel screen with both seats
+visibly playing (independent build orders, both armies growing, red and blue units engaging in
+midfield with fog revealed); every speed rung measured against the match clock (1x → 3 s of sim per
+3 s real, 2x → 7 s, 4x → 12 s, 8x → 24 s); a full match run to the 40-minute clock in 306 s of real
+time at 8x, ending on "Bulwark wins the exhibition match" with both scores, the margin, the reason,
+and the exhibition disclosure — and an empty Standings/Roster/localStorage afterwards; clicks,
+right-clicks, Q/A, O and Esc all refused mid-match; Leave and the game-over button both returning to
+the Quick Duel tab with the banner, bar, panel and Observe button all torn down; an ordinary
+skirmish still refusing Observer Mode (button hidden, O does nothing) while keeping its own Save/
+Load and idle chips; and an Odyssey entering Observer Mode with its original banner, stance line and
+development score intact, exiting on O and on Esc exactly as before.
+
 ---
 
 ## 5. Traps specific to this codebase

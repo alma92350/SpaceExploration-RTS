@@ -468,6 +468,69 @@ body.scenario .under-attack { top: 64px; z-index: 6; }
 }
 .observer-banner.hidden { display: none; }
 
+/* The spectate bar for a WATCHED AI-vs-AI match (observerPanel.js, docs/competitions-and-elo.md
+   Phase 5): sits directly under the observer banner, and unlike that banner it IS interactive —
+   speed, the exhibition disclosure, and the way out all live here. Centered rather than
+   full-width so it reads as a control strip, not a second alarm. */
+.spectate-bar {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 32px);
+  padding: 6px 12px;
+  background: rgba(5, 7, 15, 0.88);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 12px;
+  z-index: 8;
+}
+.spectate-bar.hidden { display: none; }
+.spectate-vs { color: var(--accent); font-weight: 700; }
+.spectate-speeds { display: flex; align-items: center; gap: 4px; }
+.spectate-speed-label { color: var(--muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; }
+.spectate-speed-btn {
+  min-width: 32px;
+  padding: 3px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.spectate-speed-btn:hover { border-color: var(--accent); }
+.spectate-speed-btn.active { background: rgba(79, 209, 255, 0.22); border-color: var(--accent); color: var(--accent); }
+/* Amber, matching the mode's own .comp-note caveat hue: this is the one line that says a watched
+   match isn't rated, and it must not read as decoration. */
+.spectate-note { color: var(--gold); font-size: 11.5px; }
+.spectate-leave-btn {
+  padding: 3px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.spectate-leave-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* One block per SEAT in the watched-match stats panel — the entrant's name above its own rows. */
+.observer-seat-name {
+  margin-top: 6px;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border);
+  padding-top: 5px;
+}
+.observer-rows > .observer-seat-name:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+
 .observer-panel {
   position: absolute;
   right: 16px;

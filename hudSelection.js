@@ -964,6 +964,23 @@ function rebuildSelectionPanel(sel) {
   panelActions = [];
   game.hotkeyActions = panelActions;   // input.js reads this live array for the Z/C/V/B/N production keys
 
+  // WATCHING a match (docs/competitions-and-elo.md Phase 5): the panel offers NOTHING. Neither
+  // army belongs to the player, so every affordance this function can build — the two selection
+  // shortcuts just below, and every produce/build/order button above a real selection — would
+  // command one of the two AI entrants. input.js already refuses every mouse and keyboard route
+  // into a selection while Observer Mode is on; this closes the panel's OWN buttons, which call
+  // input/engine commands directly and so bypass that guard entirely.
+  // (No panelSignature term is needed for this: game.spectateMatch is set once, by
+  // startSpectatedMatch immediately after bootState, and never changes for the life of the game —
+  // which is exactly why that function forces one resetPanelSignature()/renderHUD() right there.)
+  if (game.spectateMatch) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Spectating — both sides are AI. You issue no orders in a watched match.";
+    panelEl.appendChild(hint);
+    return;
+  }
+
   if (!sel.length) {
     const hint = document.createElement("p");
     hint.className = "hint";

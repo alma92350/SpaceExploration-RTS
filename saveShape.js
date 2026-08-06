@@ -15,11 +15,17 @@ export function isGalaxySave(parsed) {
   return !!parsed && Array.isArray(parsed.planets);
 }
 
-// Given the session's game handle ({ state, galaxy }), what the autosave/checkpoint should write —
-// or null when there's nothing resumable: no state at all, a finished match, or a scripted
-// scenario (scenarios can't be saved). Returns the MODE only; the caller pairs it with the storage
-// key and serializer.
-export function resumableMode({ state, galaxy } = {}) {
-  if (!state || state.over || state.scenario) return null;
+// Given the session's game handle ({ state, galaxy, spectateMatch }), what the autosave/checkpoint
+// should write — or null when there's nothing resumable: no state at all, a finished match, a
+// scripted scenario (scenarios can't be saved), or a SPECTATED AI-vs-AI exhibition match. Returns
+// the MODE only; the caller pairs it with the storage key and serializer.
+//
+// The spectate rule (docs/competitions-and-elo.md Phase 5) is the same call a scenario gets, for a
+// stronger reason: a watched match isn't the player's game at all. Both seats are AI-driven, and
+// what makes the "player" seat AI-driven is game.spectateMatch — a session flag, not save data.
+// Checkpointing one would let "Continue" resume it as an ordinary skirmish whose player seat is
+// suddenly unmanned, which is worse than having nothing to continue.
+export function resumableMode({ state, galaxy, spectateMatch } = {}) {
+  if (!state || state.over || state.scenario || spectateMatch) return null;
   return galaxy ? "galaxy" : "skirmish";
 }

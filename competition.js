@@ -5,6 +5,12 @@
    competitionWorker.js — never a playable game. This mode never touches boot.js, game.state, the
    canvas, or the HUD: it runs a background simulation and shows a results screen, nothing else.
 
+   PHASE 5: a Quick Duel can also be WATCHED — one match of it, booted into the real game loop with
+   both seats AI-driven (boot.js's startSpectatedMatch → tools/selfplay.js's tickSelfPlay) and
+   Observer Mode on, so fog is revealed and the human issues no orders. A watched match is
+   EXHIBITION ONLY and changes no rating; that decision, and why it isn't a close call, is argued in
+   full at EXHIBITION_NOTE below. Its pure half sits with the rest ("WATCHING A MATCH LIVE").
+
    PHASE 3: the Tournament tab — round-robin, Swiss or a knockout bracket over a multi-selected
    field of roster entries, scheduled by pairing.js inside the same Worker, with an up-front
    match-count/time estimate, round-by-round progress, live standings or a bracket view, and every
@@ -59,12 +65,12 @@ import { STRATEGY_OPTIONS, optionGroup, MAP_CHOICES, MATCH_LENGTH_OPTIONS, setup
 // imports this module in return (for captureCompetitionResult) — both files are already inside
 // test/static-integrity.test.js's documented UI cluster, so this closes no new cycle; every use
 // below is at CALL time, never at module scope, so neither side can read the other in its TDZ.
-import { startCompetitionMatch, restartToMapSelect } from "./boot.js";
+import { startCompetitionMatch, startSpectatedMatch, restartToMapSelect } from "./boot.js";
 import { DIFFICULTY_OPTIONS } from "./engine/aiDifficulty.js";
 import { archetypeFor, ARCHETYPES } from "./engine/aiArchetypes.js";
 import { FACTIONS, PLAYABLE_FACTIONS } from "./engine/factions.js";
 import { planetName } from "./data.js";
-import { duelSeed } from "./tools/duelCore.js";
+import { duelSeed, pinnedDuelDials } from "./tools/duelCore.js";
 import { swissRoundCount, tournamentRoundPlan, tallyStandings } from "./pairing.js";
 import { INITIAL_RATING, PROVISIONAL_GAMES, applySeries, applyResult } from "./elo.js";
 import { playerScore } from "./engine/victory.js";
@@ -787,6 +793,102 @@ export function shapeGauntletSummary(ledger) {
 }
 
 /* ============================================================
+   WATCHING A MATCH LIVE (docs/competitions-and-elo.md Phase 5) — the pure half: the config one
+   watched match is booted from, the exhibition framing, and the game-over block it ends on.
+
+   THE DECISION THIS SECTION MAKES, DELIBERATELY: A WATCHED MATCH IS EXHIBITION ONLY. It does not
+   move any rating, and it writes nothing to the ledger — not a rating, not a history row, not even
+   a roster entry for an entrant drafted purely to watch. Why, stated once so nobody has to
+   re-litigate it at the button:
+
+     • Every rated result in this system is a PAIRING, not a match. tools/ailab.js's runSwappedDuel,
+       competitionWorker.js's own loop, and every tournament pairing all run each (world, seed)
+       replicate BOTH WAYS and alternate the map's asym halves by replicate parity, precisely
+       because a single unswapped match is confounded by seat and map asymmetry — and the seat edge
+       here is measured, real and one-directional (tools/selfplay.js's own header: the "ai" seat
+       reads state the "player" seat already mutated on ~13% of think cycles). A watched match is
+       exactly one match, one direction, one map half.
+     • So rating it would put a differently-earned number into the same bracketed table (D2) as
+       numbers earned the careful way, and nothing on the Standings screen could tell them apart.
+     • The cheap-looking alternative — "watch it, and count it, it's still a real match" — is how a
+       ladder quietly becomes meaningless.
+
+   The other half of being deliberate is SAYING SO, on screen, where the button is and again when
+   the match ends — the same discipline Phase 1 held to when its Elo wasn't saved yet.
+
+   Watching is therefore free in both directions: run the same pairing for real afterwards and the
+   rated result is unaffected by how many times you watched it.
+   ============================================================ */
+
+// The disclosure, in one plain sentence-set, shown next to the Watch button and again on the
+// watched match's own game-over screen. A constant, not markup and not a tooltip — the same
+// reasoning SEAT_DISCLOSURE gives above, and the only shape a Node test can assert the CONTENT of.
+export const EXHIBITION_NOTE =
+  "Exhibition only — a watched match does NOT change any rating, and records nothing on the "
+  + "ladder. It is a single match in one direction on one map half; every rated result here is a "
+  + "side-swapped, multi-seed pairing, so counting one watched game would mix a differently-earned "
+  + "number into the same bracket. Run the duel for real to move the ladder.";
+
+/**
+ * One match out of a duel job -> exactly the config boot.js's startSpectatedMatch feeds
+ * tools/selfplay.js's createSelfPlayState. The whole point is that this is the SAME configuration
+ * competitionWorker.js would have simulated for that (world, replicate): the same duelSeed-derived
+ * seed (via matchSeedFor above, never a fresh roll), the same replicate-parity swapAsym, the same
+ * ONE pinnedDuelDials set on BOTH seats (the duel's whole fairness point), and each entrant's own
+ * strategy/archetype riding its own seat.
+ *
+ * SEATING follows tools/duelCore.js's runDuelMatch exactly — entrant A owns "player", entrant B
+ * owns "ai" — which is what makes "A won" mean the same thing on a watched match's game-over
+ * screen as in a simulated row. That is direction 1 ("bAsAi") of the worker's own pair; a watched
+ * match is deliberately just the one direction, which is precisely why it isn't rated (see above).
+ * @param {object} job                a job from buildJob above.
+ * @param {{ world?: string, rep?: number }} [pick]  which scheduled match to watch; defaults to the
+ *   first world's first replicate.
+ * @returns {{ world: string, seed: number, swapAsym: boolean, matchTimeLimit: number|undefined,
+ *   difficulty: string, aName: string, bName: string, ai: object, playerAi: object }}
+ */
+export function buildWatchConfig(job, { world, rep = 0 } = {}) {
+  const pickWorld = world || job.worlds[0];
+  if (!job.worlds.includes(pickWorld)) throw new Error(`"${pickWorld}" isn't one of this duel's worlds`);
+  const replicate = Math.max(0, Math.floor(rep) || 0);
+  const dials = pinnedDuelDials(job.difficulty);
+  return {
+    world: pickWorld,
+    seed: matchSeedFor(job, pickWorld, replicate),
+    swapAsym: replicate % 2 === 1,   // replicate parity — the same rule competitionWorker.js uses
+    matchTimeLimit: job.matchTimeLimit,
+    difficulty: dials.difficulty,
+    aName: job.entrantA.name,
+    bName: job.entrantB.name,
+    // Both seats read from ONE dials object, exactly like runDuelMatch's own two lines.
+    playerAi: { ...dials, strategy: job.entrantA.strategy, archetype: job.entrantA.archetype },
+    ai: { ...dials, strategy: job.entrantB.strategy, archetype: job.entrantB.archetype },
+  };
+}
+
+/**
+ * A finished watched match's terminal state -> the outcome, in the ENTRANTS' own names. The human
+ * played neither seat, so there is no victory and no defeat here — only which entrant won. Scores
+ * are A-relative, the same convention tools/duelCore.js's runDuelMatch row uses, so a watched
+ * match's margin reads exactly like a simulated one's.
+ * @param {{ winner: string|null, winReason: string|null }} state  a finished game state.
+ * @param {{ aName: string, bName: string }} watch
+ */
+export function spectatedMatchOutcome(state, { aName, bName }) {
+  const aScore = +playerScore(state, "player").toFixed(1);   // entrant A holds owner "player" (buildWatchConfig)
+  const bScore = +playerScore(state, "ai").toFixed(1);
+  const winnerName = state.winner === "player" ? aName : state.winner === "ai" ? bName : null;
+  return {
+    winnerName,
+    verdict: winnerName ? `${winnerName} wins the exhibition match.` : "The exhibition match ended in a draw.",
+    aName, bName, aScore, bScore,
+    margin: +(aScore - bScore).toFixed(1),
+    winReason: typeof state.winReason === "string" ? state.winReason : null,
+    exhibition: true,
+  };
+}
+
+/* ============================================================
    DOM RENDERING — guarded the dom.js way: every entry point below either checks `mapSelectEl`
    itself or is only ever reached from one that did, so this whole section is inert (never throws)
    under Node with no DOM. See test/static-integrity.test.js's C10 check.
@@ -1149,6 +1251,19 @@ function renderConfigView(container) {
   runBtn.type = "button";
   runBtn.addEventListener("click", startDuel);
   container.appendChild(runBtn);
+
+  // WATCH ONE MATCH LIVE (Phase 5). Sits below Run Duel and is visibly the lesser of the two: Run
+  // Duel is what moves the ladder, and the note under this button says outright that watching does
+  // not — stated where the decision is taken, not only after the match (where it is stated again).
+  const watchBtn = mk("button", "btn ghost comp-watch-btn", "👁 Watch One Match Live");
+  watchBtn.type = "button";
+  watchBtn.disabled = compConfig.worlds.length === 0;
+  if (!watchBtn.disabled) watchBtn.addEventListener("click", watchDuel);
+  container.appendChild(watchBtn);
+  container.appendChild(mk("p", "comp-disclosure comp-watch-note",
+    `Plays match 1 of this duel — ${planetName(compConfig.worlds[0] || MAP_CHOICES[0])}, the same seed and `
+    + `dials the simulation would use — in the real game at 1x-8x speed, with fog revealed and no `
+    + `orders of your own. ${EXHIBITION_NOTE}`));
 }
 
 /* ---------- progress view ---------- */
@@ -2635,6 +2750,95 @@ export function forfeitLiveCompetitionMatch() {
  */
 export function liveCompetitionFixture() {
   return game.competition && game.competition.kind === "gauntlet" ? { ...game.competition } : null;
+}
+
+/* ---------- watching a match: launching one, and ending one ---------- */
+
+/**
+ * What a finished WATCHED match's game-over screen shows (boot.js's game-over hook is the only
+ * caller). Two parts: the headline `verdict` that replaces the ordinary Victory/Defeat copy — the
+ * human played neither seat, so neither word applies — and the plain-data `block` overlays.js
+ * renders below it, restating that this was exhibition-only and offering the way back.
+ *
+ * Records NOTHING. That is the whole decision (see EXHIBITION_NOTE's own section header): no
+ * ledger write, no rating, no history row. There is deliberately no code path from here into
+ * competitionLedger.js at all, so the disclosure on screen can't drift from what actually happened.
+ * @param {object} state    the finished game state.
+ * @param {{ aName: string, bName: string, world: string, seed: number, onLeave?: Function }} watch
+ */
+export function spectatedGameOverBlock(state, watch) {
+  const out = spectatedMatchOutcome(state, watch);
+  const leave = watch.onLeave || openDuelScreen;
+  return {
+    verdict: out.verdict,
+    block: {
+      title: `Exhibition — ${out.aName} vs ${out.bName} on ${planetName(watch.world)}`,
+      outcome: `${out.aName} ${out.aScore} — ${out.bScore} ${out.bName}`
+        + (out.winReason ? ` · decided by ${out.winReason}` : "")
+        + ` · margin ${Math.abs(out.margin)}`,
+      disclosure: EXHIBITION_NOTE,
+      viewLabel: "← Back to Quick Duel",
+      onView: leave,
+    },
+  };
+}
+
+/**
+ * Show the Quick Duel tab from wherever the player currently is — the spectate bar's Leave button,
+ * a watched match's game-over screen (which has to leave the match first, exactly as "Choose
+ * another battlefield" does), or another menu screen. Mirrors openGauntletScreen above.
+ */
+export function openDuelScreen() {
+  compScreen = "duel";
+  compView = "config";
+  compError = null;
+  compRosterError = null;
+  tourneyError = null;
+  gauntletError = null;
+  setup.mode = "competition";
+  if (game.state) restartToMapSelect();      // leaves the live/finished match, then re-renders map-select
+  else if (wrapEl) refreshCompView();        // already on the competition screen
+  else renderMapSelect();                    // on some other menu screen
+}
+
+/**
+ * Boot the currently-configured Quick Duel as ONE live, watched match (the config view's Watch
+ * button). Resolves both entrant pickers and validates the config through the SAME
+ * resolveEntrantPick/buildJob path startDuel uses — so a watched match can't be configured in a way
+ * a run one couldn't be — then hands buildWatchConfig's opts to boot.js.
+ *
+ * DELIBERATELY WRITES NOTHING, not even a roster row. startDuel commits a "New Entrant" draft to
+ * the roster the instant the duel is about to run, because that duel is about to write RATINGS
+ * under that name and the ladder is keyed by name. A watched match writes no ratings, so there is
+ * nothing for a persistent identity to anchor; leaving the roster untouched keeps "watching costs
+ * nothing" literally true. Draft an entrant, watch it, decide against it — the roster never knew.
+ */
+function watchDuel() {
+  compError = null;
+  const activeLedger = ensureLedger();
+  let job;
+  try {
+    job = buildJob({
+      entrantA: resolveEntrantPick(compConfig.entrantA, activeLedger),
+      entrantB: resolveEntrantPick(compConfig.entrantB, activeLedger),
+      difficulty: compConfig.difficulty,
+      worlds: compConfig.worlds,
+      seeds: compConfig.seeds,
+      seedBase: resolveSeedBase(compConfig.seedText),
+    });
+  } catch (err) {
+    compError = err.message;
+    refreshCompView();
+    return;
+  }
+  // One worker slot for the whole mode, and a live match needs the main thread — the same
+  // termination playNextGauntletMatch does before booting its own live match.
+  if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+  if (compView === "progress") compView = "config";
+  if (tourneyView === "progress") tourneyView = "config";
+
+  const watch = buildWatchConfig(job);
+  startSpectatedMatch({ ...watch, onLeave: openDuelScreen });
 }
 
 /* ---------- entry point, called from setup.js's renderMapSelect() ---------- */

@@ -46,6 +46,11 @@
         <div id="uiHint" class="ui-hint hidden"></div>
         <div id="starmap" class="starmap-overlay hidden"></div>
         <div id="observerBanner" class="observer-banner hidden"></div>
+        <!-- The spectate controls for a WATCHED AI-vs-AI match (observerPanel.js): speed, the
+             exhibition-only disclosure, and the way back to the Competition screen. Its own
+             element rather than part of #observerBanner above, which is deliberately
+             pointer-events:none (nothing on it is ever clickable) — these controls must be. -->
+        <div id="spectateBar" class="spectate-bar hidden"></div>
         <div id="observerPanel" class="observer-panel hidden"></div>
         <div id="techChart" class="techchart-overlay hidden"></div>
         <div id="objectives" class="objectives hidden"></div>

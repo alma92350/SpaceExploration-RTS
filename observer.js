@@ -1,8 +1,16 @@
 /* ============================================================
-   Observer Mode: a free-look, read-only spectator over the Odyssey galaxy. Toggle it on (O)
-   to reveal fog on whichever world you're looking at, jump the camera to ANY world or base —
-   yours or a neighbour's — for free, and read a live stats panel (observerPanel.js) instead of
+   Observer Mode: a free-look, read-only spectator over the Odyssey galaxy — and, since
+   docs/competitions-and-elo.md Phase 5, over a WATCHED AI-vs-AI exhibition match too. Toggle it
+   on (O) to reveal fog on whichever world you're looking at, jump the camera to ANY world or base
+   — yours or a neighbour's — for free, and read a live stats panel (observerPanel.js) instead of
    issuing orders.
+
+   WHERE IT'S OFFERED, and why that list is exactly two entries. Observer Mode reveals fog and
+   costs nothing, so it is only ever offered for a game the human is NOT playing competitively:
+   the Odyssey (a play-forever sandbox with no opponent to cheat) and a spectated match between two
+   AI entrants (game.spectateMatch, boot.js's startSpectatedMatch). Offering it in an ordinary
+   player-vs-AI skirmish would just be a fog cheat, so enterObserverMode below refuses that case —
+   the SAME early return that used to say "Odyssey only", widened by exactly one term.
 
    Deliberately does not touch `game.state`, `game.galaxy.activeId`, or the real input camera:
    it only changes what gets DRAWN (boot.js's render callback swaps in observedState() + the
@@ -37,10 +45,48 @@ const PAN_KEYS = {
 
 // The world currently being spectated: the real active world's state when observerMode is
 // off (so every other module can keep reading this without an `if (game.observerMode)` of its
-// own), else whichever world spectateWorld() last pointed at.
+// own), else whichever world spectateWorld() last pointed at. A watched skirmish has exactly one
+// world and no galaxy, so it falls through to game.state — which is already what this returned
+// for a galaxy-less session before Phase 5, hence no branch of its own here.
 export function observedState() {
   if (game.observerMode && game.galaxy) return game.galaxy.planets.get(game.spectateId) || game.state;
   return game.state;
+}
+
+/* ---------- spectate speed (docs/competitions-and-elo.md Phase 5) ---------- */
+
+// The speed ladder a watched match offers. Powers of two so each rung is an obvious doubling, and
+// capped at 8x because engine/loop.js's MAX_SUBSTEPS bounds how much sim a frame can carry: at a
+// 60 Hz display 8x needs ~2.7 of the 5 substeps a frame allows, which leaves real headroom, while
+// 16x would sit at the cap and quietly under-deliver on most machines. Past the cap the loop
+// degrades to slow motion rather than spiralling (see its own comment) — a bound worth staying
+// inside, not one worth riding.
+export const SPECTATE_SPEEDS = [1, 2, 4, 8];
+
+// Any input -> a real rung, or 1x. Deliberately NOT a nearest-rung round: an off-ladder value is a
+// caller bug or a stale persisted number, and silently promoting 6 to 8 would run the match faster
+// than anything on screen claims. 1x is the honest fallback.
+export function clampSpectateSpeed(v) {
+  return SPECTATE_SPEEDS.includes(v) ? v : 1;
+}
+
+// The next rung up, wrapping 8x back to 1x — the "cycle speed" affordance, so one control can walk
+// the whole ladder.
+export function nextSpectateSpeed(v) {
+  const i = SPECTATE_SPEEDS.indexOf(clampSpectateSpeed(v));
+  return SPECTATE_SPEEDS[(i + 1) % SPECTATE_SPEEDS.length];
+}
+
+// Set the live multiplier boot.js's loop reads (session.js game.spectateSpeed). Always clamped, so
+// a bogus value can never reach engine/loop.js at all.
+export function setSpectateSpeed(v) {
+  game.spectateSpeed = clampSpectateSpeed(v);
+}
+
+// Whether a spectate-only affordance (the speed control, the Leave button, the two-seat stats
+// panel) applies right now: a watched exhibition match, as opposed to the Odyssey.
+export function isSpectatingMatch() {
+  return !!game.spectateMatch;
 }
 
 // Any completed Command-Center-type building on `state`, regardless of owner — the whole point
@@ -70,10 +116,14 @@ function pointCameraAt(state, at) {
 let obsBaseCycle = 0, lastObsBaseAt = -Infinity;
 
 export function enterObserverMode() {
-  if (!game.galaxy || game.observerMode) return;
+  // The one gate (see this file's header): an Odyssey, or a match the human is not playing.
+  // A plain skirmish falls through both terms and stays un-observable — that would be a fog cheat.
+  if (!game.galaxy && !game.spectateMatch) return;
+  if (!game.state && !game.galaxy) return;   // nothing to look at (belt-and-braces: spectateMatch always implies a state)
+  if (game.observerMode) return;
   if (game.input) game.input.cancelGesture();   // don't let a drag armed just before this resolve into a real order
   game.observerMode = true;
-  game.spectateId = game.galaxy.activeId;
+  game.spectateId = game.galaxy ? game.galaxy.activeId : game.state.planetId;
   const real = game.input ? game.input.getCamera() : null;
   // Start exactly where normal play was looking — entering shouldn't jar the view — and only
   // recenter once actual observer navigation (Space / a starmap jump) asks for somewhere else.
@@ -88,8 +138,23 @@ export function exitObserverMode() {
   game.observerCamera = null;
 }
 
+// The PLAYER-facing "stop observing" (the O key, Esc, the topbar button) — as opposed to
+// exitObserverMode above, which is the unconditional teardown boot.js runs while leaving a game.
+// Refused for a watched match, and the distinction is the whole point: in the Odyssey, leaving
+// Observer Mode returns you to commanding your own world. In an AI-vs-AI exhibition there is
+// nothing to return TO — the human commands neither seat — and dropping the delegation would hand
+// input.js's ordinary selection/order path an army belonging to one of the two entrants, mid-match.
+// So a watched match is observed for as long as it lasts; the spectate bar's Leave button (which
+// ends the match and returns to the Competition screen) is the way out.
+// Returns whether Observer Mode was actually left.
+export function requestExitObserverMode() {
+  if (game.spectateMatch) return false;
+  exitObserverMode();
+  return true;
+}
+
 export function toggleObserverMode() {
-  if (game.observerMode) exitObserverMode(); else enterObserverMode();
+  if (game.observerMode) requestExitObserverMode(); else enterObserverMode();
 }
 
 // Free jump to any world's camera — no fuel, no canJumpTo gate, no real galaxy.activeId
@@ -169,10 +234,27 @@ function tally(map, keyOf) {
 
 // A snapshot of everything the panel shows for `state` — pure data, no DOM, so it's directly
 // testable and reusable if a future analytics view wants the same numbers on a timer.
+//
+// TWO AUDIENCES, ONE FUNCTION. In the Odyssey there is a player and ONE neighbour AI, so the
+// owner-"ai" fields below (supply/resources/development) are "what the neighbour has" and every
+// one of them means exactly what it always did. In a spectated duel (Phase 5) both seats are AI
+// entrants and neither is "the AI", so:
+//   • `seats` carries the same economy per owner, off state.owners — the honest shape for a
+//     two-entrant match, and simply ignored by the Odyssey panel;
+//   • `development` degrades to NULL without diplomacy. aiDevelopment (engine/diplomacy.js) does
+//     not need state.diplomacy to run — it counts owner "ai"'s finished economic buildings plus
+//     its researched techs, both present on any skirmish state — but it is the Odyssey's own
+//     development-curve metric for the one neighbour, and reporting it for one seat of a two-seat
+//     duel would be a confident number about half the match. Same reasoning docs/competitions-and
+//     -elo.md §6 gives for keeping ailab.js's Odyssey-shaped score() out of competitions entirely.
+// Every galaxy world carries diplomacy (engine/galaxy.js's spawnPlanet, and persist.js's
+// cleanDiplomacy on load), so gating on it leaves the Odyssey panel byte-identical.
 export function observerStats(state) {
   const archetype = archetypeFor(state.planetId);
   const dip = state.diplomacy;
   const ai = state.players.ai;
+  const units = tally(state.units, u => u.type);
+  const buildings = tally(state.buildings, b => b.type);
   return {
     planetId: state.planetId,
     archetypeName: archetype.name,
@@ -181,11 +263,21 @@ export function observerStats(state) {
     stanceLabel: dip ? stanceLabel(dip.stance) : null,
     hostility: dip ? hostility(state) : null,
     pacified: !!(dip && dip.pacified),
-    units: tally(state.units, u => u.type),
-    buildings: tally(state.buildings, b => b.type),
-    development: aiDevelopment(state),
+    units,
+    buildings,
+    development: dip ? aiDevelopment(state) : null,
     supplyUsed: supplyUsed(state, "ai"),
     supplyCap: supplyCap(state, "ai"),
     resources: ai ? { ...ai.resources } : {},
+    // Per-seat, in the state's own canonical owner order (engine/state.js's state.owners), so a
+    // two-entrant match reads as two entrants rather than as "the AI" plus "the player".
+    seats: (state.owners || []).map(owner => ({
+      owner,
+      units: units[owner] || {},
+      buildings: buildings[owner] || {},
+      supplyUsed: supplyUsed(state, owner),
+      supplyCap: supplyCap(state, owner),
+      resources: state.players[owner] ? { ...state.players[owner].resources } : {},
+    })),
   };
 }
