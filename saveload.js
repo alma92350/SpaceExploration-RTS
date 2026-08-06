@@ -225,6 +225,16 @@ function goHome() {
   // ordinary skirmish that no longer belongs to any run, which is a worse outcome than an honest
   // forfeit.
   const fixture = liveCompetitionFixture();
+  // …and a WATCHED or REPLAYED match (Phase 5) is the fourth, for the stronger reason saveShape.js's
+  // resumableMode already gives: it isn't the player's game at all. This button is visible in EVERY
+  // mode, so without a branch of its own the dialog fell back to the ordinary skirmish copy — which
+  // PROMISED a checkpoint ("Your progress autosaves…") that resumableMode refuses to write, and
+  // offered "Save & Exit" as the default-focused primary. Clicking it got false back from autoSave()
+  // and fell through to a FILE download of the AI-vs-AI match: a plain skirmish save that loads back
+  // handing the human full command of one entrant's army (exactly what observer.js's
+  // requestExitObserverMode refuses mid-match), flashing "Saved ✓" on a Save button hud.js has
+  // hidden, without leaving. So: no Save & Exit, honest copy, a plain Leave.
+  const watching = game.spectateMatch;
 
   const overlay = document.createElement("div");
   overlay.className = "home-confirm";
@@ -237,12 +247,23 @@ function goHome() {
   card.tabIndex = -1;   // focusable as a fallback landing spot if there's ever no button to focus
   const h = document.createElement("h2");
   h.id = "home-confirm-title";
-  h.textContent = fixture ? "Forfeit this gauntlet match?" : scenario ? "Leave the mission?" : "Return to the menu?";
+  h.textContent = fixture ? "Forfeit this gauntlet match?"
+    : watching ? (watching.recorded ? "Stop replaying this match?" : "Stop watching this match?")
+    : scenario ? "Leave the mission?" : "Return to the menu?";
   card.setAttribute("aria-labelledby", h.id);
   const p = document.createElement("p");
   p.textContent = fixture
     ? `Leaving now records a LOSS to ${fixture.opponent} in your gauntlet, rated exactly like a match you played and lost. `
       + "A competition match can't be saved and resumed."
+    : watching
+      // The same two facts the spectate bar shows all match long, restated at the moment of leaving:
+      // whose match this is, and that nothing is riding on it either way. A replay says the sharper
+      // version — its result is already on the ladder, so re-running it records nothing by design.
+      ? `${watching.aName} vs ${watching.bName} is a match between two AI entrants — you command neither seat, `
+        + "so there's nothing here to save. "
+        + (watching.recorded
+          ? "This match is already on the ladder; re-running it records nothing."
+          : "Nothing is recorded either way.")
     : scenario
       ? "A scenario can't be saved — leaving abandons this run."
       : "Your progress autosaves — Save & Exit checkpoints it now so you can Continue later.";
@@ -271,11 +292,18 @@ function goHome() {
   // Save & Exit only leaves once the checkpoint actually lands. If localStorage is
   // unavailable (quota / private mode) we DON'T pretend it saved and exit into a lost
   // game — we fall back to a file download and keep the player in-game so nothing is lost.
-  if (!scenario && !fixture) act("Save & Exit", () => {
+  // Offered for the two modes that can actually be resumed; the other three each get their own
+  // single primary below, because for them there is no checkpoint to write in the first place.
+  if (!scenario && !fixture && !watching) act("Save & Exit", () => {
     if (autoSave()) restartToMapSelect();
     else saveToFile();
   }, "primary");
   if (fixture) act("Forfeit & Exit", () => { forfeitLiveCompetitionMatch(); restartToMapSelect(); }, "primary");
+  // One way out of a watched match, not two: the callback its launcher parked on game.spectateMatch
+  // is the same route the spectate bar's own Leave button takes (observerPanel.js), so ⌂ Home lands
+  // back on the Competition screen it came from rather than inventing a second destination. The
+  // fallback covers a launcher that parked none — restartToMapSelect clears spectateMatch itself.
+  else if (watching) act("Leave", () => { if (watching.onLeave) watching.onLeave(); else restartToMapSelect(); }, "primary");
   else act(scenario ? "Leave" : "Exit without Saving", () => restartToMapSelect(), scenario ? "primary" : "");
   act("Cancel", () => {}, "ghost");
 

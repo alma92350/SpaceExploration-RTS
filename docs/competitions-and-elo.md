@@ -675,7 +675,13 @@ a real determinism bug in the spectate half that is written up below rather than
   UI once (the render loop that normally hides those elements has just been stopped).
   `saveShape.js`'s `resumableMode` refuses to checkpoint a watched match at all — the "player" seat
   is AI-driven by a *session* flag no save carries, so a resumed autosave would come back as a
-  skirmish with an unmanned seat — and Save/Load are hidden to match.
+  skirmish with an unmanned seat — and Save/Load are hidden to match. The always-visible **⌂ Home**
+  confirm is the third door to the same place, so it branches on `spectateMatch` exactly the way
+  Phase 4's taught it to branch on a live fixture: **Leave** (the launcher's own `onLeave`, the same
+  route the spectate bar takes), no *Save & Exit*, and copy that doesn't promise a checkpoint nothing
+  will write. Without that branch it fell back to the ordinary skirmish copy and *Save & Exit*
+  downloaded the exhibition match as a plain skirmish save — one that loads back handing the human
+  full command of an entrant's army — without even leaving.
 
 #### Replay — and the determinism bug it found
 
