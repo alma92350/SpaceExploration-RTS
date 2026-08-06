@@ -38,7 +38,25 @@ import { runAI } from "../engine/ai.js";
 import { mulberry32 } from "../engine/rng.js";
 import { DEFAULT_MATCH_TIME_LIMIT } from "../engine/victory.js";
 
-const DT = 0.1;   // the sim's fixed step, same as the game loop (engine/loop.js)
+// THE FIXED STEP EVERY SELF-PLAY MATCH IS SIMULATED AT — 10 Hz, and exported because who else runs
+// at it is now a correctness question, not a detail.
+//
+// This used to be commented "same as the game loop (engine/loop.js)". IT IS NOT: createLoop's own
+// default is 20 Hz (dtFixed 0.05), so an ordinary skirmish has always advanced in half-size steps.
+// That difference is invisible while the two never simulate the same match — but it is not a
+// cosmetic tuning knob. A fixed step IS the simulation: the same seed advanced in different-sized
+// steps runs a different number of ticks, hits its think cycles at different moments and
+// accumulates floats in a different order, so it is a DIFFERENT GAME. Measured, on ferros/medium
+// from one seed: dt 0.1 ended "ai" by elimination at 1138 s, dt 0.05 ended "player" by elimination
+// at 1686 s — opposite winners.
+//
+// So anything that has to reproduce a recorded/simulated row — docs/competitions-and-elo.md Phase
+// 5's REPLAY, and the watched match that shares its path — must run at exactly this step. boot.js's
+// bootState takes a `selfPlay` option for precisely that, and test/boot.test.js drives the real
+// loop to prove it. Ordinary play is untouched and still runs at the loop's own 20 Hz.
+export const SELFPLAY_DT = 0.1;
+export const SELFPLAY_HZ = 1 / SELFPLAY_DT;
+const DT = SELFPLAY_DT;
 
 /* ============================================================
    THE SELF-PLAY MATCH

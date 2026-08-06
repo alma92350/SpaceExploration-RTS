@@ -19,7 +19,7 @@ import { tick } from "./engine/sim.js";
 // way a spectated match gets both of its seats driven by the real AI — createSelfPlayState builds
 // the state with a second controller for owner "player", tickSelfPlay runs it before the ordinary
 // tick() that already drives owner "ai".
-import { createSelfPlayState, tickSelfPlay } from "./tools/selfplay.js";
+import { createSelfPlayState, tickSelfPlay, SELFPLAY_HZ } from "./tools/selfplay.js";
 import { archetypeFor } from "./engine/aiArchetypes.js";
 import { isVisibleAt } from "./engine/fog.js";
 import { drawFrame, resetFacing, snapshotPositions } from "./render.js";
@@ -202,13 +202,21 @@ export function startCompetitionMatch(fixture) {
 // game-over hook's captureCompetitionResult returns null and no rating moves — see the exhibition
 // argument at competition.js's EXHIBITION_NOTE, and the honest game-over copy it feeds.
 export function startSpectatedMatch(cfg) {
-  const { world, seed, swapAsym, matchTimeLimit, ai, playerAi, aName, bName, difficulty, onLeave } = cfg;
+  const { world, seed, swapAsym, matchTimeLimit, ai, playerAi, aName, bName, difficulty, onLeave, recorded } = cfg;
   sound.unlockAudio();   // a real user gesture (the Watch button), same point startCompetitionMatch unlocks audio
   const fresh = createSelfPlayState({ planetId: world, seed, swapAsym, matchTimeLimit, ai, playerAi });
-  bootState(fresh, { intro: false });   // no objectives strip: that checklist is a PLAYER's to-do list
+  // `selfPlay: true` is what makes this the same simulation the Worker runs, not merely the same
+  // configuration: the loop steps at tools/selfplay.js's own fixed step. It is what a REPLAY needs
+  // to reproduce its recorded row, and the watched path shares it so "what you watch is what the
+  // Worker would have run" is true of the run and not just of the config.
+  bootState(fresh, { intro: false, selfPlay: true });   // no objectives strip: that checklist is a PLAYER's to-do list
   // After bootState, which clears both (see its own lines) — exactly the startOdyssey/
   // startCompetitionMatch pattern.
-  game.spectateMatch = { aName, bName, world, seed, difficulty, matchTimeLimit, onLeave };
+  // `recorded` (present only for a REPLAY) is the outcome this re-run is expected to reproduce —
+  // carried so the spectate bar can say what is being replayed and the game-over screen can state,
+  // honestly, whether the determinism claim held this time. It is read-only display data; nothing
+  // in the sim ever sees it.
+  game.spectateMatch = { aName, bName, world, seed, difficulty, matchTimeLimit, onLeave, recorded: recorded || null };
   game.spectateSpeed = 1;
   enterObserverMode();
   // bootState's own renderHUD() ran a frame ago, while the flag above was still null — so the
@@ -414,10 +422,21 @@ export function restartToMapSelect() {
   mapSelectEl.classList.remove("hidden");
 }
 
+// The sim rate ordinary play has always run at — engine/loop.js's own default, restated here
+// because bootState now chooses between two rates and a caller reading this file should see both
+// numbers side by side rather than one of them hiding in a default parameter.
+const PLAY_HZ = 20;
+
 // Wire a state — freshly created OR loaded from a save — to input, camera, the
 // fixed-timestep loop, and the HUD. The single boot path both startGame and
 // loadGame funnel through.
-export function bootState(newState, { intro }) {
+//
+// `selfPlay` (docs/competitions-and-elo.md Phase 5) runs the loop at tools/selfplay.js's own fixed
+// step instead of PLAY_HZ. It is set for the one kind of game whose tick sequence has to MATCH
+// something already simulated — a watched or replayed AI-vs-AI match — because a fixed step is the
+// simulation, not a tuning knob: same seed, different step, different game (see SELFPLAY_DT's own
+// comment for the measured proof). Every other boot path is untouched and still runs at PLAY_HZ.
+export function bootState(newState, { intro, selfPlay = false }) {
   if (loop) loop.stop();
   if (game.input) game.input.destroy();
   exitObserverMode();   // fresh/loaded game → fresh session, same reasoning as game.groups/colonyAlerts below
@@ -460,6 +479,10 @@ export function bootState(newState, { intro }) {
   let lastFrame = performance.now();
 
   loop = createLoop({
+    // The fixed step (see this function's own `selfPlay` note). Read ONCE, at construction, and
+    // deliberately not a live getter like `speed` below: the timestep must not move mid-match, or
+    // the run stops being the deterministic thing a replay is comparing against.
+    hz: selfPlay ? SELFPLAY_HZ : PLAY_HZ,
     // Spectate speed (docs/competitions-and-elo.md Phase 5), read LIVE so the on-screen
     // 1x/2x/4x/8x control takes effect on the very next frame without rebuilding the loop. Pinned
     // to 1 whenever no match is being watched, so an ordinary game can never inherit a leftover

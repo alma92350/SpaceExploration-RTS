@@ -1262,6 +1262,49 @@ body.paused::after {
 }
 .comp-remove-btn:hover { border-color: var(--bad); color: var(--bad); }
 
+/* Replay (docs/competitions-and-elo.md Phase 5) — the per-match action on the Quick Duel results
+   table and the Standings screen's match history. Same small, quiet geometry as .comp-remove-btn
+   next to it (a table-cell action, not a primary button), but it warms toward the ACCENT rather
+   than the danger colour on hover: replaying costs nothing and changes nothing. */
+.comp-replay-btn {
+  width: auto;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.comp-replay-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* …and where that button would be for a match that CAN'T be re-run (a live human match, most
+   often). Deliberately not a disabled button: a disabled control invites clicking to find out why,
+   while this states the reason on hover and reads as a fact about the row. */
+.comp-replay-refused {
+  font-size: 0.7rem;
+  color: var(--muted);
+  opacity: 0.75;
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* Seasons (Phase 5): the new-season label field — .comp-seeds-input's own chrome, just wide enough
+   for a real name rather than a number. */
+.comp-season-input {
+  flex: 1 1 220px;
+  min-width: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.comp-season-input:focus { outline: none; border-color: var(--accent); }
+
+/* The season currently being viewed, marked in the list the same tinted way the human's own
+   standings row is — the table above changed meaning, so which row did that has to be obvious. */
+.comp-season-row.is-viewing { background: rgba(56, 189, 248, 0.08); }
+
 /* Standings screen: a provisional entrant (< elo.js's PROVISIONAL_GAMES) gets a small pill next to
    its name — same gold/warn-adjacent "still settling" read as .comp-elo-games' own inline
    "— provisional" suffix, just legible on its own in a dense table cell. */

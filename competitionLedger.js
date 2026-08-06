@@ -130,7 +130,24 @@ import { hashStr } from "./engine/rng.js";
  */
 /** @typedef {Object.<string, { rating: number, games: number }>} LedgerRatingsTable  elo.js's own RatingsTable shape. */
 /**
- * @typedef {{ v: number, roster: RosterEntry[], ratingsByDifficulty: Object.<string, LedgerRatingsTable>, history: LedgerHistoryEntry[], gauntlet: GauntletState|null }} CompetitionLedger
+ * @typedef {{ matches: number, entrants: number, brackets: Array<{ difficulty: string, top: string|null, topRating: number|null, entrants: number, matches: number }> }} SeasonSummary
+ *   Always DERIVED from a season's own ratings/history, never stored-and-trusted — see seasonSummary.
+ */
+/**
+ * @typedef {{ label: string, finishedAt: number|null, ratingsByDifficulty: Object.<string, LedgerRatingsTable>, history: LedgerHistoryEntry[], summary: SeasonSummary }} ArchivedSeason
+ *   One CLOSED season (Phase 5): the ratings and history that were live when it was archived, under
+ *   a label, with the wall-clock finish time the UI layer injected (never read from a clock here).
+ *   Deliberately carries no roster of its own — the roster persists across seasons; only ratings
+ *   restart. See the SEASONS section below.
+ */
+/**
+ * @typedef {{ v: number, roster: RosterEntry[], ratingsByDifficulty: Object.<string, LedgerRatingsTable>, history: LedgerHistoryEntry[], gauntlet: GauntletState|null, seasons: ArchivedSeason[] }} CompetitionLedger
+ */
+/**
+ * @typedef {{ roster: Array<{ name: string, human?: boolean }>, ratingsByDifficulty?: Object.<string, LedgerRatingsTable>, history?: LedgerHistoryEntry[] }} StandingsSource
+ *   Exactly what standingsFor reads — a whole CompetitionLedger satisfies it, and so does a CLOSED
+ *   season paired with a row list (seasonStandings below), which is what lets one function render
+ *   both the live ladder and an archived one.
  */
 /**
  * @typedef {{ name: string, rating: number, games: number, wins: number, losses: number, draws: number, avgMargin: number, provisional: boolean, human: boolean }} Standing
@@ -151,6 +168,16 @@ import { hashStr } from "./engine/rng.js";
 // WRONG, which is the actual test CONTRIBUTING.md sets for a bump. And the gate has no migration
 // step: bumping would make every ladder ever saved unloadable, silently discarding real ratings and
 // history, in exchange for no safety at all.
+//
+// PHASE 5 DELIBERATELY DID NOT BUMP IT EITHER, by the same test, applied to its one new field:
+// `seasons` on the ledger. A ledger written before it existed has no archived seasons, and that is
+// exactly what its absence means — cleanLedgerShape defaults it to [], which reads back as "this
+// ladder has always been one season", which is true. No existing field's type, range or meaning
+// changed: `ratingsByDifficulty`/`history` still mean "the CURRENT season's ratings/history", which
+// is what they meant when there was only ever one season. Nothing already stored deserializes into
+// something WRONG, so the CONTRIBUTING.md rule-3 test for a bump is not met, and the no-migration
+// gate would cost every existing ladder for no safety gained. (Replay, the other Phase 5 half,
+// adds no stored field at all — it re-reads rows the ledger already had.)
 export const COMPETITION_VERSION = 1;
 
 // A Gauntlet's default match length, in seconds — setup.js's own MATCH_LENGTH_OPTIONS "Quick"
@@ -212,7 +239,7 @@ function assertValidEntrantName(name) {
  */
 export function createLedger() {
   /** @type {CompetitionLedger} */
-  const ledger = { v: COMPETITION_VERSION, roster: [], ratingsByDifficulty: {}, history: [], gauntlet: null };
+  const ledger = { v: COMPETITION_VERSION, roster: [], ratingsByDifficulty: {}, history: [], gauntlet: null, seasons: [] };
   return ledger;
 }
 
@@ -354,7 +381,7 @@ export function recordCompetition(ledger, entry) {
  * `human` flag, so a table mixing the person in with the AI field can mark which row is them and
  * state D4's seat disclosure beside it (see the Gauntlet section below) without re-reading the
  * roster it just summarised.
- * @param {CompetitionLedger} ledger
+ * @param {StandingsSource} ledger  the live ledger, or a closed season's own tables (seasonStandings)
  * @param {string} difficulty
  * @returns {Standing[]}
  */
@@ -658,6 +685,159 @@ export function abandonGauntlet(ledger) {
 }
 
 /* ============================================================
+   SEASONS (docs/competitions-and-elo.md Phase 5) — close the current ladder and start a fresh one.
+
+   WHAT A SEASON IS, exactly: the ratings and history that were live when it was closed, filed
+   under a label with a finish time, plus a small derived summary. WHAT IT ISN'T: a second copy of
+   the roster. THE ROSTER PERSISTS ACROSS SEASONS and only the ratings restart — that asymmetry is
+   the whole feature. An entrant is an identity the player built (a name, a strategy, an archetype,
+   a faction); a rating is a claim about how that identity performed in one stretch of play. Wiping
+   the identities too would make "start a fresh season" indistinguishable from "delete everything",
+   and the player would simply never press it.
+
+   A season is stored INSIDE the ledger, as one more top-level field, for the same reason the
+   gauntlet is (see this file's header): it rides the existing versioned sanitize/export/import/
+   rotate pipeline for free, and "the ladder" and "the ladders that came before it" can never get
+   out of step by being written separately.
+
+   THE SUMMARY IS DERIVED, NEVER STORED-AND-TRUSTED. archiveSeason computes it from the ratings and
+   history it is archiving, and cleanSeason RE-computes it on every import rather than reading the
+   file's own copy — so a hand-edited ladder cannot put a champion on screen who never won
+   anything. Same discipline as cleanGauntlet's `nextIndex: results.length`: the record is the
+   record, and bookkeeping derived from it follows it rather than being believed alongside it.
+   ============================================================ */
+
+// A season label is a display string, not an identity and never an object KEY, so it needs no
+// FORBIDDEN_NAMES guard (over-broad guards are their own bug — see the case-sensitivity test that
+// pins assertValidEntrantName's own narrowness). It does need a bound: it is free-typed and it is
+// re-rendered on every visit to the Standings screen. Exported so the UI's own input can cap at
+// exactly the number the sanitizer enforces, rather than the two drifting apart.
+export const MAX_SEASON_LABEL = 60;
+
+/**
+ * The plain summary of one stretch of play — who finished top of each bracket, and how much was
+ * actually played. Reads `{ ratingsByDifficulty, history }` off ANY source with that shape: the
+ * LIVE ledger (so the archive confirm can preview what it is about to record), the object
+ * archiveSeason is filing, and — on import — an archived season being re-derived rather than
+ * believed. Brackets come back in DIFFICULTY_OPTIONS order, so the answer never depends on object
+ * key insertion order (D2/D6's determinism discipline applied to a display string).
+ * @param {{ ratingsByDifficulty?: Object.<string, LedgerRatingsTable>, history?: LedgerHistoryEntry[] }} source
+ * @returns {{ matches: number, entrants: number, brackets: Array<{ difficulty: string, top: string|null, topRating: number|null, entrants: number, matches: number }> }}
+ */
+export function seasonSummary(source) {
+  const tables = (source && source.ratingsByDifficulty) || {};
+  const history = (source && source.history) || [];
+  const names = new Set();
+  const brackets = [];
+
+  for (const { mult: difficulty } of DIFFICULTY_OPTIONS) {
+    if (!Object.hasOwn(tables, difficulty)) continue;
+    const table = tables[difficulty];
+    const rated = Object.keys(table);
+    if (!rated.length) continue;
+    for (const name of rated) names.add(name);
+    // Highest rating wins the bracket, ties broken by name — standingsFor's own sort, so "top of
+    // the table" means the same thing in the summary as on the screen it summarises.
+    const top = rated.slice().sort((a, b) => table[b].rating - table[a].rating || a.localeCompare(b))[0];
+    brackets.push({
+      difficulty,
+      top,
+      topRating: table[top].rating,
+      entrants: rated.length,
+      matches: history.reduce((n, h) => n + (h.difficulty === difficulty ? h.rows.length : 0), 0),
+    });
+  }
+
+  return {
+    // Every ROW is one match; a history ENTRY is a whole competition (a duel, a tournament pairing,
+    // one gauntlet fixture), which is not the number a player means by "matches played".
+    matches: history.reduce((n, h) => n + h.rows.length, 0),
+    entrants: names.size,
+    brackets,
+  };
+}
+
+// A caller-supplied (or stored) season label, believed only as far as it is displayable: trimmed,
+// capped, and defaulted to the season's own number when it is missing, blank or not a string.
+// Coerced rather than rejected — a label is cosmetic, so refusing an archive over one would cost
+// the player a real feature to protect nothing (same severity call as cleanMatchTimeLimit's).
+function cleanSeasonLabel(raw, index) {
+  const label = typeof raw === "string" ? raw.trim() : "";
+  if (!label) return `Season ${index + 1}`;
+  return label.length > MAX_SEASON_LABEL ? label.slice(0, MAX_SEASON_LABEL) : label;
+}
+
+/**
+ * Close the current season: file the live ratings and history under `label` with a finish time,
+ * then reset both — KEEPING the roster (see this section's header). Throws, touching nothing, if
+ * there is nothing to archive or if a gauntlet is still in progress.
+ *
+ * WHY AN IN-PROGRESS GAUNTLET IS A HARD REFUSAL rather than something to carry over: a gauntlet is
+ * one run, at one pinned bracket, rated as a whole. Archiving mid-run would file the matches
+ * already played into the closed season and rate the remaining ones into a fresh table the run's
+ * own standing was never computed against, so the player's ladder trail would silently be built
+ * from two different seasons. Finishing or abandoning it first is one click and is honest. A
+ * FINISHED gauntlet is the opposite case — it belongs to the season being closed, so it is cleared
+ * along with the history it produced, and the new season starts with no run parked on it.
+ * @param {CompetitionLedger} ledger
+ * @param {{ label?: string, at?: number }} [opts]
+ * @returns {CompetitionLedger} the same `ledger`, mutated in place
+ */
+export function archiveSeason(ledger, opts) {
+  const { label, at } = opts || {};
+  if (!Array.isArray(ledger.seasons)) ledger.seasons = [];   // a ledger built before this field existed
+
+  const g = ledger.gauntlet;
+  if (g && g.nextIndex < g.schedule.length)
+    throw new Error("a gauntlet is still in progress — finish or abandon it before starting a new season");
+
+  const summary = seasonSummary(ledger);
+  if (summary.matches === 0 && summary.entrants === 0)
+    throw new Error("there's nothing to archive yet — no rated match has been played this season");
+
+  ledger.seasons.push({
+    label: cleanSeasonLabel(label, ledger.seasons.length),
+    finishedAt: Number.isFinite(at) ? at : null,
+    // Detached via a JSON round-trip, the same idiom exportLedger and recordCompetition's own row
+    // copy already use: a closed season is a record of what happened, and nothing that keeps
+    // playing afterwards may reach back into it.
+    ratingsByDifficulty: JSON.parse(JSON.stringify(ledger.ratingsByDifficulty)),
+    history: JSON.parse(JSON.stringify(ledger.history)),
+    summary,
+  });
+
+  ledger.ratingsByDifficulty = {};
+  ledger.history = [];
+  ledger.gauntlet = null;   // only ever a FINISHED run by this point (the in-progress case threw above)
+  return ledger;
+}
+
+/**
+ * One closed season's final table for one bracket, in exactly standingsFor's own Standing shape —
+ * so a past season renders through the same code, and reads the same way, as the live ladder.
+ *
+ * Deliberately does NOT read the current roster as its row list, which is the one way this differs
+ * from standingsFor: a closed season's table is what that season FINISHED as, so an entrant
+ * removed from the roster since must still appear (removing someone today cannot retroactively
+ * un-play their matches). The rows are therefore derived from the season's own ratings table, with
+ * `human` looked up against the roster purely so the screen can still mark which row is the player.
+ * An unknown index or an unplayed bracket is an empty list, never a throw — this is a display read.
+ * @param {CompetitionLedger} ledger
+ * @param {number} index   the season's own position in `ledger.seasons`
+ * @param {string} difficulty
+ * @returns {Standing[]}
+ */
+export function seasonStandings(ledger, index, difficulty) {
+  const season = ((ledger && ledger.seasons) || [])[index];
+  if (!season) return [];
+  const table = season.ratingsByDifficulty[difficulty];
+  if (!table) return [];
+  const human = humanEntry(ledger);
+  const roster = Object.keys(table).map(name => ({ name, human: !!human && human.name === name }));
+  return standingsFor({ roster, ratingsByDifficulty: season.ratingsByDifficulty, history: season.history }, difficulty);
+}
+
+/* ============================================================
    SANITIZATION — the untrusted-input boundary itself. Same STRUCTURE of guard as
    engine/persist.js's sanitizeSave, tuned for a much smaller payload (a ladder, not a whole
    galaxy).
@@ -906,6 +1086,46 @@ function cleanGauntlet(raw, roster) {
   };
 }
 
+/* --- an ARCHIVED SEASON, as untrusted input (Phase 5). Two things make this simpler than
+   cleanGauntlet above, and they are worth stating rather than leaving as an apparent oversight:
+     • A closed season is INERT. It can't misdirect a resume or rate anything — nothing ever writes
+       through it. So there is no "drop the whole thing rather than half-repair it" hazard here:
+       per-field coercion (the cleanRosterEntry severity, not the cleanGauntlet one) is exactly
+       right, and a bracket or a rating entry that doesn't check out is simply dropped.
+     • Its ratings and history are the SAME shapes the live ledger's are, so they are cleaned by
+       the SAME two functions rather than by second copies that could drift.
+   The one thing this must not do is believe the file's own `summary`: that is the field a hand-
+   edited ladder would use to put a champion on screen who never won a match, and it is entirely
+   derivable, so it is RE-DERIVED from the cleaned tables. Same reasoning as cleanGauntlet's
+   `nextIndex: results.length`. A season that cleans away to nothing at all (no surviving bracket
+   and no surviving history) records nothing real and is dropped whole, exactly as cleanHistoryEntry
+   drops a history entry that lost every row. --- */
+function cleanSeason(raw, index) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const ratingsByDifficulty = cleanRatingsByDifficulty(raw.ratingsByDifficulty);
+  const history = cleanHistory(raw.history);
+  if (!Object.keys(ratingsByDifficulty).length && !history.length) return null;
+  return {
+    label: cleanSeasonLabel(raw.label, index),
+    finishedAt: Number.isFinite(raw.finishedAt) ? raw.finishedAt : null,
+    ratingsByDifficulty,
+    history,
+    summary: seasonSummary({ ratingsByDifficulty, history }),
+  };
+}
+
+function cleanSeasons(raw) {
+  if (!Array.isArray(raw)) return [];
+  // Indexed by SURVIVING position, not by the raw one, so a default label ("Season 3") always
+  // matches where the season actually ends up in the list the player reads.
+  const out = [];
+  for (const s of raw) {
+    const cleaned = cleanSeason(s, out.length);
+    if (cleaned) out.push(cleaned);
+  }
+  return out;
+}
+
 function cleanLedgerShape(raw) {
   const src = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {};
   const roster = cleanRoster(src.roster);
@@ -918,6 +1138,10 @@ function cleanLedgerShape(raw) {
     // entrants that survived roster cleaning, and its human may only be the human that survived
     // cleanRoster's own one-human coercion.
     gauntlet: cleanGauntlet(src.gauntlet, roster),
+    // Deliberately NOT cleaned against the roster: a closed season records who was rated in it, and
+    // an entrant removed from the roster since must keep the standing they finished with (see
+    // seasonStandings). Roster membership is a fact about NOW; a season is a fact about THEN.
+    seasons: cleanSeasons(src.seasons),
   };
 }
 

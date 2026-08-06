@@ -176,12 +176,13 @@ function renderSpectateBar() {
     return;
   }
   spectateBarEl.classList.remove("hidden");
-  const sig = `${watch.aName}|${watch.bName}|${game.spectateSpeed}`;
+  const sig = `${watch.aName}|${watch.bName}|${game.spectateSpeed}|${watch.recorded ? "replay" : "watch"}`;
   if (sig === spectateBarSig) return;
   spectateBarSig = sig;
   spectateBarEl.innerHTML = "";
 
-  spectateBarEl.appendChild(mk("span", "spectate-vs", `${watch.aName} vs ${watch.bName}`));
+  spectateBarEl.appendChild(mk("span", "spectate-vs",
+    (watch.recorded ? "⟲ REPLAY · " : "") + `${watch.aName} vs ${watch.bName}`));
 
   const speeds = mk("div", "spectate-speeds");
   speeds.appendChild(mk("span", "spectate-speed-label", "Speed"));
@@ -196,8 +197,13 @@ function renderSpectateBar() {
 
   // The exhibition disclosure, ON SCREEN for the whole match — not only on the button that started
   // it and the screen that ends it. A watched match looks exactly like a played one, so what makes
-  // it different has to be visible while it's happening.
-  spectateBarEl.appendChild(mk("span", "spectate-note", "Exhibition — not rated, nothing recorded"));
+  // it different has to be visible while it's happening. A REPLAY says the sharper version: the
+  // result isn't unrated because nobody counted it, it's unrated because it was ALREADY counted,
+  // and it also names the result this run is expected to land on.
+  spectateBarEl.appendChild(mk("span", "spectate-note", watch.recorded
+    ? `Replay — already rated, nothing recorded · recorded: ${watch.recorded.winnerName
+      ? `${watch.recorded.winnerName} by ${Math.abs(watch.recorded.margin)}` : "a draw"}`
+    : "Exhibition — not rated, nothing recorded"));
 
   if (watch.onLeave) {
     const leave = mk("button", "spectate-leave-btn", "← Leave");
@@ -229,7 +235,7 @@ export function renderObserverPanel() {
   // banner that wraps to a second line lands underneath it. The navigation hints the Odyssey banner
   // carries are also less needed here — there is one world, and the bar itself shows the controls.
   observerBannerEl.textContent = game.spectateMatch
-    ? `👁 WATCHING ${worldName(state.planetId)} — both sides are AI, you issue no orders`
+    ? `👁 ${game.spectateMatch.recorded ? "REPLAYING" : "WATCHING"} ${worldName(state.planetId)} — both sides are AI, you issue no orders`
     : `🔭 OBSERVING ${worldName(state.planetId)} — Space: cycle bases · Galaxy map: jump anywhere · O/Esc: exit`;
   renderSpectateBar();
 

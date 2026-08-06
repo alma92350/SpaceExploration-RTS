@@ -55,12 +55,15 @@ export function observedState() {
 
 /* ---------- spectate speed (docs/competitions-and-elo.md Phase 5) ---------- */
 
-// The speed ladder a watched match offers. Powers of two so each rung is an obvious doubling, and
-// capped at 8x because engine/loop.js's MAX_SUBSTEPS bounds how much sim a frame can carry: at a
-// 60 Hz display 8x needs ~2.7 of the 5 substeps a frame allows, which leaves real headroom, while
-// 16x would sit at the cap and quietly under-deliver on most machines. Past the cap the loop
-// degrades to slow motion rather than spiralling (see its own comment) — a bound worth staying
-// inside, not one worth riding.
+// The speed ladder a watched or replayed match offers. Powers of two so each rung is an obvious
+// doubling, and capped at 8x because engine/loop.js's MAX_SUBSTEPS bounds how much sim a frame can
+// carry: at a 60 Hz display 8x needs ~1.3 of the 5 substeps a frame allows, which leaves real
+// headroom. (That number was ~2.7 when a spectated match ran at the ordinary 20 Hz sim rate; Phase
+// 5's replay work moved it to tools/selfplay.js's own 10 Hz step — the step every recorded row was
+// simulated at — which halves the substeps a given speed needs. 16x would still be the wrong rung
+// to add: it would sit near the cap on a 30 fps machine and quietly under-deliver.) Past the cap
+// the loop degrades to slow motion rather than spiralling (see its own comment) — a bound worth
+// staying inside, not one worth riding.
 export const SPECTATE_SPEEDS = [1, 2, 4, 8];
 
 // Any input -> a real rung, or 1x. Deliberately NOT a nearest-rung round: an off-ladder value is a
