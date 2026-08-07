@@ -76,6 +76,7 @@
 import { mulberry32 } from "../engine/rng.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
+import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
 
 /* ============================================================
    THE SCHEMA
@@ -511,4 +512,124 @@ export function diffGenes(genome, other, { genes = geneKeys() } = {}) {
     if (!same) parts.push(`${g.key}=${g.kind === "mix" ? `[${a}]` : a}`);
   }
   return parts.join(" ");
+}
+
+/* ============================================================
+   SANITISE — the boundary where an UNTRUSTED genome becomes a safe one
+
+   Once a genome can arrive from outside the program — a player-edited AI, an imported ladder file,
+   a mirror someone was sent — it stops being data this project produced and starts being data this
+   project is HANDED. And a genome is not inert: toOverrides writes it straight into the live
+   ARCHETYPES / STRATEGIES tables that the engine then reads every think cycle.
+
+   GENOME_SCHEMA is already the exact statement of what a legal gene is, so it is also the exact
+   validator. This is a WHITELIST, not a scrub: a key the schema does not name is dropped outright
+   rather than passed through, every number is coerced and clamped to its own gene's bounds, every
+   categorical must be a declared allele, and the mix is filtered to the known alphabet and its
+   length bounds. Nothing throws — bad input yields a duller AI, never a broken one or an exception
+   in the middle of a tournament, which is the same tolerance mutation relies on.
+
+   Two hazards this specifically closes, both of which are real for imported JSON:
+     • a numeric gene arriving as a string, NaN, or Infinity, which would silently poison every
+       multiplication it takes part in and produce an AI whose every decision is NaN;
+     • a key like "__proto__" or an unbounded unitMix, which is the difference between "a strange
+       opponent" and "a corrupted table for the rest of the session".
+   ============================================================ */
+
+const FORBIDDEN_GENE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * A schema-validated copy of `raw`, keeping only what GENOME_SCHEMA names and only within bounds.
+ * @param {any} raw @param {{ genes?: Gene[] }} [opts]
+ * @returns {Genome|null} null when the input is not an object at all
+ */
+export function sanitizeGenome(raw, { genes = geneKeys({ layers: ["strategy", "archetype"], odyssey: true }) } = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out = emptyGenome();
+  // Only a number or a numeric STRING may become a dial. The type check is not redundant with the
+  // isFinite check below it: `Number([])` is 0 and `Number([7])` is 7, so an array would otherwise
+  // sail through as a perfectly legal value — a JSON author writing `"garrisonMult": []` would get
+  // a silently minimum-garrison AI rather than the field being ignored.
+  const num = v => {
+    if (typeof v !== "number" && typeof v !== "string") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  for (const g of genes) {
+    if (FORBIDDEN_GENE_KEYS.has(g.key)) continue;   // belt and braces — no shipped gene is named this
+    const src = raw[g.layer];
+    if (!src || typeof src !== "object") continue;
+    const v = src[g.key];
+    if (v === undefined || v === null) continue;
+    switch (g.kind) {
+      case "ratio": case "unit01": {
+        const n = num(v);
+        if (n !== null) out[g.layer][g.key] = +clamp(n, g.min, g.max).toFixed(3);
+        break;
+      }
+      case "count": {
+        const n = num(v);
+        if (n !== null) out[g.layer][g.key] = clamp(Math.round(n), g.min, g.max);
+        break;
+      }
+      case "flag":   out[g.layer][g.key] = v === true; break;
+      case "choice": if (g.of.includes(v)) out[g.layer][g.key] = v; break;
+      case "mix": {
+        if (!Array.isArray(v)) break;
+        const mix = v.filter(t => typeof t === "string" && MIX_ALPHABET.includes(t)).slice(0, MIX_MAX_LEN);
+        // A mix too short to be a cycle is dropped rather than padded: inventing units the author
+        // never chose would misrepresent the genome, and an absent mix cleanly falls back to the
+        // archetype's own.
+        if (mix.length >= MIX_MIN_LEN) out[g.layer][g.key] = mix;
+        break;
+      }
+    }
+  }
+  const sigma = num(raw.sigma);
+  out.sigma = sigma === null ? SIGMA_DEFAULT : clamp(sigma, SIGMA_MIN, SIGMA_MAX);
+  return out;
+}
+
+/* ============================================================
+   APPLYING A GENOME — writing it into the live AI tables
+
+   These three moved here from tools/ailab.js, which re-exports them under their original names so
+   every existing call site reads unchanged. The reason is the same one tools/duelCore.js exists
+   for: a browser Worker (competitionWorker.js) needs to run a player-authored genome, and
+   tools/ailab.js imports node:fs, so nothing in a browser can touch it. Table manipulation belongs
+   next to the genome anyway — this file is now the whole "a candidate AI is data" story in one
+   place, and it has no Node-only import of its own.
+   ============================================================ */
+
+/** Write candidate rows into the live AI tables. @param {Object} [ov] @returns {void} */
+export function applyOverrides(ov = {}) {
+  for (const [name, row] of Object.entries(ov.strategies || {}))
+    STRATEGIES[name] = { name, desc: "(lab candidate)", ...(STRATEGIES[name] || {}), ...row };
+  for (const [name, row] of Object.entries(ov.archetypes || {})) {
+    const base = ARCHETYPES[name] || ARCHETYPES.balanced;
+    ARCHETYPES[name] = { ...base, ...row, odyssey: { ...(base.odyssey || {}), ...(row.odyssey || {}) } };
+  }
+  for (const [key, row] of Object.entries(ov.difficulties || {})) {
+    const i = DIFFICULTY_OPTIONS.findIndex(o => o.mult === key);
+    if (i >= 0) DIFFICULTY_OPTIONS[i] = { ...DIFFICULTY_OPTIONS[i], ...row };
+  }
+}
+
+/** Deep-clone the three live tables so a candidate's overrides can be reverted EXACTLY. @returns {Object} */
+export function snapshotTables() {
+  return {
+    strategies: JSON.parse(JSON.stringify(STRATEGIES)),
+    archetypes: JSON.parse(JSON.stringify(ARCHETYPES)),
+    difficulties: JSON.parse(JSON.stringify(DIFFICULTY_OPTIONS)),
+  };
+}
+
+/** @param {Object} snap @returns {void} */
+export function restoreTables(snap) {
+  for (const k of Object.keys(STRATEGIES)) delete STRATEGIES[k];
+  Object.assign(STRATEGIES, snap.strategies);
+  for (const k of Object.keys(ARCHETYPES)) delete ARCHETYPES[k];
+  Object.assign(ARCHETYPES, snap.archetypes);
+  DIFFICULTY_OPTIONS.length = 0;
+  DIFFICULTY_OPTIONS.push(...snap.difficulties);
 }

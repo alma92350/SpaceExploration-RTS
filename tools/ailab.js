@@ -106,8 +106,13 @@ import { rankStandings, pairRound, buildSwissBracket, roundRobinPairs, swissRoun
 // The genome — the AI as a schema'd, mutable, crossable data structure (docs/ai-evolution-design.md).
 // A leaf module like duelCore/pairing: it imports the three AI tables and mulberry32 and nothing
 // else, so `evolve` below is the only thing in this file that knows evolution exists.
-import { geneKeys, genomeFrom, randomGenome, mutate, cross, cloneGenome, toCandidate, rngFor, diffGenes }
+import { geneKeys, genomeFrom, randomGenome, mutate, cross, cloneGenome, toCandidate, rngFor, diffGenes,
+         applyOverrides, snapshotTables, restoreTables }
   from "./genome.js";
+// Re-exported under their original names: they used to be DEFINED here and every existing caller
+// (test/ailab.test.js among them) imports them from this file. They now live in ./genome.js so a
+// browser Worker can run a player-authored genome without pulling in this file's node:fs half.
+export { applyOverrides };
 
 const WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 const DT = 0.1;                  // the sim's fixed step, same as the game loop
@@ -516,38 +521,11 @@ export function score(r) {
    space is already a JSON document.
    ============================================================ */
 
-export function applyOverrides(ov = {}) {
-  for (const [name, row] of Object.entries(ov.strategies || {}))
-    STRATEGIES[name] = { name, desc: "(lab candidate)", ...(STRATEGIES[name] || {}), ...row };
-  for (const [name, row] of Object.entries(ov.archetypes || {})) {
-    const base = ARCHETYPES[name] || ARCHETYPES.balanced;
-    ARCHETYPES[name] = { ...base, ...row, odyssey: { ...(base.odyssey || {}), ...(row.odyssey || {}) } };
-  }
-  for (const [key, row] of Object.entries(ov.difficulties || {})) {
-    const i = DIFFICULTY_OPTIONS.findIndex(o => o.mult === key);
-    if (i >= 0) DIFFICULTY_OPTIONS[i] = { ...DIFFICULTY_OPTIONS[i], ...row };
-  }
-}
 
 // Deep-clone the three live tables so a candidate's overrides can be reverted EXACTLY once its
 // runs are done, leaving the next candidate a clean baseline. Plain data (the whole reason
 // applyOverrides can work at all), so a JSON round-trip clones it safely. Used by runLeaderboard
 // below — two candidates that both patch e.g. "aggressive" must never see each other's edits.
-function snapshotTables() {
-  return {
-    strategies: JSON.parse(JSON.stringify(STRATEGIES)),
-    archetypes: JSON.parse(JSON.stringify(ARCHETYPES)),
-    difficulties: JSON.parse(JSON.stringify(DIFFICULTY_OPTIONS)),
-  };
-}
-function restoreTables(snap) {
-  for (const k of Object.keys(STRATEGIES)) delete STRATEGIES[k];
-  Object.assign(STRATEGIES, snap.strategies);
-  for (const k of Object.keys(ARCHETYPES)) delete ARCHETYPES[k];
-  Object.assign(ARCHETYPES, snap.archetypes);
-  DIFFICULTY_OPTIONS.length = 0;
-  DIFFICULTY_OPTIONS.push(...snap.difficulties);
-}
 
 /* ============================================================
    LEADERBOARD — Tier 0 of "which strategy is actually better": rank candidates against a

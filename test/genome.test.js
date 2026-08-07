@@ -25,7 +25,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import assert from "node:assert/strict";
 import {
   GENOME_SCHEMA, MODULES, MIX_ALPHABET, geneKeys, genomeFrom, randomGenome, mutate, mutateMix,
-  cross, crossMix, cloneGenome, emptyGenome, toOverrides, toCandidate, diffGenes, rngFor,
+  cross, crossMix, cloneGenome, emptyGenome, toOverrides, toCandidate, diffGenes, rngFor, sanitizeGenome,
 } from "../tools/genome.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
@@ -344,4 +344,75 @@ test("diffGenes names what moved and stays silent when nothing did", () => {
   const b = cloneGenome(a);
   b.strategy.garrisonMult = 2.5;
   assert.match(diffGenes(b, a), /garrisonMult=2\.5/);
+});
+
+/* ---------- sanitizeGenome: the untrusted-input boundary ----------
+
+   Once a genome can arrive from outside the program — a player-edited AI, an imported ladder file,
+   a mirror someone was sent — it is data this project is HANDED, not data it produced. And it is
+   not inert: toOverrides writes it straight into the live tables the engine reads every think
+   cycle. These pin that GENOME_SCHEMA is enforced as a whitelist rather than a suggestion.
+   ---------- */
+
+test("an unknown key is DROPPED, not passed through", () => {
+  const g = sanitizeGenome({ strategy: { workerTargetMult: 1.2, notAGene: 99, __proto__: { x: 1 } } });
+  assert.equal(g.strategy.workerTargetMult, 1.2, "a real gene survives");
+  assert.ok(!("notAGene" in g.strategy), "a key the schema does not name must not survive");
+  assert.equal(({}).x, undefined, "and nothing may reach Object.prototype");
+});
+
+test("numbers are coerced and CLAMPED to their own gene's bounds", () => {
+  const g = sanitizeGenome({ strategy: { workerTargetMult: "99999", garrisonMult: -50 } });
+  const wt = GENOME_SCHEMA.find(x => x.key === "workerTargetMult");
+  const gm = GENOME_SCHEMA.find(x => x.key === "garrisonMult");
+  assert.equal(g.strategy.workerTargetMult, wt.max, "a string number is coerced, then clamped to max");
+  assert.equal(g.strategy.garrisonMult, gm.min, "…and a negative to min");
+});
+
+test("a non-finite number is dropped rather than poisoning every multiplication it joins", () => {
+  for (const bad of [NaN, Infinity, -Infinity, "not a number", {}, []]) {
+    const g = sanitizeGenome({ strategy: { attackTimeoutMult: bad } });
+    assert.ok(!("attackTimeoutMult" in g.strategy), `${String(bad)} must not become a dial`);
+  }
+});
+
+test("flags are strictly boolean — a truthy string is not a yes", () => {
+  assert.equal(sanitizeGenome({ strategy: { neverInitiates: "yes" } }).strategy.neverInitiates, false);
+  assert.equal(sanitizeGenome({ strategy: { neverInitiates: 1 } }).strategy.neverInitiates, false);
+  assert.equal(sanitizeGenome({ strategy: { neverInitiates: true } }).strategy.neverInitiates, true);
+});
+
+test("a categorical must be a declared allele", () => {
+  assert.equal(sanitizeGenome({ archetype: { doctrine: "assault" } }).archetype.doctrine, "assault");
+  assert.ok(!("doctrine" in sanitizeGenome({ archetype: { doctrine: "evil" } }).archetype),
+    "an undeclared allele must be dropped, not stored");
+});
+
+test("the mix is filtered to the known alphabet and to a legal length", () => {
+  const g = sanitizeGenome({ archetype: { unitMix: ["skiff", "__proto__", "lancer", "notaunit", 7, null] } });
+  assert.deepEqual(g.archetype.unitMix, ["skiff", "lancer"], "only real unit types survive");
+  // Too short to be a production cycle: dropped rather than padded, because inventing units the
+  // author never chose would misrepresent the genome. Absent falls back to the archetype's own mix.
+  assert.ok(!("unitMix" in sanitizeGenome({ archetype: { unitMix: ["skiff"] } }).archetype));
+  const huge = sanitizeGenome({ archetype: { unitMix: Array(500).fill("skiff") } });
+  assert.ok(huge.archetype.unitMix.length <= 10, "an unbounded mix must be capped");
+});
+
+test("a sanitised genome is always a LEGAL genome — it lowers and runs", () => {
+  const hostile = {
+    strategy: { workerTargetMult: "1e400", neverInitiates: [], punishConfidence: -3 },
+    archetype: { unitMix: ["colossus", "skiff"], turretCount: 1e9, faction: "nonsense" },
+    sigma: Infinity,
+  };
+  const g = sanitizeGenome(hostile);
+  const genes = geneKeys({ layers: ["strategy", "archetype"], odyssey: true });
+  inBounds({ ...g, strategy: { ...genomeFrom({ genes }).strategy, ...g.strategy },
+             archetype: { ...genomeFrom({ genes }).archetype, ...g.archetype } }, genes);
+  assert.ok(g.sigma >= 0.03 && g.sigma <= 0.8, `sigma escaped: ${g.sigma}`);
+  assert.ok(toOverrides(g, "hostile", { genes }).strategies.hostile, "it still lowers to a runnable row");
+});
+
+test("garbage that is not an object at all returns null rather than throwing", () => {
+  for (const bad of [null, undefined, 42, "genome", [], true])
+    assert.equal(sanitizeGenome(bad), null, `${String(bad)} must return null`);
 });
