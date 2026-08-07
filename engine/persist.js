@@ -196,6 +196,9 @@ function cleanController(src, prefix, planetId) {
     intelMil: Math.max(0, num(g("IntelMil"), 0)),
     intelEco: Math.max(0, num(g("IntelEco"), 0)),
     intelAt: g("IntelAt") == null ? null : num(g("IntelAt"), 0),
+    // Clamped to the 0..1 the stance is defined on, so a corrupt save cannot push the AI into a
+    // defence multiplier outside its designed swing.
+    adaptMode: g("AdaptMode") == null ? null : Math.min(1, Math.max(0, num(g("AdaptMode"), 0.5))),
     archetype: archetypeFor(planetId),
   };
 }
@@ -590,6 +593,7 @@ function serPlanet(state) {
       // posture read from an empty picture, changing every downstream decision.
       aiIntelMil: state.ai.intelMil ?? 0, aiIntelEco: state.ai.intelEco ?? 0,
       aiIntelAt: state.ai.intelAt ?? null,
+      aiAdaptMode: state.ai.adaptMode ?? null,
       // Odyssey colony-ship expansion target (engine/ai.js) — the committed deploy spot
       // of an in-flight ship. Persisted so a reload doesn't recompute a different target.
       aiColonyTarget: state.ai.colonyTarget ?? null,
@@ -618,6 +622,7 @@ function serPlanet(state) {
       // posture read from an empty picture, changing every downstream decision.
       paIntelMil: state.playerAi.intelMil ?? 0, paIntelEco: state.playerAi.intelEco ?? 0,
       paIntelAt: state.playerAi.intelAt ?? null,
+      paAdaptMode: state.playerAi.adaptMode ?? null,
       paColonyTarget: state.playerAi.colonyTarget ?? null,
     } : null,
   };

@@ -298,3 +298,144 @@ test("the read is a pure function of state — same state, same answer", () => {
   };
   assert.equal(build(), build());
 });
+
+/* ============================================================
+   PHASE 2 — the raid is a RESPONSE, not a metronome
+   (engine/aiMilitary.js aiOffense, docs/ai-adaptive-opponent.md)
+
+   The behaviour these pin: an enemy that can be SEEN to be undefended should not be safe. That is
+   the structural answer to docs/ai-evolution-design.md §9's finding — a champion that won by
+   hoarding an army it never committed, which only works because nobody could see it was
+   undefended.
+   ============================================================ */
+
+import { adaptivityFor, DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
+
+test("adaptivity is a difficulty dial: Easy never adapts, Hard adapts hardest", () => {
+  const at = mult => adaptivityFor({ ai: { difficulty: mult } }, "ai");
+  assert.equal(at("easy"), 0,
+    "Easy must never act on the read — its play stays learnable and exploitable, same argument as counterEvery: 0");
+  assert.equal(at("medium"), 1, "Medium carries no value, so it composes as ordinary adaptation");
+  assert.ok(at("hard") > 1, "Hard reacts harder and on thinner evidence");
+  // An unknown/legacy difficulty key must compose as ordinary behaviour, never as a silent opt-out.
+  assert.equal(at("nonsense-key"), 1);
+  assert.equal(adaptivityFor({}, "ai"), 1, "a state with no controller must not throw");
+});
+
+test("Medium carries no adaptivity field at all — the baseline stays byte-identical to unset", () => {
+  const medium = DIFFICULTY_OPTIONS.find(o => o.mult === "medium");
+  assert.ok(!("adaptivity" in medium),
+    "Medium is the baseline every dial is relative to; giving it an explicit value breaks that convention");
+});
+
+test("Hard commits on thinner evidence than Medium, and Easy on none", () => {
+  // The confidence bar is 0.25 / adaptivity, so a partial scout that convinces Hard need not
+  // convince Medium — and nothing convinces Easy.
+  const s = world();
+  s.time = 0;
+  // A partial scout: 1 worker + 2 habitats = 200 ore of 900, i.e. confidence 0.222 — deliberately
+  // BETWEEN Hard's bar (0.25/1.5 = 0.167) and Medium's (0.25). If this fixture ever drifts out of
+  // that band the assertion below stops testing anything, so the band is asserted first.
+  addUnit(s, "player", "worker", 100, 100);
+  addBuilding(s, "player", "habitat", 104, 100);
+  addBuilding(s, "player", "habitat", 108, 100);
+  see(s, "ai", 105, 100);
+  updateIntel(s, "ai");
+  const conf = readEnemy(s, "ai").confidence;
+  assert.ok(conf > 0.25 / 1.5 && conf < 0.25,
+    `this fixture must sit BETWEEN the two bars to be a real test (confidence ${conf})`);
+  assert.equal(enemyIsGreedy(s, "ai", { minConfidence: 0.25 / 1.5 }), true, "Hard's bar is cleared");
+  assert.equal(enemyIsGreedy(s, "ai", { minConfidence: 0.25 / 1 }), false, "Medium's is not");
+});
+
+/* ============================================================
+   PHASE 3 — the damped stance
+   ============================================================ */
+
+import { updateAdaptMode, adaptDefenceMult, ADAPT_NEUTRAL, ADAPT_DEAD_BAND, ADAPT_RATE } from "../engine/aiIntel.js";
+
+test("an unscouted enemy cannot move the stance — it hedges at neutral", () => {
+  const s = world();
+  for (let i = 0; i < 30; i++) addUnit(s, "player", "skiff", 2000 + i, 2000);   // massing, unseen
+  updateIntel(s, "ai");
+  assert.equal(updateAdaptMode(s, "ai", 1), ADAPT_NEUTRAL,
+    "never having looked must never produce a stance — hedge and scout, do not commit");
+  assert.equal(adaptDefenceMult(s, "ai"), 1, "and neutral must compose as a no-op");
+});
+
+test("Easy is pinned at neutral forever, so it stays a fixed learnable opponent", () => {
+  const s = world();
+  for (let i = 0; i < 40; i++) addUnit(s, "player", "skiff", 100 + i, 100);
+  see(s, "ai", 120, 100);
+  updateIntel(s, "ai");
+  for (let i = 0; i < 200; i++) updateAdaptMode(s, "ai", 0);
+  assert.equal(s.ai.adaptMode, ADAPT_NEUTRAL, "adaptivity 0 must never leave neutral");
+  assert.equal(adaptDefenceMult(s, "ai"), 1);
+});
+
+test("the stance moves toward a massing enemy, and never faster than the rate limit", () => {
+  const s = world();
+  for (let i = 0; i < 40; i++) addUnit(s, "player", "skiff", 100 + i * 2, 100);
+  addBuilding(s, "player", "turret", 200, 100);
+  see(s, "ai", 140, 100);
+  updateIntel(s, "ai");
+  let prev = ADAPT_NEUTRAL;
+  for (let i = 0; i < 40; i++) {
+    const next = updateAdaptMode(s, "ai", 1);
+    assert.ok(next - prev <= ADAPT_RATE + 1e-9, `moved ${next - prev} in one cycle, faster than the rate limit`);
+    prev = next;
+  }
+  assert.ok(prev > ADAPT_NEUTRAL, "a scouted, massing enemy must eventually pull the stance toward war");
+  assert.ok(adaptDefenceMult(s, "ai") > 1, "…and that must mean more static defence");
+});
+
+test("the stance moves the other way against a visibly greedy opponent", () => {
+  const s = world();
+  for (let i = 0; i < 8; i++) addBuilding(s, "player", "refinery", 100 + i * 3, 100);
+  see(s, "ai", 110, 100);
+  updateIntel(s, "ai");
+  for (let i = 0; i < 40; i++) updateAdaptMode(s, "ai", 1);
+  assert.ok(s.ai.adaptMode < ADAPT_NEUTRAL, "a pure economy opponent must pull the stance toward economy");
+  assert.ok(adaptDefenceMult(s, "ai") < 1, "…and that must mean fewer turrets, not more");
+});
+
+test("the dead band stops a small read from moving the stance at all", () => {
+  const s = world();
+  // A read close enough to neutral that acting on it would be noise-chasing.
+  addUnit(s, "player", "skiff", 100, 100);
+  addUnit(s, "player", "worker", 104, 100);
+  see(s, "ai", 102, 100);
+  updateIntel(s, "ai");
+  const r = readEnemy(s, "ai");
+  const target = ADAPT_NEUTRAL + (r.posture - ADAPT_NEUTRAL) * r.confidence;
+  assert.ok(Math.abs(target - ADAPT_NEUTRAL) <= ADAPT_DEAD_BAND,
+    `fixture must sit INSIDE the dead band to test it (target ${target})`);
+  for (let i = 0; i < 50; i++) updateAdaptMode(s, "ai", 1);
+  assert.equal(s.ai.adaptMode, ADAPT_NEUTRAL, "inside the dead band the stance must not drift at all");
+});
+
+test("the defence multiplier stays inside its designed swing — adaptation never changes identity", () => {
+  const s = world();
+  for (const mode of [0, 0.25, 0.5, 0.75, 1]) {
+    s.ai.adaptMode = mode;
+    const m = adaptDefenceMult(s, "ai");
+    assert.ok(m >= 0.4 && m <= 1.6, `defence multiplier ${m} escaped its swing at mode ${mode}`);
+  }
+  s.ai.adaptMode = ADAPT_NEUTRAL;
+  assert.equal(adaptDefenceMult(s, "ai"), 1, "neutral must be exactly 1 — a no-op, not nearly one");
+});
+
+test("both seats keep their own stance", () => {
+  const s = world();
+  s.playerAi = createAiController("ferros", {});
+  for (let i = 0; i < 40; i++) addUnit(s, "player", "skiff", 100 + i * 2, 100);   // the ai seat's enemy: massing
+  for (let i = 0; i < 8; i++) addBuilding(s, "ai", "refinery", 900 + i * 3, 900); // the player seat's enemy: greedy
+  see(s, "ai", 140, 100);
+  see(s, "player", 910, 900);
+  for (let i = 0; i < 40; i++) {
+    updateIntel(s, "ai"); updateAdaptMode(s, "ai", 1);
+    updateIntel(s, "player"); updateAdaptMode(s, "player", 1);
+  }
+  assert.ok(s.ai.adaptMode > ADAPT_NEUTRAL, "the ai seat faces an army");
+  assert.ok(s.playerAi.adaptMode < ADAPT_NEUTRAL, "the player seat faces an economy");
+});

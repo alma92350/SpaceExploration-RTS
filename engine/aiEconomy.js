@@ -23,6 +23,7 @@ import { canAct, spend, canAffordKeeping, tryBuild, tryBuildAt } from "./aiCommo
 import { affordableOnSurface, aiDoctrine, maxSupplyDemand, plannedMix } from "./aiWorkers.js";
 import { pickNextUnitType, visibleEnemyForceCount } from "./aiMilitary.js";
 import { difficultyFor } from "./aiDifficulty.js";
+import { adaptDefenceMult } from "./aiIntel.js";
 import { aiBarter } from "./market.js";
 
 const HOME_RADIUS = 420;          // nodes this close to an AI CC count as "home" economy
@@ -387,7 +388,12 @@ export function aiProduceAndFortify(state, ctx) {
     // first, once the Foundry has actually unlocked it (prereqsMet below). Every archetype today
     // caps at 2 (aiArchetypes.js), so in practice this reaches at most one Bastille per game.
     const defenses = buildings.filter(b => b.type === "turret" || b.type === "bastille");
-    const turretCap = Math.round((archetype.turretCount || 0) * (strategy.turretCountMult || 1));
+    // …and a FOURTH layer on top of archetype x strategy: the adapted stance (engine/aiIntel.js).
+    // An opponent visibly massing an army is worth walling against; one visibly playing economy is
+    // not, and ore spent on turrets there is ore not spent punishing them. 1 at neutral — and Easy
+    // is pinned at neutral — so this composes as a no-op wherever the AI has no opinion.
+    const turretCap = Math.round((archetype.turretCount || 0) * (strategy.turretCountMult || 1)
+                                 * adaptDefenceMult(state, owner));
     if (defenses.length < turretCap) {
       const i = defenses.length;
       // The first fortification slot stays a plain Sentinel Turret (cheap, always reachable —

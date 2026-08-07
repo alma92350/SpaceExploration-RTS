@@ -29,7 +29,10 @@ import { chargingPlayerWonder } from "./wonder.js";
 import { canAct, spend, controllerFor, otherOwner } from "./aiCommon.js";
 import { effectiveMix } from "./aiWorkers.js";
 import { playerUnits, playerBuildings } from "./state.js";
-import { difficultyFor } from "./aiDifficulty.js";
+import { difficultyFor, adaptivityFor } from "./aiDifficulty.js";
+// The opponent READ (docs/ai-adaptive-opponent.md). aiIntel imports only entities/fog/aiCommon,
+// so this stays a downward edge with no cycle — the same discipline aiWorkers/aiStrategy keep.
+import { enemyIsGreedy } from "./aiIntel.js";
 import { formationSlots } from "./formation.js";
 
 const COUNTER_EVERY = 3;   // default cadence: 1 in every 3 units built reacts to the player's army instead of following the mix — difficulty-shaped via aiDifficulty.js's counterEvery (Easy 0, Hard 2), see pickNextUnitType
@@ -221,7 +224,30 @@ function aiOffense(state, ctx, nonScout) {
       // byte-for-byte the original `raid || chooseAttackTarget(...)`.
       const charging = state.diplomacy && chargingPlayerWonder(state);
       const gate = charging && isVisibleAt(fog, charging.x, charging.y) ? charging : null;
-      const raid = !gate && controller.micro && !desperate && controller.waveCount % RAID_EVERY === 0 && raidTarget(state, owner);
+      // WHY THIS WAVE RAIDS. Two independent reasons, either of which is enough:
+      //
+      //   • the CADENCE — every RAID_EVERY-th wave, the original Tactical behaviour, unchanged and
+      //     still gated on controller.micro (Hard). A metronome: it harasses on a schedule
+      //     regardless of whether harassment is the right answer.
+      //   • the READ — the enemy is visibly investing in economy over defence and enough of them
+      //     has been scouted to justify acting on it (engine/aiIntel.js enemyIsGreedy). This is
+      //     harassment as a RESPONSE: punish greed, and specifically punish the hoarder that
+      //     docs/ai-evolution-design.md §9 found winning by never committing its army. An opponent
+      //     that can be seen to be undefended should not be safe.
+      //
+      // The read is deliberately NOT gated on controller.micro. Reacting to what you scouted is
+      // ordinary competence, not the unit-level micro Hard buys — and an Easy/Medium AI that never
+      // once punishes a greedy opening is the passivity the bench keeps measuring. It IS gated on
+      // difficulty's own reactivity dial via adaptReads (engine/aiDifficulty.js), so Easy still
+      // plays its learnable, exploitable archetype line — the same argument counterEvery: 0 makes
+      // there, applied to targeting instead of composition.
+      const cadenceRaid = controller.micro && controller.waveCount % RAID_EVERY === 0;
+      // Difficulty scales BOTH whether it reacts at all and how thin the evidence may be: Hard
+      // (adaptivity 1.5) commits on a less complete scout than Medium, Easy (0) never does.
+      const adapt = adaptivityFor(state, owner);
+      const punishRaid = adapt > 0
+        && enemyIsGreedy(state, owner, { minConfidence: 0.25 / adapt });
+      const raid = !gate && !desperate && (cadenceRaid || punishRaid) && raidTarget(state, owner);
       const target = gate || raid || chooseAttackTarget(state, cc, owner);
       issueAttackMove(strike, target.x, target.y);
       // Cadence: a skirmish keeps the single attackTimeout clock (unchanged);

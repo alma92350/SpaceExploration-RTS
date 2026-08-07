@@ -80,12 +80,31 @@
 export const DIFFICULTY_OPTIONS = [
   { label: "Easy", mult: "easy", note: "slow · no micro · predictable", aiApm: 20, aiMicro: false,
     workerTargetMult: 0.8, graceMult: 1.15, grievanceMult: 0.85, researchPaceMult: 1.3,
-    forgiveness: 1.25, counterEvery: 0, strategicCeiling: true },
+    forgiveness: 1.25, counterEvery: 0, strategicCeiling: true, adaptivity: 0 },
   { label: "Medium", mult: "medium", note: "a fair fight", aiApm: 65, aiMicro: false, marketAccess: true },
   { label: "Hard", mult: "hard", note: "fast · focus-fire · kite", aiApm: 140, aiMicro: true,
     workerTargetMult: 1.25, graceMult: 0.9, grievanceMult: 1.15, economicEdge: true, researchPaceMult: 0.75,
-    marketAccess: true, rusherGraduates: true, forgiveness: 0.8, counterEvery: 2 },
+    marketAccess: true, rusherGraduates: true, forgiveness: 0.8, counterEvery: 2, adaptivity: 1.5 },
 ];
+
+/* Tier 7 adds `adaptivity` — how strongly this difficulty lets the AI act on its READ of the
+   opponent (engine/aiIntel.js, docs/ai-adaptive-opponent.md). Easy is 0: it never adapts, so its
+   play stays exactly its learnable, exploitable archetype line. That is the identical argument
+   Tier 5 makes for `counterEvery: 0` — a new player has to be able to form a model of the
+   opponent and beat it, and an AI that answers everything they try is unreadable rather than
+   hard. Medium carries none of it (the 1 default, i.e. it does adapt, at ordinary strength);
+   Hard is 1.5, reacting harder and on thinner evidence.
+
+   Read through adaptivityFor(state, owner) below with a `?? 1` at the source, so — as with every
+   other dial in this file — an absent value composes as the ordinary behaviour and a legacy or
+   unknown difficulty key is a no-op rather than an accidental opt-out. */
+
+/** How strongly `owner` acts on its opponent read: 0 disables adaptation entirely, 1 is ordinary,
+ * >1 reacts harder and on thinner evidence. @param {State} state @param {string} [owner] @returns {number} */
+export function adaptivityFor(state, owner = "ai") {
+  const v = difficultyFor(state, owner).adaptivity;
+  return v == null ? 1 : v;
+}
 
 /** The active difficulty entry for `owner` (default "ai", so every existing save/test/call site
  * that predates self-play reads state.ai.difficulty exactly as before) — DIFFICULTY_OPTIONS'

@@ -111,6 +111,10 @@ export function createAiController(planetId, opts = {}) {
     // Null/0 until something is actually sighted — "I have seen nothing" must stay distinguishable
     // from "I have seen an empty base" (see aiIntel's header).
     intelMil: 0, intelEco: 0, intelAt: null,
+    // The damped STANCE derived from that belief (engine/aiIntel.js updateAdaptMode): 0 = the
+    // enemy is playing economy, 1 = they are massing, 0.5 = no opinion. Null until a first think
+    // cycle sets it, and pinned at neutral forever on Easy (adaptivity 0).
+    adaptMode: null,
     // This world's opponent temperament (engine/aiArchetypes.js) — UNLESS opts.archetype names a
     // real ARCHETYPES key, in which case that per-entrant pick wins instead (docs/
     // competitions-and-elo.md D3: a competition entrant carries its own doctrine, so "Rusher vs

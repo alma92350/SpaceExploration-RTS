@@ -176,3 +176,73 @@ export function enemyIsGreedy(state, owner = "ai", { maxPosture = 0.35, minConfi
   if (r.posture == null) return false;   // never seen them — hedge and scout, never assume weakness
   return r.posture <= maxPosture && r.confidence >= minConfidence;
 }
+
+/* ============================================================
+   MODE — the smoothed stance the AI actually acts on
+
+   `posture` is the raw read and is far too jumpy to drive investment decisions directly: it moves
+   every time a wave walks past. `adaptMode` is the damped version — the same 0..1 scale, but it
+   only moves when the read has genuinely shifted, and then only slowly.
+
+   BOTH damping terms are load-bearing, and for different reasons:
+
+     dead band   Two adaptive AIs facing each other form a feedback loop — A goes economy, B raids,
+                 A goes military, B turtles, A goes economy — and an undamped controller oscillates
+                 in it forever instead of settling. The band means small reads change nothing.
+     rate limit  Even a real shift is absorbed over many think cycles rather than in one, so the
+                 opponent stays LEGIBLE. A player has to be able to notice "it's turtling now" and
+                 respond; an AI that reconfigures itself instantly is not a harder opponent, it is
+                 an unreadable one. This is the same argument engine/aiDifficulty.js makes for
+                 Easy's counterEvery: 0, applied to stance instead of composition.
+
+   Confidence gates the whole thing: an unscouted enemy cannot move the mode at all, so the AI
+   hedges at neutral and goes looking rather than committing to a stance it cannot justify.
+   ============================================================ */
+
+export const ADAPT_NEUTRAL = 0.5;    // no opinion — hedge, build for both
+export const ADAPT_DEAD_BAND = 0.15; // the read must differ from the current mode by this to move it
+export const ADAPT_RATE = 0.04;      // …and then moves at most this far per think cycle
+
+/**
+ * Step `owner`'s stance toward what it currently believes, and return the new value. Called once
+ * per think cycle from engine/ai.js, right after updateIntel, so every phase in a cycle acts on one
+ * stance. `adaptivity` (engine/aiDifficulty.js) scales the rate: 0 pins the mode at neutral forever,
+ * which is how Easy stays a fixed, learnable opponent.
+ * @param {State} state @param {string} [owner] @param {number} [adaptivity] @returns {number}
+ */
+export function updateAdaptMode(state, owner = "ai", adaptivity = 1) {
+  const controller = owner === "ai" ? state.ai : state.playerAi;
+  if (!controller) return ADAPT_NEUTRAL;
+  const cur = controller.adaptMode == null ? ADAPT_NEUTRAL : controller.adaptMode;
+  if (adaptivity <= 0) { controller.adaptMode = ADAPT_NEUTRAL; return ADAPT_NEUTRAL; }
+  const r = readEnemy(state, owner);
+  // An unknown or barely-scouted enemy pulls toward neutral, never toward a stance: "I have not
+  // looked" must not read as "they are peaceful" here either.
+  const target = r.posture == null ? ADAPT_NEUTRAL
+    : ADAPT_NEUTRAL + (r.posture - ADAPT_NEUTRAL) * r.confidence;
+  const gap = target - cur;
+  if (Math.abs(gap) <= ADAPT_DEAD_BAND) { controller.adaptMode = cur; return cur; }
+  const step = Math.min(Math.abs(gap), ADAPT_RATE * adaptivity) * (gap < 0 ? -1 : 1);
+  const next = Math.min(1, Math.max(0, cur + step));
+  controller.adaptMode = next;
+  return next;
+}
+
+// How far the mode is allowed to swing static defence. 0.6x against a visibly greedy opponent
+// (turrets are ore not spent on punishing them) up to 1.6x against one that is massing (wall up).
+// Bounded deliberately: adaptation changes TEMPO AND INVESTMENT, never identity — a Rusher that
+// adapts into a turtle is not a Rusher, and the archetype has to stay recognisable.
+const DEFENCE_SWING = 0.6;
+
+/**
+ * The multiplier the adapted stance applies to static defence, composed onto the archetype's own
+ * turretCount and the strategy's turretCountMult exactly like every other layer in this engine.
+ * 1 at neutral, so an AI with no opinion — and every Easy AI, pinned at neutral — is byte-identical
+ * to one that never had a mode at all.
+ * @param {State} state @param {string} [owner] @returns {number}
+ */
+export function adaptDefenceMult(state, owner = "ai") {
+  const controller = owner === "ai" ? state.ai : state.playerAi;
+  const mode = controller && controller.adaptMode != null ? controller.adaptMode : ADAPT_NEUTRAL;
+  return 1 + (mode - ADAPT_NEUTRAL) * 2 * DEFENCE_SWING;
+}

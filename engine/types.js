@@ -246,6 +246,7 @@
  * @property {number} intelMil    ore-value of enemy MILITARY assets this controller has seen (aiIntel.js)
  * @property {number} intelEco    ore-value of enemy ECONOMIC assets this controller has seen
  * @property {number|null} intelAt sim-time it last saw anything of the enemy; null = never
+ * @property {number|null} adaptMode damped stance from that belief: 0 economy, 1 massing, 0.5 neutral
  * @property {Archetype} archetype
  */
 

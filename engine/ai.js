@@ -75,7 +75,8 @@ import { aiFoundOrSurvive, aiExpand, aiBaseAndTech, aiProduceAndFortify, aiResea
 import { aiIndustry, aiIndustryReserve } from "./aiIndustry.js";
 import { aiSuperweapon } from "./aiSuperweapon.js";
 import { strategyFor } from "./aiStrategy.js";
-import { updateIntel, readEnemy } from "./aiIntel.js";
+import { updateIntel, readEnemy, updateAdaptMode } from "./aiIntel.js";
+import { adaptivityFor } from "./aiDifficulty.js";
 
 const THINK_INTERVAL = 1.5;
 
@@ -151,6 +152,10 @@ function aiContext(state, owner = "ai") {
   // any phase consults it, exactly like warFooting above — so every phase in one cycle reasons
   // about the same picture of the enemy rather than each re-deriving it at a different moment.
   updateIntel(state, owner);
+  // …then step the damped STANCE off that belief (aiIntel.js updateAdaptMode). Order matters: the
+  // stance must be derived from THIS cycle's sighting, not last cycle's. adaptivity 0 (Easy) pins
+  // it at neutral, which makes every consumer below byte-identical to having no stance at all.
+  updateAdaptMode(state, owner, adaptivityFor(state, owner));
   return {
     owner, enemyOwner, fog, controller,
     archetype, arch, strategy, warFooting,
