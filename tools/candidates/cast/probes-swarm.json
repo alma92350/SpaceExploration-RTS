@@ -1,0 +1,22 @@
+{
+  "name": "cast-probes-swarm",
+  "strategy": "cast-probes-swarm",
+  "overrides": {
+    "strategies": {
+      "cast-probes-swarm": {
+        "attackTimeoutMult": 0.7,
+        "armyAttackSizeMult": 0.703,
+        "garrisonMult": 0.409,
+        "neverInitiates": true,
+        "workerTargetMult": 1.289,
+        "warFootingMult": 3.135,
+        "warFootingTime": 54.054,
+        "turretCountMult": 0.899,
+        "matchEnemyForce": false,
+        "matchBuffer": 1.118,
+        "matchFloor": 6
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"probes/swarm\" (aggression 1.0 waves, army 138): 81% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

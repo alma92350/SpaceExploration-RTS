@@ -1009,7 +1009,8 @@ export function runSwissTournament(candidates, opts = {}) {
        and report both numbers.
    ============================================================ */
 
-const EVO_SEED_KEY = "evolve";   // see the seedKey paragraph above — one pinned map set per run
+const EVO_SEED_KEY = "evolve";        // see the seedKey paragraph above — one pinned map set per run
+const ARCHIVE_SEED_KEY = "archive";   // the solo-bench twin of it — see runSeed's own comment
 
 /**
  * Rate one generation's field and return fitness per candidate name. One INDEPENDENT rating table
@@ -1259,20 +1260,42 @@ const cellKey = desc => ARCHIVE_DIMS.map(d => d.names[binOf(desc[d.key], d.edges
  * header above.
  * @returns {{ desc: Object, tripped: string[], rows: Object[] }}
  */
-function describeCandidate(cand, { worlds, minutes, opponent, difficulty, seedBase }) {
+function describeCandidate(cand, { worlds, minutes, opponent, difficulty, seedBase, seeds = 1 }) {
   const snap = snapshotTables();
   try {
     if (cand.overrides) applyOverrides(cand.overrides);
-    const rows = worlds.map(world => run({
-      minutes, sample: 5, opponent, apm: "real", seedBase, world,
-      strategy: cand.strategy, difficulty, archetype: cand.archetype || undefined,
-      seed: runSeed(seedBase, world, cand.strategy, difficulty, 0),
-    }));
-    // Mean across worlds: a descriptor read off ONE world is a description of that world as much
-    // as of the genome (korrath's Rusher and forge's Economist do not play the same game), and the
-    // cast has to be recognisable wherever it's dropped into the galaxy.
+    const rows = [];
+    for (const world of worlds)
+      for (let rep = 0; rep < seeds; rep++)
+        rows.push(run({
+          minutes, sample: 5, opponent, apm: "real", seedBase, world,
+          strategy: cand.strategy, difficulty, archetype: cand.archetype || undefined,
+          // ARCHIVE_SEED_KEY, not the candidate's name — every genome in a run is described on the
+          // IDENTICAL maps, and a saved cell re-reads on those same maps later. See runSeed.
+          seed: runSeed(seedBase, world, cand.strategy, difficulty, rep, ARCHIVE_SEED_KEY),
+        }));
+    // MEDIAN across worlds and replicates — not the mean, and that is a measured decision rather
+    // than a preference.
+    //
+    // The first real run of this command filed two genomes three bins apart on the army axis (8 vs
+    // 113) that differ in ONE active gene; re-measured, they swapped ends of the axis. Probing why,
+    // with one genome held fixed on pinned maps over 4 replicates per world, gave: korrath
+    // 26/23/22/27 (perfectly stable), vesper 1/0/8/0, and ferros 36/3/1/296. The distribution is
+    // HEAVY-TAILED — an Odyssey economy that gets going compounds, so one run in twelve returns an
+    // order of magnitude more army than the rest.
+    //
+    // Averaging cannot fix a heavy tail; it inherits it. The same 12 runs give a mean of 21.0 / 14.8
+    // / 36.9 at 1 / 2 / 4 replicates — diverging, because whichever sample happens to contain the
+    // 296 decides the answer. The median over the identical samples gives 26 / 13 / 15, which
+    // converges. So the axis is stabilised by a robust statistic at unchanged cost, and `seeds`
+    // then buys real precision on top instead of buying lottery tickets.
+    const median = xs => {
+      const s = [...xs].sort((a, b) => a - b);
+      const m = s.length >> 1;
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
     const desc = {};
-    for (const d of ARCHIVE_DIMS) desc[d.key] = rows.reduce((a, r) => a + (r[d.key] || 0), 0) / rows.length;
+    for (const d of ARCHIVE_DIMS) desc[d.key] = median(rows.map(r => r[d.key] || 0));
     const tripped = [...new Set(rows.flatMap(r => CHECKS.filter(c => c.hit(r)).map(c => c.id)))];
     return { desc, tripped, rows };
   } finally {
@@ -1304,7 +1327,7 @@ function panelStrength(cand, panel, { worlds, seeds, minutes, difficulty, seedBa
  */
 export function runArchive({
   iterations = 60, seed = 1, layers = ["strategy"], odyssey = false,
-  descriptorWorlds = ["korrath", "ferros", "vesper"], descriptorMinutes = 40,
+  descriptorWorlds = ["korrath", "ferros", "vesper"], descriptorMinutes = 40, descriptorSeeds = 2,
   descriptorOpponent = "turtle", difficulty = "medium",
   duelWorlds = ["korrath", "ferros"], duelSeeds = 1, duelMinutes = 40,
   panel = [], screen = true, seedStrategies = Object.keys(STRATEGIES), onCell = null,
@@ -1315,7 +1338,8 @@ export function runArchive({
   const log = [];
   let evaluated = 0, rejected = 0;
 
-  const descOpts = { worlds: descriptorWorlds, minutes: descriptorMinutes, opponent: descriptorOpponent, difficulty, seedBase: seed };
+  const descOpts = { worlds: descriptorWorlds, minutes: descriptorMinutes, opponent: descriptorOpponent,
+                     difficulty, seedBase: seed, seeds: descriptorSeeds };
   const duelOpts = { worlds: duelWorlds, seeds: duelSeeds, minutes: duelMinutes, difficulty, seedBase: seed };
 
   // The defects the SHIPPED strategies themselves exhibit under this run's own opponent and match
@@ -1474,8 +1498,16 @@ const pickDials = (row, dials) => Object.fromEntries(dials.map(d => [d.k, row[d.
 
 // Every run's seed is derived from (base seed, world, strategy, difficulty, replicate) so a
 // row reproduces on its own — you can re-probe exactly one line of a sweep.
-const runSeed = (base, world, strategy, difficulty, rep) =>
-  hashStr(`${base}:${world}:${strategy}:${difficulty}:${rep}`);
+// `key` overrides the STRATEGY NAME in the hash, and exists for the same reason duelSeed's own
+// seedKey does (tools/duelCore.js, docs/ai-evolution-design.md §8.1) — this is that trap's twin in
+// the solo path, and it bites harder here because it defeats VERIFICATION. Re-measuring a saved
+// candidate under a new name draws a different map set, so "I ran the archive's own cell again and
+// got a different answer" conflates a genome changing with its maps changing. Measured: the
+// archive's never/small and never/swarm cells re-read as army 93 and 2 under new names, against 8
+// and 113 under their original ones. Pass one fixed key and every genome is described on identical
+// ground. Omitted, this is byte-for-byte the derivation every existing caller has always used.
+const runSeed = (base, world, strategy, difficulty, rep, key) =>
+  hashStr(`${base}:${world}:${key ?? strategy}:${difficulty}:${rep}`);
 
 function baseConfig(args) {
   return {
@@ -2008,6 +2040,7 @@ const CMDS = {
       layers, odyssey: args.odyssey === "true",
       descriptorWorlds: list(args["descriptor-worlds"], ["korrath", "ferros", "vesper"]),
       descriptorMinutes: num(args["descriptor-minutes"], 40),
+      descriptorSeeds: num(args["descriptor-seeds"], 2),
       descriptorOpponent: args.opponent || "turtle",
       difficulty: args.difficulty || "medium",
       duelWorlds: list(args["duel-worlds"], ["korrath", "ferros"]),
@@ -2018,7 +2051,7 @@ const CMDS = {
     const outDir = args["out-dir"] || "tools/candidates/cast";
     console.log(`ARCHIVE (MAP-Elites) — ${opts.iterations} evaluations`);
     console.log(`  axes:        ${ARCHIVE_DIMS.map(d => `${d.label} [${d.names.join("|")}]`).join("   x   ")}`);
-    console.log(`  describe on: ${opts.descriptorWorlds.join(", ")} @ ${opts.descriptorMinutes}m vs ${opts.descriptorOpponent}`);
+    console.log(`  describe on: ${opts.descriptorWorlds.join(", ")} x ${opts.descriptorSeeds} seed(s) @ ${opts.descriptorMinutes}m vs ${opts.descriptorOpponent}`);
     console.log(`  strength vs: ${panel.map(p => p.name).join(", ")} on ${opts.duelWorlds.join(", ")} @ ${opts.duelMinutes}m`);
     console.log(`  screen:      ${opts.screen ? "on — relative to what the SHIPPED strategies trip here" : "OFF"}`);
     console.log();

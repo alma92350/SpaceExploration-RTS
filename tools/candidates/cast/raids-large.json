@@ -1,0 +1,22 @@
+{
+  "name": "cast-raids-large",
+  "strategy": "cast-raids-large",
+  "overrides": {
+    "strategies": {
+      "cast-raids-large": {
+        "attackTimeoutMult": 0.858,
+        "armyAttackSizeMult": 0.406,
+        "garrisonMult": 0.976,
+        "neverInitiates": true,
+        "workerTargetMult": 1.136,
+        "warFootingMult": 3.373,
+        "warFootingTime": 57.267,
+        "turretCountMult": 0.596,
+        "matchEnemyForce": false,
+        "matchBuffer": 1.102,
+        "matchFloor": 9
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"raids/large\" (aggression 3.3 waves, army 16): 88% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

@@ -1,0 +1,22 @@
+{
+  "name": "cast-never-small",
+  "strategy": "cast-never-small",
+  "overrides": {
+    "strategies": {
+      "cast-never-small": {
+        "attackTimeoutMult": 0.73,
+        "armyAttackSizeMult": 0.701,
+        "garrisonMult": 0.443,
+        "neverInitiates": true,
+        "workerTargetMult": 1.3,
+        "warFootingMult": 3.162,
+        "warFootingTime": 54.772,
+        "turretCountMult": 0.775,
+        "matchEnemyForce": false,
+        "matchBuffer": 1.118,
+        "matchFloor": 7
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"never/small\" (aggression 0.0 waves, army 8): 81% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

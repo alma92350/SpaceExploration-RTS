@@ -1,0 +1,22 @@
+{
+  "name": "cast-never-token",
+  "strategy": "cast-never-token",
+  "overrides": {
+    "strategies": {
+      "cast-never-token": {
+        "attackTimeoutMult": 0.671,
+        "armyAttackSizeMult": 0.635,
+        "garrisonMult": 0.377,
+        "neverInitiates": true,
+        "workerTargetMult": 1.279,
+        "warFootingMult": 3.162,
+        "warFootingTime": 53.345,
+        "turretCountMult": 0.775,
+        "matchEnemyForce": true,
+        "matchBuffer": 1.15,
+        "matchFloor": 9
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"never/token\" (aggression 0.3 waves, army 3): 88% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}
