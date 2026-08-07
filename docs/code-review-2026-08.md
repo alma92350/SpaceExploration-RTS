@@ -1,0 +1,347 @@
+# Code review — Stellar Frontier: RTS
+
+**Date:** 2026-08-07 · **Commit:** `56d13d7` · **Reviewer:** external, architecture + TDD focus
+
+**Baseline measured, not assumed:**
+
+| Check | Result |
+|---|---|
+| `npm test` | **2494 pass, 0 fail** (271 s) |
+| `npm run typecheck` | **FAILS — exit 1**, 21 errors (TypeScript 7.0.2) / 2 errors (TypeScript 5.7) |
+| GitHub Actions | **Red since 2026-08-05.** Last green run `2026-08-05T17:02Z` |
+| Source / test size | 36,499 src lines · 40,356 test lines |
+| Dead exports | 1 (`sound.js:getVolume`) |
+| `engine/` import cycles | 0 |
+| UI import cycles | 15 |
+
+---
+
+## Verdict
+
+The simulation core is genuinely good work — better than most game codebases this size. `engine/` is
+acyclic, purity and determinism are enforced by tests that test *themselves*, and the comments
+explain *why*. That is real engineering.
+
+The problems are all on the outside of that core: **the quality gates are red and being merged
+through**, the type contract is enforced by a test that cannot fail on the thing that is broken,
+and the newest feature — the adaptive AI, ~3,000 lines across two PRs — **does not do what it says
+it does**, because the test written for it drives the code at a cadence the game never uses.
+
+No sugar coating: you have excellent discipline pointed at the wrong 20% of the surface. The engine
+is over-guarded relative to its risk. The release pipeline, the type layer, and the newest AI logic
+are under-guarded relative to theirs.
+
+---
+
+## 1. CI has been red for two days and two PRs merged straight through it — BLOCKER
+
+**What.** `npm run typecheck` exits 1. Both matrix jobs (Node 20, Node 22) fail at the
+*Type-check the annotated files* step. PR #90 and PR #91 both merged to `main` on a red build. The
+failing file is `competitionLedger.js`:
+
+- `competitionLedger.js:295` — `addRosterEntry`'s `@param` declares
+  `{ name, strategy?, archetype?, faction?, createdAt?, human? }`, but the body reads and writes
+  `entry.genome`. The field was added to the runtime shape and never to the type.
+- `competitionLedger.js:363–426` — `recordCompetition`'s `@param` types `rows` as `object[]`. The
+  body reads `r.aName`, `r.bName`, `r.winner`, `row.margin`. TypeScript 7 rejects property access on
+  bare `object`; TypeScript 5 did not.
+
+Neither is a runtime bug. The code works. But `CONTRIBUTING.md` names `npm run typecheck` as release
+gate #1, and it has been failing for every commit since 2026-08-05.
+
+**So what.** A red build that everyone merges through stops being a signal. Right now nothing in
+this repo can tell you whether a *new* break is your fault — the answer is always "it was already
+red". That is how the next real defect ships. The specific irony: the `genome` gap is precisely the
+"field renamed or added without updating the typedef" failure that `CONTRIBUTING.md` says the type
+layer exists to catch. The layer caught it. Nobody was listening.
+
+**Now what.**
+1. Fix both signatures. Add `genome?: object` to `addRosterEntry`'s param. Give `recordCompetition`
+   a real `MatchRow`-shaped param instead of `object[]` (or define the typedef in `engine/types.js`
+   and reference it).
+2. Turn on branch protection so `main` cannot take a merge on a red check. Until that exists, every
+   other item in this report is optional and this one is not.
+
+---
+
+## 2. CI installs an unpinned TypeScript — BLOCKER
+
+**What.** `.github/workflows/test.yml` runs `npx --yes --package typescript -- tsc -p jsconfig.json`.
+No version. That resolves to whatever is newest on the registry that morning. TypeScript 7.0.2 is
+what runs today, and it turns the same source into 21 errors where TypeScript 5.7 reports 2.
+
+**So what.** The build is not reproducible. A green commit can go red overnight with no code change,
+and you cannot tell a real regression from a compiler upgrade. This is also how item #1 got worse
+without anyone touching `competitionLedger.js` — the compiler moved, not the code. The comment above
+that line carefully explains why TypeScript stays out of `package.json`, and that reasoning is
+sound; the mistake is that "not a dependency" was allowed to mean "not a version".
+
+**Now what.** Pin it: `npx --yes --package typescript@5.7.2 -- tsc -p jsconfig.json`. Keep it out of
+`package.json` exactly as the comment argues — pinning the invocation costs you nothing and buys a
+reproducible gate. Bump the pin deliberately, as its own commit, so a compiler upgrade is reviewable.
+
+---
+
+## 3. The adaptive AI forgets the enemy in ~60 seconds, not the 4 minutes it documents — HIGH
+
+**What.** `engine/aiIntel.js:135` fades the stored belief and writes the faded value back, then
+recomputes the fade next cycle from the *same* `intelAt` stamp and applies it to the
+already-faded number. The decay compounds. The comment on line 130 says:
+
+> Linear fade rather than an exponential one: subtraction and division only … "how stale is this"
+> stays something a reader can do in their head.
+
+It is neither linear nor exponential — it is a product of `(1 - age/240)` over every think cycle, so
+the real decay rate depends on **how often the function is called**. `engine/ai.js:81` calls it
+every `THINK_INTERVAL = 1.5` sim-seconds. Driving the real module at the real cadence:
+
+| Sim seconds since last sighting | Documented (linear) | Actual |
+|---:|---:|---:|
+| 15 | 93.75 | 70.36 |
+| 30 | 87.50 | 25.35 |
+| 60 | 75.00 | **0.36** |
+| 120 | 50.00 | 0.00 |
+
+The belief is gone after one minute. Confidence collapses faster still, because
+`readEnemy` multiplies the already-compounded total by a *second*, independent freshness term
+(`aiIntel.js:157,162`) — the decay is applied twice.
+
+**So what.** This breaks the headline promise of the feature and of `docs/ai-adaptive-opponent.md`:
+
+- The module header says "an army stepping out of vision for a fight doesn't erase itself." It does.
+- `enemyIsGreedy` needs `confidence >= 0.25`, which needs ~225 ore of *live* sighting. In practice it
+  can only fire while the AI is actively looking at the enemy — the persistent belief contributes
+  nothing.
+- `updateAdaptMode` computes `target = 0.5 + (posture - 0.5) * confidence`. With confidence at
+  ~0, target is neutral, the 0.15 dead band swallows it, and `adaptMode` sits pinned at 0.5.
+  `adaptDefenceMult` then returns 1.0 — byte-identical to having no adaptation at all.
+
+So the AI adapts only while it has eyes on the enemy, which is exactly the case where it did not need
+a belief model. Scouting has close to zero payoff, and the evolvable dials bred on top of this
+(`punishPosture`, `punishConfidence`, `adaptBandMult`, `adaptRateMult`, `defenceSwingMult`) were
+searched against a signal that is mostly zero — **the cast in `tools/candidates/cast/` may be tuned
+against noise.**
+
+**Now what.**
+1. Decide which the design wants and make the code say it. Cleanest fix: keep a `intelPeakMil` /
+   `intelPeakEco` high-water pair that is only ever *raised* by a sighting, and compute the faded
+   value at read time from `intelAt` — never write the faded number back. That makes the fade
+   genuinely linear, cadence-independent, and matches every word of the existing comments.
+2. Remove the double decay: either `readEnemy` applies freshness, or the stored value carries it.
+   Not both.
+3. Re-run the MAP-Elites cast afterwards. The archive's descriptors are downstream of this.
+
+Red test proving it (drop into `test/aiIntel.test.js`):
+
+```js
+test("the belief fades linearly over INTEL_FADE, whatever the think-cycle rate", () => {
+  const s = { time: 0, units: new Map(), buildings: new Map(), fogs: { ai: null },
+              ai: { intelMil: 100, intelEco: 0, intelAt: 0, adaptMode: null },
+              playerAi: null, players: {} };
+  while (s.time < INTEL_FADE / 2) { s.time += 1.5; updateIntel(s, "ai"); }  // ai.js THINK_INTERVAL
+  const mil = readEnemy(s, "ai").mil;
+  assert.ok(Math.abs(mil - 50) < 5, `half the window should leave ~50, got ${mil.toFixed(4)}`);
+});
+```
+
+Currently fails with `got 0.0000`.
+
+---
+
+## 4. The test for #3 drives the code at a cadence production never uses — HIGH (TDD)
+
+**What.** `test/aiIntel.test.js:179` is the test that owns this behaviour. It jumps
+`s.time` in one hop (`0` → `INTEL_FADE * 0.5` → `INTEL_FADE * 3`) and calls `updateIntel` **once**
+per hop. A single call *is* linear, so the test passes. The bug only exists across repeated calls —
+which is the only way the game ever calls it.
+
+Its assertions are directional, not numeric:
+
+```js
+assert.ok(faded > 0 && faded < grown, `time must fade the belief (${grown} -> ${faded})`);
+```
+
+Any decay curve at all satisfies that. A value 200× too small passes.
+
+**So what.** This is the most expensive class of test gap you have, because it is invisible: the
+feature has 441 lines of new tests, they are well-written, they read as thorough, and they cannot
+fail on the defect. Two things went wrong together — the test *stepped time* where production
+*accumulates* it, and it asserted a *direction* where the docs specify a *number*. Either alone
+would probably have caught this.
+
+**Now what.**
+1. For any function that accumulates state across calls, the test must call it the way the caller
+   does — in a loop, at the production interval. Consider a shared `advance(state, seconds)` helper
+   in `test/_helpers.js` that ticks at `THINK_INTERVAL` so this is the path of least resistance.
+2. Where a doc comment states a number (240 s, half at 120 s), assert the number. Directional
+   assertions are right for emergent outcomes, wrong for specified curves.
+3. Worth a sweep: 959 of your assertions are `assert.ok(a > b)`-shaped. Most are legitimate for a
+   simulation. The ones guarding a *documented constant* are not.
+
+---
+
+## 5. The type-contract test checks that annotations exist, not that they are correct — MEDIUM (TDD)
+
+**What.** `test/types-contract.test.js` does two things. It compares constructed keys against
+declared `@property` lines for **five** factories (`State`, `AiState`, `Diplomacy`, `Galaxy`,
+`GalaxySettings`). And it asserts every exported function in a `// @ts-check` file has *some*
+`@param`/`@returns`:
+
+```js
+if (!/@(param|returns)\s*\{/.test(doc)) bare.push(...)
+```
+
+`addRosterEntry` has a `@param`. It is wrong. The test passes. `RosterEntry`, `CompetitionLedger`
+and `MatchRow` are not in the five covered shapes, and `tsc` never runs inside `npm test`.
+
+**So what.** The guard measures annotation *density* and calls it type safety. That is a proxy, and
+this is the failure the proxy permits: a present-but-incomplete signature on an uncovered shape,
+which is exactly the CI break in #1. The only check that would have caught it lives outside the
+suite, in CI, which is red and ignored. The test file's own header is eloquent about drift being
+invisible — and then leaves a hole the same size.
+
+**Now what.**
+1. Add `npm run typecheck` to the local loop, or add a suite test that shells out to `tsc` and
+   asserts exit 0. A gate developers only see in CI is a gate developers do not see.
+2. Extend the factory table to the competition shapes — `RosterEntry`, `CompetitionLedger`,
+   `MatchRow`. They are user-facing persisted data and deserve it more than `GalaxySettings`.
+
+---
+
+## 6. Two functions are over 780 lines — MEDIUM
+
+**What.** Measured by brace depth, not heuristics:
+
+- `hudSelection.js:946` — `rebuildSelectionPanel()`, **871 lines**
+- `input.js:38` — `attachInput()`, **785 lines**
+
+For scale, the next largest in the repo is `hud.js:renderHUD()` at 214.
+
+**So what.** These are the two places a contributor is most likely to need to change and least able
+to change safely. `attachInput()` in particular closes over the entire input state in one scope, so
+there is no seam to test a single interaction against. Note the team is already aware of the first —
+`hudPanelSignature.js`'s header calls out "800 lines of button construction" by name, and
+`docs/code-improvement-tiers.md` files the fix under Tier 3. It has not been scheduled, and it grew.
+
+**Now what.** Do not rewrite either. Split by panel family, one at a time, behind the existing
+`panelSignature` seam — that seam was built for exactly this and is the reason this is a move rather
+than a rewrite. One family per PR, suite green each time. `attachInput()` splits along the same
+line: one module per input mode (selection, camera, build placement, hotkeys).
+
+---
+
+## 7. Import discipline stops at the engine boundary — MEDIUM
+
+**What.** `engine/` has **zero** internal import cycles. The UI layer has **15**, among
+`boot.js`, `setup.js`, `competition.js`, `saveload.js`, `overlays.js`, `hud.js`, `hudSelection.js` —
+including a 5-module ring (`boot → competition → overlays → saveload → setup → boot`).
+
+**So what.** ES modules tolerate cycles, so nothing is broken today. What breaks is testability and
+change safety: you cannot import `competition.js` in a test without dragging `boot.js` and the whole
+UI graph in, and module-init order becomes load-bearing in a way nobody has written down. The engine
+proves the team can hold this line — it just was never asked of the UI.
+
+**Now what.** No big refactor. Break the ring at its weakest edge: whatever `boot.js` needs from
+`competition.js` (and vice versa) is almost certainly one or two functions that belong in a shared
+leaf module. `session.js` and `dom.js` already play that role for others. Add a cycle check to
+`test/static-integrity.test.js` and ratchet — assert the count never exceeds today's 15, then walk it
+down.
+
+---
+
+## 8. `tools/` ships to the browser but sits outside the purity and determinism guards — MEDIUM
+
+**What.** Four shipped modules import from `tools/`:
+
+```
+boot.js              → tools/selfplay.js
+competition.js       → tools/duelCore.js, tools/genome.js
+competitionWorker.js → tools/duelCore.js, tools/genome.js
+playerFingerprint.js → tools/genome.js
+```
+
+`test/engine-purity.test.js` walks `engine/` and follows relative imports *out* of it. Nothing in
+`engine/` imports `tools/`, so `tools/` is never scanned. Meanwhile
+`test/static-integrity.test.js:24` still asserts the opposite in prose:
+
+> The subset the BROWSER loads: shipped code minus tools/, which are Node CLI benches
+> (tools/ailab.js, tools/selfplay.js, tools/serve.js) that index.html never reaches.
+
+That was true when written. It is not true now.
+
+**So what.** `tools/duelCore.js` and `tools/genome.js` run inside the competition Worker and decide
+match outcomes that become **Elo ratings** — persisted, exported, compared across sessions. Their
+determinism matters as much as the engine's. A `Math.random()` or `Date.now()` landing in either one
+would silently make ratings irreproducible and no guard would say a word. They are clean today (I
+checked); the point is that nothing keeps them clean. `tools/genome.js` also parses untrusted
+player-authored JSON, which makes it a trust boundary sitting in a directory named "dev tooling".
+
+**Now what.**
+1. Extend the purity scan's roots to include the browser-reachable `tools/` files, or simplest and
+   better: move `genome.js`, `duelCore.js` and `selfplay.js` out of `tools/` into the shipped tree
+   (they have no Node-only imports — that is exactly why they were split out of `ailab.js`). Leave
+   `ailab.js`, `selfplay-cli.js` and `serve.js` behind as the real benches.
+2. Fix the stale comment either way.
+
+---
+
+## 9. Smaller remarks
+
+**Release cadence has stalled.** `version.js`, `package.json` and `version.json` all agree on
+`1.0.0` — that part is correct. But `CHANGELOG.md`'s `[Unreleased]` section now holds observer mode,
+patrol orders, the counter-triangle work, doctrine research timing, Odyssey world selection, the
+endgame clock, a new archetype, competitions with Elo, genome evolution and an in-app AI editor.
+*So what:* the release checklist in `CONTRIBUTING.md` is thorough and unused, and a browser smoke
+test (step 2) has not gated any of this. *Now what:* cut 1.1.0 once CI is green. The checklist is
+good; run it.
+
+**Documentation outweighs the thing it documents.** `docs/` is 1.3 MB — a 805 KB
+`player-handbook.html` plus ~500 KB of design docs (`improvement-proposals.md` alone is 152 KB).
+*So what:* design docs that large stop being read, and several already disagree with the code (see
+#3, #8). *Now what:* when a doc and the code disagree, the doc is a bug. Prune the proposal backlog
+to what is actually planned.
+
+**CI runners are on deprecated Node.** `actions/checkout@v4` and `actions/setup-node@v4` are being
+force-run on Node 24 with a deprecation warning. *Now what:* bump to `@v5` when convenient — no
+urgency, but it will become a hard failure.
+
+**Autosave and update timers are never cleared** (`saveload.js:354`, `update.js:107`). Correct for a
+single-page app that lives as long as the tab; both are properly guarded against running under Node.
+Noted only so a future reviewer does not re-flag it. No action.
+
+---
+
+## What is genuinely good — and should not be traded away
+
+Stated plainly, because a review that only lists faults gives a false picture of this codebase:
+
+- **The guard tests test themselves.** `determinism.test.js` mutates seven sim fields and requires
+  the fingerprint to move; `engine-purity.test.js` asserts its own file-walk reaches `data.js`;
+  `static-integrity.test.js` feeds its resolver a deliberate typo and requires a report;
+  `types-contract.test.js` checks its own parser bites. Very few teams write the meta-test. It is
+  the single strongest thing here.
+- **Determinism coverage is real.** The roster sweep runs all 11 worlds *and fails if the fixture
+  stops reaching combat* — that assertion is the difference between a sweep and theatre.
+- **Comments explain why, not what,** and they carry the history of the bug they prevent. The
+  `loop.js` note on why speed scales the accumulator instead of `hz` is a good example.
+- **Additive save fields were handled correctly** — the new intel fields in `persist.js` default
+  conservatively and correctly skip a `SAVE_VERSION` bump, exactly as `CONTRIBUTING.md` prescribes.
+- **Near-zero rot:** one unreferenced export in 36k lines, no `.skip`, no `.only`, no silent
+  `catch {}`.
+
+---
+
+## Order of work
+
+| # | Item | Effort |
+|---|---|---|
+| 1 | Fix the two `competitionLedger.js` signatures; get CI green | 30 min |
+| 2 | Pin the TypeScript version in CI; add branch protection | 15 min |
+| 3 | Fix the `updateIntel` compounding decay; land the red test first | half day |
+| 4 | Re-run the MAP-Elites cast against the corrected signal | rerun |
+| 5 | `tsc` inside `npm test`; extend the contract table to competition shapes | half day |
+| 6 | Move browser-reachable `tools/` files into the shipped tree | 1 hour |
+| 7 | Cycle ratchet in `static-integrity`; cut 1.1.0 | 1 day |
+| 8 | Split `rebuildSelectionPanel` / `attachInput`, one family per PR | ongoing |
+
+Items 1 and 2 are not improvements. They are the precondition for trusting anything else here.
