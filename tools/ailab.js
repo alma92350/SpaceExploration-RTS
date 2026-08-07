@@ -1202,10 +1202,23 @@ export function runEvolution({
         four shipped baselines, so its score is absolute and comparable across the whole run —
         which dissolves the anchoring problem `evolve` had to correct for (eloForMatches restarts
         from a fresh 1200 each generation, so ratings there are only comparable within one).
-     3. THE HEALTH SCREEN IS FREE. Describing a genome means running it solo on the Odyssey bench,
-        which is exactly what CHECKS needs — at exactly the 40-60 minute length those detectors are
-        calibrated for. So `evolve`'s opt-in `--screen` is ON by default here at no extra cost, and
-        a genome that deadlocks its own supply is refused entry to the archive whatever it scores.
+     3. THE HEALTH SCREEN IS FREE, AND SELF-CALIBRATING. Describing a genome means running it solo
+        on the Odyssey bench, which is exactly what CHECKS needs. So `evolve`'s opt-in `--screen`
+        is ON by default here at no extra cost.
+          But it screens RELATIVE TO THE SHIPPED STRATEGIES, not against the raw detector list, and
+        that is not a nicety — the first real run of this command refused 39 of its first 41
+        genomes INCLUDING all four shipped strategies, which is proof the screen was wrong rather
+        than the genomes. The cause: CHECKS was calibrated against the `passive` sparring bot, and
+        the descriptor run deliberately uses a PROVOKING one (see below), where an AI spends on
+        army and takes losses so `devFinal` never clears dev-flatline's threshold. A detector that
+        fires on correct behaviour is worse than no detector — this file's own CHECKS header
+        records three rewrites of exactly that mistake, and choosing a different opponent
+        reintroduced it a fourth time.
+          So: the seed strategies are evaluated first and always seated, the union of what THEY
+        trip becomes the tolerated set, and a genome is refused only for a defect the shipped AI
+        does not also exhibit under identical conditions. That is the question the screen was
+        always trying to ask, and it now re-answers it for whatever opponent and match length the
+        caller picks instead of assuming one.
 
    The descriptor run uses the `turtle` sparring bot by default: a real economy behind turrets that
    never attacks, but whose turrets kill scouts and so DO provoke. That makes the aggression axis
@@ -1305,6 +1318,11 @@ export function runArchive({
   const descOpts = { worlds: descriptorWorlds, minutes: descriptorMinutes, opponent: descriptorOpponent, difficulty, seedBase: seed };
   const duelOpts = { worlds: duelWorlds, seeds: duelSeeds, minutes: duelMinutes, difficulty, seedBase: seed };
 
+  // The defects the SHIPPED strategies themselves exhibit under this run's own opponent and match
+  // length. Null until the seeds have been measured, which is what disables the screen for them —
+  // see point 3 in the header for why screening against the raw detector list was wrong.
+  let tolerated = null;
+
   // Evaluate one genome and try to seat it. A genome only ever displaces the CURRENT OCCUPANT of
   // its own cell, which is the whole mechanism: local competition, global diversity.
   const consider = (genome, origin) => {
@@ -1312,32 +1330,42 @@ export function runArchive({
     const cand = toCandidate(genome, name, { genes });
     const { desc, tripped } = describeCandidate(cand, descOpts);
     evaluated++;
-    if (screen && tripped.length) {
+    // Only defects the shipped AI does NOT also show here count against a genome.
+    const novel = tolerated ? tripped.filter(t => !tolerated.has(t)) : [];
+    if (screen && novel.length) {
       rejected++;
-      log.push({ name, origin, cell: cellKey(desc), desc, tripped, seated: false, reason: "screen" });
+      log.push({ name, origin, cell: cellKey(desc), desc, tripped, novel, seated: false, reason: "screen" });
       // Report the refusal too, not just the seatings. A screen that is rejecting EVERYTHING looks
       // identical to a search that is finding nothing unless each refusal is visible — and there is
       // a specific, easy way to land in that state: CHECKS is calibrated for 40-60 sim-minute runs
       // (several detectors carry an "…and it never resolved in the last third" term keyed to that
       // length), so a short --descriptor-minutes makes every healthy genome trip dev-flatline.
       if (onCell) onCell(log[log.length - 1], archive);
-      return null;
+      return { tripped, seated: false };
     }
     const key = cellKey(desc);
     const fitness = panelStrength(cand, panel, duelOpts);
     const incumbent = archive.get(key);
     const seated = !incumbent || fitness > incumbent.fitness;
     if (seated) archive.set(key, { key, genome, desc, fitness, name, origin, evaluatedAt: evaluated });
-    log.push({ name, origin, cell: key, desc, tripped, fitness: +fitness.toFixed(3), seated,
+    log.push({ name, origin, cell: key, desc, tripped, novel, fitness: +fitness.toFixed(3), seated,
                beat: incumbent ? +incumbent.fitness.toFixed(3) : null });
     if (onCell) onCell(log[log.length - 1], archive);
-    return seated ? key : null;
+    return { tripped, seated };
   };
 
   // SEED from the shipped strategies. Four hand-written rows with real search already spent on
   // them, and — the point here — four rows that already sit in different parts of the behaviour
   // space, so the archive starts spread rather than clustered.
-  for (const key of seedStrategies) consider(genomeFrom({ strategy: key, genes }), `seed:${key}`);
+  //
+  // They also CALIBRATE the screen: whatever they trip under this run's own opponent and match
+  // length is what the detectors are saying about the configuration rather than about a genome, so
+  // it becomes the tolerated set and the seeds themselves are never refused. `tolerated` stays null
+  // until this loop finishes, which is what exempts them.
+  const seedTrips = new Set();
+  for (const key of seedStrategies)
+    for (const t of consider(genomeFrom({ strategy: key, genes }), `seed:${key}`).tripped) seedTrips.add(t);
+  tolerated = seedTrips;
 
   while (evaluated < iterations) {
     const elites = [...archive.values()];
@@ -1365,6 +1393,7 @@ export function runArchive({
   return {
     cells: [...archive.values()].sort((x, y) => x.key < y.key ? -1 : 1),
     dims: ARCHIVE_DIMS, evaluated, rejected, coverage: archive.size / total, genes, log,
+    tolerated: [...tolerated],   // what the SHIPPED strategies trip here — report it, never hide it
   };
 }
 
@@ -1991,7 +2020,7 @@ const CMDS = {
     console.log(`  axes:        ${ARCHIVE_DIMS.map(d => `${d.label} [${d.names.join("|")}]`).join("   x   ")}`);
     console.log(`  describe on: ${opts.descriptorWorlds.join(", ")} @ ${opts.descriptorMinutes}m vs ${opts.descriptorOpponent}`);
     console.log(`  strength vs: ${panel.map(p => p.name).join(", ")} on ${opts.duelWorlds.join(", ")} @ ${opts.duelMinutes}m`);
-    console.log(`  screen:      ${opts.screen ? "on (free — the descriptor run IS the health run)" : "OFF"}`);
+    console.log(`  screen:      ${opts.screen ? "on — relative to what the SHIPPED strategies trip here" : "OFF"}`);
     console.log();
 
     const res = runArchive({
@@ -2003,7 +2032,10 @@ const CMDS = {
         // and still be seated or simply lose its cell contest, and printing that as "refused" would
         // report a screen that isn't running.
         + "  " + (entry.seated ? (entry.beat != null ? `seated (beat ${(entry.beat * 100).toFixed(0)}%)` : "SEATED — new cell")
-                : entry.reason === "screen" ? `refused [${entry.tripped.join(",")}]`
+                // Name the NOVEL defect, not everything it tripped: the tolerated ones are what the
+                // shipped strategies do here too, so listing them would blame a genome for the
+                // configuration.
+                : entry.reason === "screen" ? `refused [${entry.novel.join(",")}]`
                 : `no (holder ${(entry.beat * 100).toFixed(0)}%)`)
         + `   ${archive.size} cells`),
     });
@@ -2013,7 +2045,12 @@ const CMDS = {
     const [xDim, yDim] = ARCHIVE_DIMS;
     const at = (x, y) => res.cells.find(c => c.key === `${xDim.names[x]}/${yDim.names[y]}`);
     console.log(`\nTHE CAST — ${res.cells.length}/${xDim.names.length * yDim.names.length} cells filled `
-      + `(${(res.coverage * 100).toFixed(0)}% coverage), ${res.evaluated} evaluated, ${res.rejected} refused by the health screen\n`);
+      + `(${(res.coverage * 100).toFixed(0)}% coverage), ${res.evaluated} evaluated, ${res.rejected} refused by the health screen`);
+    // Never hide the calibration. If the shipped strategies trip everything here, the screen is a
+    // no-op and the reader has to be able to see that rather than infer it from a suspiciously
+    // clean run.
+    console.log(`  screen tolerated (what the SHIPPED strategies trip under these settings): `
+      + `${res.tolerated.length ? res.tolerated.join(", ") : "nothing — the full detector list was enforced"}\n`);
     console.log(pad("", 9) + xDim.names.map(n => pad(n, 16)).join("") + `   <- ${xDim.label}`);
     for (let y = 0; y < yDim.names.length; y++) {
       console.log(pad(yDim.names[y], 9) + xDim.names.map((_, x) => {
@@ -2044,11 +2081,10 @@ const CMDS = {
     // An archive that came back (nearly) empty has one overwhelmingly likely cause, and it is not
     // "no good AI exists". Say so, rather than leaving a blank grid to be read as a result.
     if (res.rejected > res.evaluated * 0.8)
-      console.log(`\n!! ${res.rejected} of ${res.evaluated} genomes were REFUSED by the health screen.`
-        + `\n   CHECKS is calibrated for 40-60 sim-minute runs — several detectors ask "…and it never`
-        + `\n   resolved in the last third", which a short run cannot satisfy however healthy the AI is.`
-        + `\n   --descriptor-minutes is ${opts.descriptorMinutes}. Raise it to 40+, or pass --screen false`
-        + `\n   to seat genomes unscreened (and lose the free defect filter).`);
+      console.log(`\n!! ${res.rejected} of ${res.evaluated} genomes were REFUSED by the health screen,`
+        + `\n   for defects the shipped strategies do NOT show here. That is a lot, and worth reading`
+        + `\n   before trusting: --descriptor-minutes is ${opts.descriptorMinutes} against '${opts.descriptorOpponent}'.`
+        + `\n   Pass --screen false to seat genomes unscreened (and lose the defect filter).`);
     if (args.json) { writeFileSync(args.json, JSON.stringify(res.log, null, 1)); console.log(`wrote ${args.json}`); }
   },
 };
@@ -2140,11 +2176,14 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
                               measured on the solo Odyssey bench) and competes ONLY against the
                               current occupant of its own cell -- so a genome that wins by refusing
                               to fight can win the "never attacks" cell and nothing else, which is a
-                              structural answer to the Goodhart failure `evolve` hit rather than a
+                              structural answer to the Goodhart failure 'evolve' hit rather than a
                               hand-written penalty for it. Strength is measured against a FIXED
                               panel, so it is absolute and comparable across the whole run. The
-                              health screen is ON by default and free: describing a genome means
-                              running it solo at exactly the length CHECKS is calibrated for.
+                              health screen is ON by default, free (describing a genome IS running
+                              it solo), and calibrated RELATIVE to the shipped strategies: a genome
+                              is refused only for a defect they do not also show under the same
+                              opponent and match length, because CHECKS is calibrated against the
+                              'passive' bot and this runs against a provoking one.
                               Writes one runnable candidate per filled cell.
 
 Common flags

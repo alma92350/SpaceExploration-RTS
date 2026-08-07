@@ -1348,16 +1348,21 @@ test("every cell in the archive really is a distinct behaviour", () => {
       "a cell's key disagrees with its own measured descriptors");
 });
 
-test("the health screen refuses entry outright, whatever the genome scores", () => {
-  // Screening is ON by default here (unlike evolve) because the descriptor run IS the health run.
-  // A refused genome must never be seated and must never even be scored — the early return is the
-  // point, since scoring is the expensive half.
-  const res = runArchive({ ...archiveOpts, iterations: 6, seed: 7, screen: true, descriptorMinutes: 6 });
+test("the health screen refuses entry outright, and never duels what it refuses", () => {
+  // Forcing the refusal path takes a deliberate setup now, and the reason is the point: with the
+  // seed strategies present, a 6-minute descriptor run's dev-flatline is TOLERATED, because the
+  // shipped AI trips it here too. Passing no seeds leaves nothing to calibrate against, so the raw
+  // detector list is enforced — which is the only configuration where an absolute screen is the
+  // intended behaviour rather than the bug the test below pins.
+  const res = runArchive({ ...archiveOpts, iterations: 6, seed: 7, screen: true, seedStrategies: [] });
+  assert.deepEqual(res.tolerated, [], "with no seeds there is nothing to calibrate against");
   const refused = res.log.filter(e => e.reason === "screen");
   assert.ok(refused.length > 0, "a 6-minute descriptor run must trip dev-flatline — CHECKS is calibrated for 40-60m");
   for (const e of refused) {
     assert.equal(e.seated, false);
-    assert.equal(e.fitness, undefined, "a refused genome must not be duelled — that is the saving");
+    // The early return is the saving, not a detail: scoring is the expensive half of an evaluation,
+    // so a screen that refused AFTER duelling would cost the same as no screen at all.
+    assert.equal(e.fitness, undefined, "a refused genome must not be duelled");
     assert.ok(!res.cells.some(c => c.name === e.name), "a refused genome reached the archive anyway");
   }
   assert.equal(res.rejected, refused.length);
@@ -1390,4 +1395,29 @@ test("labWorld forwards an archetype, so a genome's own temperament reaches the 
   assert.equal(shape(labWorld({ world: "ferros", strategy: "default", difficulty: "medium",
     opponent: "passive", seed: 1, apm: "real", archetype: "rusher" }).state), "Rusher",
     "an explicit archetype must win over the world's");
+});
+
+test("the health screen never refuses the SHIPPED strategies — it calibrates against them", () => {
+  // THE REGRESSION THIS EXISTS FOR. The archive's first real run refused 39 of its first 41
+  // genomes, including all four shipped strategies, because CHECKS was calibrated against the
+  // `passive` sparring bot while the descriptor run deliberately uses a provoking one — where the
+  // AI spends on army, takes losses, and never clears dev-flatline's development threshold. A
+  // detector firing on correct behaviour is worse than no detector; the seeds are the definition
+  // of correct behaviour available, so they set the tolerance instead of being judged by it.
+  const res = runArchive({ ...archiveOpts, iterations: 8, seed: 13, screen: true, descriptorMinutes: 6 });
+  const seeds = res.log.filter(e => e.origin.startsWith("seed:"));
+  assert.equal(seeds.length, Object.keys(STRATEGIES).length, "every shipped strategy must be evaluated");
+  for (const s of seeds)
+    assert.notEqual(s.reason, "screen", `the shipped strategy ${s.origin} was refused by the screen`);
+  // A 6-minute descriptor run trips detectors calibrated for 40-60m, so this run MUST have
+  // something to tolerate — otherwise the test would pass vacuously on a screen that never fired.
+  assert.ok(res.tolerated.length > 0, "nothing was tolerated — the calibration path never engaged");
+  // …and the tolerance is exactly what the seeds tripped, no more.
+  const seedTrips = new Set(seeds.flatMap(s => s.tripped));
+  assert.deepEqual([...res.tolerated].sort(), [...seedTrips].sort());
+  // Nobody is refused for a defect the shipped AI also shows.
+  for (const e of res.log.filter(e => e.reason === "screen")) {
+    assert.ok(e.novel.length > 0, `${e.name} was refused with no novel defect`);
+    for (const t of e.novel) assert.ok(!res.tolerated.includes(t), `${t} is tolerated but was held against ${e.name}`);
+  }
 });
