@@ -1,67 +1,70 @@
-# The cast — PROVISIONAL. Read this before using any of these.
+# The cast — ten playable AIs whose LABELS are still unverified
 
-Fifteen AI genomes produced by `node tools/ailab.js archive` (MAP-Elites) on 2026-08-07, one per
-filled cell of an aggression × army-size grid. Full context: `docs/ai-evolution-design.md` §6E and
-the 2026-08-07 rows of the search ledger in `docs/odyssey-ai-review.md`.
+Produced by `node tools/ailab.js archive` (MAP-Elites), one file per filled cell of an
+aggression × army-size grid. Design: `docs/ai-evolution-design.md` §6E; ledger rows dated
+2026-08-06/07 in `docs/odyssey-ai-review.md`.
 
-## What is trustworthy here
+## Trustworthy: the genomes and their strength
 
-**The genomes.** Each file is a real, runnable candidate in exactly the shape `duel` / `sweep` /
-`leaderboard` already take. They pass the health screen and they play.
+Each file is a real, runnable candidate in exactly the shape `duel` / `sweep` / `leaderboard`
+already take. Each passed the health screen. The percentage in each `_hypothesis` line is a win
+rate over 16 real matches against a fixed panel of all four shipped strategies, both owner slots,
+two worlds — fixed opponents, so those numbers are comparable to each other and across runs. They
+range 38%–88%.
 
-**Their strength numbers.** The percentage in each `_hypothesis` line is a win rate over 16 real
-matches against a fixed panel of all four shipped strategies (both owner slots, two worlds). Fixed
-opponents mean those numbers are comparable to each other and across runs. They range 56%–94%.
+## NOT trustworthy: the cell labels
 
-## What is NOT trustworthy: the cell labels
+**Do not treat these ten as ten reliably distinct play styles.** The behaviour label on each file
+is a measurement that does not reproduce on maps the archive never saw.
 
-**The behaviour label on each file — `never/swarm`, `raids/token` and so on — is not reliable, and
-you should not treat these fifteen as fifteen genuinely distinct play styles.**
+Verified by re-measuring four cells on **held-out replicates** — the archive measured on replicates
+0–1, so 2–3 are maps it never trained on. Three of the four landed in a different bin:
 
-The run that produced them measured each genome's behaviour with a single 40-minute run per world.
-That is far too noisy to bin on. Re-measuring two cells three bins apart on the army axis returned:
-
-| cell | army in the archive run | army re-measured |
+| cell | filed as | re-measured |
 |---|---|---|
-| `never/small` | 8 | 93 |
-| `never/swarm` | 113 | 2 |
+| `never/token` | never/token | never/token ✓ |
+| `never/small` | never/small | never/token |
+| `waves/swarm` | waves/swarm | probes/token |
+| `raids/token` | raids/token | probes/token |
 
-They swapped ends of the axis. The per-world spread behind a single one of those means was
-`32 / 0 / 247` — that is not a measurement, it is a card draw. Two of these files differ in exactly
-one active gene (`workerTargetMult` 1.30 vs 1.47) yet were filed three bins apart.
+The verification harness itself was checked first, because a uniformly-tiny re-measurement looks
+more like a broken script than like noise: re-run on the archive's *own* replicates it reproduces
+the filed descriptor exactly. The harness is faithful; the descriptor is not stable.
 
-The extremes are probably real — a genome averaging 3 units and one averaging 138 are not the same
-AI. Neighbouring cells are not.
+## Why — and why the obvious fixes were not enough
 
-## Why it was unstable, and what was fixed
+The final army size of a 40-minute Odyssey run varies enormously with the map. One genome, held
+fixed, measured across three worlds × two replicates:
 
-Holding one genome fixed on pinned maps over four replicates per world:
+| | korrath | ferros | vesper |
+|---|---|---|---|
+| rep 0 | 3 | 58 | 47 |
+| rep 1 | 3 | 143 | 208 |
 
-| world | army across replicates |
-|---|---|
-| korrath | 26, 23, 22, 27 |
-| vesper | 1, 0, 8, 0 |
-| ferros | 36, 3, 1, **296** |
+Median ≈ 53. The same genome on replicates 2–3 medians at **1.5**.
 
-The distribution is **heavy-tailed**, not merely noisy — an Odyssey economy that gets going
-compounds, so roughly one run in twelve returns an order of magnitude more army than the rest.
-That matters because it rules out the obvious fix: averaging inherits a heavy tail rather than
-smoothing it. The same twelve runs give a **mean** of 21.0 / 14.8 / 36.9 at 1 / 2 / 4 replicates —
-*diverging*, because whichever sample happens to contain the 296 decides the answer. The **median**
-over the identical samples gives 26 / 13 / 15, which converges.
+Two fixes already landed and were not sufficient:
 
-Three changes landed:
+- **A median instead of a mean.** The distribution is heavy-tailed — an economy that gets going
+  compounds — and averaging inherits a heavy tail rather than smoothing it. Measured over twelve
+  runs of one genome, the *mean* read 21.0 / 14.8 / 36.9 at 1 / 2 / 4 replicates (diverging,
+  because whichever sample held a 296 decided the answer) while the *median* read 26 / 13 / 15
+  (converging). That fixed the pathology it was aimed at.
+- **`runSeed` gained a pinned key**, so every genome in a run is described on identical maps and a
+  saved cell re-reads on the same ones later. Without it, renaming a candidate changed its maps,
+  which defeats verification outright.
 
-- **The descriptor is now a median, not a mean.** This is the fix that matters, and it costs
-  nothing.
-- **`runSeed` takes an optional pinned key**, so every genome in a run is described on identical
-  maps and a saved candidate re-reads on those same maps later. Previously the strategy *name* was
-  hashed into the seed, so renaming a candidate changed its maps — which is why the re-measurement
-  in the table above had to be read carefully, since it conflated "different genome" with
-  "different maps".
-- **`--descriptor-seeds`** (default 2) takes several replicates per world, which now buys real
-  precision on top of a robust statistic instead of buying lottery tickets.
+Both were necessary and neither was enough, because the residual variance is **across worlds**, not
+within one. A per-world median of 3 and a per-world median of 208 do not average into a
+description of a genome; they average into a description of the roster.
 
-The files in this directory predate all three. Re-run `archive` to get a cast whose labels can be
-trusted; until then, treat these as fifteen playable AIs of measured strength and unverified
-personality.
+## What a trustworthy cast would need
+
+- **Bin per world, then vote** rather than taking one median across a pooled sample — a genome that
+  is a swarm on vesper and a token force on korrath is not one thing, and the current descriptor
+  hides that instead of reporting it.
+- **Many more replicates** than 2, if the pooled median is kept.
+- Or **a descriptor that is not final army size** — an integral over the run, or a per-ore-spent
+  ratio, would not inherit the compounding that makes the raw count so map-dependent.
+
+Until then: ten playable AIs of measured strength and unverified personality.
