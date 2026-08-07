@@ -27,8 +27,9 @@ import {
   run, labWorld, summarise, score, applyOverrides, CHECKS, OPPONENTS, WORLDS, WEIGHTS, runLeaderboard,
   runDuel, runRoundRobin, pinnedDuelDials, runSwappedDuel, runDuelBrackets, runRoundRobinSwapped, runSearch,
   runSwissTournament, pairRound, rankStandings, buildSwissBracket, snapshotTables, restoreTables,
-  runEvolution,
+  runEvolution, runArchive, ARCHIVE_DIMS, binOf,
 } from "../tools/ailab.js";
+import { toCandidate } from "../tools/genome.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
 import { DIFFICULTY_OPTIONS } from "../engine/aiDifficulty.js";
@@ -1283,4 +1284,110 @@ test("elitism is monotone: the best genome is never lost to an unlucky mutation"
   for (const entry of res.log) seen = Math.max(seen, entry.champion.edge);
   assert.equal(+res.bestEdge.toFixed(1), seen,   // the log rounds to 1dp; the result carries full precision
     "the reported best must be the best edge any generation actually reached");
+});
+
+/* ---------- archive: MAP-Elites, a CAST rather than one optimum ----------
+
+   The archive's whole claim is that local competition produces global diversity — a genome only
+   ever displaces the current occupant of its OWN behaviour cell, so the degenerate turtle `evolve`
+   found can win the "never attacks" cell and nothing else. These pin that mechanism, plus the
+   binning it rests on. Short runs (tiny descriptor/duel budgets): this guards the loop, not the AI.
+   ---------- */
+
+const archiveOpts = {
+  iterations: 5, descriptorWorlds: ["korrath"], descriptorMinutes: 6,
+  duelWorlds: ["korrath"], duelMinutes: 4, duelSeeds: 1, screen: false,
+  panel: [{ name: "Panel: Adaptive" }],
+};
+
+test("binOf is total and ordered — every real value lands in exactly one bin", () => {
+  for (const d of ARCHIVE_DIMS) {
+    assert.equal(d.names.length, d.edges.length + 1, `${d.label}: n edges must give n+1 bins`);
+    for (let i = 1; i < d.edges.length; i++)
+      assert.ok(d.edges[i] > d.edges[i - 1], `${d.label}: edges must ascend`);
+    assert.equal(binOf(-1e9, d.edges), 0, `${d.label}: below every edge is bin 0`);
+    assert.equal(binOf(1e9, d.edges), d.edges.length, `${d.label}: above every edge is the last bin`);
+    // The boundary itself belongs to the UPPER bin, and each edge must actually move the bin —
+    // an edge that changes nothing is a silently missing axis.
+    d.edges.forEach((e, i) => {
+      assert.equal(binOf(e, d.edges), i + 1, `${d.label}: a value ON edge ${e} belongs to the upper bin`);
+      assert.equal(binOf(e - 1e-9, d.edges), i, `${d.label}: just below edge ${e} belongs to the lower bin`);
+    });
+  }
+});
+
+test("runArchive is deterministic: the same seed builds the same cast", () => {
+  const strip = r => JSON.stringify(r.cells.map(c => [c.key, c.fitness, c.genome]));
+  assert.equal(strip(runArchive({ ...archiveOpts, seed: 3 })), strip(runArchive({ ...archiveOpts, seed: 3 })));
+});
+
+test("a genome only ever displaces the occupant of its OWN cell", () => {
+  // The mechanism, asserted directly against the log: every seating that displaced somebody must
+  // name a strictly worse fitness in the SAME cell, and no seating may remove a different cell.
+  const res = runArchive({ ...archiveOpts, iterations: 8, seed: 11 });
+  const held = new Map();
+  for (const e of res.log) {
+    if (!e.seated) continue;
+    if (e.beat != null) {
+      assert.ok(held.has(e.cell), `${e.name} displaced someone in an empty cell "${e.cell}"`);
+      assert.ok(e.fitness > e.beat, `${e.name} seated in "${e.cell}" without beating the holder`);
+    }
+    held.set(e.cell, e.fitness);
+  }
+  // …and every cell in the final archive is one the log actually seated, at that fitness.
+  for (const c of res.cells) assert.equal(held.get(c.key), +c.fitness.toFixed(3));
+});
+
+test("every cell in the archive really is a distinct behaviour", () => {
+  const res = runArchive({ ...archiveOpts, iterations: 8, seed: 4 });
+  assert.equal(new Set(res.cells.map(c => c.key)).size, res.cells.length, "duplicate cell keys");
+  // The key must be derivable from the descriptors — i.e. a cell genuinely describes how it plays,
+  // rather than being an arbitrary label attached at seating time.
+  for (const c of res.cells)
+    assert.equal(c.key, ARCHIVE_DIMS.map(d => d.names[binOf(c.desc[d.key], d.edges)]).join("/"),
+      "a cell's key disagrees with its own measured descriptors");
+});
+
+test("the health screen refuses entry outright, whatever the genome scores", () => {
+  // Screening is ON by default here (unlike evolve) because the descriptor run IS the health run.
+  // A refused genome must never be seated and must never even be scored — the early return is the
+  // point, since scoring is the expensive half.
+  const res = runArchive({ ...archiveOpts, iterations: 6, seed: 7, screen: true, descriptorMinutes: 6 });
+  const refused = res.log.filter(e => e.reason === "screen");
+  assert.ok(refused.length > 0, "a 6-minute descriptor run must trip dev-flatline — CHECKS is calibrated for 40-60m");
+  for (const e of refused) {
+    assert.equal(e.seated, false);
+    assert.equal(e.fitness, undefined, "a refused genome must not be duelled — that is the saving");
+    assert.ok(!res.cells.some(c => c.name === e.name), "a refused genome reached the archive anyway");
+  }
+  assert.equal(res.rejected, refused.length);
+});
+
+test("archive cells lower to runnable candidates, each carrying its own strategy key", () => {
+  const res = runArchive({ ...archiveOpts, iterations: 6, seed: 5 });
+  assert.ok(res.cells.length > 0, "the archive is empty — nothing to promote");
+  const names = new Set();
+  for (const c of res.cells) {
+    const cand = toCandidate(c.genome, `cast-${c.key.replace(/\//g, "-")}`, { genes: res.genes });
+    assert.ok(cand.overrides.strategies[cand.name], "no strategy row");
+    assert.ok(!names.has(cand.name), "two cells produced the same candidate name — they would collide in a duel");
+    names.add(cand.name);
+  }
+});
+
+test("the archive leaves the shipped AI tables exactly as it found them", () => {
+  const before = JSON.stringify({ s: STRATEGIES, a: ARCHETYPES, d: DIFFICULTY_OPTIONS });
+  runArchive({ ...archiveOpts, iterations: 6, seed: 9, layers: ["strategy", "archetype"] });
+  assert.equal(JSON.stringify({ s: STRATEGIES, a: ARCHETYPES, d: DIFFICULTY_OPTIONS }), before);
+});
+
+test("labWorld forwards an archetype, so a genome's own temperament reaches the descriptor run", () => {
+  // Without this the solo bench silently measures the WORLD's archetype, and an archive over the
+  // archetype chromosome would bin every genome by a temperament none of them carry.
+  const shape = s => `${s.ai.archetype.name}`;
+  assert.equal(shape(labWorld({ world: "ferros", strategy: "default", difficulty: "medium",
+    opponent: "passive", seed: 1, apm: "real" }).state), "Economist", "ferros' own archetype");
+  assert.equal(shape(labWorld({ world: "ferros", strategy: "default", difficulty: "medium",
+    opponent: "passive", seed: 1, apm: "real", archetype: "rusher" }).state), "Rusher",
+    "an explicit archetype must win over the world's");
 });
