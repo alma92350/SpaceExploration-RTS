@@ -4,19 +4,19 @@
   "overrides": {
     "strategies": {
       "cast-waves-token": {
-        "attackTimeoutMult": 0.671,
-        "armyAttackSizeMult": 0.775,
-        "garrisonMult": 0.377,
-        "neverInitiates": true,
-        "workerTargetMult": 1,
-        "warFootingMult": 3.055,
-        "warFootingTime": 76.911,
+        "attackTimeoutMult": 0.619,
+        "armyAttackSizeMult": 0.56,
+        "garrisonMult": 0.396,
+        "neverInitiates": false,
+        "workerTargetMult": 1.216,
+        "warFootingMult": 2.934,
+        "warFootingTime": 55.226,
         "turretCountMult": 0.775,
-        "matchEnemyForce": true,
-        "matchBuffer": 1.15,
-        "matchFloor": 9
+        "matchEnemyForce": false,
+        "matchBuffer": 0.96,
+        "matchFloor": 10
       }
     }
   },
-  "_hypothesis": "MAP-Elites cell \"waves/token\" (aggression 7.7 waves, army 4): 81% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+  "_hypothesis": "MAP-Elites cell \"waves/token\" (aggression 10.5 waves, army 2): 63% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
 }

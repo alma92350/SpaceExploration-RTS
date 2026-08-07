@@ -4,19 +4,19 @@
   "overrides": {
     "strategies": {
       "cast-never-small": {
-        "attackTimeoutMult": 0.73,
-        "armyAttackSizeMult": 0.701,
-        "garrisonMult": 0.443,
+        "attackTimeoutMult": 0.579,
+        "armyAttackSizeMult": 0.775,
+        "garrisonMult": 0.387,
         "neverInitiates": true,
-        "workerTargetMult": 1.3,
+        "workerTargetMult": 1,
         "warFootingMult": 3.162,
-        "warFootingTime": 54.772,
+        "warFootingTime": 40.107,
         "turretCountMult": 0.775,
-        "matchEnemyForce": false,
-        "matchBuffer": 1.118,
-        "matchFloor": 7
+        "matchEnemyForce": true,
+        "matchBuffer": 0.893,
+        "matchFloor": 3
       }
     }
   },
-  "_hypothesis": "MAP-Elites cell \"never/small\" (aggression 0.0 waves, army 8): 81% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+  "_hypothesis": "MAP-Elites cell \"never/small\" (aggression 0.0 waves, army 10): 44% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
 }

@@ -4,19 +4,19 @@
   "overrides": {
     "strategies": {
       "cast-probes-token": {
-        "attackTimeoutMult": 0.671,
-        "armyAttackSizeMult": 0.775,
-        "garrisonMult": 0.346,
-        "neverInitiates": true,
-        "workerTargetMult": 1.337,
-        "warFootingMult": 4.218,
-        "warFootingTime": 76.911,
-        "turretCountMult": 1.052,
+        "attackTimeoutMult": 0.668,
+        "armyAttackSizeMult": 0.6,
+        "garrisonMult": 0.4,
+        "neverInitiates": false,
+        "workerTargetMult": 1.953,
+        "warFootingMult": 2.723,
+        "warFootingTime": 89.986,
+        "turretCountMult": 0.775,
         "matchEnemyForce": false,
-        "matchBuffer": 1.12,
-        "matchFloor": 7
+        "matchBuffer": 1.118,
+        "matchFloor": 8
       }
     }
   },
-  "_hypothesis": "MAP-Elites cell \"probes/token\" (aggression 1.3 waves, army 3): 81% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+  "_hypothesis": "MAP-Elites cell \"probes/token\" (aggression 1.5 waves, army 2): 88% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
 }
