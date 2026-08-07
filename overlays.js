@@ -14,6 +14,9 @@ import { FACTIONS } from "./engine/factions.js";
 import { UNITS, committedDoctrine, hasCompletedBuilding } from "./engine/entities.js";
 import { game } from "./session.js";
 import { scoreBreakdown, playerScore } from "./engine/victory.js";
+// PLAY AGAINST YOURSELF (playerFingerprint.js, docs/ai-evolution-design.md): the finished match
+// state is the only place a human's own play can be measured, so the offer belongs on this screen.
+import { mirrorOfPlayer } from "./playerFingerprint.js";
 import { pauseLoop, resumeLoop, togglePause } from "./boot.js";   // runtime-only calls; the boot↔overlays cycle resolves via live bindings
 import * as sound from "./sound.js";
 
@@ -430,6 +433,47 @@ export function showGameOver(winner, seed, onRestart, opts = {}) {
   // the two blocks say different things but have identical structure, and a second near-copy of
   // it would be the thing that drifts.
   else if (opts.spectate && opts.spectate.block) renderCompetitionResult(opts.spectate.block);
+
+  // MIRROR ME — turn the game that just finished into an AI that plays the way you just played
+  // (playerFingerprint.js). Offered only where there is a "you" to measure: never on a spectated
+  // AI-vs-AI match, and only once the match actually carried a state to read.
+  //
+  // Downloads the genome as a candidate file rather than adding it to the competition roster,
+  // because competitionLedger.js's addRosterEntry validates `strategy` against KNOWN_STRATEGIES —
+  // a roster entry cannot yet CARRY a genome, only name a shipped one, so storing it there would
+  // silently flatten the mirror back to "default". Making the ledger carry a genome is the next
+  // stage; until then the file drops straight into `ailab duel` and into Import Ladder later.
+  if (!opts.spectate && opts.state) {
+    const mirrorBtn = document.createElement("button");
+    mirrorBtn.className = "btn";
+    mirrorBtn.style.width = "auto";
+    mirrorBtn.style.padding = "10px 20px";
+    mirrorBtn.style.marginTop = "16px";
+    mirrorBtn.textContent = "\u29c9 Save an AI that plays like you";
+    mirrorBtn.title = "Measures what you built this match — economy vs army, your unit mix, how far "
+      + "you expanded — and fits an AI genome to it.";
+    mirrorBtn.addEventListener("click", () => {
+      try {
+        const { candidate, fingerprint } = mirrorOfPlayer(opts.state, { name: "Your Mirror" });
+        const note = fingerprint.posture == null ? "no assets to measure"
+          : `${Math.round((1 - fingerprint.posture) * 100)}% economy, ${fingerprint.army} army, `
+            + `${fingerprint.workers} workers${fingerprint.mix.length ? `, built ${fingerprint.mix.join("/")}` : ""}`;
+        const blob = new Blob([JSON.stringify({ ...candidate, _hypothesis: `Mirror of a human game: ${note}.` }, null, 2)],
+          { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "your-mirror.json";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        mirrorBtn.textContent = `\u2713 Saved — ${note}`;
+        mirrorBtn.disabled = true;
+      } catch (err) {
+        mirrorBtn.textContent = `Couldn't build a mirror: ${err.message}`;
+      }
+    });
+    gameOverEl.appendChild(mirrorBtn);
+  }
 
   const again = document.createElement("button");
   again.className = "btn";
