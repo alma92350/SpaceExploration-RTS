@@ -1,0 +1,22 @@
+{
+  "name": "cast-probes-token",
+  "strategy": "cast-probes-token",
+  "overrides": {
+    "strategies": {
+      "cast-probes-token": {
+        "attackTimeoutMult": 0.668,
+        "armyAttackSizeMult": 0.6,
+        "garrisonMult": 0.4,
+        "neverInitiates": false,
+        "workerTargetMult": 1.953,
+        "warFootingMult": 2.723,
+        "warFootingTime": 89.986,
+        "turretCountMult": 0.775,
+        "matchEnemyForce": false,
+        "matchBuffer": 1.118,
+        "matchFloor": 8
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"probes/token\" (aggression 1.5 waves, army 2): 88% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

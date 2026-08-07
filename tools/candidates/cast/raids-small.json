@@ -1,0 +1,22 @@
+{
+  "name": "cast-raids-small",
+  "strategy": "cast-raids-small",
+  "overrides": {
+    "strategies": {
+      "cast-raids-small": {
+        "attackTimeoutMult": 0.671,
+        "armyAttackSizeMult": 0.775,
+        "garrisonMult": 0.387,
+        "neverInitiates": true,
+        "workerTargetMult": 1,
+        "warFootingMult": 3.162,
+        "warFootingTime": 54.772,
+        "turretCountMult": 0.775,
+        "matchEnemyForce": true,
+        "matchBuffer": 1.15,
+        "matchFloor": 3
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"raids/small\" (aggression 3.0 waves, army 12): 50% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

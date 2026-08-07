@@ -75,6 +75,8 @@ import { aiFoundOrSurvive, aiExpand, aiBaseAndTech, aiProduceAndFortify, aiResea
 import { aiIndustry, aiIndustryReserve } from "./aiIndustry.js";
 import { aiSuperweapon } from "./aiSuperweapon.js";
 import { strategyFor } from "./aiStrategy.js";
+import { updateIntel, readEnemy, updateAdaptMode } from "./aiIntel.js";
+import { adaptivityFor } from "./aiDifficulty.js";
 
 const THINK_INTERVAL = 1.5;
 
@@ -146,9 +148,20 @@ function aiContext(state, owner = "ai") {
   const warFooting = !!strategy.warFootingTime
     && controller.lastThreatAt != null
     && (state.time - controller.lastThreatAt) < strategy.warFootingTime;
+  // OPPONENT BELIEF (engine/aiIntel.js): fold this cycle's sighting into the persistent read BEFORE
+  // any phase consults it, exactly like warFooting above — so every phase in one cycle reasons
+  // about the same picture of the enemy rather than each re-deriving it at a different moment.
+  updateIntel(state, owner);
+  // …then step the damped STANCE off that belief (aiIntel.js updateAdaptMode). Order matters: the
+  // stance must be derived from THIS cycle's sighting, not last cycle's. adaptivity 0 (Easy) pins
+  // it at neutral, which makes every consumer below byte-identical to having no stance at all.
+  updateAdaptMode(state, owner, adaptivityFor(state, owner));
   return {
     owner, enemyOwner, fog, controller,
     archetype, arch, strategy, warFooting,
+    // The read itself, snapshotted once per cycle. `posture` is null until something has actually
+    // been seen — a consumer must treat that as "I don't know", never as "they are peaceful".
+    enemy: readEnemy(state, owner),
     ai: state.players[owner],
     workers: playerUnits(state, owner).filter(u => u.type === "worker"),
     army: playerUnits(state, owner).filter(u => UNITS[u.type].role === "combat"),

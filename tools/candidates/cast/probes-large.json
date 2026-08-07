@@ -1,0 +1,22 @@
+{
+  "name": "cast-probes-large",
+  "strategy": "cast-probes-large",
+  "overrides": {
+    "strategies": {
+      "cast-probes-large": {
+        "attackTimeoutMult": 0.671,
+        "armyAttackSizeMult": 1.045,
+        "garrisonMult": 0.346,
+        "neverInitiates": true,
+        "workerTargetMult": 0.905,
+        "warFootingMult": 3.162,
+        "warFootingTime": 51.905,
+        "turretCountMult": 0.753,
+        "matchEnemyForce": true,
+        "matchBuffer": 1.15,
+        "matchFloor": 3
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"probes/large\" (aggression 1.0 waves, army 17): 50% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

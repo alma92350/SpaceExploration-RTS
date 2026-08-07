@@ -1,0 +1,22 @@
+{
+  "name": "cast-waves-large",
+  "strategy": "cast-waves-large",
+  "overrides": {
+    "strategies": {
+      "cast-waves-large": {
+        "attackTimeoutMult": 0.267,
+        "armyAttackSizeMult": 0.523,
+        "garrisonMult": 0.393,
+        "neverInitiates": false,
+        "workerTargetMult": 0.943,
+        "warFootingMult": 3.339,
+        "warFootingTime": 54.772,
+        "turretCountMult": 1.266,
+        "matchEnemyForce": false,
+        "matchBuffer": 0.825,
+        "matchFloor": 12
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"waves/large\" (aggression 11.5 waves, army 19): 38% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

@@ -81,6 +81,9 @@ import {
   recordGauntletMatch, recordGauntletForfeit, gauntletProgress, abandonGauntlet,
   seasonSummary, archiveSeason, seasonStandings, MAX_SEASON_LABEL,
 } from "./competitionLedger.js";
+// The genome whitelist (GENOME_SCHEMA) — the same validator addRosterEntry applies, run here
+// too so a bad file is reported to the player rather than silently becoming an empty AI.
+import { sanitizeGenome } from "./tools/genome.js";
 
 /* ============================================================
    PURE — job construction, seed derivation, table/Elo shaping, roster/standings shaping. No DOM,
@@ -2285,6 +2288,62 @@ function exportLadderToFile() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// A single candidate document is tiny — a few dozen numbers. The cap is deliberately far tighter
+// than the ladder one below: nothing legitimate here is even close, so a big file is a wrong file.
+const MAX_AI_FILE_BYTES = 256 * 1024;
+
+// Load one candidate file as a roster entrant. Its genome goes through competitionLedger.js's
+// addRosterEntry, which runs tools/genome.js's sanitizeGenome over it — a whitelist against
+// GENOME_SCHEMA — so an out-of-range dial, an unknown key or a hostile mix cannot reach the live
+// AI tables. Nothing here trusts the file; it only names it.
+function importAiFromFile() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json,.json";
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (file.size > MAX_AI_FILE_BYTES) { compRosterError = "Import failed: that file is too large to be an AI."; refreshCompView(); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const doc = JSON.parse(String(reader.result));
+        const genome = sanitizeGenome(genomeFromCandidate(doc));
+        if (!genome) throw new Error("that file carries no readable genome");
+        const base = typeof doc.name === "string" && doc.name.trim() ? doc.name.trim() : "Imported AI";
+        // Names are unique on the roster, and addRosterEntry throws on a collision. Pick the first
+        // free suffix rather than making the player rename by hand or silently replacing an entry
+        // they may still care about.
+        let name = base;
+        for (let i = 2; ensureLedger().roster.some(r => r.name === name); i++) name = `${base} ${i}`;
+        addRosterEntry(ensureLedger(), { name, genome, archetype: doc.archetype || null, createdAt: Date.now() });
+        saveLedgerToStorage(ensureLedger());
+        compRosterError = "";
+      } catch (err) {
+        compRosterError = `Import failed: ${err.message}`;
+      }
+      refreshCompView();
+    };
+    reader.onerror = () => { compRosterError = "Import failed: that file could not be read."; refreshCompView(); };
+    reader.readAsText(file);
+  });
+  input.click();
+}
+
+// A candidate document (tools/genome.js toCandidate) stores its genome LOWERED into overrides rows,
+// because that is the shape the bench consumes. Lift it back: the strategy row and the entrant's
+// own archetype row are the two halves, keyed by whatever name the file was written under.
+function genomeFromCandidate(doc) {
+  if (!doc || typeof doc !== "object") return null;
+  if (doc.strategy && typeof doc.strategy === "object") return doc;   // already a raw genome
+  const strategies = doc.overrides?.strategies || {};
+  const archetypes = doc.overrides?.archetypes || {};
+  const sRow = Object.values(strategies)[0];
+  const aRow = Object.values(archetypes)[0];
+  if (!sRow && !aRow) return null;
+  return { strategy: sRow || {}, archetype: aRow || {}, sigma: doc.sigma };
+}
+
 const MAX_LADDER_FILE_BYTES = 4 * 1024 * 1024;   // generous headroom over any real ladder (competitionLedger.js's own sanitizer caps it further)
 
 function importLadderFromFile() {
@@ -2464,6 +2523,15 @@ function renderRosterScreen(container) {
   renderAddRosterEntryForm(container);
 
   const ioRow = mk("div", "comp-io-row");
+  // IMPORT AN AI — a mirror of your own play (the game-over screen's "Save an AI that plays like
+  // you"), or a genome someone authored or evolved. The file is a candidate document, exactly the
+  // shape tools/ailab.js's duel/sweep already take, so a bench-bred AI and a player-made one are
+  // the same artifact and neither needs a converter.
+  const importAiBtn = mk("button", "btn", "⭱ Import AI");
+  importAiBtn.type = "button";
+  importAiBtn.title = "Load a genome file — your own mirror, or one you were sent — as a roster entrant.";
+  importAiBtn.addEventListener("click", importAiFromFile);
+  ioRow.appendChild(importAiBtn);
   const exportBtn = mk("button", "btn", "⭳ Export Ladder");
   exportBtn.type = "button";
   exportBtn.addEventListener("click", exportLadderToFile);

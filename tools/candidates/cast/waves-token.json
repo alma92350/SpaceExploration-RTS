@@ -1,0 +1,22 @@
+{
+  "name": "cast-waves-token",
+  "strategy": "cast-waves-token",
+  "overrides": {
+    "strategies": {
+      "cast-waves-token": {
+        "attackTimeoutMult": 0.619,
+        "armyAttackSizeMult": 0.56,
+        "garrisonMult": 0.396,
+        "neverInitiates": false,
+        "workerTargetMult": 1.216,
+        "warFootingMult": 2.934,
+        "warFootingTime": 55.226,
+        "turretCountMult": 0.775,
+        "matchEnemyForce": false,
+        "matchBuffer": 0.96,
+        "matchFloor": 10
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"waves/token\" (aggression 10.5 waves, army 2): 63% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

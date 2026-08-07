@@ -62,6 +62,22 @@ All notable changes to this project are documented here. The format follows
   Arsenal gate and fields a real Tier-2/3 composition instead of Skiffs only, and a `--apm`
   flag so a probe can exercise a difficulty row's real APM throttle instead of always running
   unthrottled.
+- **The AI reads what kind of game you're playing, and answers it.** It now keeps a running,
+  fog-limited picture of you — how much of your investment went into army versus economy, as far
+  as it has actually *scouted* — and acts on it. Play greedy and undefended and it will come for
+  your worker line instead of grinding your front door; mass an army and it walls up instead of
+  wasting ore on turrets it doesn't need. This is the first thing the AI believes that can be
+  **wrong**: kill its scout and its picture of you goes stale, which makes denying it vision a real
+  counter-play rather than a formality. Its stance is deliberately damped so it stays *legible* —
+  you can notice it turtling and respond — and Easy never adapts at all, keeping the predictable,
+  learnable opponent a new player needs. Adaptation changes tempo and targeting, never identity: a
+  Rusher still rushes.
+- **Play against yourself.** After any match, "Save an AI that plays like you" measures what you
+  actually built — economy versus army, your unit mix, how far you expanded, whether you walled —
+  and fits an AI genome to it. Import it from the Competition roster and duel it. Your own army,
+  read back in the order you leaned on it, becomes the AI's production cycle. Roster entrants can
+  now carry a genome of their own rather than only naming one of the four shipped strategies, so a
+  bench-bred AI and a player-made one are the same thing and neither needs converting.
 - **The AI opponent can now be EVOLVED** — `node tools/ailab.js evolve` breeds a population of
   AI "genomes" (`tools/genome.js`: the dial tables as a schema'd, mutable, crossable data
   structure) and selects them by real head-to-head self-play, with the four shipped strategies

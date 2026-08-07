@@ -1,0 +1,22 @@
+{
+  "name": "cast-waves-swarm",
+  "strategy": "cast-waves-swarm",
+  "overrides": {
+    "strategies": {
+      "cast-waves-swarm": {
+        "attackTimeoutMult": 0.573,
+        "armyAttackSizeMult": 0.523,
+        "garrisonMult": 0.393,
+        "neverInitiates": false,
+        "workerTargetMult": 1.348,
+        "warFootingMult": 3.162,
+        "warFootingTime": 45.115,
+        "turretCountMult": 0.681,
+        "matchEnemyForce": false,
+        "matchBuffer": 0.825,
+        "matchFloor": 12
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"waves/swarm\" (aggression 10.5 waves, army 58): 63% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

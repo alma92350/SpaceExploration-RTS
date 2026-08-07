@@ -189,6 +189,16 @@ function cleanController(src, prefix, planetId) {
     unitsBuilt: Math.max(0, Math.floor(num(g("UnitsBuilt"), 0))),
     waveCount: Math.max(0, Math.floor(num(g("WaveCount"), 0))),
     nextWaveAt: g("NextWaveAt") == null ? undefined : num(g("NextWaveAt"), 0),
+    // Opponent belief (engine/aiIntel.js). Additive and defaulted the same conservative way
+    // LastThreatAt is: an old save without these loads as "never seen anything", so a reloaded AI
+    // starts honestly blind and goes scouting rather than acting on intel it cannot justify.
+    // Clamped at 0 because a negative asset value is meaningless and would invert posture.
+    intelMil: Math.max(0, num(g("IntelMil"), 0)),
+    intelEco: Math.max(0, num(g("IntelEco"), 0)),
+    intelAt: g("IntelAt") == null ? null : num(g("IntelAt"), 0),
+    // Clamped to the 0..1 the stance is defined on, so a corrupt save cannot push the AI into a
+    // defence multiplier outside its designed swing.
+    adaptMode: g("AdaptMode") == null ? null : Math.min(1, Math.max(0, num(g("AdaptMode"), 0.5))),
     archetype: archetypeFor(planetId),
   };
 }
@@ -577,6 +587,13 @@ function serPlanet(state) {
       // persisted or a reloaded hostile world fires its next probe a full cadence
       // early (undefined ?? 0 ⇒ immediately wave-ready), breaking continue-identically.
       aiNextWaveAt: state.ai.nextWaveAt ?? null,
+      // Opponent belief (engine/aiIntel.js): a fading high-water mark of what this controller has
+      // SEEN of the enemy. Persisted for the same continue-identically reason aiWaveCount is —
+      // dropping it would make a reloaded AI forget the army it scouted and re-derive its whole
+      // posture read from an empty picture, changing every downstream decision.
+      aiIntelMil: state.ai.intelMil ?? 0, aiIntelEco: state.ai.intelEco ?? 0,
+      aiIntelAt: state.ai.intelAt ?? null,
+      aiAdaptMode: state.ai.adaptMode ?? null,
       // Odyssey colony-ship expansion target (engine/ai.js) — the committed deploy spot
       // of an in-flight ship. Persisted so a reload doesn't recompute a different target.
       aiColonyTarget: state.ai.colonyTarget ?? null,
@@ -599,6 +616,13 @@ function serPlanet(state) {
       paNextAttackAt: state.playerAi.nextAttackAt ?? null, paUnitsBuilt: state.playerAi.unitsBuilt ?? 0,
       paWaveCount: state.playerAi.waveCount ?? 0,
       paNextWaveAt: state.playerAi.nextWaveAt ?? null,
+      // Opponent belief (engine/aiIntel.js): a fading high-water mark of what this controller has
+      // SEEN of the enemy. Persisted for the same continue-identically reason aiWaveCount is —
+      // dropping it would make a reloaded AI forget the army it scouted and re-derive its whole
+      // posture read from an empty picture, changing every downstream decision.
+      paIntelMil: state.playerAi.intelMil ?? 0, paIntelEco: state.playerAi.intelEco ?? 0,
+      paIntelAt: state.playerAi.intelAt ?? null,
+      paAdaptMode: state.playerAi.adaptMode ?? null,
       paColonyTarget: state.playerAi.colonyTarget ?? null,
     } : null,
   };

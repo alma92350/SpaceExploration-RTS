@@ -79,6 +79,7 @@ import { ARCHETYPES, PLANET_ARCHETYPE } from "./engine/aiArchetypes.js";
 import { FACTIONS } from "./engine/factions.js";
 import { DIFFICULTY_OPTIONS } from "./engine/aiDifficulty.js";
 import { hashStr } from "./engine/rng.js";
+import { sanitizeGenome } from "./tools/genome.js";
 
 /**
  * @typedef {{ name: string, strategy: string, archetype: string|null, faction: string, createdAt: number|null, human: boolean }} RosterEntry
@@ -178,6 +179,12 @@ import { hashStr } from "./engine/rng.js";
 // something WRONG, so the CONTRIBUTING.md rule-3 test for a bump is not met, and the no-migration
 // gate would cost every existing ladder for no safety gained. (Replay, the other Phase 5 half,
 // adds no stored field at all — it re-reads rows the ledger already had.)
+// A roster entry may carry its OWN GENOME (docs/ai-evolution-design.md) — a player-authored or
+// player-mirrored AI rather than one of the four shipped strategies. That genome arrives from
+// untrusted places (an imported ladder file, a mirror someone was sent) and is written straight
+// into the live AI tables at duel time, so it is validated against GENOME_SCHEMA exactly like every
+// other field here is validated against its own enum. sanitizeGenome is a WHITELIST: unknown keys
+// dropped, numbers coerced and clamped, categoricals checked against their declared alleles.
 export const COMPETITION_VERSION = 1;
 
 // A Gauntlet's default match length, in seconds — setup.js's own MATCH_LENGTH_OPTIONS "Quick"
@@ -282,13 +289,22 @@ export function addRosterEntry(ledger, entry) {
     if (existing)
       throw new Error(`"${existing.name}" is already the human entrant — there can only be one, so remove it first`);
   }
+  // A genome makes this entrant its OWN strategy rather than a named shipped one: the row is
+  // written into STRATEGIES under the entrant's name at duel time (competitionWorker.js), so the
+  // strategy field carries that name instead of being flattened to "default" by the enum check.
+  const genome = entry?.genome ? sanitizeGenome(entry.genome) : null;
   ledger.roster.push({
     name,
-    strategy: KNOWN_STRATEGIES.has(entry?.strategy) ? entry.strategy : "default",
+    strategy: genome ? name : (KNOWN_STRATEGIES.has(entry?.strategy) ? entry.strategy : "default"),
     archetype: KNOWN_ARCHETYPES.has(entry?.archetype) ? entry.archetype : null,
     faction: KNOWN_FACTIONS.has(entry?.faction) ? entry.faction : "neutral",
     createdAt: Number.isFinite(entry?.createdAt) ? entry.createdAt : null,
     human,
+    // Present ONLY when there is one. An entry naming a shipped strategy keeps exactly the shape it
+    // has always had — the same "additive, absent means the old behaviour" discipline every other
+    // field in this project follows, and it means existing rosters and exported ladders are
+    // byte-identical rather than gaining a null nobody asked for.
+    ...(genome ? { genome } : {}),
   });
   return ledger;
 }
@@ -930,12 +946,17 @@ function cleanRosterEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
   if (!name || FORBIDDEN_NAMES.has(name)) return null;   // a forbidden or blank name is DROPPED on import, not thrown (see addRosterEntry for the throwing, interactive counterpart)
+  // Same rule as addRosterEntry: a valid genome makes the entrant its own strategy. Sanitised
+  // first, so an imported ladder cannot smuggle an out-of-range dial — or a key the schema never
+  // named — into the live AI tables.
+  const genome = raw.genome ? sanitizeGenome(raw.genome) : null;
   return {
     name,
-    strategy: KNOWN_STRATEGIES.has(raw.strategy) ? raw.strategy : "default",
+    strategy: genome ? name : (KNOWN_STRATEGIES.has(raw.strategy) ? raw.strategy : "default"),
     archetype: KNOWN_ARCHETYPES.has(raw.archetype) ? raw.archetype : null,
     faction: KNOWN_FACTIONS.has(raw.faction) ? raw.faction : "neutral",
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : null,
+    ...(genome ? { genome } : {}),   // absent unless real — see addRosterEntry
     // Strictly `=== true`, exactly as addRosterEntry reads it: an entry written before this field
     // existed (undefined) and an entry carrying some truthy junk both mean "not the human".
     human: raw.human === true,

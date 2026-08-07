@@ -54,6 +54,9 @@
 "use strict";
 
 import { pinnedDuelDials, duelSeed, runDuelMatch } from "./tools/duelCore.js";
+// tools/genome.js is pure and browser-safe by construction (that is why applyOverrides lives
+// there and not in tools/ailab.js, which imports node:fs and can never run in a Worker).
+import { toOverrides, applyOverrides, snapshotTables, restoreTables } from "./tools/genome.js";
 import {
   roundRobinPairs, buildSwissBracket, buildKnockoutBracket,
   swissRoundCount, tournamentRoundPlan, tallyStandings,
@@ -108,52 +111,66 @@ export function runCompetitionJob(job, onProgress) {
   // archetype as "use the world's own temperament", exactly as before this option existed).
   const aArchetype = entrantA.archetype || null;
   const bArchetype = entrantB.archetype || null;
-  const total = worlds.length * seeds * 2;     // both directions, side-swapped
-  const rows = [];
-  let completed = 0;
-  const post = row => {
-    rows.push(row);
-    completed++;
-    if (onProgress) onProgress({ completed, total, row });
-  };
+  // A player-authored entrant carries its own GENOME rather than naming a shipped strategy
+  // (docs/ai-evolution-design.md). Write both entrants' rows into the live AI tables before any
+  // match runs — they share one live table for the fight, exactly as tools/ailab.js's runDuel does
+  // — and restore afterwards so one competition's genomes can never leak into the next.
+  //   The strategy KEY is the entrant's own name, which is what competitionLedger.js's
+  // addRosterEntry/cleanRosterEntry already store for a genome-carrying entry, so the two halves
+  // cannot drift: whatever name the row was filed under is the name the table is keyed by.
+  const tableSnapshot = snapshotTables();
+  if (entrantA.genome) applyOverrides(toOverrides(entrantA.genome, entrantA.name));
+  if (entrantB.genome) applyOverrides(toOverrides(entrantB.genome, entrantB.name));
+  try {
+    const total = worlds.length * seeds * 2;     // both directions, side-swapped
+    const rows = [];
+    let completed = 0;
+    const post = row => {
+      rows.push(row);
+      completed++;
+      if (onProgress) onProgress({ completed, total, row });
+    };
 
-  for (const world of worlds) {
-    for (let rep = 0; rep < seeds; rep++) {
-      // Sorted into the hash (tools/duelCore.js's own duelSeed), so both directions below draw
-      // the SAME map for this (world, rep) — only the seat assignment differs between them.
-      const seed = duelSeed(seedBase, world, difficulty, entrantA.name, entrantB.name, rep);
-      const swapAsym = rep % 2 === 1;   // replicate parity — same rule tools/ailab.js's runDuel uses
+    for (const world of worlds) {
+      for (let rep = 0; rep < seeds; rep++) {
+        // Sorted into the hash (tools/duelCore.js's own duelSeed), so both directions below draw
+        // the SAME map for this (world, rep) — only the seat assignment differs between them.
+        const seed = duelSeed(seedBase, world, difficulty, entrantA.name, entrantB.name, rep);
+        const swapAsym = rep % 2 === 1;   // replicate parity — same rule tools/ailab.js's runDuel uses
 
-      // Direction 1 ("bAsAi"): entrantA owns "player", entrantB owns "ai" — runDuelMatch's own
-      // fixed mapping, no relabelling needed. Archetype rides along the SAME seat its own
-      // strategy does (aArchetype with aStrategy, bArchetype with bStrategy) — an entrant's
-      // doctrine follows the entrant, not the seat, exactly like strategy already does here.
-      post({
-        ...runDuelMatch({
-          world, seed, dials, minutes, swapAsym,
-          aName: entrantA.name, aStrategy, aArchetype, bName: entrantB.name, bStrategy, bArchetype,
-        }),
-        direction: "bAsAi",
-      });
+        // Direction 1 ("bAsAi"): entrantA owns "player", entrantB owns "ai" — runDuelMatch's own
+        // fixed mapping, no relabelling needed. Archetype rides along the SAME seat its own
+        // strategy does (aArchetype with aStrategy, bArchetype with bStrategy) — an entrant's
+        // doctrine follows the entrant, not the seat, exactly like strategy already does here.
+        post({
+          ...runDuelMatch({
+            world, seed, dials, minutes, swapAsym,
+            aName: entrantA.name, aStrategy, aArchetype, bName: entrantB.name, bStrategy, bArchetype,
+          }),
+          direction: "bAsAi",
+        });
 
-      // Direction 2 ("aAsAi"): entrantB owns "player", entrantA owns "ai" — then flipped back so
-      // the row still reads aName=entrantA/bName=entrantB, exactly like runSwappedDuel's aAsAi.
-      // Archetype swaps seats right alongside strategy, for the same reason.
-      post({
-        ...flipRow(runDuelMatch({
-          world, seed, dials, minutes, swapAsym,
-          aName: entrantB.name, aStrategy: bStrategy, aArchetype: bArchetype,
-          bName: entrantA.name, bStrategy: aStrategy, bArchetype: aArchetype,
-        })),
-        direction: "aAsAi",
-      });
+        // Direction 2 ("aAsAi"): entrantB owns "player", entrantA owns "ai" — then flipped back so
+        // the row still reads aName=entrantA/bName=entrantB, exactly like runSwappedDuel's aAsAi.
+        // Archetype swaps seats right alongside strategy, for the same reason.
+        post({
+          ...flipRow(runDuelMatch({
+            world, seed, dials, minutes, swapAsym,
+            aName: entrantB.name, aStrategy: bStrategy, aArchetype: bArchetype,
+            bName: entrantA.name, bStrategy: aStrategy, bArchetype: aArchetype,
+          })),
+          direction: "aAsAi",
+        });
+      }
     }
-  }
 
-  const aWins = rows.filter(r => r.winner === "a").length;
-  const bWins = rows.filter(r => r.winner === "b").length;
-  const draws = rows.filter(r => r.winner === "draw").length;
-  return { rows, aWins, bWins, draws };
+    const aWins = rows.filter(r => r.winner === "a").length;
+    const bWins = rows.filter(r => r.winner === "b").length;
+    const draws = rows.filter(r => r.winner === "draw").length;
+    return { rows, aWins, bWins, draws };
+  } finally {
+    restoreTables(tableSnapshot);   // never let one competition's genomes leak into the next
+  }
 }
 
 /* ============================================================

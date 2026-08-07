@@ -519,6 +519,42 @@ generalising champion that the game should not ship. Both halves of that are the
 
 ---
 
+## 9b. Play against yourself — what the genome was for
+
+The search was never the point. The point was that a genome is a *thing a player can own*: edit one
+into existence, or have their own play captured into an AI and then face it.
+
+**`playerFingerprint.js`** is the second half of that. It measures a finished match from ground
+truth — deliberately NOT fog-limited, unlike `engine/aiIntel.js`, because this is analysis of a
+game that already happened rather than a decision an AI is making — and fits a genome to it.
+
+The fit is stated as **ratios against the archetype's baseline**, never absolutes, because that is
+how the engine composes its layers: a player who ran 18 workers is not `workerTargetMult: 18`, they
+are "1.5× what this temperament would have run", and only the ratio transfers to another world.
+Every value is clamped to its own gene's schema bounds, so an extreme game yields a legal AI rather
+than a broken one — the same guarantee mutation has, through the same schema.
+
+One gene needs no fitting at all: **`unitMix` is directly observable.** The player's own army, read
+back in descending count order, *is* a production cycle. That ordering matters rather than being
+cosmetic — it decides what gets built first, which is why the mix has a rotate operator.
+
+**Reachable now** from the game-over screen: "Save an AI that plays like you" writes the mirror as
+a candidate file that drops straight into `ailab duel`.
+
+**What it cannot see, stated honestly:** tempo. A fingerprint is taken from a *state*, so it reads
+standing composition and investment — army versus economy, workers kept, whether they walled, what
+they built — but not *when* they attacked or how often, because the sim keeps no player-side
+history. The fit therefore sets stance and investment from evidence and leaves timing at the
+archetype default rather than inventing it. Sampling the fingerprint across a whole match (exactly
+what `tools/ailab.js`'s `sample()` already does for the AI) is the obvious upgrade.
+
+**The blocker for putting a mirror on the competition roster** is worth recording because it is not
+obvious: `competitionLedger.js`'s `addRosterEntry` validates `strategy` against `KNOWN_STRATEGIES`
+and `archetype` against `KNOWN_ARCHETYPES`. A roster entry can *name* a shipped strategy but cannot
+*carry* a genome, so storing a mirror there today would silently flatten it back to `default`.
+Making the ledger carry a genome — sanitized, versioned, and applied by `competitionWorker.js`
+before a duel — is the next stage, and it is also what player-editable genomes need.
+
 ## 10. Open questions
 
 - **What should the objective be, now that duel-Elo is known to be farmable?** The three options in

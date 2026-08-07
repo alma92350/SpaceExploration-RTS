@@ -1,0 +1,22 @@
+{
+  "name": "cast-raids-token",
+  "strategy": "cast-raids-token",
+  "overrides": {
+    "strategies": {
+      "cast-raids-token": {
+        "attackTimeoutMult": 0.668,
+        "armyAttackSizeMult": 0.6,
+        "garrisonMult": 0.4,
+        "neverInitiates": false,
+        "workerTargetMult": 1.891,
+        "warFootingMult": 2.723,
+        "warFootingTime": 53.263,
+        "turretCountMult": 0.762,
+        "matchEnemyForce": false,
+        "matchBuffer": 1.118,
+        "matchFloor": 10
+      }
+    }
+  },
+  "_hypothesis": "MAP-Elites cell \"raids/token\" (aggression 3.0 waves, army 2): 88% vs the fixed panel (Baseline: Adaptive, Baseline: Aggressive, Baseline: Economic, Baseline: Force Parity), seed 1. Health-screened clean."
+}

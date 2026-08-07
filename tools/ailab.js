@@ -70,7 +70,7 @@
 
 "use strict";
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createGameState } from "../engine/state.js";
 import { tick } from "../engine/sim.js";
 import { createDiplomacy, hostility, aiDevelopment, provoked } from "../engine/diplomacy.js";
@@ -106,8 +106,13 @@ import { rankStandings, pairRound, buildSwissBracket, roundRobinPairs, swissRoun
 // The genome — the AI as a schema'd, mutable, crossable data structure (docs/ai-evolution-design.md).
 // A leaf module like duelCore/pairing: it imports the three AI tables and mulberry32 and nothing
 // else, so `evolve` below is the only thing in this file that knows evolution exists.
-import { geneKeys, genomeFrom, randomGenome, mutate, cross, cloneGenome, toCandidate, rngFor, diffGenes }
+import { geneKeys, genomeFrom, randomGenome, mutate, cross, cloneGenome, toCandidate, rngFor, diffGenes,
+         applyOverrides, snapshotTables, restoreTables }
   from "./genome.js";
+// Re-exported under their original names: they used to be DEFINED here and every existing caller
+// (test/ailab.test.js among them) imports them from this file. They now live in ./genome.js so a
+// browser Worker can run a player-authored genome without pulling in this file's node:fs half.
+export { applyOverrides };
 
 const WORLDS = [...Object.keys(PLANET_ARCHETYPE), ...Object.keys(ODYSSEY_EXTRA_ARCHETYPE)];
 const DT = 0.1;                  // the sim's fixed step, same as the game loop
@@ -124,11 +129,17 @@ const THINK = 1.5;               // sparring-bot decision cadence, matching the 
 // difficulty row's aiApm (the CLI's own default, via baseConfig below); anything else — including
 // simply omitting it — keeps a direct labWorld/run() call unthrottled exactly like before, so
 // every existing programmatic caller (this file's own test suite included) is untouched.
-function labWorld({ world, strategy, difficulty, opponent, seed, apm }) {
+// `archetype` is an optional STRING KEY into ARCHETYPES, forwarded exactly as tools/duelCore.js's
+// runDuelMatch already forwards its own (docs/competitions-and-elo.md D3) — absent on every caller
+// that predates the archive below, and createGameState falls back to archetypeFor(planetId) when
+// it's absent or names an unknown key, so an omitted archetype is byte-identical to before this
+// option existed. Without it the solo bench could not describe a genome carrying an archetype
+// chromosome: it would silently measure the world's own temperament instead.
+function labWorld({ world, strategy, difficulty, opponent, seed, apm, archetype }) {
   const diffOpt = DIFFICULTY_OPTIONS.find(o => o.mult === difficulty);
   const s = createGameState({
     planetId: world, seed, rng: mulberry32(seed), endless: true,
-    aiStrategy: strategy, difficulty,
+    aiStrategy: strategy, difficulty, aiArchetype: archetype,
     aiApm: apm === "real" ? (diffOpt?.aiApm ?? null) : null, aiMicro: !!diffOpt?.aiMicro,
     aiFaction: archetypeFor(world).faction,
   });
@@ -510,38 +521,11 @@ export function score(r) {
    space is already a JSON document.
    ============================================================ */
 
-export function applyOverrides(ov = {}) {
-  for (const [name, row] of Object.entries(ov.strategies || {}))
-    STRATEGIES[name] = { name, desc: "(lab candidate)", ...(STRATEGIES[name] || {}), ...row };
-  for (const [name, row] of Object.entries(ov.archetypes || {})) {
-    const base = ARCHETYPES[name] || ARCHETYPES.balanced;
-    ARCHETYPES[name] = { ...base, ...row, odyssey: { ...(base.odyssey || {}), ...(row.odyssey || {}) } };
-  }
-  for (const [key, row] of Object.entries(ov.difficulties || {})) {
-    const i = DIFFICULTY_OPTIONS.findIndex(o => o.mult === key);
-    if (i >= 0) DIFFICULTY_OPTIONS[i] = { ...DIFFICULTY_OPTIONS[i], ...row };
-  }
-}
 
 // Deep-clone the three live tables so a candidate's overrides can be reverted EXACTLY once its
 // runs are done, leaving the next candidate a clean baseline. Plain data (the whole reason
 // applyOverrides can work at all), so a JSON round-trip clones it safely. Used by runLeaderboard
 // below — two candidates that both patch e.g. "aggressive" must never see each other's edits.
-function snapshotTables() {
-  return {
-    strategies: JSON.parse(JSON.stringify(STRATEGIES)),
-    archetypes: JSON.parse(JSON.stringify(ARCHETYPES)),
-    difficulties: JSON.parse(JSON.stringify(DIFFICULTY_OPTIONS)),
-  };
-}
-function restoreTables(snap) {
-  for (const k of Object.keys(STRATEGIES)) delete STRATEGIES[k];
-  Object.assign(STRATEGIES, snap.strategies);
-  for (const k of Object.keys(ARCHETYPES)) delete ARCHETYPES[k];
-  Object.assign(ARCHETYPES, snap.archetypes);
-  DIFFICULTY_OPTIONS.length = 0;
-  DIFFICULTY_OPTIONS.push(...snap.difficulties);
-}
 
 /* ============================================================
    LEADERBOARD — Tier 0 of "which strategy is actually better": rank candidates against a
@@ -1003,7 +987,8 @@ export function runSwissTournament(candidates, opts = {}) {
        and report both numbers.
    ============================================================ */
 
-const EVO_SEED_KEY = "evolve";   // see the seedKey paragraph above — one pinned map set per run
+const EVO_SEED_KEY = "evolve";        // see the seedKey paragraph above — one pinned map set per run
+const ARCHIVE_SEED_KEY = "archive";   // the solo-bench twin of it — see runSeed's own comment
 
 /**
  * Rate one generation's field and return fitness per candidate name. One INDEPENDENT rating table
@@ -1172,6 +1157,249 @@ export function runEvolution({
 }
 
 /* ============================================================
+   ARCHIVE — MAP-Elites: breed a CAST of distinct opponents, not one optimum
+
+   `evolve` above searches for a single best genome, and its first real run showed exactly why
+   that is the wrong target for this game. The champion it found beat all four shipped strategies
+   on held-out worlds — and won by never attacking, because engine/victory.js's score-at-clock
+   tiebreak pays 1.35x for combat units and 0.25x for banked ore, so an army that never fights and
+   never takes attrition is the most valuable thing you can own when the clock runs out. A better
+   number, a worse opponent. (docs/ai-evolution-design.md §9, and the 2026-08-06 ledger rows.)
+
+   Odyssey has no win condition. What the game actually wants from this search is what ARCHETYPES
+   is trying to be by hand with four entries: a CAST of distinct, legible opponents. So this
+   command optimises for a filled grid rather than a maximum.
+
+   HOW IT DIFFERS FROM `evolve`, in the three places that matter:
+
+     1. THE ARCHIVE REPLACES THE POPULATION. Every genome is binned by how it BEHAVES (see
+        ARCHIVE_DIMS) and only ever competes against the current occupant of its own cell. A
+        genome that wins by refusing to fight can therefore only ever win the "never attacks"
+        cell — it cannot crowd out the rest of the cast, which is the structural answer to the
+        Goodhart failure above rather than a hand-written penalty for it.
+     2. FITNESS IS AGAINST A FIXED PANEL, not a tournament of peers. Every genome plays the SAME
+        four shipped baselines, so its score is absolute and comparable across the whole run —
+        which dissolves the anchoring problem `evolve` had to correct for (eloForMatches restarts
+        from a fresh 1200 each generation, so ratings there are only comparable within one).
+     3. THE HEALTH SCREEN IS FREE, AND SELF-CALIBRATING. Describing a genome means running it solo
+        on the Odyssey bench, which is exactly what CHECKS needs. So `evolve`'s opt-in `--screen`
+        is ON by default here at no extra cost.
+          But it screens RELATIVE TO THE SHIPPED STRATEGIES, not against the raw detector list, and
+        that is not a nicety — the first real run of this command refused 39 of its first 41
+        genomes INCLUDING all four shipped strategies, which is proof the screen was wrong rather
+        than the genomes. The cause: CHECKS was calibrated against the `passive` sparring bot, and
+        the descriptor run deliberately uses a PROVOKING one (see below), where an AI spends on
+        army and takes losses so `devFinal` never clears dev-flatline's threshold. A detector that
+        fires on correct behaviour is worse than no detector — this file's own CHECKS header
+        records three rewrites of exactly that mistake, and choosing a different opponent
+        reintroduced it a fourth time.
+          So: the seed strategies are evaluated first and always seated, the union of what THEY
+        trip becomes the tolerated set, and a genome is refused only for a defect the shipped AI
+        does not also exhibit under identical conditions. That is the question the screen was
+        always trying to ask, and it now re-answers it for whatever opponent and match length the
+        caller picks instead of assuming one.
+
+   The descriptor run uses the `turtle` sparring bot by default: a real economy behind turrets that
+   never attacks, but whose turrets kill scouts and so DO provoke. That makes the aggression axis
+   measure something real — "does this neighbour come at a defended base?" — rather than just
+   echoing the neverInitiates flag back, since in Odyssey a provoked never-initiator may still
+   answer (engine/diplomacy.js provoked()).
+   ============================================================ */
+
+// The behaviour space the cast is spread across. Two dimensions on purpose: a 2-D grid prints as a
+// grid, fills at a rate a few hours of bench time can actually reach, and reads as a cast list.
+//
+// These two axes are the ones a PLAYER can feel from the other side of the map — does it come at
+// me, and how much of it arrives — rather than the ones easiest to measure. Their corners are the
+// four opponents anyone can name (never/token = a placid neighbour; never/swarm = the doomstack
+// turtle `evolve` found; waves/token = a rusher trickling probes; waves/swarm = the one that
+// should scare you), and the interior is everything between.
+//
+// `edges` are the bin boundaries: a value < edges[0] lands in bin 0, and so on. Exported so a test
+// can assert the bins are total and ordered rather than trusting the literal.
+export const ARCHIVE_DIMS = [
+  { key: "waves", label: "aggression", edges: [1, 3, 7], names: ["never", "probes", "raids", "waves"] },
+  { key: "armyFinal", label: "army", edges: [6, 16, 31], names: ["token", "small", "large", "swarm"] },
+];
+
+/** Which bin `v` falls in. @param {number} v @param {number[]} edges @returns {number} */
+export function binOf(v, edges) {
+  let i = 0;
+  while (i < edges.length && v >= edges[i]) i++;
+  return i;
+}
+
+/** The archive key for one descriptor vector, e.g. "never/swarm". @returns {string} */
+const cellKey = desc => ARCHIVE_DIMS.map(d => d.names[binOf(desc[d.key], d.edges)]).join("/");
+
+/**
+ * Describe a candidate: run it solo on the Odyssey bench and read back BOTH its behaviour
+ * descriptors and whether it trips any named defect. One pass, two answers — see point 3 in the
+ * header above.
+ * @returns {{ desc: Object, tripped: string[], rows: Object[] }}
+ */
+function describeCandidate(cand, { worlds, minutes, opponent, difficulty, seedBase, seeds = 1 }) {
+  const snap = snapshotTables();
+  try {
+    if (cand.overrides) applyOverrides(cand.overrides);
+    const rows = [];
+    for (const world of worlds)
+      for (let rep = 0; rep < seeds; rep++)
+        rows.push(run({
+          minutes, sample: 5, opponent, apm: "real", seedBase, world,
+          strategy: cand.strategy, difficulty, archetype: cand.archetype || undefined,
+          // ARCHIVE_SEED_KEY, not the candidate's name — every genome in a run is described on the
+          // IDENTICAL maps, and a saved cell re-reads on those same maps later. See runSeed.
+          seed: runSeed(seedBase, world, cand.strategy, difficulty, rep, ARCHIVE_SEED_KEY),
+        }));
+    // MEDIAN across worlds and replicates — not the mean, and that is a measured decision rather
+    // than a preference.
+    //
+    // The first real run of this command filed two genomes three bins apart on the army axis (8 vs
+    // 113) that differ in ONE active gene; re-measured, they swapped ends of the axis. Probing why,
+    // with one genome held fixed on pinned maps over 4 replicates per world, gave: korrath
+    // 26/23/22/27 (perfectly stable), vesper 1/0/8/0, and ferros 36/3/1/296. The distribution is
+    // HEAVY-TAILED — an Odyssey economy that gets going compounds, so one run in twelve returns an
+    // order of magnitude more army than the rest.
+    //
+    // Averaging cannot fix a heavy tail; it inherits it. The same 12 runs give a mean of 21.0 / 14.8
+    // / 36.9 at 1 / 2 / 4 replicates — diverging, because whichever sample happens to contain the
+    // 296 decides the answer. The median over the identical samples gives 26 / 13 / 15, which
+    // converges. So the axis is stabilised by a robust statistic at unchanged cost, and `seeds`
+    // then buys real precision on top instead of buying lottery tickets.
+    const median = xs => {
+      const s = [...xs].sort((a, b) => a - b);
+      const m = s.length >> 1;
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
+    const desc = {};
+    for (const d of ARCHIVE_DIMS) desc[d.key] = median(rows.map(r => r[d.key] || 0));
+    const tripped = [...new Set(rows.flatMap(r => CHECKS.filter(c => c.hit(r)).map(c => c.id)))];
+    return { desc, tripped, rows };
+  } finally {
+    restoreTables(snap);
+  }
+}
+
+/**
+ * Strength against the FIXED panel — every genome faces the identical opponents, so the number is
+ * absolute rather than relative to whoever else happens to be in the run. Returns a win rate in
+ * [0, 1] over every panel member x world x seed x both owner slots.
+ */
+function panelStrength(cand, panel, { worlds, seeds, minutes, difficulty, seedBase }) {
+  let wins = 0, n = 0;
+  for (const opponent of panel) {
+    const res = runSwappedDuel(cand, opponent, { worlds, seeds, minutes, difficulty, seedBase, seedKey: EVO_SEED_KEY });
+    wins += res.aWins;
+    n += res.n;
+  }
+  return n ? wins / n : 0;
+}
+
+/**
+ * MAP-Elites over the AI genome. Returns the archive as a plain array of cells — never console
+ * output, same shape discipline as runSearch/runEvolution.
+ * @param {Object} opts
+ * @returns {{ cells: Object[], dims: Object[], evaluated: number, rejected: number,
+ *   coverage: number, genes: Object[], log: Object[] }}
+ */
+export function runArchive({
+  iterations = 60, seed = 1, layers = ["strategy"], odyssey = false,
+  descriptorWorlds = ["korrath", "ferros", "vesper"], descriptorMinutes = 40, descriptorSeeds = 2,
+  descriptorOpponent = "turtle", difficulty = "medium",
+  duelWorlds = ["korrath", "ferros"], duelSeeds = 1, duelMinutes = 40,
+  panel = [], screen = true, seedStrategies = Object.keys(STRATEGIES), onCell = null,
+} = {}) {
+  const genes = geneKeys({ layers, odyssey });
+  const rng = rngFor(hashStr(`${seed}:archive`));
+  const archive = new Map();
+  const log = [];
+  let evaluated = 0, rejected = 0;
+
+  const descOpts = { worlds: descriptorWorlds, minutes: descriptorMinutes, opponent: descriptorOpponent,
+                     difficulty, seedBase: seed, seeds: descriptorSeeds };
+  const duelOpts = { worlds: duelWorlds, seeds: duelSeeds, minutes: duelMinutes, difficulty, seedBase: seed };
+
+  // The defects the SHIPPED strategies themselves exhibit under this run's own opponent and match
+  // length. Null until the seeds have been measured, which is what disables the screen for them —
+  // see point 3 in the header for why screening against the raw detector list was wrong.
+  let tolerated = null;
+
+  // Evaluate one genome and try to seat it. A genome only ever displaces the CURRENT OCCUPANT of
+  // its own cell, which is the whole mechanism: local competition, global diversity.
+  const consider = (genome, origin) => {
+    const name = `arch${evaluated}`;
+    const cand = toCandidate(genome, name, { genes });
+    const { desc, tripped } = describeCandidate(cand, descOpts);
+    evaluated++;
+    // Only defects the shipped AI does NOT also show here count against a genome.
+    const novel = tolerated ? tripped.filter(t => !tolerated.has(t)) : [];
+    if (screen && novel.length) {
+      rejected++;
+      log.push({ name, origin, cell: cellKey(desc), desc, tripped, novel, seated: false, reason: "screen" });
+      // Report the refusal too, not just the seatings. A screen that is rejecting EVERYTHING looks
+      // identical to a search that is finding nothing unless each refusal is visible — and there is
+      // a specific, easy way to land in that state: CHECKS is calibrated for 40-60 sim-minute runs
+      // (several detectors carry an "…and it never resolved in the last third" term keyed to that
+      // length), so a short --descriptor-minutes makes every healthy genome trip dev-flatline.
+      if (onCell) onCell(log[log.length - 1], archive);
+      return { tripped, seated: false };
+    }
+    const key = cellKey(desc);
+    const fitness = panelStrength(cand, panel, duelOpts);
+    const incumbent = archive.get(key);
+    const seated = !incumbent || fitness > incumbent.fitness;
+    if (seated) archive.set(key, { key, genome, desc, fitness, name, origin, evaluatedAt: evaluated });
+    log.push({ name, origin, cell: key, desc, tripped, novel, fitness: +fitness.toFixed(3), seated,
+               beat: incumbent ? +incumbent.fitness.toFixed(3) : null });
+    if (onCell) onCell(log[log.length - 1], archive);
+    return { tripped, seated };
+  };
+
+  // SEED from the shipped strategies. Four hand-written rows with real search already spent on
+  // them, and — the point here — four rows that already sit in different parts of the behaviour
+  // space, so the archive starts spread rather than clustered.
+  //
+  // They also CALIBRATE the screen: whatever they trip under this run's own opponent and match
+  // length is what the detectors are saying about the configuration rather than about a genome, so
+  // it becomes the tolerated set and the seeds themselves are never refused. `tolerated` stays null
+  // until this loop finishes, which is what exempts them.
+  const seedTrips = new Set();
+  for (const key of seedStrategies)
+    for (const t of consider(genomeFrom({ strategy: key, genes }), `seed:${key}`).tripped) seedTrips.add(t);
+  tolerated = seedTrips;
+
+  while (evaluated < iterations) {
+    const elites = [...archive.values()];
+    let genome, origin;
+    if (elites.length === 0) { genome = randomGenome(rng, genes); origin = "random"; }
+    else if (elites.length >= 2 && rng() < 0.4) {
+      // CROSS two elites from DIFFERENT cells — the operator earns its keep here in a way it
+      // cannot in a converged population: the parents are known to play differently, so a
+      // module-wise cut between them is a real recombination of two strategies rather than two
+      // near-copies. This is the mechanism that fills interior cells the seeds don't reach.
+      const a = elites[Math.floor(rng() * elites.length)];
+      const b = elites[Math.floor(rng() * elites.length)];
+      genome = mutate(cross(a.fitness >= b.fitness ? a.genome : b.genome,
+                            a.fitness >= b.fitness ? b.genome : a.genome, rng, { genes }), rng, { genes });
+      origin = `cross:${a.key}+${b.key}`;
+    } else {
+      const parent = elites[Math.floor(rng() * elites.length)];
+      genome = mutate(parent.genome, rng, { genes });
+      origin = `mutate:${parent.key}`;
+    }
+    consider(genome, origin);
+  }
+
+  const total = ARCHIVE_DIMS.reduce((a, d) => a * (d.edges.length + 1), 1);
+  return {
+    cells: [...archive.values()].sort((x, y) => x.key < y.key ? -1 : 1),
+    dims: ARCHIVE_DIMS, evaluated, rejected, coverage: archive.size / total, genes, log,
+    tolerated: [...tolerated],   // what the SHIPPED strategies trip here — report it, never hide it
+  };
+}
+
+/* ============================================================
    HEALTH CHECKS — the findings this bench already turned up, encoded
 
    Each is a named, reproducible defect rather than a paragraph in a review doc: run the
@@ -1248,8 +1476,16 @@ const pickDials = (row, dials) => Object.fromEntries(dials.map(d => [d.k, row[d.
 
 // Every run's seed is derived from (base seed, world, strategy, difficulty, replicate) so a
 // row reproduces on its own — you can re-probe exactly one line of a sweep.
-const runSeed = (base, world, strategy, difficulty, rep) =>
-  hashStr(`${base}:${world}:${strategy}:${difficulty}:${rep}`);
+// `key` overrides the STRATEGY NAME in the hash, and exists for the same reason duelSeed's own
+// seedKey does (tools/duelCore.js, docs/ai-evolution-design.md §8.1) — this is that trap's twin in
+// the solo path, and it bites harder here because it defeats VERIFICATION. Re-measuring a saved
+// candidate under a new name draws a different map set, so "I ran the archive's own cell again and
+// got a different answer" conflates a genome changing with its maps changing. Measured: the
+// archive's never/small and never/swarm cells re-read as army 93 and 2 under new names, against 8
+// and 113 under their original ones. Pass one fixed key and every genome is described on identical
+// ground. Omitted, this is byte-for-byte the derivation every existing caller has always used.
+const runSeed = (base, world, strategy, difficulty, rep, key) =>
+  hashStr(`${base}:${world}:${key ?? strategy}:${difficulty}:${rep}`);
 
 function baseConfig(args) {
   return {
@@ -1767,6 +2003,101 @@ const CMDS = {
     console.log(`\nwrote ${out} — a runnable candidate: duel it against a baseline, then sweep it.`);
     if (args.json) console.log(`wrote ${args.json}`);
   },
+
+  // MAP-Elites: a CAST of distinct opponents rather than one optimum — see the ARCHIVE header
+  // comment for why that is the right target for a mode with no win condition, and for the three
+  // ways it differs from `evolve`.
+  archive(args) {
+    const layers = list(args.genes, ["strategy"]);
+    const panel = list(args.panel, [
+      "tools/candidates/baseline-adaptive.json", "tools/candidates/baseline-aggressive.json",
+      "tools/candidates/baseline-economic.json", "tools/candidates/baseline-force-parity.json",
+    ]).map(p => JSON.parse(readFileSync(p, "utf8")));
+    const opts = {
+      iterations: num(args.iterations, 60), seed: num(args.seed, 1),
+      layers, odyssey: args.odyssey === "true",
+      descriptorWorlds: list(args["descriptor-worlds"], ["korrath", "ferros", "vesper"]),
+      descriptorMinutes: num(args["descriptor-minutes"], 40),
+      descriptorSeeds: num(args["descriptor-seeds"], 2),
+      descriptorOpponent: args.opponent || "turtle",
+      difficulty: args.difficulty || "medium",
+      duelWorlds: list(args["duel-worlds"], ["korrath", "ferros"]),
+      duelSeeds: num(args["duel-seeds"], 1),
+      duelMinutes: num(args["duel-minutes"], 40),
+      panel, screen: args.screen !== "false",
+    };
+    const outDir = args["out-dir"] || "tools/candidates/cast";
+    console.log(`ARCHIVE (MAP-Elites) — ${opts.iterations} evaluations`);
+    console.log(`  axes:        ${ARCHIVE_DIMS.map(d => `${d.label} [${d.names.join("|")}]`).join("   x   ")}`);
+    console.log(`  describe on: ${opts.descriptorWorlds.join(", ")} x ${opts.descriptorSeeds} seed(s) @ ${opts.descriptorMinutes}m vs ${opts.descriptorOpponent}`);
+    console.log(`  strength vs: ${panel.map(p => p.name).join(", ")} on ${opts.duelWorlds.join(", ")} @ ${opts.duelMinutes}m`);
+    console.log(`  screen:      ${opts.screen ? "on — relative to what the SHIPPED strategies trip here" : "OFF"}`);
+    console.log();
+
+    const res = runArchive({
+      ...opts,
+      onCell: (entry, archive) => console.log(
+        pad(entry.name, 9) + pad(entry.cell, 15)
+        + padL(entry.fitness != null ? (entry.fitness * 100).toFixed(0) + "%" : "-", 6)
+        // Keyed on `reason`, NOT on `tripped.length`: with --screen false a genome can trip a check
+        // and still be seated or simply lose its cell contest, and printing that as "refused" would
+        // report a screen that isn't running.
+        + "  " + (entry.seated ? (entry.beat != null ? `seated (beat ${(entry.beat * 100).toFixed(0)}%)` : "SEATED — new cell")
+                // Name the NOVEL defect, not everything it tripped: the tolerated ones are what the
+                // shipped strategies do here too, so listing them would blame a genome for the
+                // configuration.
+                : entry.reason === "screen" ? `refused [${entry.novel.join(",")}]`
+                : `no (holder ${(entry.beat * 100).toFixed(0)}%)`)
+        + `   ${archive.size} cells`),
+    });
+
+    // The cast, as a grid. Rows are the second axis, columns the first, so it reads the way the
+    // header describes it: how aggressive across, how big down.
+    const [xDim, yDim] = ARCHIVE_DIMS;
+    const at = (x, y) => res.cells.find(c => c.key === `${xDim.names[x]}/${yDim.names[y]}`);
+    console.log(`\nTHE CAST — ${res.cells.length}/${xDim.names.length * yDim.names.length} cells filled `
+      + `(${(res.coverage * 100).toFixed(0)}% coverage), ${res.evaluated} evaluated, ${res.rejected} refused by the health screen`);
+    // Never hide the calibration. If the shipped strategies trip everything here, the screen is a
+    // no-op and the reader has to be able to see that rather than infer it from a suspiciously
+    // clean run.
+    console.log(`  screen tolerated (what the SHIPPED strategies trip under these settings): `
+      + `${res.tolerated.length ? res.tolerated.join(", ") : "nothing — the full detector list was enforced"}\n`);
+    console.log(pad("", 9) + xDim.names.map(n => pad(n, 16)).join("") + `   <- ${xDim.label}`);
+    for (let y = 0; y < yDim.names.length; y++) {
+      console.log(pad(yDim.names[y], 9) + xDim.names.map((_, x) => {
+        const c = at(x, y);
+        return pad(c ? `${(c.fitness * 100).toFixed(0)}% ${c.name}` : "—", 16);
+      }).join(""));
+    }
+    console.log(`   ^ ${yDim.label}`);
+
+    const baseline = genomeFrom({ strategy: "default", genes: res.genes });
+    console.log(`\nWHAT EACH ONE IS (genes vs. Adaptive):`);
+    for (const c of res.cells)
+      console.log(`  ${pad(c.key, 15)} ${padL((c.fitness * 100).toFixed(0) + "%", 5)}  `
+        + `waves ${c.desc.waves.toFixed(1)} army ${c.desc.armyFinal.toFixed(0)}  `
+        + diffGenes(c.genome, baseline, { genes: res.genes }).slice(0, 88));
+
+    mkdirSync(outDir, { recursive: true });
+    for (const c of res.cells) {
+      const slug = c.key.replace(/\//g, "-");
+      writeFileSync(`${outDir}/${slug}.json`, JSON.stringify({
+        ...toCandidate(c.genome, `cast-${slug}`, { genes: res.genes }),
+        _hypothesis: `MAP-Elites cell "${c.key}" (${xDim.label} ${c.desc.waves.toFixed(1)} waves, `
+          + `${yDim.label} ${c.desc.armyFinal.toFixed(0)}): ${(c.fitness * 100).toFixed(0)}% vs the fixed panel `
+          + `(${panel.map(p => p.name).join(", ")}), seed ${opts.seed}. Health-screened clean.`,
+      }, null, 2));
+    }
+    console.log(`\nwrote ${res.cells.length} candidates to ${outDir}/ — each one a distinct, runnable opponent.`);
+    // An archive that came back (nearly) empty has one overwhelmingly likely cause, and it is not
+    // "no good AI exists". Say so, rather than leaving a blank grid to be read as a result.
+    if (res.rejected > res.evaluated * 0.8)
+      console.log(`\n!! ${res.rejected} of ${res.evaluated} genomes were REFUSED by the health screen,`
+        + `\n   for defects the shipped strategies do NOT show here. That is a lot, and worth reading`
+        + `\n   before trusting: --descriptor-minutes is ${opts.descriptorMinutes} against '${opts.descriptorOpponent}'.`
+        + `\n   Pass --screen false to seat genomes unscreened (and lose the defect filter).`);
+    if (args.json) { writeFileSync(args.json, JSON.stringify(res.log, null, 1)); console.log(`wrote ${args.json}`); }
+  },
 };
 
 // The gene set a given `evolve` invocation is varying — recomputed for the progress printer rather
@@ -1845,6 +2176,26 @@ const USAGE = `AI LAB — a headless bench for the Odyssey opponent.
                               duel/sweep/leaderboard. Odyssey-gated genes (diplomacy, industry) are
                               EXCLUDED by default: a duel is a skirmish, so nothing there reads
                               them and evolving them would be scoring pure drift.
+  node tools/ailab.js archive [--iterations 60] [--seed 1] [--genes strategy] [--difficulty medium]
+                              [--descriptor-worlds a,b] [--descriptor-minutes 40] [--opponent turtle]
+                              [--duel-worlds a,b] [--duel-seeds 1] [--duel-minutes 40]
+                              [--panel a.json,b.json] [--screen false]
+                              [--out-dir tools/candidates/cast] [--json log.json]
+                              -- MAP-ELITES: breeds a CAST of distinct opponents instead of one
+                              optimum, which is the right target for a mode with no win condition.
+                              Every genome is binned by how it BEHAVES (aggression x army size,
+                              measured on the solo Odyssey bench) and competes ONLY against the
+                              current occupant of its own cell -- so a genome that wins by refusing
+                              to fight can win the "never attacks" cell and nothing else, which is a
+                              structural answer to the Goodhart failure 'evolve' hit rather than a
+                              hand-written penalty for it. Strength is measured against a FIXED
+                              panel, so it is absolute and comparable across the whole run. The
+                              health screen is ON by default, free (describing a genome IS running
+                              it solo), and calibrated RELATIVE to the shipped strategies: a genome
+                              is refused only for a defect they do not also show under the same
+                              opponent and match length, because CHECKS is calibrated against the
+                              'passive' bot and this runs against a provoking one.
+                              Writes one runnable candidate per filled cell.
 
 Common flags
   --overrides f.json   inject candidate rows into the AI tables before running:
