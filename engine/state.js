@@ -104,6 +104,13 @@ export function createAiController(planetId, opts = {}) {
     unitsBuilt: 0,            // total combat units this controller has produced (drives its build cadence)
     waveCount: 0,             // committed-wave counter — drives the economy-raid cadence (waveCount % RAID_EVERY)
     nextWaveAt: null,        // Odyssey: scheduled time of the next offensive wave; null ⇒ wave-ready
+    // OPPONENT BELIEF (engine/aiIntel.js) — ore-value of the enemy's military/economic assets as
+    // far as this controller has SEEN, plus when it last saw anything. A fading high-water mark,
+    // not a live read, and the first AI state that can be wrong: it is what the AI thinks, not what
+    // is true, which is what makes scouting worth its cost and killing the scout a real counter.
+    // Null/0 until something is actually sighted — "I have seen nothing" must stay distinguishable
+    // from "I have seen an empty base" (see aiIntel's header).
+    intelMil: 0, intelEco: 0, intelAt: null,
     // This world's opponent temperament (engine/aiArchetypes.js) — UNLESS opts.archetype names a
     // real ARCHETYPES key, in which case that per-entrant pick wins instead (docs/
     // competitions-and-elo.md D3: a competition entrant carries its own doctrine, so "Rusher vs

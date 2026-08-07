@@ -243,6 +243,9 @@
  * @property {number} unitsBuilt
  * @property {number} waveCount
  * @property {number|null} nextWaveAt
+ * @property {number} intelMil    ore-value of enemy MILITARY assets this controller has seen (aiIntel.js)
+ * @property {number} intelEco    ore-value of enemy ECONOMIC assets this controller has seen
+ * @property {number|null} intelAt sim-time it last saw anything of the enemy; null = never
  * @property {Archetype} archetype
  */
 
@@ -358,6 +361,10 @@
  * @property {(field: string) => *} arch   reads the archetype field, letting its Odyssey overlay win
  * @property {Strategy} strategy   this owner's AI strategy (engine/aiStrategy.js strategyFor(state, owner))
  * @property {boolean} warFooting   true while a strategy with warFootingTime has seen a threat recently (engine/ai.js)
+ * @property {{ posture: number|null, confidence: number, mil: number, eco: number, age: number|null }} enemy
+ *   this controller's BELIEF about its opponent (engine/aiIntel.js readEnemy), snapshotted once per
+ *   think cycle. `posture` 0 = pure economy, 1 = pure war, null = never seen anything — which a
+ *   consumer must treat as "I don't know", never as "they are peaceful".
  * @property {Player} ai   this owner's economy/faction Player object (state.players[owner]) — named `ai` for historical/API-stability reasons, not literally owner "ai"
  * @property {Unit[]} workers
  * @property {Unit[]} army
