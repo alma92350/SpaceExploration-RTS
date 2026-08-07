@@ -25,7 +25,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import assert from "node:assert/strict";
 import {
   GENOME_SCHEMA, MODULES, MIX_ALPHABET, geneKeys, genomeFrom, randomGenome, mutate, mutateMix,
-  cross, crossMix, cloneGenome, emptyGenome, toOverrides, toCandidate, diffGenes, rngFor, sanitizeGenome,
+  cross, crossMix, cloneGenome, emptyGenome, toOverrides, toCandidate, diffGenes, rngFor, sanitizeGenome, inertGenes,
 } from "../tools/genome.js";
 import { STRATEGIES } from "../engine/aiStrategy.js";
 import { ARCHETYPES } from "../engine/aiArchetypes.js";
@@ -415,4 +415,61 @@ test("a sanitised genome is always a LEGAL genome — it lowers and runs", () =>
 test("garbage that is not an object at all returns null rather than throwing", () => {
   for (const bad of [null, undefined, 42, "genome", [], true])
     assert.equal(sanitizeGenome(bad), null, `${String(bad)} must return null`);
+});
+
+/* ---------- inertGenes: the epistasis, made visible ----------
+
+   Junk DNA is useful to a SEARCH (an inert gene drifts, giving a lineage somewhere new to land when
+   its switch flips back) and actively hostile to a PERSON tuning a dial that nothing reads. The
+   editor greys those rows out, so this has to agree with the rules the engine actually applies.
+   ---------- */
+
+test("neverInitiates makes every offence dial inert, and says so", () => {
+  const genes = geneKeys({ layers: ["strategy", "archetype"], odyssey: true });
+  const g = genomeFrom({ genes });
+  g.strategy.neverInitiates = true;
+  const inert = inertGenes(g, { genes });
+  for (const k of ["attackTimeoutMult", "armyAttackSizeMult", "garrisonMult", "armyAttackSize", "garrison"])
+    assert.ok(inert[k], `${k} is read by nothing under neverInitiates and must be marked`);
+  assert.match(inert.attackTimeoutMult, /never initiates/i, "the reason must name the switch responsible");
+  // …and turning it off brings them back.
+  g.strategy.neverInitiates = false;
+  const live = inertGenes(g, { genes });
+  assert.ok(!live.attackTimeoutMult, "with the switch off the offence dials must be live again");
+});
+
+test("the force-parity and army-cap switches gate their own dials", () => {
+  const genes = geneKeys({ layers: ["strategy", "archetype"], odyssey: true });
+  const g = genomeFrom({ genes });
+  g.strategy.matchEnemyForce = false;
+  g.strategy.capsArmy = false;
+  const inert = inertGenes(g, { genes });
+  assert.ok(inert.matchBuffer && inert.matchFloor, "parity dials are dead without the switch");
+  assert.ok(inert.standingArmyCap, "the cap value is dead without the cap switch");
+  // warFooting only ever lifts a standingArmyCap, so with no cap there is nothing for it to lift.
+  assert.ok(inert.warFootingMult && inert.warFootingTime,
+    "the war-footing surge is dead when there is no cap to surge from");
+  g.strategy.matchEnemyForce = true;
+  g.strategy.capsArmy = true;
+  const live = inertGenes(g, { genes });
+  assert.ok(!live.matchBuffer && !live.standingArmyCap && !live.warFootingMult);
+});
+
+test("Odyssey-only genes are inert in a skirmish and live in an Odyssey", () => {
+  const genes = geneKeys({ layers: ["strategy", "archetype"], odyssey: true });
+  const g = genomeFrom({ genes });
+  const skirmish = inertGenes(g, { genes, odyssey: false });
+  for (const k of ["graceMult", "grievanceMult", "forgiveness", "wantsIndustryAlways", "useBombOffensively"])
+    assert.ok(skirmish[k], `${k} is Odyssey-gated and must be marked inert in a skirmish`);
+  const odyssey = inertGenes(g, { genes, odyssey: true });
+  assert.ok(!odyssey.graceMult, "…and live once the target really is an Odyssey match");
+});
+
+test("a plain genome with no switches set marks nothing beyond the Odyssey group", () => {
+  const genes = geneKeys();   // strategy layer, skirmish-relevant genes only
+  const g = genomeFrom({ strategy: "default", genes });
+  g.strategy.neverInitiates = false;
+  g.strategy.matchEnemyForce = true;
+  g.strategy.capsArmy = true;
+  assert.deepEqual(inertGenes(g, { genes }), {}, "an ordinary aggressive genome has no dead dials");
 });

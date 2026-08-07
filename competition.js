@@ -83,7 +83,8 @@ import {
 } from "./competitionLedger.js";
 // The genome whitelist (GENOME_SCHEMA) — the same validator addRosterEntry applies, run here
 // too so a bad file is reported to the player rather than silently becoming an empty AI.
-import { sanitizeGenome } from "./tools/genome.js";
+import { sanitizeGenome, GENOME_SCHEMA, MIX_ALPHABET, geneKeys, genomeFrom, inertGenes, toCandidate }
+  from "./tools/genome.js";
 
 /* ============================================================
    PURE — job construction, seed derivation, table/Elo shaping, roster/standings shaping. No DOM,
@@ -1284,6 +1285,7 @@ const COMP_TABS = [
   { key: "duel", label: "🏆 Quick Duel" },
   { key: "tournament", label: "🏟 Tournament" },
   { key: "roster", label: "📋 Roster" },
+  { key: "editor", label: "🧬 AI Editor" },
   { key: "standings", label: "📈 Standings" },
   { key: "gauntlet", label: "🎯 Gauntlet" },
 ];
@@ -1331,6 +1333,7 @@ function refreshCompView() {
   renderCompTabs(wrapEl);
 
   if (compScreen === "roster") renderRosterScreen(wrapEl);
+  else if (compScreen === "editor") renderAiEditorScreen(wrapEl);
   else if (compScreen === "standings") renderStandingsScreen(wrapEl);
   else if (compScreen === "tournament") renderTournamentScreen(wrapEl);
   else if (compScreen === "gauntlet") renderGauntletScreen(wrapEl);
@@ -2505,6 +2508,258 @@ function renderAddRosterEntryForm(container) {
   card.appendChild(addBtn);
 
   container.appendChild(card);
+}
+
+/* ============================================================
+   THE AI EDITOR — build an opponent by hand (docs/ai-evolution-design.md)
+
+   The genome was always meant to be a thing a PLAYER owns, not only something a search breeds.
+   Until now owning one meant editing JSON by hand, which is a fine format for a bench and a poor
+   one for a person.
+
+   THE WHOLE FORM IS GENERATED FROM GENOME_SCHEMA. Every control's kind, bounds, grouping and label
+   come from the schema row, so this screen cannot drift out of step with what the engine actually
+   reads: add a gene there and it appears here, with the right widget and the right limits, and it
+   is impossible to build an illegal AI through this UI because the bounds ARE the schema's.
+
+   IT SHOWS WHAT IS INERT, which is the feature that justifies a real screen over a text box. The
+   genome is full of epistatic switches — under "never initiates" every offense dial is read by
+   nothing, matchBuffer/matchFloor are dead unless force-matching is on, the whole diplomacy group
+   is dead outside Odyssey. Junk DNA is useful to a search and hostile to a person: someone tuning
+   a muster size for ten minutes under a flag that makes it meaningless gets no feedback at all.
+   inertGenes() (tools/genome.js) names them and the rows grey out live as you toggle.
+   ============================================================ */
+
+// The genome currently on the bench. Null until the screen is first opened, then kept across tab
+// switches so a half-built AI survives a trip to the Roster and back.
+let editorGenome = null;
+let editorName = "";
+let editorError = "";
+let editorSaved = "";
+
+const EDITOR_GENES = () => geneKeys({ layers: ["strategy", "archetype"], odyssey: true });
+
+// Module -> the plain-English heading a player reads, since "linkage group" is a search concept.
+const MODULE_LABELS = {
+  offense: "Attacking", economy: "Economy", defense: "Defence", diplomacy: "Diplomacy (Odyssey)",
+  adaptation: "Reading the opponent", macro: "Expansion & build-out", tempo: "Attack timing",
+  composition: "What it builds",
+};
+
+// One-line explanations, keyed by gene. Written for someone who has played the game, not for
+// someone who has read the engine.
+const GENE_HELP = {
+  attackTimeoutMult: "Lower = commits to an attack sooner.",
+  armyAttackSizeMult: "Lower = attacks with a smaller force.",
+  garrisonMult: "Higher = keeps more units home when it attacks.",
+  neverInitiates: "Never starts a fight. Still defends, and still answers a provocation in Odyssey.",
+  useBombOffensively: "Walks a built Helium Bomb to the target instead of keeping it as a home trap.",
+  workerTargetMult: "Higher = a bigger worker economy.",
+  capsArmy: "Hold the standing army at a fixed size and spend the rest on economy.",
+  standingArmyCap: "How many combat units it keeps while capped.",
+  warFootingMult: "How far the cap lifts once it is attacked.",
+  warFootingTime: "How long that surge lasts, in seconds.",
+  wantsIndustryAlways: "Climbs the deep factory chain even when its temperament wouldn't.",
+  turretCountMult: "Higher = more static defence.",
+  matchEnemyForce: "Size its army to mirror whatever it has seen of yours.",
+  matchBuffer: "How far above parity it aims.",
+  matchFloor: "The smallest home guard it keeps regardless.",
+  graceMult: "How long the opening peace lasts.",
+  grievanceMult: "How fast it sours when you hurt it.",
+  forgiveness: "How fast it cools off again.",
+  punishPosture: "How economy-heavy you must look before it raids you.",
+  punishConfidence: "How much of you it must have scouted before acting on that.",
+  adaptRateMult: "How fast its stance shifts as it learns about you.",
+  adaptBandMult: "How big a change it takes to shift at all. Higher = more stubborn.",
+  defenceSwingMult: "How far its stance swings turret spending.",
+  workerTarget: "Base worker count before multipliers.",
+  expandWhenNodesBelow: "Expands once home ore drops below this fraction. 0 = never expands.",
+  maxBarracks: "How many production buildings it will run.",
+  wantsRefinery: "Builds a Refinery and researches its doctrine.",
+  armyAttackSize: "Base wave size before multipliers.",
+  attackTimeout: "Base seconds before it commits anyway.",
+  garrison: "Base home guard before multipliers.",
+  turretCount: "Base turret count before multipliers.",
+  unitMix: "Its repeating production cycle. Order matters — the first entry is built first.",
+  doctrine: "Which upgrade path it researches.",
+  faction: "Its faction bonuses.",
+};
+
+function renderAiEditorScreen(container) {
+  const genes = EDITOR_GENES();
+  if (!editorGenome) editorGenome = genomeFrom({ strategy: "default", archetype: "balanced", genes });
+
+  container.appendChild(mk("p", "setup-hint comp-intro",
+    "Build an opponent dial by dial. Every control here comes from the AI's own schema, so anything "
+    + "you can set is something the engine really reads and within limits it really accepts — you "
+    + "cannot build a broken AI from this screen. Greyed rows are dials that nothing is currently "
+    + "reading, and each says why."));
+
+  // START FROM — the shipped strategies and archetypes are far better starting points than a blank
+  // form, and "modify a Rusher" is a much more approachable task than "invent an AI".
+  const seedRow = mk("div", "comp-io-row");
+  seedRow.appendChild(mk("span", "setup-hint", "Start from: "));
+  for (const key of Object.keys(STRATEGIES)) {
+    const b = mk("button", "btn", STRATEGIES[key].name || key);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      editorGenome = genomeFrom({ strategy: key, archetype: "balanced", genes });
+      editorSaved = ""; editorError = ""; refreshCompView();
+    });
+    seedRow.appendChild(b);
+  }
+  container.appendChild(seedRow);
+
+  const inert = inertGenes(editorGenome, { genes, odyssey: false });
+
+  // One block per linkage group, in schema order.
+  const modules = [...new Set(genes.map(g => g.module))];
+  for (const mod of modules) {
+    const rows = genes.filter(g => g.module === mod);
+    if (!rows.length) continue;
+    container.appendChild(mk("h4", "comp-entrant-heading", MODULE_LABELS[mod] || mod));
+    const card = mk("div", "comp-entrant");
+    for (const g of rows) card.appendChild(renderGeneRow(g, inert[g.key]));
+    container.appendChild(card);
+  }
+
+  // SAVE — straight onto the roster, where it is duellable immediately.
+  container.appendChild(mk("h4", "comp-entrant-heading", "Save to roster"));
+  const saveCard = mk("div", "comp-entrant");
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "comp-name-input";
+  nameInput.placeholder = "Name this AI";
+  nameInput.maxLength = 40;
+  nameInput.value = editorName;
+  nameInput.addEventListener("input", () => { editorName = nameInput.value; });
+  saveCard.appendChild(nameInput);
+
+  const saveBtn = mk("button", "btn", "Save to roster");
+  saveBtn.type = "button";
+  saveBtn.addEventListener("click", () => {
+    try {
+      const name = (editorName || "").trim();
+      if (!name) throw new Error("give it a name first");
+      // sanitizeGenome again on the way out, even though every control is schema-bounded: the save
+      // path is the one that reaches the live AI tables, and it should not depend on the UI having
+      // been the only writer.
+      addRosterEntry(ensureLedger(), { name, genome: sanitizeGenome(editorGenome), createdAt: Date.now() });
+      saveLedgerToStorage(ensureLedger());
+      editorSaved = `Saved “${name}” — pick it as an entrant in Quick Duel.`;
+      editorError = "";
+    } catch (err) {
+      editorError = err.message;
+      editorSaved = "";
+    }
+    refreshCompView();
+  });
+  saveCard.appendChild(saveBtn);
+
+  const dlBtn = mk("button", "btn", "⭳ Download");
+  dlBtn.type = "button";
+  dlBtn.title = "Save as a candidate file — the same format the bench and Import AI use.";
+  dlBtn.addEventListener("click", () => {
+    const name = (editorName || "Custom AI").trim();
+    const blob = new Blob([JSON.stringify(toCandidate(editorGenome, name, { genes }), null, 2)],
+      { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  saveCard.appendChild(dlBtn);
+  container.appendChild(saveCard);
+
+  if (editorError) container.appendChild(mk("p", "comp-error", editorError));
+  if (editorSaved) container.appendChild(mk("p", "setup-hint", editorSaved));
+}
+
+// One control, chosen by the gene's KIND. Bounds come from the schema row, never from here.
+function renderGeneRow(g, inertWhy) {
+  const row = mk("div", "comp-gene-row" + (inertWhy ? " comp-gene-inert" : ""));
+  const label = mk("label", "comp-gene-label", g.key);
+  row.appendChild(label);
+  const bag = editorGenome[g.layer];
+
+  if (g.kind === "flag") {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = bag[g.key] === true;
+    // A flag can turn other rows inert, so the whole screen re-renders rather than just this row.
+    cb.addEventListener("change", () => { bag[g.key] = cb.checked; refreshCompView(); });
+    row.appendChild(cb);
+  } else if (g.kind === "choice") {
+    const sel = document.createElement("select");
+    for (const opt of g.of) {
+      const o = document.createElement("option");
+      o.value = o.textContent = opt;
+      if (bag[g.key] === opt) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener("change", () => { bag[g.key] = sel.value; });
+    row.appendChild(sel);
+  } else if (g.kind === "mix") {
+    row.appendChild(renderMixEditor(g, bag));
+  } else {
+    const isCount = g.kind === "count";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = String(g.min);
+    slider.max = String(g.max);
+    slider.step = isCount ? "1" : String(Math.max(0.001, +((g.max - g.min) / 200).toFixed(3)));
+    slider.value = String(bag[g.key]);
+    const out = mk("span", "comp-gene-value", String(bag[g.key]));
+    slider.addEventListener("input", () => {
+      const v = isCount ? Math.round(Number(slider.value)) : +Number(slider.value).toFixed(3);
+      bag[g.key] = v;
+      out.textContent = String(v);
+    });
+    row.appendChild(slider);
+    row.appendChild(out);
+  }
+
+  // The reason it is inert outranks the ordinary help text: it is the more actionable fact.
+  row.appendChild(mk("span", "setup-hint comp-gene-help", inertWhy || GENE_HELP[g.key] || ""));
+  return row;
+}
+
+// The production cycle: an ordered list, because order decides what gets built first. Kept simple —
+// add a type, remove a slot — rather than drag-and-drop, which is a lot of code for a nine-slot list.
+function renderMixEditor(g, bag) {
+  const wrap = mk("div", "comp-mix");
+  const mix = Array.isArray(bag[g.key]) ? bag[g.key] : [];
+  mix.forEach((type, i) => {
+    const chip = mk("button", "btn comp-mix-chip", `${i + 1}. ${type} ✕`);
+    chip.type = "button";
+    chip.title = "Remove this slot";
+    chip.addEventListener("click", () => {
+      // Two entries is the shortest thing that is still a cycle (tools/genome.js MIX_MIN_LEN).
+      if (mix.length <= 2) { editorError = "a production cycle needs at least two entries"; }
+      else { mix.splice(i, 1); editorError = ""; }
+      refreshCompView();
+    });
+    wrap.appendChild(chip);
+  });
+  const add = document.createElement("select");
+  const blank = document.createElement("option");
+  blank.value = ""; blank.textContent = "+ add…";
+  add.appendChild(blank);
+  for (const t of MIX_ALPHABET) {
+    const o = document.createElement("option");
+    o.value = o.textContent = t;
+    add.appendChild(o);
+  }
+  add.addEventListener("change", () => {
+    if (!add.value) return;
+    if (mix.length >= 10) { editorError = "a production cycle is capped at ten entries"; }
+    else { mix.push(add.value); editorError = ""; }
+    refreshCompView();
+  });
+  wrap.appendChild(add);
+  return wrap;
 }
 
 function renderRosterScreen(container) {

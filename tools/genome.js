@@ -633,3 +633,48 @@ export function restoreTables(snap) {
   DIFFICULTY_OPTIONS.length = 0;
   DIFFICULTY_OPTIONS.push(...snap.difficulties);
 }
+
+/* ============================================================
+   INERT GENES — which dials are currently read by NOTHING
+
+   The genome is full of epistatic switches (see the KINDS note in this file's header): under
+   `neverInitiates` every offense dial is dead, `matchBuffer`/`matchFloor` are dead unless
+   `matchEnemyForce` is on, `standingArmyCap` is not even emitted unless `capsArmy` is, and the
+   whole diplomacy group is dead outside Odyssey.
+
+   That is deliberate and useful for a SEARCH — inert genes drift as junk DNA and give a lineage
+   somewhere new to land when a switch flips back. It is actively hostile to a PERSON. Someone
+   tuning `armyAttackSizeMult` for ten minutes while `neverInitiates` is checked is getting no
+   feedback at all, and nothing on screen tells them why.
+
+   So the editor asks this function and greys those rows out. Pure and schema-driven, so it can be
+   tested on its own and cannot drift from the rules the engine actually applies.
+   ============================================================ */
+
+/**
+ * The gene keys that `genome` currently renders meaningless, with the reason for each.
+ * @param {Genome} genome @param {{ genes?: Gene[], odyssey?: boolean }} [opts]
+ *   odyssey  true when the target is an Odyssey match; false (default) means a skirmish, where the
+ *            whole Odyssey-gated group is read by nothing.
+ * @returns {Object.<string, string>} gene key -> why it is inert
+ */
+export function inertGenes(genome, { genes = geneKeys({ layers: ["strategy", "archetype"], odyssey: true }), odyssey = false } = {}) {
+  const out = {};
+  const s = genome.strategy || {};
+  for (const g of genes) {
+    if (g.odysseyOnly && !odyssey) out[g.key] = "Odyssey only — read by nothing in a skirmish or duel";
+  }
+  if (s.neverInitiates)
+    for (const k of ["attackTimeoutMult", "armyAttackSizeMult", "garrisonMult", "armyAttackSize", "attackTimeout", "garrison"])
+      if (genes.some(g => g.key === k)) out[k] = "inert while “never initiates” is on — it never commits a wave";
+  if (!s.matchEnemyForce)
+    for (const k of ["matchBuffer", "matchFloor"])
+      if (genes.some(g => g.key === k)) out[k] = "inert unless “match enemy force” is on";
+  if (!s.capsArmy) {
+    if (genes.some(g => g.key === "standingArmyCap")) out.standingArmyCap = "inert unless “cap the standing army” is on";
+    // warFooting only ever lifts a standingArmyCap, so with no cap there is nothing for it to lift.
+    for (const k of ["warFootingMult", "warFootingTime"])
+      if (genes.some(g => g.key === k)) out[k] = "inert without a standing-army cap — there is nothing to lift";
+  }
+  return out;
+}

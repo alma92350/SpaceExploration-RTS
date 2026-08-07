@@ -1710,3 +1710,23 @@ body.panel-collapsed #selectionPanel { display: none; }
 .scenario-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 .scenario-btn.disabled:hover { border-color: var(--border); color: var(--text); }
 .scenario-btn.hidden { display: none; }
+
+/* --- AI Editor (competition.js renderAiEditorScreen) — a schema-generated form, so the layout has
+   to work for any gene the schema grows, not just today's list. --- */
+.comp-gene-row {
+  display: grid;
+  grid-template-columns: 190px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+.comp-gene-row > .comp-gene-help { grid-column: 1 / -1; margin: 0 0 4px 190px; font-size: 11px; }
+.comp-gene-label { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.comp-gene-value { font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+/* INERT: a dial nothing is currently reading. Dimmed rather than hidden or disabled — the value is
+   still real and still saved (it matters again the moment its switch flips back), so hiding it
+   would lose work and disabling it would suggest it is broken. */
+.comp-gene-inert { opacity: 0.45; }
+.comp-gene-inert .comp-gene-help { font-style: italic; }
+.comp-mix { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.comp-mix-chip { width: auto; padding: 2px 8px; font-size: 11px; }
