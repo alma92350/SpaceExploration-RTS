@@ -2,6 +2,12 @@
 
 **Date:** 2026-08-07 · **Commit:** `56d13d7` · **Reviewer:** external, architecture + TDD focus
 
+> **Status update.** Findings 1, 2 and 3 have since been fixed in this branch — the typecheck is
+> green on both TypeScript 5.7 and 7, the CI compiler is pinned, and `updateIntel` now fades on a
+> real straight line. The three new tests in `test/aiIntel.test.js` were written red first and
+> reproduce the old decay exactly. Findings 4–9 are open. The suite is at 2497 passing.
+> Everything below is the review as written against `56d13d7`, left unedited.
+
 **Baseline measured, not assumed:**
 
 | Check | Result |

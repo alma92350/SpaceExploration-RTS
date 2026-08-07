@@ -110,7 +110,14 @@ export function createAiController(planetId, opts = {}) {
     // is true, which is what makes scouting worth its cost and killing the scout a real counter.
     // Null/0 until something is actually sighted — "I have seen nothing" must stay distinguishable
     // from "I have seen an empty base" (see aiIntel's header).
-    intelMil: 0, intelEco: 0, intelAt: null,
+    // intelMil/intelEco are PEAKS, each with its own stamp saying when it was set — the current
+    // belief is that peak faded by its own elapsed time, computed at read (aiIntel.js
+    // channelValue), never accumulated. Separate clocks because a worker still in view refreshes
+    // what the AI knows about the economy and nothing about the army that left.
+    intelMil: 0, intelMilAt: null, intelEco: 0, intelEcoAt: null,
+    // …and intelAt answers the different question confidence needs: when did it last see the
+    // enemy at all. Null until something is actually sighted.
+    intelAt: null,
     // The damped STANCE derived from that belief (engine/aiIntel.js updateAdaptMode): 0 = the
     // enemy is playing economy, 1 = they are massing, 0.5 = no opinion. Null until a first think
     // cycle sets it, and pinned at neutral forever on Easy (adaptivity 0).

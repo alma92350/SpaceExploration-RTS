@@ -248,8 +248,11 @@
  * @property {number} unitsBuilt
  * @property {number} waveCount
  * @property {number|null} nextWaveAt
- * @property {number} intelMil    ore-value of enemy MILITARY assets this controller has seen (aiIntel.js)
- * @property {number} intelEco    ore-value of enemy ECONOMIC assets this controller has seen
+ * @property {number} intelMil    PEAK ore-value of enemy MILITARY assets seen (aiIntel.js); the
+ *   live belief is this faded by intelMilAt's age, computed at read and never written back
+ * @property {number|null} intelMilAt sim-time that military peak was set; null = never
+ * @property {number} intelEco    PEAK ore-value of enemy ECONOMIC assets seen
+ * @property {number|null} intelEcoAt sim-time that economic peak was set; null = never
  * @property {number|null} intelAt sim-time it last saw anything of the enemy; null = never
  * @property {number|null} adaptMode damped stance from that belief: 0 economy, 1 massing, 0.5 neutral
  * @property {Archetype} archetype

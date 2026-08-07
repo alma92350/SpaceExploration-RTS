@@ -143,6 +143,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **The adaptive AI actually remembers what it scouted now.** Its opponent belief was documented
+  to fade in a straight line over four minutes, but the code faded the stored value and wrote the
+  faded number back, then re-faded *that* from the same timestamp on the next think cycle. The
+  decay compounded once per cycle, so at the AI's real 1.5-second cadence a four-minute fade
+  emptied in about sixty seconds — and because confidence gates everything downstream, the whole
+  adaptive layer sat pinned at neutral the moment the enemy left vision. Scouting bought almost
+  nothing and `adaptDefenceMult` returned 1.0, identical to having no adaptation at all. The peak
+  is now immutable and the fade is computed at read time from elapsed time, so it is the straight
+  line it always claimed to be, at any think rate. Military and economic belief also fade on
+  separate clocks: a worker parked in view used to keep re-dating the *military* estimate, holding
+  up the AI's read of an army that had long since walked away.
+- **`npm run typecheck` passes again**, and CI pins the compiler version. Two JSDoc signatures in
+  `competitionLedger.js` were wrong — `addRosterEntry` never declared the `genome` field it reads
+  and writes, and `recordCompetition` typed its match rows as bare `object`. The build had been red
+  since 2026-08-05. CI also installed TypeScript unpinned, so the same source reported 2 errors
+  under 5.7 and 21 under 7.0.2; the invocation is now pinned so a compiler release can't turn a
+  green commit red on its own.
 - A worker whose gathering node hit exactly 0 mid-carry could strand its last partial load
   forever (never banked); this is now rare in practice, since the same fix that stops gatherers
   from idling at a dry node also gives it somewhere to carry the stranded load — the fully-idle
