@@ -57,6 +57,36 @@ test("duelSeed genuinely varies with world, difficulty, replicate, and base seed
   assert.notEqual(base, duelSeed(1, "ferros", "medium", "Alpha", "Gamma", 0), "the actual pair must vary the seed");
 });
 
+/* ---------- duelSeed's seedKey escape hatch (docs/ai-evolution-design.md §8.1) ---------- */
+
+test("omitting seedKey leaves duelSeed byte-for-byte the derivation it has always been", () => {
+  // The whole point of the parameter is that it is invisible unless asked for: every existing
+  // caller (runDuel without an evolutionary opts, every recorded competition row, every saved
+  // --json duel result) must keep drawing the identical maps.
+  for (const [world, diff, rep] of [["ferros", "medium", 0], ["korrath", "hard", 3], ["vesper", "easy", 1]]) {
+    assert.equal(duelSeed(1, world, diff, "Alpha", "Beta", rep),
+      duelSeed(1, world, diff, "Alpha", "Beta", rep, undefined),
+      "an explicit undefined seedKey must be identical to omitting it");
+  }
+});
+
+test("seedKey replaces the NAMES in the hash, so differently-named pairs share one map set", () => {
+  // This is the property an evolutionary run needs: generated names (g3i7 vs g2i4) would otherwise
+  // hash to their own maps every generation, and "the child beat its parent's number" would be
+  // partly a statement about map luck rather than about the genome.
+  const a = duelSeed(1, "ferros", "medium", "g3i7", "g2i4", 0, "evolve");
+  const b = duelSeed(1, "ferros", "medium", "totally", "different", 0, "evolve");
+  assert.equal(a, b, "with a seedKey pinned, the candidate names must not reach the map draw");
+  assert.notEqual(a, duelSeed(1, "ferros", "medium", "g3i7", "g2i4", 0),
+    "and it must actually differ from the unpinned derivation, or it is doing nothing");
+  // Everything else still varies exactly as before — the key replaces the names, nothing else.
+  assert.notEqual(a, duelSeed(1, "korrath", "medium", "g3i7", "g2i4", 0, "evolve"));
+  assert.notEqual(a, duelSeed(1, "ferros", "hard", "g3i7", "g2i4", 0, "evolve"));
+  assert.notEqual(a, duelSeed(1, "ferros", "medium", "g3i7", "g2i4", 1, "evolve"));
+  assert.notEqual(a, duelSeed(2, "ferros", "medium", "g3i7", "g2i4", 0, "evolve"));
+  assert.notEqual(a, duelSeed(1, "ferros", "medium", "g3i7", "g2i4", 0, "evolve2"));
+});
+
 /* ---------- runDuelMatch (formerly ailab.js's own private duelRun) ---------- */
 
 const dials = pinnedDuelDials("medium");

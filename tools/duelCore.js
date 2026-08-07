@@ -48,6 +48,15 @@ export function pinnedDuelDials(difficulty) {
 // side-symmetry bug would show up as those two disagreeing" — and with an order-dependent seed the
 // two halves would differ in seat AND map, so a disagreement would be confounded with ordinary
 // seed variance and carry no information at all.
+//
+// `seedKey` OVERRIDES the name-derived half of that hash, and exists for one caller: an
+// evolutionary search (tools/genome.js, docs/ai-evolution-design.md §8.1). Names in the hash are
+// exactly right when the pair IS the experiment — two hand-written candidates, compared to each
+// other — but wrong the moment names are generated per individual, because then a generation's
+// every pairing draws its own map set and "the child scored better than its parent did" is partly
+// a statement about map luck rather than about the genome. Passing one fixed key for a whole
+// generation (or a whole run) pins every pairing in it to the same maps, so genomes are compared
+// on identical ground. Omitted, this is byte-for-byte the seed derivation it has always been.
 /**
  * @param {number} base
  * @param {string} world
@@ -55,10 +64,12 @@ export function pinnedDuelDials(difficulty) {
  * @param {string} aName
  * @param {string} bName
  * @param {number} rep
+ * @param {string} [seedKey]   replaces the sorted-names segment; omit for today's exact behaviour.
  * @returns {number}
  */
-export function duelSeed(base, world, difficulty, aName, bName, rep) {
-  return hashStr(`${base}:duel:${world}:${difficulty}:${[aName, bName].sort().join("|")}:${rep}`);
+export function duelSeed(base, world, difficulty, aName, bName, rep, seedKey) {
+  const pairPart = seedKey != null ? seedKey : [aName, bName].sort().join("|");
+  return hashStr(`${base}:duel:${world}:${difficulty}:${pairPart}:${rep}`);
 }
 
 // Run ONE match: candidate A as owner "player", candidate B as owner "ai", both spending from the
