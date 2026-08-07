@@ -475,17 +475,65 @@ duel-length skirmish they fire on healthy genomes, which is precisely the failur
 CHECKS header records three rewrites of. So the screen runs at its own length, on its own Odyssey
 worlds, and only when asked.
 
-### The honest prior
+### What the first run actually found
 
-The four shipped strategies have had real human search spent on them, and a first GA may not beat
-them. The value in Phase 1 is not necessarily a stronger AI — it is a **reusable
-variation-and-selection loop**, plus §6E's diverse archive, which the hand-tuning process cannot
-produce at all. See the search ledger in `docs/odyssey-ai-review.md` for what the first run
-actually measured.
+12 genomes × 6 generations, korrath/ferros/vesper, Medium+Hard, 3h21m. Full rows in the search
+ledger (`docs/odyssey-ai-review.md`); the three findings worth carrying forward:
+
+**1. It works, and it generalises.** The champion beats all four hand-tuned strategies on four
+worlds it never trained on, at a longer clock than it was selected under: 50W-14L (78%) at Medium,
+40W-24L (63%) at Hard, over 320 matches. Medium is ~4.5σ over even. So the loop is not producing
+noise, and it is not overfitting its training worlds.
+
+**2. And it should not be promoted, because it is Goodhart's law in a can.** Stripped of inert
+genes the champion is three dials — `neverInitiates`, `workerTargetMult` at the schema ceiling, and
+no army cap — which is to say: *max economy, uncapped army, never attack*. At Hard **every one of
+its 40 wins is a `timeout-score` win and none is an elimination**, while 16 of its 24 losses are
+eliminations. It does not play better; it exploits the fact that `engine/victory.js` weights combat
+units 1.35× and banked ore 0.25×, so an army that never fights and never takes attrition is the
+most valuable thing you can own at the clock. §8.8 predicted this in the abstract; it took one
+generation to arrive in practice.
+
+This is the single most useful thing the run produced, and it is an argument about the *objective*,
+not about the search. Duel-Elo was chosen over `score()` precisely because a win "cannot be farmed
+except by winning" — that reasoning was incomplete. A win at the timeout is farmable, because the
+timeout is scored by a heuristic, and any heuristic is a hand-written definition of good. Three
+plausible responses, none free:
+  - **Score only eliminations** (a timeout is a draw). Cleanest, but it selects hard for all-in
+    aggression and would probably breed the opposite degenerate.
+  - **Fitness = win rate weighted toward elimination wins.** A dial, therefore another thing to
+    tune, therefore another thing to Goodhart.
+  - **Take the finding as being about the game, not the bench**: a tiebreak that pays 1.35× for an
+    army you never commit rewards turtling in *real* matches too, not just evolved ones. That is
+    worth a balance conversation independent of any of this.
+
+**3. Read the trajectory, not the numbers.** Elitism accidentally supplied a control: generation
+3's champion is cloned unchanged into generation 4 and scored **+199 then +118** — 81 edge points
+apart on a byte-identical genome. The apparent per-generation climb is a flat line with ±80
+scatter. Only the gap to the anchors (+120 to +200, consistently) survives that, and the held-out
+round-robin is what actually confirmed it. **A single-seed generation cannot rank genomes**; the
+next run spends its compute on `--seeds` or on §8.7's successive halving, not on more generations.
+
+The honest summary: Phase 1 delivered a working variation-and-selection loop and a genuinely
+generalising champion that the game should not ship. Both halves of that are the result.
 
 ---
 
 ## 10. Open questions
+
+- **What should the objective be, now that duel-Elo is known to be farmable?** The three options in
+  §9 are the start of that argument, not the end of it. Until it is settled, no evolved genome
+  should be promoted into `engine/` on duel record alone — the held-out round-robin proves
+  generalisation, not quality.
+- **Should the schema's bounds be widened where evolution pins them?** `workerTargetMult` landed
+  exactly on 2.0, its ceiling. A binding bound means the optimum is outside the range, and the
+  honest options are to widen it or to state why the range is a design constraint rather than a
+  search constraint (on Hard the difficulty row multiplies by a further 1.25, so 2.0 is really
+  2.5×).
+- **`runEvolution` has no resume.** A 3-hour run that dies is a 3-hour run lost. Per-generation
+  checkpointing now writes the champion-so-far, but the *population* is not serialised, so a run
+  can be salvaged but not continued. The fix is the same shape as `Workflow`'s resume: write the
+  population alongside the champion and take a `--resume-from`.
 
 - **Should the player ever see a genome?** A "Lineage" panel on a Competition roster entry —
   parents, generation, which genes it inherited from which side — is nearly free (it is all JSON
