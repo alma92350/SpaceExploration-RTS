@@ -104,6 +104,11 @@
  * @property {number} [matchFloor]
  * @property {boolean} [wantsIndustryAlways]   climbs the deep factory chain regardless of archetype.wantsRefinery
  * @property {boolean} [useBombOffensively]    walks a built Helium Bomb to the attack target instead of leaving it home
+ * @property {number} [punishPosture]         adaptation: at or below this enemy posture, punish greed (engine/aiIntel.js)
+ * @property {number} [punishConfidence]      adaptation: evidence required before acting on that read
+ * @property {number} [adaptRateMult]         adaptation: multiplier on how fast the stance moves
+ * @property {number} [adaptBandMult]         adaptation: multiplier on the dead band that resists moving it
+ * @property {number} [defenceSwingMult]      adaptation: multiplier on how far the stance swings static defence
  */
 
 // ---- entities -------------------------------------------------------------------

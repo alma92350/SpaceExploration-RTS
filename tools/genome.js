@@ -142,6 +142,21 @@ export const GENOME_SCHEMA = [
   { key: "grievanceMult",      layer: "strategy", kind: "ratio", min: 0.3,  max: 3,   module: "diplomacy", odysseyOnly: true },
   { key: "forgiveness",        layer: "strategy", kind: "ratio", min: 0.3,  max: 3,   module: "diplomacy", odysseyOnly: true },
 
+  // ---- ADAPTATION — the POLICY the AI reads its opponent with (engine/aiIntel.js,
+  // docs/ai-adaptive-opponent.md). These are the genes that make the search breed a reactive
+  // BEHAVIOUR rather than a fixed build: when to call an opponent greedy and punish it, how much
+  // evidence to demand first, how twitchy or stubborn the stance is, and how far the stance is
+  // allowed to swing investment. Every one is read through a `?? default` at its use site, so an
+  // absent value is exactly the shipped behaviour.
+  //   Their own linkage group on purpose: they interact strongly with each other (a low evidence
+  // bar with a twitchy rate is a very different AI from either alone) and weakly with everything
+  // else, which is precisely the condition module-wise crossover is built for.
+  { key: "punishPosture",    layer: "strategy", kind: "ratio", min: 0.1,  max: 0.8, module: "adaptation" },
+  { key: "punishConfidence", layer: "strategy", kind: "ratio", min: 0.05, max: 0.8, module: "adaptation" },
+  { key: "adaptRateMult",    layer: "strategy", kind: "ratio", min: 0.25, max: 4,   module: "adaptation" },
+  { key: "adaptBandMult",    layer: "strategy", kind: "ratio", min: 0.25, max: 4,   module: "adaptation" },
+  { key: "defenceSwingMult", layer: "strategy", kind: "ratio", min: 0.05, max: 2,   module: "adaptation" },
+
   // ---- MACRO — the archetype's own counts. Only in play when the archetype chromosome is
   // enabled (`--genes strategy,archetype`), which also requires the per-side archetype plumb
   // through runDuel — see tools/ailab.js.

@@ -42,6 +42,9 @@
 import { UNITS, BUILDINGS } from "./entities.js";
 import { isVisibleAt } from "./fog.js";
 import { otherOwner } from "./aiCommon.js";
+// aiStrategy.js is the pure, import-free leaf its own header describes, so this is a downward
+// edge with no cycle — the same one aiWorkers/aiMilitary/aiEconomy already have.
+import { strategyFor } from "./aiStrategy.js";
 
 // How long an unrefreshed belief takes to fade to nothing, in sim seconds. Four minutes: long
 // enough that an army stepping out of vision for a fight doesn't erase itself, short enough that
@@ -171,9 +174,17 @@ export function readEnemy(state, owner = "ai") {
  * @param {{ maxPosture?: number, minConfidence?: number }} [opts]
  * @returns {boolean}
  */
-export function enemyIsGreedy(state, owner = "ai", { maxPosture = 0.35, minConfidence = 0.25 } = {}) {
+export function enemyIsGreedy(state, owner = "ai", opts = {}) {
   const r = readEnemy(state, owner);
   if (r.posture == null) return false;   // never seen them — hedge and scout, never assume weakness
+  // THE ADAPTATION POLICY IS EVOLVABLE (docs/ai-evolution-design.md Phase 4). Both thresholds read
+  // off the strategy row through the same `?? default` seam every other dial in this engine uses,
+  // so an absent value is exactly today's behaviour and tools/genome.js can search them without an
+  // engine change — the property that made a candidate AI JSON in the first place. An explicit
+  // opts value still wins, which is what lets aiMilitary scale the bar by difficulty.
+  const strategy = strategyFor(state, owner);
+  const maxPosture = opts.maxPosture ?? strategy.punishPosture ?? 0.35;
+  const minConfidence = opts.minConfidence ?? strategy.punishConfidence ?? 0.25;
   return r.posture <= maxPosture && r.confidence >= minConfidence;
 }
 
@@ -221,8 +232,13 @@ export function updateAdaptMode(state, owner = "ai", adaptivity = 1) {
   const target = r.posture == null ? ADAPT_NEUTRAL
     : ADAPT_NEUTRAL + (r.posture - ADAPT_NEUTRAL) * r.confidence;
   const gap = target - cur;
-  if (Math.abs(gap) <= ADAPT_DEAD_BAND) { controller.adaptMode = cur; return cur; }
-  const step = Math.min(Math.abs(gap), ADAPT_RATE * adaptivity) * (gap < 0 ? -1 : 1);
+  // Both damping terms are evolvable multipliers on the shipped constants — a genome can breed a
+  // twitchy reactor or a stubborn one — and both default to 1, i.e. exactly today's behaviour.
+  const strategy = strategyFor(state, owner);
+  const band = ADAPT_DEAD_BAND * (strategy.adaptBandMult ?? 1);
+  const rate = ADAPT_RATE * (strategy.adaptRateMult ?? 1);
+  if (Math.abs(gap) <= band) { controller.adaptMode = cur; return cur; }
+  const step = Math.min(Math.abs(gap), rate * adaptivity) * (gap < 0 ? -1 : 1);
   const next = Math.min(1, Math.max(0, cur + step));
   controller.adaptMode = next;
   return next;
@@ -244,5 +260,7 @@ const DEFENCE_SWING = 0.6;
 export function adaptDefenceMult(state, owner = "ai") {
   const controller = owner === "ai" ? state.ai : state.playerAi;
   const mode = controller && controller.adaptMode != null ? controller.adaptMode : ADAPT_NEUTRAL;
-  return 1 + (mode - ADAPT_NEUTRAL) * 2 * DEFENCE_SWING;
+  const strategy = strategyFor(state, owner);
+  const swing = DEFENCE_SWING * (strategy.defenceSwingMult ?? 1);
+  return 1 + (mode - ADAPT_NEUTRAL) * 2 * swing;
 }

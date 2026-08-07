@@ -21,6 +21,7 @@
    ============================================================ */
 
 import { test } from "node:test";
+import { readFileSync, readdirSync } from "node:fs";
 import assert from "node:assert/strict";
 import {
   GENOME_SCHEMA, MODULES, MIX_ALPHABET, geneKeys, genomeFrom, randomGenome, mutate, mutateMix,
@@ -58,21 +59,39 @@ test("gene keys are unique — a duplicate would silently shadow in the lowered 
   assert.equal(new Set(keys).size, keys.length);
 });
 
-test("every gene key is one the engine actually reads, or the schema is tuning nothing", () => {
-  // A gene named after a field no use site consults is the quietest possible bug: the search runs,
-  // the numbers move, and the AI never changes. Checked against the shipped tables, which between
-  // them field every dial the engine reads — plus the two switches this file introduces on
-  // purpose (capsArmy gates standingArmyCap; matchEnemyForce/neverInitiates etc. are all shipped).
-  const shipped = new Set();
-  for (const row of Object.values(STRATEGIES)) Object.keys(row).forEach(k => shipped.add(`strategy.${k}`));
-  for (const row of Object.values(ARCHETYPES)) {
-    Object.keys(row).forEach(k => shipped.add(`archetype.${k}`));
-    Object.keys(row.odyssey || {}).forEach(k => shipped.add(`archetype.${k}`));
-  }
-  const INTRODUCED = new Set(["strategy.capsArmy"]);   // this file's own explicit switch
+test("every gene key is one the ENGINE actually reads, or the schema is tuning nothing", () => {
+  // A gene named after a field no use site consults is the quietest possible bug in this whole
+  // system: the search runs, the numbers move, generations pass, and the AI never changes.
+  //
+  // Checked against the engine SOURCE rather than against the shipped tables. The shipped-table
+  // version of this test passed vacuously for anything already in a row and — worse — failed for a
+  // gene that is genuinely read but has no shipped default, which is exactly what an adaptation
+  // dial looks like (engine/aiIntel.js reads strategy.punishPosture through a `?? 0.35`, and no
+  // STRATEGIES row carries it). Reading the source asks the real question: does anything consume
+  // this name?
+  const engine = readdirSync(new URL("../engine/", import.meta.url))
+    .filter(f => f.endsWith(".js"))
+    .map(f => readFileSync(new URL(`../engine/${f}`, import.meta.url), "utf8"))
+    .join("\n");
+  const CAPS_ARMY = "strategy.capsArmy";   // this file's own switch — gates standingArmyCap, never read by the engine
   for (const g of GENOME_SCHEMA) {
-    const id = `${g.layer}.${g.key}`;
-    assert.ok(shipped.has(id) || INTRODUCED.has(id), `${id} is read by nothing in the shipped tables`);
+    if (`${g.layer}.${g.key}` === CAPS_ARMY) continue;
+    // Strategy dials are read as `strategy.key`; archetype dials either as `archetype.key` or
+    // through engine/ai.js's Odyssey-overlay reader, `arch("key")`.
+    const patterns = [`strategy.${g.key}`, `archetype.${g.key}`, `arch("${g.key}")`, `.${g.key}`];
+    assert.ok(patterns.some(p => engine.includes(p)),
+      `gene "${g.key}" is read by nothing under engine/ — evolving it would tune nothing at all`);
+  }
+});
+
+test("the adaptation genes really are wired into the engine's own reads", () => {
+  // Sharper than the sweep above, because these are the newest and the easiest to leave dangling:
+  // assert each one appears at the exact `strategy.X` read site engine/aiIntel.js uses.
+  const intel = readFileSync(new URL("../engine/aiIntel.js", import.meta.url), "utf8");
+  for (const key of ["punishPosture", "punishConfidence", "adaptRateMult", "adaptBandMult", "defenceSwingMult"]) {
+    assert.ok(intel.includes(`strategy.${key}`), `${key} is not read in engine/aiIntel.js`);
+    assert.ok(GENOME_SCHEMA.some(g => g.key === key && g.module === "adaptation"),
+      `${key} must be in the adaptation linkage group so crossover cuts around it as a set`);
   }
 });
 

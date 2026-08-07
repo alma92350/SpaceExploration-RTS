@@ -122,6 +122,25 @@ precedent decides the shape here:
    breeds adaptation *policies* rather than constants — and MAP-Elites breeds a cast of adaptation
    styles rather than a cast of fixed builds.
 
+**All four are implemented.** The adaptation policy is five genes in their own linkage group —
+`punishPosture`, `punishConfidence` (when to call an opponent greedy, and how much evidence to
+demand first), `adaptRateMult`, `adaptBandMult` (how twitchy or stubborn the stance is) and
+`defenceSwingMult` (how far it swings investment). They sit in one module because they interact
+strongly with each other and weakly with everything else, which is exactly the condition
+module-wise crossover exists for: a low evidence bar paired with a twitchy rate is a completely
+different opponent from either alone, and a child should inherit that pairing intact.
+
+Every one is read through a `?? default` at its use site, so an absent value is the shipped
+behaviour and the search needs no engine change to explore them — the same property that made a
+candidate AI JSON in the first place.
+
+### Where this goes next
+
+The read is also the mechanism for something bigger: **fingerprinting the player**. `posture`,
+army size and expansion are exactly the axes MAP-Elites already bins genomes on, so measuring the
+*human* on those axes and fitting a genome to the result produces an AI that plays the way you do.
+That is Phase 6, and it is what the genome work was always for — see `docs/ai-evolution-design.md`.
+
 ## Constraints this must respect
 
 Everything before this touched only `tools/`. This touches `engine/`, so the project's hard rules
