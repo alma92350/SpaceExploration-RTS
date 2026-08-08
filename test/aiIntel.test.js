@@ -24,6 +24,7 @@ import {
 import { BUILDINGS, UNITS } from "../engine/entities.js";
 import { createGameState, createAiController } from "../engine/state.js";
 import { FOG_CELL_SIZE } from "../engine/fog.js";
+import { advanceThinkCycles } from "./_helpers.js";
 
 const world = () => {
   const s = createGameState({ planetId: "ferros", seed: 1 });
@@ -215,16 +216,12 @@ test("only a sighting raises the estimate; only time lowers it", () => {
    per think cycle and the documented four-minute fade really emptied in about sixty seconds. So
    these drive it at the production cadence and assert the NUMBER the docs promise.        */
 
-const THINK_INTERVAL = 1.5;   // engine/ai.js — the cadence runAI actually calls updateIntel at
-
-// Run `seconds` of sim forward the way the game does: many small think cycles, not one jump.
-const think = (s, seconds, owner = "ai") => {
-  const until = s.time + seconds;
-  while (s.time < until) {
-    s.time = Math.min(until, s.time + THINK_INTERVAL);
-    updateIntel(s, owner);
-  }
-};
+// Run `seconds` of sim forward the way the game does: many think cycles, not one jump. The cadence
+// comes from engine/ai.js's own exported THINK_INTERVAL via test/_helpers.js, deliberately not a
+// local copy — a test whose idea of the think rate can drift from the engine's is how this class
+// of bug hides in the first place.
+const think = (s, seconds, owner = "ai") =>
+  advanceThinkCycles(s, seconds, st => updateIntel(st, owner));
 
 test("the belief fades LINEARLY over INTEL_FADE when driven at the real think cadence", () => {
   const s = world();

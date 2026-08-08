@@ -78,7 +78,13 @@ import { strategyFor } from "./aiStrategy.js";
 import { updateIntel, readEnemy, updateAdaptMode } from "./aiIntel.js";
 import { adaptivityFor } from "./aiDifficulty.js";
 
-const THINK_INTERVAL = 1.5;
+// Sim seconds between one controller's think cycles. EXPORTED so a test can drive an AI function
+// at the cadence the game really uses instead of hardcoding its own guess — the gap that let
+// aiIntel.js's fade ship a decay two hundred times too steep: its tests jumped state.time in one
+// hop, which is correct for a single call and says nothing about the dozens runAI actually makes
+// between two sightings. test/_helpers.js's advanceThinkCycles is built on this constant so the
+// two can never drift apart.
+export const THINK_INTERVAL = 1.5;
 
 /**
  * @param {State} state

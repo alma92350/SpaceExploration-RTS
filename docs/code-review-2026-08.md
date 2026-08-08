@@ -236,22 +236,32 @@ line: one module per input mode (selection, camera, build placement, hotkeys).
 
 ---
 
-## 7. Import discipline stops at the engine boundary — MEDIUM
+## 7. Import discipline stops at the engine boundary — ~~MEDIUM~~ **WITHDRAWN**
 
-**What.** `engine/` has **zero** internal import cycles. The UI layer has **15**, among
-`boot.js`, `setup.js`, `competition.js`, `saveload.js`, `overlays.js`, `hud.js`, `hudSelection.js` —
-including a 5-module ring (`boot → competition → overlays → saveload → setup → boot`).
+**This finding was wrong, and the error is worth recording.** I reported "15 UI import cycles,
+unguarded". Both halves are misleading.
 
-**So what.** ES modules tolerate cycles, so nothing is broken today. What breaks is testability and
-change safety: you cannot import `competition.js` in a test without dragging `boot.js` and the whole
-UI graph in, and module-init order becomes load-bearing in a way nobody has written down. The engine
-proves the team can hold this line — it just was never asked of the UI.
+The 15 is an artifact of how I counted: my detector enumerated distinct *simple cycles*, and a
+single strongly-connected cluster of 7 modules contains many. There is **one** cycle here —
+`boot.js`, `competition.js`, `hud.js`, `hudSelection.js`, `overlays.js`, `saveload.js`, `setup.js` —
+not fifteen.
 
-**Now what.** No big refactor. Break the ring at its weakest edge: whatever `boot.js` needs from
-`competition.js` (and vice versa) is almost certainly one or two functions that belong in a shared
-leaf module. `session.js` and `dom.js` already play that role for others. Add a cycle check to
-`test/static-integrity.test.js` and ratchet — assert the count never exceeds today's 15, then walk it
-down.
+And it is already guarded, better than I proposed. `test/static-integrity.test.js` runs **Tarjan
+over the whole shipped module graph** and asserts the set of strongly-connected components equals
+exactly that 7-module cluster. A new cycle anywhere — including inside `engine/` — fails the suite,
+and a *seventh* member joining the known cluster failed it too until someone justified it in a
+comment. That is a membership freeze, which is strictly stronger than the count ratchet I
+recommended adding.
+
+I missed it because I ran my own cycle detector instead of checking whether the suite already had
+one. Lesson worth keeping: measure the codebase, then check what the tests already claim, before
+concluding something is unguarded.
+
+**What still stands** is the underlying architectural point, downgraded to a remark: the cluster is
+real, it makes `competition.js` un-importable in a test without dragging in `boot.js`, and its
+safety rests on an invariant enforced by prose ("every back-edge is called at runtime, not at
+module-evaluation time" — `overlays.js`) rather than by a check. Breaking it is still worthwhile,
+just not urgent, and the existing guard will hold the line meanwhile.
 
 ---
 

@@ -211,7 +211,7 @@ function gauss(rng) {
 
 const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
 
-/** A seeded stream, so callers never reach for Math.random. @param {number} seed */
+/** A seeded stream, so callers never reach for the global one. @param {number} seed */
 export const rngFor = seed => mulberry32(seed >>> 0);
 
 /* ============================================================
