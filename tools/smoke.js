@@ -19,15 +19,19 @@
 
      - It lives in tools/, so `node --test test/*.test.js` never globs it. `npm test` stays
        offline, dependency-free and fast.
-     - Playwright is fetched at RUN time via npx, never added to package.json — exactly the
-       precedent the CI type-check step set for TypeScript, and for the same reason: a tool the
-       build uses is not a thing the game depends on.
+     - Playwright is installed with `--no-save`, so it never enters package.json. Same intent as
+       the CI type-check step fetching TypeScript on demand: a tool the build uses is not a thing
+       the game depends on. (`npx --package X -- node script` looks like the tidier version of
+       this and does NOT work — npx puts the package's BIN on PATH but not its module on the
+       child's resolution path, so `require` inside the script still fails. Verified, after
+       shipping it broken once.)
 
    RUNNING IT
 
-     npm run smoke                    # CI does this; fetches playwright-core via npx
-     node tools/smoke.js              # if playwright-core is already resolvable
-     node tools/smoke.js --keep-open  # leave the browser open (headed) to watch it
+     npm install --no-save playwright@1.56.1   # once; --no-save keeps package.json clean
+     npx playwright install --with-deps chromium
+     npm run smoke
+     npm run smoke -- --keep-open              # headed, left open, to watch it
 
    It starts and stops its own server, so there is nothing to set up. Exits non-zero on the first
    uncaught page error, on a console error, or on any step not reaching the state it expects.
@@ -89,17 +93,22 @@ const check = (name, ok, detail = "") => {
 };
 
 async function main() {
+  // playwright (full) or playwright-core, whichever is present — the CLI that downloads browsers
+  // only ships in the full package, so CI installs that one; a machine that already has the core
+  // package works too.
   let chromium;
-  try {
-    ({ chromium } = createRequire(join(ROOT, "package.json"))("playwright-core"));
-  } catch {
-    try { ({ chromium } = await import("playwright-core")); }
-    catch {
-      console.error("playwright-core is not resolvable.\n" +
-        "This is deliberately NOT a dependency — run it the way CI does:\n" +
-        "  npm run smoke\n");
-      process.exit(2);
-    }
+  const req = createRequire(join(ROOT, "package.json"));
+  for (const pkg of ["playwright", "playwright-core"]) {
+    try { ({ chromium } = req(pkg)); break; } catch { /* try the next one */ }
+  }
+  if (!chromium) {
+    console.error(
+      "Playwright is not installed, which is deliberate — it is not a dependency of this game.\n" +
+      "Install it for this checkout without touching package.json:\n\n" +
+      "  npm install --no-save playwright@1.56.1\n" +
+      "  npx playwright install --with-deps chromium\n" +
+      "  npm run smoke\n");
+    process.exit(2);
   }
 
   const server = await startServer();
