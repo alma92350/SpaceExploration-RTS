@@ -2597,13 +2597,19 @@ function renderAiEditorScreen(container) {
 
   // START FROM — the shipped strategies and archetypes are far better starting points than a blank
   // form, and "modify a Rusher" is a much more approachable task than "invent an AI".
+  //   The seeds are read off STRATEGY_OPTIONS, not engine/aiStrategy.js's raw STRATEGIES: this
+  // module deliberately never imports that table (see strategyLabel's own note above), and the row
+  // that did reached for an undefined binding — which threw on the first render and made this whole
+  // tab a blank screen, since a ReferenceError inside renderAiEditorScreen aborts refreshCompView
+  // after it has already emptied the wrapper. STRATEGY_OPTIONS carries the same four keys under
+  // `mult` with the same labels, so what a player sees is unchanged.
   const seedRow = mk("div", "comp-io-row");
   seedRow.appendChild(mk("span", "setup-hint", "Start from: "));
-  for (const key of Object.keys(STRATEGIES)) {
-    const b = mk("button", "btn", STRATEGIES[key].name || key);
+  for (const opt of STRATEGY_OPTIONS) {
+    const b = mk("button", "btn", opt.label);
     b.type = "button";
     b.addEventListener("click", () => {
-      editorGenome = genomeFrom({ strategy: key, archetype: "balanced", genes });
+      editorGenome = genomeFrom({ strategy: opt.mult, archetype: "balanced", genes });
       editorSaved = ""; editorError = ""; refreshCompView();
     });
     seedRow.appendChild(b);

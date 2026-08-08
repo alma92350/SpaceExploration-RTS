@@ -6,7 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The Competition screen's 🧬 AI Editor tab was a blank screen.** Its "Start from:" row read
+  `engine/aiStrategy.js`'s `STRATEGIES` table, which `competition.js` deliberately never imports —
+  so opening the tab threw `ReferenceError: STRATEGIES is not defined` before a single control was
+  built, and because `refreshCompView` empties its wrapper before calling the screen renderer, the
+  result was an empty pane. The seed buttons now read `setup.js`'s `STRATEGY_OPTIONS`, the same
+  table the rest of the module already uses for strategy names; the four seeds and their labels are
+  unchanged. `npm run smoke` now clicks through all six Competition tabs and fails on any tab that
+  raises, naming the tab that broke.
 
 ## [1.1.0] — 2026-08-08
 

@@ -134,6 +134,56 @@ async function main() {
       (await page.evaluate(() => performance.getEntriesByType("resource").filter(r => r.name.endsWith(".js")).length)) > 50);
     check("the setup screen offers a game mode", await page.isVisible("text=⚔ Skirmish"));
 
+    /* ---------- every Competition tab ----------
+       Six sub-screens rendered straight into the DOM by competition.js, none of which the match
+       walkthrough below ever touches. Worth its own steps because of the exact failure mode this
+       whole file exists for: the AI Editor shipped reaching for an undefined `STRATEGIES` binding,
+       which parses fine, imports fine, and throws only when a human clicks the tab. refreshCompView
+       empties its wrapper BEFORE calling the screen renderer, so the throw left a pane holding
+       nothing but the back button and the tab row — a blank screen and a console error nobody saw.
+
+       Each tab is checked against the ERROR LOG rather than against a child count, and that is the
+       substantive choice here. A half-rendered screen still has children: the AI Editor appends its
+       intro paragraph before the line that threw, so "more children than the chrome" passed on the
+       very bug this is meant to catch. A tab that raised nothing is the real assertion, and it says
+       WHICH tab broke — which the single console check at the end of the run cannot. */
+    await page.click("text=🏆 Competition");
+    await page.waitForTimeout(500);
+    const compTabs = ["🏆 Quick Duel", "🏟 Tournament", "📋 Roster", "🧬 AI Editor", "📈 Standings", "🎯 Gauntlet"];
+    for (const tab of compTabs) {
+      const before = errors.length;
+      await page.click(`.comp-tab-btn:text-is("${tab}")`);
+      await page.waitForTimeout(300);
+      const kids = await page.evaluate(() => document.querySelector(".comp-screen")?.children.length ?? 0);
+      check(`the ${tab} tab renders`, errors.length === before && kids > 2,
+        errors.length > before ? errors.slice(before).join(" | ") : `${kids} children`);
+    }
+
+    // The AI Editor generates its whole form from GENOME_SCHEMA, so a row per gene and a seed button
+    // per shipped strategy is the check that it built the form rather than an empty shell.
+    await page.click('.comp-tab-btn:text-is("🧬 AI Editor")');
+    await page.waitForTimeout(400);
+    const editor = await page.evaluate(() => ({
+      genes: document.querySelectorAll(".comp-gene-row").length,
+      seeds: [...document.querySelectorAll(".comp-io-row .btn")].map(b => b.textContent),
+      inert: document.querySelectorAll(".comp-gene-inert").length,
+    }));
+    check("the AI Editor builds a row per gene", editor.genes >= 30, `${editor.genes} gene rows`);
+    check("the AI Editor offers the shipped strategies as seeds",
+      editor.seeds.includes("Aggressive") && editor.seeds.includes("Force Parity"), editor.seeds.join(", "));
+    check("the AI Editor greys out the dials nothing is reading", editor.inert > 0, `${editor.inert} inert rows`);
+
+    // Reseeding from a shipped strategy re-renders the whole form (a seed can flip flags, which
+    // changes which rows are inert) — the one interaction on this screen that rebuilds everything.
+    await page.click('.comp-io-row .btn:text-is("Aggressive")');
+    await page.waitForTimeout(300);
+    check("reseeding the editor from a shipped strategy re-renders it",
+      (await page.evaluate(() => document.querySelectorAll(".comp-gene-row").length)) >= 30);
+
+    await page.click(".comp-back-btn");
+    await page.waitForTimeout(400);
+    check("leaving Competition returns to the setup screen", await page.isVisible("text=⚔ Skirmish"));
+
     // Start a real match. Clicking a world card is what launches it (setup.js renderMapSelect).
     await page.click("text=⚔ Skirmish");
     await page.waitForTimeout(400);
