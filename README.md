@@ -224,19 +224,29 @@ which is what that "whether it keeps your saves" note above is warning you about
   `renderShared.js` / `minimap.js` / `camera.js` / `effects.js` — the canvas view. `render.js`
   orchestrates the frame; the `render*.js` family draws units, buildings, effects and nodes; there
   are no images, every silhouette is vector drawing code.
-- `input.js` — mouse/keyboard/touch controls and the right-click command ladder.
-- `hud.js` / `hudSelection.js` / `overlays.js` / `setup.js` / `landingPicker.js` /
-  `observerPanel.js` / `techChart.js` / `starmap.js` / `dom.js` — UI chrome. `hudSelection.js` owns
-  the selection panel and is the largest file in the repo.
+- `input.js` / `inputCommands.js` — mouse/keyboard/touch controls. `input.js` owns the stateful
+  half (drag boxes, pinch gestures, held keys, control groups); `inputCommands.js` owns the
+  stateless half — what is at a point, and what the right-click command ladder does about it.
+- `hud.js` / `hudSelection.js` / `hudPanelSignature.js` / `overlays.js` / `setup.js` /
+  `landingPicker.js` / `observerPanel.js` / `techChart.js` / `starmap.js` / `dom.js` — UI chrome.
+  `hudSelection.js` owns the selection panel: one `render*` function per panel family, dispatched
+  by `rebuildSelectionPanel`, with `hudPanelSignature.js` deciding when a rebuild is needed at all.
 - `boot.js` / `session.js` / `saveload.js` / `update.js` / `version.js` / `saveShape.js` — wiring
   the sim to the page, session state, save/load, and the version/auto-update check.
 - `sound.js` / `observer.js` — audio cues and Observer Mode.
 - `data.js` — pure content (factions, the commodity catalog, production recipes, the charted
   worlds).
-- `tools/serve.js` — the zero-dependency dev server behind `npm start`.
-- `tools/ailab.js` / `tools/selfplay.js` — a headless bench for measuring and tuning the Odyssey
-  AI: it runs the sim without a browser, scores the opponent over a long session, and A/B-tests
-  candidate AIs supplied as JSON. See [docs/odyssey-ai-review.md](docs/odyssey-ai-review.md).
+- `tools/serve.js` / `tools/ailab.js` / `tools/selfplay-cli.js` — Node CLI benches, never loaded by
+  the browser: the zero-dependency dev server behind `npm start`, and a headless AI bench that runs
+  the sim without a browser, scores the opponent over a long session, A/B-tests candidate AIs
+  supplied as JSON, and evolves new ones. See [docs/odyssey-ai-review.md](docs/odyssey-ai-review.md)
+  and [docs/ai-evolution-design.md](docs/ai-evolution-design.md).
+- `tools/selfplay.js` / `tools/duelCore.js` / `tools/genome.js` — **shipped code that happens to live
+  under `tools/`**, not benches. They run a match headlessly, which is what the CLI wants *and* what
+  the in-browser competition Worker (`competitionWorker.js`) wants, so `boot.js`, `competition.js`
+  and `playerFingerprint.js` import them too. Because a duel's outcome becomes a persisted Elo
+  rating, they carry the same determinism and DOM-free requirements as `engine/`, and
+  `test/engine-purity.test.js` scans them alongside it.
 
 ## Background: why a separate repo
 

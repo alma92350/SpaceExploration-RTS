@@ -409,14 +409,24 @@ surface.
   correct the comment and pin the bound with a characterisation test. Do not leave the comment and the
   code disagreeing. **M**
 - **Rebuild-signature co-location.** 141 lines with 11 inline IIFEs, each re-deriving a lookup that
-  `rebuildSelectionPanel` derives again ~1,000 lines later. **M**
+  `rebuildSelectionPanel` derives again further down the file. **M**
+  *(Partly done, 2026-08-08: `rebuildSelectionPanel` is now a dispatcher over twelve named
+  `renderX()` families instead of one 871-line body, so the "render" third of the registry exists
+  already. What is left is moving each family's signature term next to its renderer — now a
+  per-family move rather than one big one.)*
 - **Production rosters copied out of `BUILDINGS[].produces` in three hand-maintained shapes**, with the
   Odyssey gate duplicated *differently* from the engine's own. Land the test before the refactor — it
   passes today. **S**
 - **Silhouette collisions** (C6's art half — the Gate deserves a bespoke hull), **per-frame allocation**
   (measured 2.16 ms of pure JS and 0.9 MB/s of garbage at 306 units, before any rasterization; pop caps go
-  to 300 *per side*), **five byte-identical cross-module function bodies**, and the **6-module UI import
-  cycle** (benign today, guarded nowhere, fails as a blank white screen). Each **S–M**.
+  to 300 *per side*), **five byte-identical cross-module function bodies** (the two that actually bit
+  — `clamp`, `negate` — are shared now and re-forking is guarded by
+  `test/static-integrity.test.js`), and the **UI import cycle** (now 7 modules, not 6: `competition.js`
+  joined it deliberately. Still benign only because every back-edge is called at runtime rather than
+  at module-evaluation time, and still failing as a blank white screen if that stops being true —
+  but no longer "guarded nowhere": a Tarjan check in `test/static-integrity.test.js` freezes the
+  cluster's exact membership, so a new cycle anywhere, or an eighth member here, fails the suite).
+  Each **S–M**.
 
 ---
 

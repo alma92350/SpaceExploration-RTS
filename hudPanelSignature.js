@@ -8,8 +8,8 @@
    state contributes no term to it silently never redraws. (That is not
    hypothetical: it is what left the Freight Lane and Colony Policy controls
    inert, reading as no-ops and inviting a second click that toggled the change
-   back.) A model that important should be readable on its own, without scrolling
-   past 800 lines of button construction — and the derivations it shares with the
+   back.) A model that important should be readable on its own, rather than buried
+   in the middle of the panel's button construction — and the derivations it shares with the
    renderers (factoryStatus, loadableComs, countByType, counterInfo) belong beside
    it rather than in the middle of the DOM code, since both sides call them and
    the two must never drift.
@@ -24,6 +24,12 @@
    that a move rather than a rewrite; test/hudSelection.test.js already drives a
    completeness table over every interactive panel family so a missing term fails
    loudly instead of shipping dead.
+
+   HALF OF THAT IS NOW DONE, which changes what is left. hudSelection.js's twelve
+   panel families each have their own renderX() function and rebuildSelectionPanel
+   is a dispatcher — so the "render" third of the registry already exists, named
+   and separable. What remains is moving each family's SIGNATURE term next to its
+   renderer, which is now a per-family move rather than one big one.
    ============================================================ */
 
 "use strict";
