@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node tools/serve.js",
     "test": "node --test test/*.test.js",
-    "typecheck": "tsc -p jsconfig.json"
+    "typecheck": "tsc -p jsconfig.json",
+    "smoke": "npx --yes --package playwright-core@1.56.1 -- node tools/smoke.js"
   },
   "engines": {
     "node": ">=20"

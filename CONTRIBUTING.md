@@ -146,12 +146,14 @@ This is a repository setting, so it cannot live in a file here. It takes about t
 **Settings → Branches → Add branch ruleset** (or *Add rule* on the classic UI)
 
 - Target branch: `main`
-- ☑ **Require status checks to pass before merging**, and add both by name:
+- ☑ **Require status checks to pass before merging**, and add all three by name:
   - `tests (node 20)`
   - `tests (node 22)`
+  - `browser smoke test`
 
-  Both must be listed. The matrix produces one check per Node version, and requiring only one
-  lets a version-specific regression through — which is the whole reason the matrix exists.
+  All three must be listed. The matrix produces one check per Node version, and requiring only one
+  lets a version-specific regression through — which is the whole reason the matrix exists. The
+  smoke job is the only check that can see a page which parses cleanly and then throws on load.
 - ☑ **Require branches to be up to date before merging** — so a check that passed against a stale
   base cannot count for a merge onto a newer one.
 - ☑ **Block force pushes**
@@ -169,8 +171,10 @@ When cutting a release:
 
 1. `npm test` is green (determinism + purity + static-integrity included), and `npm run typecheck`
    reports no errors on the `// @ts-check`ed files.
-2. Smoke-test in a real browser (`npm start`) — start a skirmish and an Odyssey, save and reload
-   both.
+2. `npm run smoke` is green — boots the real page in real Chromium, starts a match and clicks
+   things, failing on any uncaught error (`tools/smoke.js`; CI runs it as the *browser smoke test*
+   job). It is shallow on purpose. Still worth ten minutes by hand for anything the script does not
+   cover — an Odyssey run, and a save/reload of both modes.
 3. Bump `APP_VERSION` in `version.js` **and** `version` in `package.json` to the new semver, and
    keep `version.json` in sync (the auto-update check compares them). (`test/release-manifest.test.js`,
    `test/version.test.js`.)
