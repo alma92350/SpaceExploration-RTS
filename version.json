@@ -1,8 +1,8 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "saveVersion": 1,
   "galaxySaveVersion": 1,
   "minSaveVersion": 1,
   "minGalaxySaveVersion": 1,
-  "notes": "First versioned release: save/load to a file, browser autosave with Continue, and in-app update checks."
+  "notes": "Observer Mode, patrol orders, in-game competitions with Elo ranking, an evolvable AI genome, and a visible counter-triangle. Save formats are unchanged, so 1.0.0 saves load as-is."
 }

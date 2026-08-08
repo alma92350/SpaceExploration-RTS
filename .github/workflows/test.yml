@@ -15,8 +15,8 @@ jobs:
         node-version: [20, 22]
     name: tests (node ${{ matrix.node-version }})
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
       # No dependencies to install — the game and its test suite run on the Node
@@ -29,5 +29,14 @@ jobs:
       # instead of installing it. `--package typescript` names the package explicitly so this
       # works correctly on a clean runner regardless of any ambient global `tsc`, unlike a bare
       # `npx tsc` (which depends on npx's registry-matching behavior).
+      #
+      # THE VERSION IS PINNED, and that part is load-bearing. Unpinned, `--package typescript`
+      # resolves to whatever is newest on the registry that morning, so a green commit can go red
+      # overnight with no code change and a real regression is indistinguishable from a compiler
+      # upgrade. That is not hypothetical here: TypeScript 7 reported 21 errors on a tree that
+      # TypeScript 5.7 reported 2 on, and CI stayed red across two merges to main. Pinning the
+      # INVOCATION keeps the compiler out of package.json exactly as the note above intends —
+      # it is still not a dependency, it is just no longer a moving target. Bump this
+      # deliberately, in its own commit, so a compiler upgrade is reviewable on its own.
       - name: Type-check the annotated files
-        run: npx --yes --package typescript -- tsc -p jsconfig.json
+        run: npx --yes --package typescript@5.7.2 -- tsc -p jsconfig.json

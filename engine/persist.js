@@ -193,8 +193,14 @@ function cleanController(src, prefix, planetId) {
     // LastThreatAt is: an old save without these loads as "never seen anything", so a reloaded AI
     // starts honestly blind and goes scouting rather than acting on intel it cannot justify.
     // Clamped at 0 because a negative asset value is meaningless and would invert posture.
+    // intelMil/intelEco are PEAKS; each carries its own stamp. A save written before the
+    // per-channel stamps existed has neither, and loads with both null — aiIntel.js's channelValue
+    // falls back to the shared IntelAt in exactly that case, which is the closest true statement
+    // the old data supports. Still purely additive, so no SAVE_VERSION bump (CONTRIBUTING §3).
     intelMil: Math.max(0, num(g("IntelMil"), 0)),
+    intelMilAt: g("IntelMilAt") == null ? null : num(g("IntelMilAt"), 0),
     intelEco: Math.max(0, num(g("IntelEco"), 0)),
+    intelEcoAt: g("IntelEcoAt") == null ? null : num(g("IntelEcoAt"), 0),
     intelAt: g("IntelAt") == null ? null : num(g("IntelAt"), 0),
     // Clamped to the 0..1 the stance is defined on, so a corrupt save cannot push the AI into a
     // defence multiplier outside its designed swing.
@@ -592,6 +598,7 @@ function serPlanet(state) {
       // dropping it would make a reloaded AI forget the army it scouted and re-derive its whole
       // posture read from an empty picture, changing every downstream decision.
       aiIntelMil: state.ai.intelMil ?? 0, aiIntelEco: state.ai.intelEco ?? 0,
+      aiIntelMilAt: state.ai.intelMilAt ?? null, aiIntelEcoAt: state.ai.intelEcoAt ?? null,
       aiIntelAt: state.ai.intelAt ?? null,
       aiAdaptMode: state.ai.adaptMode ?? null,
       // Odyssey colony-ship expansion target (engine/ai.js) — the committed deploy spot
@@ -621,6 +628,7 @@ function serPlanet(state) {
       // dropping it would make a reloaded AI forget the army it scouted and re-derive its whole
       // posture read from an empty picture, changing every downstream decision.
       paIntelMil: state.playerAi.intelMil ?? 0, paIntelEco: state.playerAi.intelEco ?? 0,
+      paIntelMilAt: state.playerAi.intelMilAt ?? null, paIntelEcoAt: state.playerAi.intelEcoAt ?? null,
       paIntelAt: state.playerAi.intelAt ?? null,
       paAdaptMode: state.playerAi.adaptMode ?? null,
       paColonyTarget: state.playerAi.colonyTarget ?? null,

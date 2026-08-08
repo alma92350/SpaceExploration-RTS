@@ -24,6 +24,7 @@ import {
 import { BUILDINGS, UNITS } from "../engine/entities.js";
 import { createGameState, createAiController } from "../engine/state.js";
 import { FOG_CELL_SIZE } from "../engine/fog.js";
+import { advanceThinkCycles } from "./_helpers.js";
 
 const world = () => {
   const s = createGameState({ planetId: "ferros", seed: 1 });
@@ -199,6 +200,91 @@ test("only a sighting raises the estimate; only time lowers it", () => {
   s.time = INTEL_FADE * 3;
   updateIntel(s, "ai");
   assert.equal(readEnemy(s, "ai").mil, 0, "a long-unrefreshed belief must fade to nothing");
+});
+
+/* ---------- the SHAPE of the fade, not just its direction ----------
+
+   The three tests above step `s.time` in ONE hop and call updateIntel ONCE per hop. That is not
+   how engine/ai.js drives this module: runAI calls updateIntel every THINK_INTERVAL (1.5 sim
+   seconds), so between two sightings it runs dozens of times. A fade that is correct for one call
+   and wrong for many passes every assertion above, because they only ever check a DIRECTION
+   ("faded > 0 && faded < grown") — and any decay curve at all satisfies that, including one two
+   hundred times too steep.
+
+   That is exactly the bug these three tests were written for: updateIntel used to write its faded
+   value back and then re-fade it from the same timestamp next cycle, so the decay compounded once
+   per think cycle and the documented four-minute fade really emptied in about sixty seconds. So
+   these drive it at the production cadence and assert the NUMBER the docs promise.        */
+
+// Run `seconds` of sim forward the way the game does: many think cycles, not one jump. The cadence
+// comes from engine/ai.js's own exported THINK_INTERVAL via test/_helpers.js, deliberately not a
+// local copy — a test whose idea of the think rate can drift from the engine's is how this class
+// of bug hides in the first place.
+const think = (s, seconds, owner = "ai") =>
+  advanceThinkCycles(s, seconds, st => updateIntel(st, owner));
+
+test("the belief fades LINEARLY over INTEL_FADE when driven at the real think cadence", () => {
+  const s = world();
+  const skiffs = [addUnit(s, "player", "skiff", 100, 100), addUnit(s, "player", "skiff", 110, 100)];
+  see(s, "ai", 105, 100);
+  s.time = 0;
+  updateIntel(s, "ai");
+  const peak = readEnemy(s, "ai").mil;
+  assert.ok(peak > 0, "fixture sanity: the army was actually seen");
+
+  // They leave, and are never seen again. Every checkpoint is a fraction of the documented window.
+  for (const u of skiffs) { u.x = 4000; u.y = 4000; }
+  for (const [elapsed, expectedShare] of [[0.25, 0.75], [0.25, 0.5], [0.25, 0.25]]) {
+    think(s, INTEL_FADE * elapsed);
+    const got = readEnemy(s, "ai").mil;
+    const want = peak * expectedShare;
+    assert.ok(Math.abs(got - want) < peak * 0.02,
+      `at ${Math.round(s.time)}s of a ${INTEL_FADE}s fade the belief should be ~${want.toFixed(1)} ` +
+      `(${expectedShare * 100}% of ${peak.toFixed(1)}), got ${got.toFixed(4)}`);
+  }
+});
+
+test("the fade depends on ELAPSED TIME, not on how many think cycles ran in it", () => {
+  // The property the bug violated. Two identical worlds, the same sim seconds, different cadences:
+  // a coarse one and a fine one. A per-cycle decay makes the fine-grained run fade far further; a
+  // time-based one lands both on the same number.
+  const run = (cadence) => {
+    const s = world();
+    const skiff = addUnit(s, "player", "skiff", 100, 100);
+    see(s, "ai", 100, 100);
+    s.time = 0;
+    updateIntel(s, "ai");
+    skiff.x = 4000; skiff.y = 4000;
+    const until = INTEL_FADE * 0.5;
+    while (s.time < until) { s.time = Math.min(until, s.time + cadence); updateIntel(s, "ai"); }
+    return readEnemy(s, "ai").mil;
+  };
+  const coarse = run(30), fine = run(0.25);
+  assert.ok(Math.abs(coarse - fine) < 0.01,
+    `the same ${INTEL_FADE * 0.5}s must fade the belief identically at any cadence ` +
+    `(30s steps -> ${coarse.toFixed(4)}, 0.25s steps -> ${fine.toFixed(4)})`);
+});
+
+test("a worker still in sight does not freeze the belief about an army that left", () => {
+  // The other half of the property, and the one a single shared "last seen anything" timestamp
+  // gets wrong: economy and military decay on their OWN clocks. A worker line parked in view is a
+  // genuine refresh of what the AI knows about the ECONOMY, and says nothing whatsoever about the
+  // army that walked off — so it must not hold the military estimate up.
+  const s = world();
+  const skiff = addUnit(s, "player", "skiff", 100, 100);
+  addUnit(s, "player", "worker", 120, 100);
+  see(s, "ai", 110, 100);
+  s.time = 0;
+  updateIntel(s, "ai");
+  const peakMil = readEnemy(s, "ai").mil;
+  assert.ok(peakMil > 0 && readEnemy(s, "ai").eco > 0, "fixture sanity: both channels were seen");
+
+  skiff.x = 4000; skiff.y = 4000;          // the army leaves; the worker stays in view
+  think(s, INTEL_FADE * 0.5);
+  const r = readEnemy(s, "ai");
+  assert.ok(Math.abs(r.mil - peakMil * 0.5) < peakMil * 0.02,
+    `the military belief must keep fading on its own clock (~${(peakMil * 0.5).toFixed(1)}), got ${r.mil.toFixed(4)}`);
+  assert.ok(r.eco > 0, "the economy belief stays fresh — that worker really is still there");
 });
 
 /* ---------- posture ---------- */

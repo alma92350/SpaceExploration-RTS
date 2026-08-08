@@ -18,7 +18,7 @@
 import { SAVE_VERSION, GALAXY_SAVE_VERSION } from "./engine/persist.js";
 
 // The running build's release version. Bump on each release/merge (and version.json with it).
-export const APP_VERSION = "1.0.0";
+export const APP_VERSION = "1.1.0";
 
 // The save-format versions this build WRITES — owned by engine/persist.js, surfaced here so the
 // manifest and the compatibility check share one source of truth.

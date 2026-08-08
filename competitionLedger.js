@@ -82,11 +82,15 @@ import { hashStr } from "./engine/rng.js";
 import { sanitizeGenome } from "./tools/genome.js";
 
 /**
- * @typedef {{ name: string, strategy: string, archetype: string|null, faction: string, createdAt: number|null, human: boolean }} RosterEntry
+ * @typedef {{ name: string, strategy: string, archetype: string|null, faction: string, createdAt: number|null, human: boolean, genome?: Object }} RosterEntry
  *   `archetype` is a STRING KEY into engine/aiArchetypes.js's ARCHETYPES table (D3), or null for
  *   "no override — use whatever the world/planet hands out". Deliberately carries no difficulty
  *   field (see this file's header) — difficulty is the ratingsByDifficulty bracket axis, not part
  *   of an entrant's identity.
+ *   `genome` is OPTIONAL and present only on an entrant that carries its own tools/genome.js dials
+ *   rather than naming a shipped strategy (see addRosterEntry). Declared optional rather than
+ *   `Object|null` on purpose: the field is omitted entirely when absent, so existing rosters and
+ *   exported ladders stay byte-identical instead of gaining a null nobody asked for.
  *   `human` (Phase 4) marks THE one entry that is the player themself. At most one entry may carry
  *   it; it is otherwise an ordinary entrant, rated in the same bracketed tables as everyone else
  *   (D1: a human rating has to mean what an AI rating means, or comparing them is meaningless).
@@ -125,9 +129,20 @@ import { sanitizeGenome } from "./tools/genome.js";
  *   (this module is pure; timestamps arrive from the UI layer, same as recordCompetition's `at`).
  */
 /**
- * @typedef {{ at: number|null, difficulty: string, aName: string, bName: string, rows: object[] }} LedgerHistoryEntry
- *   `rows` is exactly competitionWorker.js's own "done" message rows field — this module treats it
- *   as opaque data it stores and reads back (aName/bName/winner/margin), never a shape it invents.
+ * @typedef {{ aName: string, bName: string, winner: "a"|"b"|"draw", margin?: number }} CompetitionResultRow
+ *   One finished match as competitionWorker.js reports it. NOT elo.js's MatchRow: that carries a
+ *   numeric `score` from A's point of view, and recordCompetition converts to it. `margin` is
+ *   optional and always aName-relative (standingsFor negates it for the B seat).
+ *
+ *   Typed as a real shape rather than the bare `object` it used to be. That was not a cosmetic
+ *   looseness: `object` has no properties at all, so every `row.aName` / `row.winner` /
+ *   `row.margin` read in this file was a type error the moment a checker looked at it — which is
+ *   what broke `npm run typecheck` under TypeScript 7 (TypeScript 5 let the same reads pass).
+ */
+/**
+ * @typedef {{ at: number|null, difficulty: string, aName: string, bName: string, rows: CompetitionResultRow[] }} LedgerHistoryEntry
+ *   `rows` is exactly competitionWorker.js's own "done" message rows field — this module stores it
+ *   and reads it back (aName/bName/winner/margin), never a shape it invents.
  */
 /** @typedef {Object.<string, { rating: number, games: number }>} LedgerRatingsTable  elo.js's own RatingsTable shape. */
 /**
@@ -275,7 +290,7 @@ export function humanEntry(ledger) {
  * that has exactly one answer. A second one would make humanEntry's answer depend on roster order,
  * and would let a Gauntlet be started as one identity and rated as another.
  * @param {CompetitionLedger} ledger
- * @param {{ name: string, strategy?: string, archetype?: string|null, faction?: string, createdAt?: number, human?: boolean }} [entry]
+ * @param {{ name: string, strategy?: string, archetype?: string|null, faction?: string, createdAt?: number, human?: boolean, genome?: Object }} [entry]
  * @returns {CompetitionLedger} the same `ledger`, mutated in place
  */
 export function addRosterEntry(ledger, entry) {
@@ -346,7 +361,7 @@ export function removeRosterEntry(ledger, name) {
  * untouched — the same "guard fires before any mutation" discipline elo.js's own applyResult holds
  * itself to for the same-name collision it guards against.
  * @param {CompetitionLedger} ledger
- * @param {{ at?: number, difficulty: string, aName: string, bName: string, rows: object[] }} entry
+ * @param {{ at?: number, difficulty: string, aName: string, bName: string, rows: CompetitionResultRow[] }} entry
  * @returns {CompetitionLedger} the same `ledger`, mutated in place
  */
 export function recordCompetition(ledger, entry) {
@@ -617,7 +632,11 @@ export function recordGauntletMatch(ledger, result) {
     // aName-relative convention standingsFor reads every history row with.
     aName: g.humanName,
     bName: fixture.opponent,
-    winner: winner === "human" ? "a" : winner === "opponent" ? "b" : "draw",
+    // The cast narrows what TypeScript would otherwise widen: the ternary yields exactly
+    // "a" | "b" | "draw", but an un-annotated object literal widens each property to `string`,
+    // so the row stops matching CompetitionResultRow at the recordCompetition call below. The
+    // three-way check at the top of this function is what actually guarantees the narrowing.
+    winner: /** @type {"a"|"b"|"draw"} */ (winner === "human" ? "a" : winner === "opponent" ? "b" : "draw"),
     winReason: isForfeit ? "forfeit" : (typeof winReason === "string" ? winReason : null),
     margin: margin_,
     time: Number.isFinite(time) ? time : null,

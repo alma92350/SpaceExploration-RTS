@@ -25,7 +25,8 @@
    imports these exports — run `node tools/selfplay-cli.js run [--world ferros] [--seed 1] …`.
 
    Deterministic by construction: the map seeds from mulberry32, and the sim
-   itself has zero Math.random/Date.now (engine/ is purity-guarded). Two runs
+   itself reaches for no unseeded randomness and no wall clock — this file and
+   engine/ are both covered by test/engine-purity.test.js. Two runs
    from the same seed produce byte-identical results — see fingerprint()
    below and test/ai-selfplay.test.js.
    ============================================================ */

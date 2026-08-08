@@ -25,6 +25,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { createGameState, createAiController } from "../engine/state.js";
 import { createDiplomacy } from "../engine/diplomacy.js";
 import { createGalaxy } from "../engine/galaxy.js";
+import { createLedger, addRosterEntry, recordCompetition, standingsFor } from "../competitionLedger.js";
 import { walkJs } from "./_helpers.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,6 +58,119 @@ for (const [name, build] of CASES) {
       `constructs — a // @ts-check'ed caller reading one gets a spurious error in correct code`);
   });
 }
+
+/* ============================================================
+   THE SAME CONTRACT, FOR THE COMPETITION SHAPES
+
+   The five cases above cover engine/types.js's `@typedef {Object}` + `@property` blocks. The
+   competition stack writes its typedefs the other way — inline `@typedef {{ a: X, b: Y }} Name`,
+   in competitionLedger.js rather than engine/types.js — so none of them were checked by anything,
+   and RosterEntry drifted exactly the way State.playerAi once did: addRosterEntry grew a `genome`
+   field that the typedef never declared. That is not a hypothetical. It is what turned
+   `npm run typecheck` red for two days and merged to main twice, because the only thing that could
+   see it was tsc, running in CI, on a build everyone had stopped reading.
+
+   These shapes deserve the guard MORE than GalaxySettings does, not less: a roster entry and a
+   ledger are user-facing data that gets persisted to localStorage, exported to a file, and
+   imported back from an untrusted one.
+   ============================================================ */
+
+// Keys of an inline `@typedef {{ ... }} Name`. Depth-aware on purpose: these types nest real
+// generics (`Object.<string, LedgerRatingsTable>`, `Array<{ difficulty: string, ... }>`), so a
+// naive split on "," would shred them and invent property names out of the fragments.
+function declaredInlineProps(src, typedefName) {
+  // Brace-MATCHED, not regex-captured. A `@typedef\s*\{\{([\s\S]*?)\}\}\s+Name` pattern looks
+  // right and is not: the lazy quantifier still starts at the FIRST `@typedef {{` in the file, so
+  // asking for a typedef declared later returns a body spanning every typedef in between (found
+  // by this file's own parser guard, which is why that guard exists). Walking the braces from each
+  // `@typedef {{` to its own close is the only way to attribute a body to the right name.
+  let body = null;
+  for (const m of src.matchAll(/@typedef\s*\{\{/g)) {
+    let i = m.index + m[0].length - 1, depth = 1;   // sit on the inner `{`
+    while (i + 1 < src.length && depth > 0) {
+      i++;
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") depth--;
+    }
+    const after = src.slice(i + 1);
+    const name = /^\}\s*([A-Za-z_$][\w$]*)/.exec(after);
+    if (name && name[1] === typedefName) {
+      body = src.slice(m.index + m[0].length, i);
+      break;
+    }
+  }
+  assert.ok(body != null, `no inline @typedef {{...}} ${typedefName} found`);
+  const keys = new Set();
+  let depth = 0, field = "";
+  const flush = () => {
+    const head = field.split(":")[0].trim().replace(/\?$/, "");
+    if (/^[A-Za-z_$][\w$]*$/.test(head)) keys.add(head);
+    field = "";
+  };
+  for (const ch of body) {
+    if ("{<([".includes(ch)) depth++;
+    else if ("}>)]".includes(ch)) depth--;
+    if (ch === "," && depth === 0) flush(); else field += ch;
+  }
+  flush();
+  return keys;
+}
+
+const ledgerSrc = readFileSync(join(root, "competitionLedger.js"), "utf8");
+
+const LEDGER_CASES = [
+  // A roster entry carrying a GENOME specifically — the exact shape whose missing declaration
+  // broke the build. A genome-less entry omits the field entirely, so it would not have caught it.
+  ["RosterEntry", () => {
+    const l = createLedger();
+    addRosterEntry(l, { name: "Genomed", genome: { strategy: {}, archetype: {} } });
+    assert.ok(l.roster[0].genome, "fixture sanity: the entry must actually carry a genome");
+    return l.roster[0];
+  }],
+  ["CompetitionLedger", () => createLedger()],
+  // standingsFor's rows are what the Standings screen renders, so a field it constructs but never
+  // declares is a column the UI reads through an `any`.
+  ["Standing", () => {
+    const l = createLedger();
+    addRosterEntry(l, { name: "A" });
+    addRosterEntry(l, { name: "B" });
+    recordCompetition(l, {
+      difficulty: "medium", aName: "A", bName: "B",
+      rows: [{ aName: "A", bName: "B", winner: "a", margin: 3 }],
+    });
+    const rows = standingsFor(l, "medium");
+    assert.ok(rows.length > 0, "fixture sanity: a rated match should produce a standings row");
+    return rows[0];
+  }],
+];
+
+for (const [name, build] of LEDGER_CASES) {
+  test(`every field ${name}'s factory constructs is declared on the ${name} typedef`, () => {
+    const declared = declaredInlineProps(ledgerSrc, name);
+    const constructed = Object.keys(build()).sort();
+    assert.ok(constructed.length > 0, `fixture sanity: the ${name} factory returned an empty object`);
+    assert.deepEqual(constructed.filter(k => !declared.has(k)), [],
+      `competitionLedger.js's ${name} typedef is missing declaration(s) for field(s) it actually ` +
+      `constructs — this is the drift that broke npm run typecheck`);
+  });
+}
+
+test("the inline-typedef parser survives the nested generics these shapes really use", () => {
+  // A guard on the parser, same reason declaredProps has one: a regex that quietly returned an
+  // empty set, or one shredded by the commas inside `Object.<string, X>`, would make all three
+  // tests above pass on anything at all.
+  const keys = declaredInlineProps(ledgerSrc, "CompetitionLedger");
+  assert.deepEqual([...keys].sort(),
+    ["gauntlet", "history", "ratingsByDifficulty", "roster", "seasons", "v"],
+    "the parser must read every top-level key and not split inside Object.<string, ...>");
+
+  // And that a genuinely missing field is REPORTED, not silently tolerated.
+  const declared = declaredInlineProps(ledgerSrc, "RosterEntry");
+  assert.ok(declared.has("genome"), "RosterEntry must declare the optional genome field");
+  assert.deepEqual(
+    Object.keys({ ...createLedger().roster[0], notADeclaredField: 1 }).filter(k => !declared.has(k)),
+    ["notADeclaredField"]);
+});
 
 test("every // @ts-check file actually annotates its exported functions", () => {
   // The pragma alone buys nothing. jsconfig.json sets strict:false and noImplicitAny:false, so an

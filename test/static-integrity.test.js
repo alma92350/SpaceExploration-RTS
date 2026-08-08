@@ -21,8 +21,17 @@ function shippedJs() {
   return walkJs(root).filter(f => !relative(root, f).startsWith("test" + sep));
 }
 
-// The subset the BROWSER loads: shipped code minus tools/, which are Node CLI benches
-// (tools/ailab.js, tools/selfplay.js, tools/serve.js) that index.html never reaches.
+// The candidate set for the ORPHAN check below: shipped code minus tools/.
+//
+// The exclusion is about what an unreachable file MEANS, not about what the browser loads — and
+// the comment here used to say the latter, which is no longer true: boot.js imports
+// tools/selfplay.js, and competition.js / competitionWorker.js / playerFingerprint.js import
+// tools/duelCore.js and tools/genome.js, so three tools/ files really do run in the browser today
+// (test/engine-purity.test.js derives that same set and purity-scans them for exactly that
+// reason). What is still true is that tools/ ALSO holds genuine Node CLI benches — ailab.js,
+// selfplay-cli.js, serve.js — which are launched from a shell and are SUPPOSED to be unreachable
+// from index.html. Orphan-checking tools/ would therefore report those three as broken every run.
+// The browser-reachable ones are covered by the reachability walk anyway, as its own imports.
 function browserJs() {
   return shippedJs().filter(f => !relative(root, f).startsWith("tools" + sep));
 }

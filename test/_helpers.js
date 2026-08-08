@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { createGalaxy, activeState } from "../engine/galaxy.js";
 import { makeBuilding, makeUnit } from "../engine/state.js";
 import { deployColonyShip } from "../engine/colony.js";
+import { THINK_INTERVAL } from "../engine/ai.js";
 
 // Every .js file under `dir`, at ANY depth. The static guards (engine-purity, static-integrity)
 // used a bare readdirSync, which is not recursive — so a file in an engine/ subdirectory escaped
@@ -154,4 +155,44 @@ export function jumpReadyGalaxy(seed = 1) {
   from.units.set(ship.id, ship);
   g.credits = 2000;
   return g;
+}
+
+/* ============================================================
+   DRIVING ACCUMULATING STATE AT THE PRODUCTION CADENCE
+
+   Some engine state is not a fact about the current frame — it is carried forward and updated
+   repeatedly (an opponent belief that fades, a damped stance that steps toward a target). For
+   anything in that class, a test that JUMPS state.time and calls the function once is testing a
+   code path the game never takes: runAI calls these every THINK_INTERVAL, so between two sightings
+   they run dozens of times, and a per-call error that is invisible in one call compounds into a
+   completely different curve.
+
+   That is not hypothetical. engine/aiIntel.js shipped a fade documented as linear over four
+   minutes that really emptied in about sixty seconds, because it re-applied its decay once per
+   think cycle. Its tests — 441 lines of them — could not see it: they stepped time in one hop and
+   asserted a DIRECTION ("it went down") where the docs specify a NUMBER.
+
+   So: use this to advance an accumulating function, and assert the number.
+   ============================================================ */
+
+/**
+ * Run `onThink` the way runAI does — once per think cycle — while advancing `state.time` by
+ * `seconds` in total. The cadence defaults to the engine's own exported THINK_INTERVAL rather than
+ * a copy, so a change to the AI's think rate reaches every test built on this automatically.
+ *
+ * @param {Object} state    anything carrying a numeric `.time` the callee reads
+ * @param {number} seconds  sim seconds to advance
+ * @param {(state: Object) => void} onThink   the accumulating update under test
+ * @param {number} [cadence]
+ */
+export function advanceThinkCycles(state, seconds, onThink, cadence = THINK_INTERVAL) {
+  const until = state.time + seconds;
+  // Math.min on the last step so the total elapsed time is exactly `seconds` regardless of whether
+  // it divides evenly by the cadence — otherwise a test's expected value silently drifts by up to
+  // one cycle, which is precisely the kind of slop that hides a curve bug.
+  while (state.time < until) {
+    state.time = Math.min(until, state.time + cadence);
+    onThink(state);
+  }
+  return state;
 }

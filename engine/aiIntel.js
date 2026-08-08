@@ -58,6 +58,56 @@ export const INTEL_FULL = 900;
 
 const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+/**
+ * How much of a belief set `age` sim-seconds ago is still worth — 1 fresh, 0 past the window,
+ * straight-line in between. Subtraction and division only, no pow()/exp(): a curved fade would
+ * put an engine-approximated math call on a path that feeds every AI decision, and this project's
+ * same-seed-same-game promise (CONTRIBUTING §1) does not want that.
+ * @param {number} age @returns {number}
+ */
+function fadeKeep(age) {
+  return age >= INTEL_FADE ? 0 : 1 - age / INTEL_FADE;
+}
+
+/**
+ * One channel's belief RIGHT NOW: the stored peak, faded by how long since that peak was set.
+ *
+ * THE FADE IS COMPUTED, NEVER ACCUMULATED. This used to fade the stored number and write the faded
+ * number back, then re-fade THAT from the same timestamp on the next think cycle — so the decay
+ * compounded once per cycle and its real rate depended on how often the AI happened to think. At
+ * engine/ai.js's 1.5s cadence the documented four-minute fade emptied in about sixty seconds, which
+ * quietly made the whole belief model inert the moment the enemy left vision. Keeping the peak
+ * immutable and deriving the current value from elapsed time makes the fade exactly the straight
+ * line the header describes, at any cadence.
+ *
+ * `atKey` falls back to the shared `intelAt` so a save written before the per-channel stamps
+ * existed loads as "both channels last refreshed when anything was last seen" — the closest true
+ * statement that old data supports.
+ * @param {Object} controller @param {number} now @param {string} valKey @param {string} atKey
+ * @returns {number}
+ */
+function channelValue(controller, now, valKey, atKey) {
+  const peak = controller[valKey] || 0;
+  if (peak <= 0) return 0;
+  const at = controller[atKey] != null ? controller[atKey] : controller.intelAt;
+  if (at == null) return 0;
+  return peak * fadeKeep(Math.max(0, now - at));
+}
+
+/**
+ * Fold one channel's live sighting into its stored peak. Only a sighting that beats what the AI
+ * already believes moves anything; anything less leaves the peak AND its stamp untouched, so the
+ * existing fade carries on from where it was rather than restarting.
+ * @param {Object} controller @param {number} now @param {string} valKey @param {string} atKey
+ * @param {number} live @returns {void}
+ */
+function refreshChannel(controller, now, valKey, atKey, live) {
+  if (live > channelValue(controller, now, valKey, atKey)) {
+    controller[valKey] = live;
+    controller[atKey] = now;
+  }
+}
+
 /** Sum of a cost object's commodities — the same flat ore-value engine/victory.js's own
  * costValue uses, kept local so this file stays a leaf of entities/fog/aiCommon only.
  * @param {Object} [cost] @returns {number} */
@@ -115,10 +165,16 @@ export function sightEnemy(state, owner = "ai") {
  * engine/ai.js's aiContext, before any phase reads it, so every phase in a cycle sees the same
  * picture.
  *
- * The update is `max(live, faded stored)` per channel — see the high-water-mark note in this
- * file's header. Only a sighting raises it; only time lowers it. `intelAt` is stamped whenever
- * ANYTHING enemy is in sight, including nothing-but-workers, because "I looked and saw a worker
- * line" is a genuine refresh of the belief, not a gap in it.
+ * The update is `max(live, faded peak)` per channel — see the high-water-mark note in this file's
+ * header. Only a sighting raises it; only time lowers it.
+ *
+ * THE TWO CHANNELS FADE ON SEPARATE CLOCKS, which is why there are two stamps and not one. A
+ * worker line parked in view is a real refresh of what the AI knows about the ECONOMY and says
+ * nothing at all about the army that walked off half a minute ago. Under one shared stamp that
+ * worker kept re-dating the military belief too, so a single visible drone held the estimate of an
+ * army that no longer existed up indefinitely — the mirror image of the compounding bug, and just
+ * as wrong. `intelAt` is still stamped whenever ANYTHING enemy is in sight: it answers a different
+ * question ("when did I last look at them at all"), which is what readEnemy's confidence needs.
  *
  * @param {State} state @param {string} [owner] @returns {void}
  */
@@ -126,18 +182,9 @@ export function updateIntel(state, owner = "ai") {
   const controller = owner === "ai" ? state.ai : state.playerAi;
   if (!controller) return;
   const live = sightEnemy(state, owner);
-  const last = controller.intelAt;
-  // Linear fade rather than an exponential one: subtraction and division only, so it carries no
-  // cross-engine float question the way a pow() would, and "how stale is this" stays something a
-  // reader can do in their head.
-  const age = last == null ? Infinity : Math.max(0, state.time - last);
-  const keep = age >= INTEL_FADE ? 0 : 1 - age / INTEL_FADE;
-  const mil = Math.max(live.mil, (controller.intelMil || 0) * keep);
-  const eco = Math.max(live.eco, (controller.intelEco || 0) * keep);
-  controller.intelMil = mil;
-  controller.intelEco = eco;
+  refreshChannel(controller, state.time, "intelMil", "intelMilAt", live.mil);
+  refreshChannel(controller, state.time, "intelEco", "intelEcoAt", live.eco);
   if (live.mil > 0 || live.eco > 0) controller.intelAt = state.time;
-  else if (last == null) controller.intelAt = null;   // never seen anything yet — stay honestly blind
 }
 
 /**
@@ -151,10 +198,17 @@ export function updateIntel(state, owner = "ai") {
 export function readEnemy(state, owner = "ai") {
   const controller = owner === "ai" ? state.ai : state.playerAi;
   if (!controller) return { posture: null, confidence: 0, mil: 0, eco: 0, age: null };
-  const mil = controller.intelMil || 0, eco = controller.intelEco || 0;
+  // Each channel's stored PEAK, faded by its own elapsed time — the fade lives here, at the read,
+  // and is never written back (see channelValue).
+  const mil = channelValue(controller, state.time, "intelMil", "intelMilAt");
+  const eco = channelValue(controller, state.time, "intelEco", "intelEcoAt");
   const total = mil + eco;
   const age = controller.intelAt == null ? null : Math.max(0, state.time - controller.intelAt);
-  const freshness = age == null ? 0 : (age >= INTEL_FADE ? 0 : 1 - age / INTEL_FADE);
+  // NOT a second fade on top of the one already in `mil`/`eco` above — this one answers "how long
+  // since I last laid eyes on them at all", which is a different question from how much of any one
+  // channel's estimate still stands, and it is the half that separates "I have seen nothing" from
+  // "I have seen an empty base".
+  const freshness = age == null ? 0 : fadeKeep(age);
   return {
     posture: total > 0 ? mil / total : null,
     // Both halves must hold: a stale look at a whole base is as uninformative as a fresh glimpse

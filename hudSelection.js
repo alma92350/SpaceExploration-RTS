@@ -943,14 +943,17 @@ function sectionToggle(key, label, count) {
   return !collapsed;
 }
 
-function rebuildSelectionPanel(sel) {
-  // The units a building's panel should offer: the ENGINE's own roster, filtered by the ENGINE's own
-  // two gates. This used to be three hand-maintained copies of entities.js's `produces` lists — two
-  // identical literals plus a pair of unrolled blocks — so adding a unit to a roster made it
-  // buildable by the engine and by the AI while staying invisible in the UI, with nothing failing.
-  // The Odyssey gate was duplicated differently as well: queueProduction gates per-unit on
-  // `def.odysseyOnly && !state.endless`, while the HUD hand-split the array on game.galaxy.
-  const producibleAt = type => (BUILDINGS[type].produces || []).filter(t => {
+// The units a building's panel should offer: the ENGINE's own roster, filtered by the ENGINE's own
+// two gates. This used to be three hand-maintained copies of entities.js's `produces` lists — two
+// identical literals plus a pair of unrolled blocks — so adding a unit to a roster made it
+// buildable by the engine and by the AI while staying invisible in the UI, with nothing failing.
+// The Odyssey gate was duplicated differently as well: queueProduction gates per-unit on
+// `def.odysseyOnly && !state.endless`, while the HUD hand-split the array on game.galaxy.
+//
+// Module-level, taking `state` explicitly, rather than a closure inside rebuildSelectionPanel: the
+// Command Center and Stardock panels both call it, and they now live in their own functions.
+function producibleAt(state, type) {
+  return (BUILDINGS[type].produces || []).filter(t => {
     const def = UNITS[t];
     if (!def) return false;
     if (def.odysseyOnly && !state.endless && !game.galaxy) return false;
@@ -958,7 +961,613 @@ function rebuildSelectionPanel(sel) {
     // than shown forever-greyed — the engine's own availability rule (engine/market.js).
     return Object.keys(def.cost).every(c => commodityAvailable(state, "player", c));
   });
+}
 
+/* ============================================================
+   ONE PANEL FAMILY, ONE FUNCTION
+
+   rebuildSelectionPanel was 871 lines: a preamble, then two dozen independent
+   `if (<thing selected>) { ...build its controls... }` blocks in a row. Nothing about that shape
+   required one function — the blocks share only `state`, `sel` and `input`, and the file was
+   already splitting the newer ones out (renderMarket, renderFreight, renderLanes, renderLanes'
+   siblings). This finishes what that started, so the dispatcher reads as a table of contents and
+   each family is editable without scrolling past the other eleven.
+
+   hudPanelSignature.js's header asked for exactly this ("a model that important should be
+   readable on its own, without scrolling past 800 lines of button construction") and
+   docs/code-improvement-tiers.md files it as Tier 3. The registry of
+   { match, signature, render } per family that both describe is the next step, and it is a much
+   smaller one now that every family is already a named function.
+   ============================================================ */
+
+/** The rows at the TOP of the panel naming what is selected: aggregated by type when it is a
+    pure multi-unit selection, one row per entity otherwise. Both branches are the same panel
+    family, so they move together. */
+function renderSelectionSummary(state, sel, input) {
+if (sel.length > 1 && sel.every(e => e.kind === "unit")) {
+  const counts = countByType(sel);
+  const multiType = counts.size > 1;   // only worth sub-selecting when the mix has 2+ types
+  for (const [type, entry] of counts) {
+    const def = UNITS[type];
+    const label = summaryRowLabel(type, entry);
+    // With several types selected, each row is a button that narrows the selection
+    // to just that type (input.selectType) — click "3× Bastion" to keep only them.
+    if (multiType) {
+      const btn = document.createElement("button");
+      // sel-row-summary marks this as one of the per-entity summary rows the cheap
+      // live-patch path in renderSelectionPanel() positionally rewrites each tick —
+      // plain .sel-row alone isn't specific enough: half a dozen unrelated rows
+      // elsewhere in this function (queue rows, researched-tech rows, the factory
+      // recipe line, …) carry it too.
+      btn.className = "sel-row sel-row-summary type-row";
+      btn.textContent = label;
+      btn.title = `Select only your ${def.name}s`;
+      btn.addEventListener("click", () => input.selectType(type));
+      panelEl.appendChild(btn);
+    } else {
+      const row = document.createElement("div");
+      row.className = "sel-row sel-row-summary";
+      row.textContent = label;
+      panelEl.appendChild(row);
+    }
+  }
+} else {
+  sel.forEach(e => {
+    const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
+    const row = document.createElement("div");
+    row.className = "sel-row sel-row-summary";
+    row.textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
+    panelEl.appendChild(row);
+
+    // Damaged (a completed building) or wounded (a unit): say so plainly, and whether a worker's
+    // already patching it (engine/repair.js updateRepairJob/countRepairJobs) — the same "needs a
+    // hauler" style stall note a factory/rig gets below, generalized to any structure or unit.
+    if (!e.constructing && e.hp > 0 && e.hp < e.maxHp) {
+      const repairing = (e.repairers || 0) > 0;
+      const what = e.kind === "building" ? "Damaged" : "Wounded";
+      const note = document.createElement("div");
+      note.className = "sel-note " + (repairing ? "warn" : "bad");
+      note.textContent = repairing
+        ? `${what} — ${e.repairers} worker${e.repairers > 1 ? "s" : ""} repairing`
+        : `${what} — right-click with a worker selected to repair`;
+      panelEl.appendChild(note);
+    }
+    // A player-assigned home base (engine/commands.js issueSetHomeBase): this unit prefers that
+    // Command Center's zone over the usual nearest-CC guess for its haul/service/ferry/repair
+    // job search (engine/gather.js zoneFirst) — right-click a DIFFERENT Command Center to move
+    // it, or the "Clear" button to fall back to plain nearest-distance.
+    if (e.kind === "unit" && e.homeCC) {
+      const home = state.buildings.get(e.homeCC);
+      const note = document.createElement("div");
+      note.className = "sel-note " + (home ? "good" : "");
+      note.textContent = home ? "🏠 Home base assigned — jobs stay loyal to it first" : "🏠 Home base assigned (that Command Center is gone — using nearest-distance for now)";
+      panelEl.appendChild(note);
+      if (home) panelEl.appendChild(makeButton("Clear home base", () => { e.homeCC = null; }, { tip: "Go back to picking jobs by plain nearest-distance" }));
+    }
+    // A gathering worker's node saturation (engine/gather.js miningEfficiency / sim.js
+    // countMiners): node.miners is retallied every tick but nothing used to show it, so a
+    // deposit six workers deep just read as ordinary slow income with no visible cause. Resolve
+    // the order's node the same way updateGather does (nodesById when the map built one) and
+    // report the live headcount against the worker's own soft cap, flagging the
+    // diminishing-returns band (miningEfficiency's own cutoff) once it's crossed.
+    if (e.kind === "unit" && e.order && e.order.type === "gather") {
+      const node = state.map.nodesById
+        ? state.map.nodesById.get(e.order.nodeId)
+        : state.map.nodes.find(n => n.id === e.order.nodeId);
+      const cap = UNITS[e.type].minerSoftCap;
+      if (node && Number.isFinite(cap)) {
+        const miners = node.miners || 0;
+        const over = miners > cap;
+        const note = document.createElement("div");
+        note.className = "sel-note " + (over ? "warn" : "");
+        note.textContent = `Miners ${miners}/${cap}` + (over ? " — diminishing returns" : "");
+        panelEl.appendChild(note);
+      }
+    }
+  });
+}
+}
+
+/** Command Center: worker/support production, the home-base pin, and the Capital upgrade. */
+function renderCommandCenter(state, cc) {
+  // How many units are explicitly pinned to THIS Command Center as their home base
+  // (engine/commands.js issueSetHomeBase) — right-click this CC with eligible units selected to
+  // add more; right-click a DIFFERENT one to move them there instead.
+  const homedHere = [...state.units.values()].filter(u => u.owner === "player" && u.homeCC === cc.id).length;
+  if (homedHere > 0) {
+    const homeRow = document.createElement("div");
+    homeRow.className = "sel-note good";
+    homeRow.textContent = `🏠 ${homedHere} unit${homedHere > 1 ? "s" : ""} call this home — their jobs stay loyal to it first`;
+    panelEl.appendChild(homeRow);
+  }
+  // Odyssey: the CC also builds Colony Ships — the mobile seed you deploy to found a
+  // new base (no more building a CC directly). Gated on game.galaxy like the sibling
+  // Odyssey CC panels below, so a skirmish CC shows only Worker/Ranger.
+  // Odyssey adds the Colony Ship (found a base) and the three cargo ships (haul goods on a jump —
+  // gated behind the Spaceport, so they surface once you've built the jump pad).
+  const ccUnits = producibleAt(state, "command");
+  // Collapsible: 7-11 produce buttons (base + altCost variants) is the biggest cluster on the
+  // CC panel — count matches what a player thinks of as "the list" (one entry per unit type),
+  // not the raw altCost-doubled button count.
+  const ccCount = ccUnits.reduce((n, t) => n + (UNITS[t].altCost ? 2 : 1), 0);
+  if (sectionToggle("cc:produce", "Produce", ccCount)) {
+    for (const t of ccUnits) {
+      const def = UNITS[t];
+      const locked = !prereqsMet(state, "player", def);
+      panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
+        () => queueProduction(state, cc.id, t),
+        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+      // A unit with an alternative price (the Worker, buildable on biomass instead of ore) gets a
+      // second button paying that cost — so a biomass-rich, ore-poor claim can still grow its labour.
+      if (def.altCost) {
+        panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.altCost)})`,
+          () => queueProduction(state, cc.id, t, true),
+          { cost: def.altCost, tip: `${def.name} paid in ${costText(def.altCost)} instead of ore`, locked,
+            lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+      }
+    }
+  }
+  if (cc.queue.length) renderQueueRows(cc);
+  if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
+  if (game.galaxy) renderColonyPolicy(state, cc);          // Odyssey: standing orders for once you leave this world
+  // Odyssey diplomacy: tribute (appease), gifts, and favor requests — the panel itself always
+  // shows once there's a neighbour to have one with; renderDiplomacy gates its OWN tribute
+  // button to Neutral-or-worse, but gifts/favors matter across the whole stance range (they're
+  // the lever that pushes an already-cordial world on toward Allied).
+  if (game.galaxy && state.diplomacy) renderDiplomacy(state);
+}
+
+/** Refinery: the doctrine research list, tier- and doctrine-gated. */
+function renderRefinery(state, refinery) {
+  const upgrades = state.players.player.upgrades;
+  const chosen = committedDoctrine(state, "player");   // null until the first research commits (or queues) a doctrine
+  const label = { assault: "Assault", bulwark: "Bulwark", logistics: "Logistics" };
+  const queue = refinery.researchQueue || [];
+  const queued = new Set(queue.map(j => j.techId));
+  if (queue.length) {
+    const row = document.createElement("div");
+    row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
+    row.textContent = researchRowText(queue, UPGRADES);
+    panelEl.appendChild(row);
+  }
+  const visibleUpgrades = RESEARCHABLE_UPGRADES.filter(u => !queued.has(u.id));
+  if (sectionToggle("refinery:research", "Research", visibleUpgrades.length)) {
+    visibleUpgrades.forEach(u => {
+      if (upgrades[u.id]) {
+        const row = document.createElement("div");
+        row.className = "sel-row";
+        row.textContent = `${u.ico ? u.ico + " " : ""}${u.name} (${label[u.doctrine]}) — researched`;
+        panelEl.appendChild(row);
+        return;
+      }
+      const doctrineLocked = chosen && chosen !== u.doctrine;
+      const tierLocked = !prereqsMet(state, "player", u);
+      const locked = doctrineLocked || tierLocked;
+      const lockTip = doctrineLocked ? `Locked — committed to the ${label[chosen]} doctrine`
+        : tierLocked ? `Requires ${UPGRADES[(u.requires || [])[0]]?.name || "its Tier 1"}` : null;
+      panelEl.appendChild(makeButton(`Research ${u.name} · ${label[u.doctrine]} (${costText(u.cost)})`,
+        () => researchUpgrade(state, refinery.id, u.id),
+        { cost: u.cost, tip: u.desc, locked, lockTip, icon: u.ico ? { emoji: u.ico } : null }));
+    });
+  }
+}
+
+/** Datacenter (Odyssey): the tech-tree research list. */
+function renderDatacenter(state, datacenter) {
+  const upgrades = state.players.player.upgrades;
+  const queue = datacenter.researchQueue || [];
+  const queued = new Set(queue.map(j => j.techId));
+  // Cancelable research queue with refunds: one row per queued node, each with its own ×
+  // cancel button (renderResearchQueueRows — the production-queue's renderQueueRows idiom),
+  // instead of the single un-cancelable summary row the Refinery's doctrine research still uses.
+  if (queue.length) renderResearchQueueRows(datacenter, TECHS);
+  // Already-queued nodes are dropped here (reflected in the progress row's "+N queued" above,
+  // not repeated below), so the collapsible count matches exactly what the list itself shows.
+  const visibleTechs = Object.values(TECHS).filter(t => !queued.has(t.id));
+  if (sectionToggle("datacenter:research", "Research", visibleTechs.length)) {
+    visibleTechs.forEach(t => {
+      if (upgrades[t.id]) {
+        const row = document.createElement("div");
+        row.className = "sel-row";
+        row.textContent = `${t.ico ? t.ico + " " : ""}${t.name} — researched`;
+        panelEl.appendChild(row);
+        return;
+      }
+      // Available if every prereq is researched, a completed building, or queued ahead.
+      const ready = (t.requires || []).every(r => queued.has(r) || prereqsMet(state, "player", { requires: [r] }));
+      panelEl.appendChild(makeButton(`Research ${t.name} (${costText(t.cost)})`,
+        () => researchTech(state, datacenter.id, t.id),
+        { cost: t.cost, tip: t.desc, locked: !ready, lockTip: !ready ? lockTipFor(t) : null, icon: t.ico ? { emoji: t.ico } : null }));
+    });
+  }
+}
+
+/** Stardock: the heavy/Tier-3 unit production list. */
+function renderStardock(state, stardock) {
+  // Driven off BUILDINGS.stardock.produces like the CC and Barracks panels, rather than two
+  // hand-unrolled blocks — the third shape this same roster used to be written in.
+  for (const t of producibleAt(state, "stardock")) {
+    const def = UNITS[t];
+    const locked = !prereqsMet(state, "player", def);
+    // The doomsday device gets an extra line about its blast (engine/bomb.js; it is built unarmed,
+    // and arming is a separate step once it's out on the field).
+    const tip = t === "heliumbomb"
+      ? `${unitTip(def)} · ${BOMB_BLAST_RADIUS}-radius blast, ${BOMB_FUSE_DELAY}s fuse once triggered — damage falls off with distance from ground zero`
+      : unitTip(def);
+    panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
+      () => queueProduction(state, stardock.id, t),
+      { cost: def.cost, tip, locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
+  }
+  if (stardock.queue.length) renderQueueRows(stardock);
+}
+
+/** Factory (Odyssey): recipe, power/throttle status, and the input/output larder. */
+function renderFactory(state, factory) {
+  const recipe = recipeOf(factory);
+  const inParts = Object.entries(recipe.in)
+    .filter(([c]) => c !== "energy")
+    .map(([c, q]) => `${q}${COM[c]?.ico || ""} ${COM[c]?.name || c}`).join(" + ");
+  const energy = recipe.in.energy || 0;
+  const recRow = document.createElement("div");
+  recRow.className = "sel-row";
+  recRow.textContent = `${inParts} → ${recipe.qty} ${COM[recipe.out]?.name || recipe.out}`
+    + (energy ? ` · ⚡${energy}` : "");
+  panelEl.appendChild(recRow);
+
+  const st = factoryStatus(state, factory, recipe);
+  const stRow = document.createElement("div");
+  stRow.className = "sel-note " + st.cls;
+  stRow.textContent = st.text;
+  panelEl.appendChild(stRow);
+
+  // Local logistics buffers (engine/haul.js): the input larder workers fill and the output
+  // buffer workers drain. Makes visible why a factory is fed/starved and clear/backed-up.
+  // Each input commodity gets its OWN slice of the larder (entities.js inputCapOf — an
+  // oversupplied one can never crowd out room for another the recipe still needs), so the
+  // breakdown shows each commodity against ITS OWN cap rather than one misleading combined total.
+  const input = factory.input || {};
+  const inCap = inputCapOf(factory.type);
+  const inList = Object.keys(recipe.in).filter(c => c !== "energy")
+    .map(c => `${Math.floor(input[c] || 0)}/${Math.floor(inCap)}${COM[c]?.ico || ""}`).join(" ");
+  const larder = document.createElement("div");
+  larder.className = "sel-note";
+  larder.textContent = `Larder${inList ? " " + inList : ""} — carried in by workers`;
+  panelEl.appendChild(larder);
+
+  const outBuf = document.createElement("div");
+  const outPct = storeCapOf(factory.type) ? Math.round((storeTotal(factory) / storeCapOf(factory.type)) * 100) : 0;
+  outBuf.className = "sel-note " + (storeRoom(factory) <= 1e-6 ? "bad" : outPct >= 66 ? "warn" : "");
+  outBuf.textContent = `Output ${Math.round(storeTotal(factory))}/${storeCapOf(factory.type)} ${COM[recipe.out]?.name || recipe.out} — hauled to a Command Center`;
+  panelEl.appendChild(outBuf);
+
+  panelEl.appendChild(gridEfficiencyRow(state, factory));
+  panelEl.appendChild(iceCoolantRow(state, factory.owner));
+  renderLogiPriority(state, factory);
+
+  // Pause toggle: stop this factory drawing down its inputs — the way to keep a hungry
+  // Smelter from eating all your ore, or to free most of the grid for the Gate (a paused
+  // factory still idles at a 5% Power trickle rather than freeing its whole reserved draw).
+  panelEl.appendChild(makeButton(factory.paused ? "▶ Resume production" : "⏸ Pause production",
+    () => { factory.paused = !factory.paused; },
+    { tip: factory.paused ? "Resume converting inputs into goods"
+                          : "Stop consuming inputs — banks nothing and idles its Power draw down to a 5% trickle until resumed" }));
+}
+
+/** Plasma Rig (Odyssey): extraction progress, power status and the output buffer. */
+function renderPlasmaRig(state, rig) {
+  const info = rigInfo(state, rig);
+  const meta = COM[info.vein];
+  const head = document.createElement("div");
+  head.className = "sel-row";
+  head.textContent = `⛏ Mining ${meta?.ico || ""} ${meta?.name || info.vein} · seam: ${info.richLabel}`;
+  panelEl.appendChild(head);
+
+  const progRow = document.createElement("div");
+  progRow.className = "sel-note";
+  progRow.textContent = `Dig ${Math.round(info.progress * 100)}%`
+    + (info.lastTier ? ` · last strike: ${info.lastTier} (+${Math.round(info.lastYield)} ${meta?.name || info.vein})` : " · warming up…");
+  panelEl.appendChild(progRow);
+
+  // Finite output buffer (engine/haul.js): what's piled up waiting to be hauled to a
+  // Command Center, and how close it is to full — the point at which the rig stalls.
+  const bufRow = document.createElement("div");
+  const bufPct = info.storeCap ? Math.round((info.stored / info.storeCap) * 100) : 0;
+  bufRow.className = "sel-note " + (info.storeFull ? "bad" : bufPct >= 66 ? "warn" : "");
+  bufRow.textContent = `Output buffer ${Math.round(info.stored)}/${info.storeCap} (${bufPct}%) — workers haul it to a Command Center`;
+  panelEl.appendChild(bufRow);
+
+  let cls = "good", text = "Digging at full power";
+  if (!info.nuclearOk) { cls = "bad"; text = "Stalled — out of radioactives (no nuclear to exploit)"; }
+  else if (info.throttle <= 0) { cls = "bad"; text = "Stalled — no Power for the plasma arc (build a Reactor)"; }
+  else if (info.storeFull) { cls = "bad"; text = "Stalled — output buffer full (needs a hauler to a Command Center)"; }
+  else if (info.throttle < 0.995) { cls = "warn"; text = `Throttled ${Math.round(info.throttle * 100)}% — low Power`; }
+  const stRow = document.createElement("div");
+  stRow.className = "sel-note " + cls;
+  stRow.textContent = text;
+  panelEl.appendChild(stRow);
+
+  panelEl.appendChild(gridEfficiencyRow(state, rig));
+  panelEl.appendChild(iceCoolantRow(state, rig.owner));
+
+  panelEl.appendChild(makeButton(rig.paused ? "▶ Resume digging" : "⏸ Pause digging",
+    () => { rig.paused = !rig.paused; },
+    { tip: rig.paused ? "Restart the plasma arc"
+                      : "Stop burning radioactives and idle the plasma arc's Power draw down to a 5% trickle until resumed" }));
+}
+
+/** Combustion Generator (Odyssey): fuel larder, burn rate and the lit/unlit state. */
+function renderGenerator(state, gen) {
+  const def = BUILDINGS[gen.type];
+  const fuelCap = inputCapOf(gen.type);
+  const larder = def.combust.fuels.map(f => `${Math.floor(gen.input?.[f] || 0)}/${Math.floor(fuelCap)}${COM[f]?.ico || ""}`).join(" ");
+  const row = document.createElement("div");
+  const lit = !gen.paused && gen.powered;
+  row.className = "sel-note " + (gen.paused ? "" : lit ? "good" : "bad");
+  row.textContent = gen.paused ? `Paused — grants no Power (⚡${def.energyGrants} when running)`
+    : lit ? `Grants ⚡${def.energyGrants} Power · burning ${COM[gen.fuel]?.name || gen.fuel}`
+          : `Stalled — larder empty (needs ${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} hauled in)`;
+  panelEl.appendChild(row);
+  const larderRow = document.createElement("div");
+  larderRow.className = "sel-note";
+  larderRow.textContent = `Larder ${larder} — carried in by workers`;
+  panelEl.appendChild(larderRow);
+  const note = document.createElement("p");
+  note.className = "hint";
+  const burnRate = def.combust.rate * iceCoolantMult(state, gen.owner);   // banked ice halves the live burn rate
+  note.textContent = `Powers your factories over its own grid — if total draw outruns your Power, every factory throttles. Burns ${burnRate.toFixed(2)}/s of `
+    + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's input, or pause it.`;
+  panelEl.appendChild(note);
+  panelEl.appendChild(iceCoolantRow(state, gen.owner));
+  renderLogiPriority(state, gen);
+  panelEl.appendChild(makeButton(gen.paused ? "▶ Resume" : "⏸ Pause",
+    () => { gen.paused = !gen.paused; },
+    { tip: gen.paused ? "Bring it back online, feeding the grid again" : "Take it off the grid until resumed, without demolishing it" }));
+}
+
+/** Spaceport (Odyssey): the staged-fleet manifest, cargo hold, pad upgrade and the jump list. */
+function renderSpaceport(state, spaceport) {
+  const m = jumpManifest(state, spaceport);   // capacity-capped preview: what THIS pad alone lifts, what waits
+  const tier = spaceportTier(spaceport);
+  const vessel = jumpVessel(state);            // is a colony ship on any pad? (settles a NEW world) — a hint, not a gate
+  // A jump actually combines every completed Spaceport's staged units (jumpManifestAll), not
+  // just this one — comparing totals against this pad's own is a cheap way to tell whether a
+  // second pad is in play, without adding another exported "how many spaceports" helper.
+  const all = jumpManifestAll(state);
+  const otherPads = all.capacity > m.capacity;
+
+  // Fuel discount this pad's tier grants on NEW-world jumps (FUEL_DISCOUNT_BY_TIER,
+  // engine/galaxy.js jumpCost) — free return jumps are unaffected, so the copy only
+  // ever claims a new-world discount, never "jumps are cheaper" in general.
+  const fuelMult = FUEL_DISCOUNT_BY_TIER[tier] ?? 1;
+  const tierLine = document.createElement("div");
+  tierLine.className = "sel-note good";
+  tierLine.textContent = `Spaceport · Tier ${tier}/${SPACEPORT_MAX_TIER} · jump capacity ${m.capacity} supply`
+    + (fuelMult < 1 ? ` · new-world fuel ×${fuelMult}` : "");
+  panelEl.appendChild(tierLine);
+
+  const info = document.createElement("p");
+  info.className = "hint";
+  info.textContent = `Jump the fleet staged by the pad to another world — free to a world you already hold, fuel scaled by distance to reach a new one. A jump lifts up to ${m.capacity} supply (ship population); a larger fleet crosses in several jumps. Your bases here stay as a colony.`;
+  panelEl.appendChild(info);
+
+  // Staged-fleet manifest: total population vs the pad's capacity, and what waits for the next trip.
+  const fleet = document.createElement("p");
+  fleet.className = m.leftBehind > 0 ? "hint warn" : "hint";
+  fleet.textContent = m.staged === 0
+    ? "No units staged by the pad — a jump will carry only cargo. Park an army (to reinforce) or a Colony Ship (to settle) here to bring it."
+    : m.leftBehind > 0
+      ? `Fleet staged: ${m.stagedSupply} supply, ${m.staged} units. This jump lifts ${m.used}/${m.capacity} — ${m.leftBehind} unit${m.leftBehind === 1 ? "" : "s"} wait for the next trip (or upgrade the pad).`
+      : `Fleet staged: ${m.stagedSupply}/${m.capacity} supply (${m.staged} units) — all fit in one jump.`;
+  panelEl.appendChild(fleet);
+
+  // You hold more than one completed Spaceport: a jump combines every pad's staged fleet, so
+  // this panel's numbers (this pad alone) understate what actually launches — spell that out.
+  if (otherPads) {
+    const combined = document.createElement("p");
+    combined.className = "hint";
+    combined.textContent = `You hold more than one Spaceport — a jump lifts staged units from ALL of them together: ${all.used}/${all.capacity} supply combined this trip${all.leftBehind > 0 ? `, ${all.leftBehind} waiting` : ""}.`;
+    panelEl.appendChild(combined);
+  }
+
+  const shipHint = document.createElement("p");
+  shipHint.className = "hint";
+  shipHint.textContent = vessel
+    ? "A Colony Ship is loaded — jump to a new world and deploy it to found a base."
+    : "No Colony Ship on the pad: you can still hop to a world you hold (to control or reinforce it). To settle a NEW world, build a Colony Ship at a Command Center and park it here first.";
+  panelEl.appendChild(shipHint);
+
+  // Upgrade the launch pad (raises jump capacity AND cuts new-world fuel) — an Odyssey
+  // fortification, like the Capital.
+  if (tier < SPACEPORT_MAX_TIER) {
+    const upCost = SPACEPORT_UPGRADE_COST[tier + 1];
+    const nextCap = jumpCapacity({ tier: tier + 1 });
+    const nextMult = FUEL_DISCOUNT_BY_TIER[tier + 1] ?? 1;
+    panelEl.appendChild(makeButton(`⬆ Upgrade to Tier ${tier + 1} (${costText(upCost)}) — capacity ${nextCap}`,
+      () => upgradeSpaceport(state, spaceport),
+      { cost: upCost, icon: { kind: "building", type: "spaceport" },
+        tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump. New-world fuel drops to ×${nextMult} too.` }));
+  }
+
+  // Cargo hold: manufactured goods ride in the CARGO SHIPS staged for this jump — the hold is
+  // their combined capacity (build Haulers/Heavy Haulers/Bulk Freighters at a Command Center and
+  // park them by the pad). Shows what's actually aboard right now (hand-loaded via each ship's
+  // own panel, Load/Unload) — a jump no longer auto-fills an empty hold (engine/galaxy.js
+  // loadCargo), so this preview is exactly what will be delivered, not a hypothetical pick.
+  const capacity = freightCapacity(m.riders);
+  const cargo = {};
+  for (const u of m.riders) for (const com in (u.freight || {})) cargo[com] = (cargo[com] || 0) + u.freight[com];
+  const cargoTotal = Object.values(cargo).reduce((a, b) => a + b, 0);
+  const cargoInfo = document.createElement("p");
+  cargoInfo.className = "hint";
+  cargoInfo.textContent = capacity === 0
+    ? "Cargo hold: none — stage a cargo ship (Hauler / Heavy Hauler / Bulk Freighter) by the pad to haul goods."
+    : cargoTotal
+      ? `Cargo hold (${cargoTotal}/${capacity}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — delivered to the destination.`
+      : `Cargo hold (0/${capacity}): empty — load specific goods on a staged ship's own panel before you jump, or it arrives with nothing.`;
+  panelEl.appendChild(cargoInfo);
+  const jumpWorlds = game.galaxy.worlds.filter(w => w !== game.galaxy.activeId);
+  if (sectionToggle("spaceport:jump", "Jump", jumpWorlds.length)) {
+    for (const w of jumpWorlds) {
+      const name = planetName(w);
+      const owned = game.galaxy.planets.has(w);   // a world you already hold → free to return
+      const cost = jumpCost(game.galaxy, w);
+      const afford = game.galaxy.credits >= cost;
+      panelEl.appendChild(makeButton(`Jump ▸ ${name}${owned ? " · your colony" : ` · ◈${cost}`}`,
+        () => initiateJump(w),
+        { tip: owned ? "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
+                     : "Settle new ground: carry the staged expedition here. Bring a Colony Ship to found a base.",
+          locked: !afford,
+          lockTip: `Need ◈${cost} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
+    }
+  }
+
+  renderLanes(state, spaceport);
+}
+
+/** Helium Bomb: arm/disarm and the fuse state. */
+function renderBomb(state, bomb, sel) {
+  const armed = !!bomb.armed;
+  const fused = armed && bomb.fuseUntil != null;
+  const note = document.createElement("div");
+  note.className = "sel-note " + (fused || armed ? "bad" : "good");
+  note.textContent = fused
+    ? `🔥 FUSE LIT — detonating in ~${BOMB_FUSE_DELAY}s. Disarm now to cut the fuse.`
+    : armed
+      ? `⚠ ARMED — a live enemy within ${Math.round(BOMB_DETECT_RANGE)} of it (point-blank) lights a ${BOMB_FUSE_DELAY}s fuse, and so does your command. The blast that follows reaches ${BOMB_BLAST_RADIUS} — any owner, including yours — an outright kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that. A direct hit still sets it off instantly, no fuse.`
+      : `Unarmed — safe to move anywhere. Once armed: ${BOMB_BLAST_RADIUS}-radius blast, any owner — a guaranteed kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that.`;
+  panelEl.appendChild(note);
+  panelEl.appendChild(makeButton(armed ? "◯ Disarm" : "☢ Arm the Bomb",
+    () => {
+      const v = !armed;
+      for (const e of sel) if (e.kind === "unit" && UNITS[e.type].role === "bomb") {
+        e.armed = v;
+        if (!v) e.fuseUntil = null;   // standing down cuts a lit fuse too
+      }
+    },
+    { tip: armed ? (fused ? "Stand down — cuts the fuse, cancelling the detonation"
+                          : "Stand down — safe again until re-armed")
+                 : "Arm it: from now on a hit detonates it instantly; proximity or your command lights a fuse" }));
+  if (armed && !fused) {
+    panelEl.appendChild(makeButton("💥 Detonate Now", () => lightFuse(state, bomb),
+      { tip: `Light the fuse — detonates in ${BOMB_FUSE_DELAY}s` }));
+  }
+}
+
+/** The BUILD menu a selected worker offers, grouped by category. */
+function renderBuildMenu(state, builders, input) {
+  const canBuild = t => builders.some(b => canBuildCategory(b.type, BUILDINGS[t].category));
+  const buildBtn = t => {
+    const def = BUILDINGS[t];
+    const locked = !prereqsMet(state, "player", def);
+    return prodButton(`Build ${def.name} (${costText(def.cost)})`,
+      () => input.startBuild(t),
+      { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "building", type: t } });
+  };
+  // Odyssey adds the Spaceport (jump pad) and the whole industry chain. You DON'T build a
+  // Command Center here — new bases are founded by deploying a Colony Ship (build one at a
+  // CC, move it, deploy). That's ~18 buildings — a flat list is a wall — so group them by
+  // purpose. The entry tier of each group is always shown; deeper buildings REVEAL as their
+  // prereqs are met (a greyed button per locked tier would bury the menu), mirroring how the
+  // Barracks hides units you can't yet field. NOTE: these "Economy"/"Military" group labels
+  // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
+  // (the worker build-capability check), which is applied independently via canBuild.
+  const GROUPS = [
+    ["Economy", ["market", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "chemplant", "assembler",
+                 "fabricator", "chipfab", "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
+    ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion", "torpedobattery", "habitat", "stardock"]],
+    ["Endgame", ["antimatter_gate"]],
+    ["Travel", ["spaceport"]],
+  ];
+  // bastille/aegisbastion join turret here (visible-but-locked, like the Foundry/Arsenal/
+  // Spaceport gates themselves) so the player sees the rest of the static-defense ladder as a
+  // goal before it's reachable — torpedobattery deliberately stays OUT of this set: it's a
+  // deep Strategic-tier leaf (Foundry/Arsenal-gated stuff previews early, but a Torpedo Works
+  // hasn't even been teched toward yet at that point), so it reveals only once actually reached,
+  // same as chipfab/machineworks/torpedoworks/stardock/antimatter_gate already do.
+  const alwaysShow = new Set(["market", "barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion",
+                              "habitat", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "spaceport"]);
+  // What's actually SHOWN (not just category-eligible) in each mode — the header's count
+  // mirrors this exactly, so "▸ Build (N)" never promises more than expanding reveals.
+  const shownGroups = state.endless
+    ? GROUPS.map(([title, types]) => [title, types.filter(t => canBuild(t) && (alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t])))])
+        .filter(([, shown]) => shown.length)
+    : [[null, ["barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion", "habitat", "command"].filter(canBuild)]];
+  // Collapsible PER GROUP: a generalist Worker (every category) or a mixed selection can offer
+  // a long wall of options, and different players care about different groups — Economy vs
+  // Military fold independently (game.collapsedSections, session.js), remembered across
+  // selections like the formation choice below. Skirmish's single flat list (title === null,
+  // shownGroups above) has no sub-groups to split, so it falls through to one flat "Build"
+  // toggle instead — same shape, same helper, no special-casing needed. Collapsing a group
+  // shifts which building the Z/C/V/B/N hotkeys map to (prodButton claims them positionally by
+  // render order) — pre-existing behaviour, now scoped per group instead of per whole submenu.
+  for (const [title, shown] of shownGroups) {
+    const key = title ? `build:${title.toLowerCase()}` : "build:all";
+    if (sectionToggle(key, title || "Build", shown.length)) {
+      for (const t of shown) panelEl.appendChild(buildBtn(t));
+    }
+  }
+}
+
+/** Multi-unit orders: formation shape and leader position for a mixed selection. */
+function renderMultiUnitOrders(input) {
+  const head = document.createElement("div");
+  head.className = "sel-group";
+  head.textContent = "Formation";
+  panelEl.appendChild(head);
+
+  const leaderHint = document.createElement("p");
+  leaderHint.className = "hint";
+  leaderHint.textContent = "The first unit you selected leads — the rest follow it, even on a later solo move. Ctrl+click a unit already in the selection to promote it to leader instead.";
+  panelEl.appendChild(leaderHint);
+
+  const shapeRow = document.createElement("div");
+  shapeRow.className = "formation-row";
+  for (const shape of FORMATION_SHAPES) {
+    const btn = document.createElement("button");
+    btn.className = "btn formation-btn" + (game.formation.shape === shape ? " active" : "");
+    btn.textContent = FORMATION_LABELS[shape];
+    btn.title = FORMATION_TIPS[shape];
+    btn.addEventListener("click", () => {
+      game.formation.shape = shape;
+      // A Circle's leader is always centered — force leaderPos to "center" so a stale
+      // "front"/"back" left over from Line/Wedge can't silently put it ON the ring instead
+      // (engine/formation.js's circleOffsets treats anything other than exactly "front"/"back"
+      // as "center"). Leaving Circle resets it back to a sane Line/Wedge default.
+      if (shape === "circle") game.formation.leaderPos = "center";
+      else if (game.formation.leaderPos === "center") game.formation.leaderPos = "front";
+      renderHUD();
+    });
+    shapeRow.appendChild(btn);
+  }
+  panelEl.appendChild(shapeRow);
+
+  // Leader position only matters for a shape with a real front/back — Grid has no natural
+  // leader slot, and a Circle's leader is always centered (protected), not toggled.
+  if (game.formation.shape === "line" || game.formation.shape === "wedge") {
+    const leaderRow = document.createElement("div");
+    leaderRow.className = "formation-row";
+    for (const leaderPos of ["front", "back"]) {
+      const btn = document.createElement("button");
+      btn.className = "btn formation-btn" + (game.formation.leaderPos === leaderPos ? " active" : "");
+      btn.textContent = leaderPos === "front" ? "Leader: Front" : "Leader: Back";
+      btn.title = leaderPos === "front" ? "The strongest unit leads at the point"
+                                         : "The strongest unit is shielded at the rear; flanks lead";
+      btn.addEventListener("click", () => { game.formation.leaderPos = leaderPos; renderHUD(); });
+      leaderRow.appendChild(btn);
+    }
+    panelEl.appendChild(leaderRow);
+  } else if (game.formation.shape === "circle") {
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = "Leader: center — protected in the middle of the ring.";
+    panelEl.appendChild(note);
+  }
+
+  panelEl.appendChild(makeButton("Hold Formation ( F )", () => input.formSelected(),
+    { tip: "Form up right here in the chosen shape and hold — a defensive stance for the whole group, not just one ship" }));
+}
+
+function rebuildSelectionPanel(sel) {
   const { state, input } = game;
   panelEl.innerHTML = "";
   panelActions = [];
@@ -992,137 +1601,10 @@ function rebuildSelectionPanel(sel) {
     return;
   }
 
-  if (sel.length > 1 && sel.every(e => e.kind === "unit")) {
-    const counts = countByType(sel);
-    const multiType = counts.size > 1;   // only worth sub-selecting when the mix has 2+ types
-    for (const [type, entry] of counts) {
-      const def = UNITS[type];
-      const label = summaryRowLabel(type, entry);
-      // With several types selected, each row is a button that narrows the selection
-      // to just that type (input.selectType) — click "3× Bastion" to keep only them.
-      if (multiType) {
-        const btn = document.createElement("button");
-        // sel-row-summary marks this as one of the per-entity summary rows the cheap
-        // live-patch path in renderSelectionPanel() positionally rewrites each tick —
-        // plain .sel-row alone isn't specific enough: half a dozen unrelated rows
-        // elsewhere in this function (queue rows, researched-tech rows, the factory
-        // recipe line, …) carry it too.
-        btn.className = "sel-row sel-row-summary type-row";
-        btn.textContent = label;
-        btn.title = `Select only your ${def.name}s`;
-        btn.addEventListener("click", () => input.selectType(type));
-        panelEl.appendChild(btn);
-      } else {
-        const row = document.createElement("div");
-        row.className = "sel-row sel-row-summary";
-        row.textContent = label;
-        panelEl.appendChild(row);
-      }
-    }
-  } else {
-    sel.forEach(e => {
-      const def = e.kind === "unit" ? UNITS[e.type] : BUILDINGS[e.type];
-      const row = document.createElement("div");
-      row.className = "sel-row sel-row-summary";
-      row.textContent = `${def.name} — ${Math.ceil(e.hp)}/${e.maxHp} hp`;
-      panelEl.appendChild(row);
-
-      // Damaged (a completed building) or wounded (a unit): say so plainly, and whether a worker's
-      // already patching it (engine/repair.js updateRepairJob/countRepairJobs) — the same "needs a
-      // hauler" style stall note a factory/rig gets below, generalized to any structure or unit.
-      if (!e.constructing && e.hp > 0 && e.hp < e.maxHp) {
-        const repairing = (e.repairers || 0) > 0;
-        const what = e.kind === "building" ? "Damaged" : "Wounded";
-        const note = document.createElement("div");
-        note.className = "sel-note " + (repairing ? "warn" : "bad");
-        note.textContent = repairing
-          ? `${what} — ${e.repairers} worker${e.repairers > 1 ? "s" : ""} repairing`
-          : `${what} — right-click with a worker selected to repair`;
-        panelEl.appendChild(note);
-      }
-      // A player-assigned home base (engine/commands.js issueSetHomeBase): this unit prefers that
-      // Command Center's zone over the usual nearest-CC guess for its haul/service/ferry/repair
-      // job search (engine/gather.js zoneFirst) — right-click a DIFFERENT Command Center to move
-      // it, or the "Clear" button to fall back to plain nearest-distance.
-      if (e.kind === "unit" && e.homeCC) {
-        const home = state.buildings.get(e.homeCC);
-        const note = document.createElement("div");
-        note.className = "sel-note " + (home ? "good" : "");
-        note.textContent = home ? "🏠 Home base assigned — jobs stay loyal to it first" : "🏠 Home base assigned (that Command Center is gone — using nearest-distance for now)";
-        panelEl.appendChild(note);
-        if (home) panelEl.appendChild(makeButton("Clear home base", () => { e.homeCC = null; }, { tip: "Go back to picking jobs by plain nearest-distance" }));
-      }
-      // A gathering worker's node saturation (engine/gather.js miningEfficiency / sim.js
-      // countMiners): node.miners is retallied every tick but nothing used to show it, so a
-      // deposit six workers deep just read as ordinary slow income with no visible cause. Resolve
-      // the order's node the same way updateGather does (nodesById when the map built one) and
-      // report the live headcount against the worker's own soft cap, flagging the
-      // diminishing-returns band (miningEfficiency's own cutoff) once it's crossed.
-      if (e.kind === "unit" && e.order && e.order.type === "gather") {
-        const node = state.map.nodesById
-          ? state.map.nodesById.get(e.order.nodeId)
-          : state.map.nodes.find(n => n.id === e.order.nodeId);
-        const cap = UNITS[e.type].minerSoftCap;
-        if (node && Number.isFinite(cap)) {
-          const miners = node.miners || 0;
-          const over = miners > cap;
-          const note = document.createElement("div");
-          note.className = "sel-note " + (over ? "warn" : "");
-          note.textContent = `Miners ${miners}/${cap}` + (over ? " — diminishing returns" : "");
-          panelEl.appendChild(note);
-        }
-      }
-    });
-  }
+  renderSelectionSummary(state, sel, input);
 
   const cc = sel.find(e => e.kind === "building" && e.type === "command" && !e.constructing);
-  if (cc) {
-    // How many units are explicitly pinned to THIS Command Center as their home base
-    // (engine/commands.js issueSetHomeBase) — right-click this CC with eligible units selected to
-    // add more; right-click a DIFFERENT one to move them there instead.
-    const homedHere = [...state.units.values()].filter(u => u.owner === "player" && u.homeCC === cc.id).length;
-    if (homedHere > 0) {
-      const homeRow = document.createElement("div");
-      homeRow.className = "sel-note good";
-      homeRow.textContent = `🏠 ${homedHere} unit${homedHere > 1 ? "s" : ""} call this home — their jobs stay loyal to it first`;
-      panelEl.appendChild(homeRow);
-    }
-    // Odyssey: the CC also builds Colony Ships — the mobile seed you deploy to found a
-    // new base (no more building a CC directly). Gated on game.galaxy like the sibling
-    // Odyssey CC panels below, so a skirmish CC shows only Worker/Ranger.
-    // Odyssey adds the Colony Ship (found a base) and the three cargo ships (haul goods on a jump —
-    // gated behind the Spaceport, so they surface once you've built the jump pad).
-    const ccUnits = producibleAt("command");
-    // Collapsible: 7-11 produce buttons (base + altCost variants) is the biggest cluster on the
-    // CC panel — count matches what a player thinks of as "the list" (one entry per unit type),
-    // not the raw altCost-doubled button count.
-    const ccCount = ccUnits.reduce((n, t) => n + (UNITS[t].altCost ? 2 : 1), 0);
-    if (sectionToggle("cc:produce", "Produce", ccCount)) {
-      for (const t of ccUnits) {
-        const def = UNITS[t];
-        const locked = !prereqsMet(state, "player", def);
-        panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
-          () => queueProduction(state, cc.id, t),
-          { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
-        // A unit with an alternative price (the Worker, buildable on biomass instead of ore) gets a
-        // second button paying that cost — so a biomass-rich, ore-poor claim can still grow its labour.
-        if (def.altCost) {
-          panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.altCost)})`,
-            () => queueProduction(state, cc.id, t, true),
-            { cost: def.altCost, tip: `${def.name} paid in ${costText(def.altCost)} instead of ore`, locked,
-              lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
-        }
-      }
-    }
-    if (cc.queue.length) renderQueueRows(cc);
-    if (game.galaxy) renderCapital(state, cc);              // Odyssey: fortify this CC into the anchored Capital
-    if (game.galaxy) renderColonyPolicy(state, cc);          // Odyssey: standing orders for once you leave this world
-    // Odyssey diplomacy: tribute (appease), gifts, and favor requests — the panel itself always
-    // shows once there's a neighbour to have one with; renderDiplomacy gates its OWN tribute
-    // button to Neutral-or-worse, but gifts/favors matter across the whole stance range (they're
-    // the lever that pushes an already-cordial world on toward Allied).
-    if (game.galaxy && state.diplomacy) renderDiplomacy(state);
-  }
+  if (cc) renderCommandCenter(state, cc);
 
   const market = sel.find(e => e.kind === "building" && e.type === "market" && !e.constructing);
   // Odyssey: trade local commodities for universal credits — its own building (not the CC),
@@ -1134,7 +1616,7 @@ function rebuildSelectionPanel(sel) {
     // Only offer a unit this world can actually pay for — a specialty unit
     // (Wraith/gas, Aegis/ice, Colossus/relics) is hidden entirely on a map that
     // deposits none of its commodity, instead of showing a forever-greyed button.
-    const trainable = producibleAt("barracks");
+    const trainable = producibleAt(state, "barracks");
     if (sectionToggle("barracks:produce", "Produce", trainable.length)) {
       for (const t of trainable) {
         const def = UNITS[t];
@@ -1153,94 +1635,19 @@ function rebuildSelectionPanel(sel) {
   // button-per-upgrade list below it drops anything already queued (the progress row already
   // says it's underway), same split the Datacenter panel makes.
   const refinery = sel.find(e => e.kind === "building" && e.type === "refinery" && !e.constructing);
-  if (refinery) {
-    const upgrades = state.players.player.upgrades;
-    const chosen = committedDoctrine(state, "player");   // null until the first research commits (or queues) a doctrine
-    const label = { assault: "Assault", bulwark: "Bulwark", logistics: "Logistics" };
-    const queue = refinery.researchQueue || [];
-    const queued = new Set(queue.map(j => j.techId));
-    if (queue.length) {
-      const row = document.createElement("div");
-      row.className = "sel-row research-progress";   // patched live each tick (see renderSelectionPanel)
-      row.textContent = researchRowText(queue, UPGRADES);
-      panelEl.appendChild(row);
-    }
-    const visibleUpgrades = RESEARCHABLE_UPGRADES.filter(u => !queued.has(u.id));
-    if (sectionToggle("refinery:research", "Research", visibleUpgrades.length)) {
-      visibleUpgrades.forEach(u => {
-        if (upgrades[u.id]) {
-          const row = document.createElement("div");
-          row.className = "sel-row";
-          row.textContent = `${u.ico ? u.ico + " " : ""}${u.name} (${label[u.doctrine]}) — researched`;
-          panelEl.appendChild(row);
-          return;
-        }
-        const doctrineLocked = chosen && chosen !== u.doctrine;
-        const tierLocked = !prereqsMet(state, "player", u);
-        const locked = doctrineLocked || tierLocked;
-        const lockTip = doctrineLocked ? `Locked — committed to the ${label[chosen]} doctrine`
-          : tierLocked ? `Requires ${UPGRADES[(u.requires || [])[0]]?.name || "its Tier 1"}` : null;
-        panelEl.appendChild(makeButton(`Research ${u.name} · ${label[u.doctrine]} (${costText(u.cost)})`,
-          () => researchUpgrade(state, refinery.id, u.id),
-          { cost: u.cost, tip: u.desc, locked, lockTip, icon: u.ico ? { emoji: u.ico } : null }));
-      });
-    }
-  }
+  if (refinery) renderRefinery(state, refinery);
 
   // Datacenter (Odyssey): the industrial tech tree. Researches one node at a time,
   // paid in gathered commodities and developed over time — flat lock-tip buttons,
   // the same idiom as the Refinery's doctrine research (no separate tree UI).
   const datacenter = sel.find(e => e.kind === "building" && e.type === "datacenter" && !e.constructing);
-  if (datacenter) {
-    const upgrades = state.players.player.upgrades;
-    const queue = datacenter.researchQueue || [];
-    const queued = new Set(queue.map(j => j.techId));
-    // Cancelable research queue with refunds: one row per queued node, each with its own ×
-    // cancel button (renderResearchQueueRows — the production-queue's renderQueueRows idiom),
-    // instead of the single un-cancelable summary row the Refinery's doctrine research still uses.
-    if (queue.length) renderResearchQueueRows(datacenter, TECHS);
-    // Already-queued nodes are dropped here (reflected in the progress row's "+N queued" above,
-    // not repeated below), so the collapsible count matches exactly what the list itself shows.
-    const visibleTechs = Object.values(TECHS).filter(t => !queued.has(t.id));
-    if (sectionToggle("datacenter:research", "Research", visibleTechs.length)) {
-      visibleTechs.forEach(t => {
-        if (upgrades[t.id]) {
-          const row = document.createElement("div");
-          row.className = "sel-row";
-          row.textContent = `${t.ico ? t.ico + " " : ""}${t.name} — researched`;
-          panelEl.appendChild(row);
-          return;
-        }
-        // Available if every prereq is researched, a completed building, or queued ahead.
-        const ready = (t.requires || []).every(r => queued.has(r) || prereqsMet(state, "player", { requires: [r] }));
-        panelEl.appendChild(makeButton(`Research ${t.name} (${costText(t.cost)})`,
-          () => researchTech(state, datacenter.id, t.id),
-          { cost: t.cost, tip: t.desc, locked: !ready, lockTip: !ready ? lockTipFor(t) : null, icon: t.ico ? { emoji: t.ico } : null }));
-      });
-    }
-  }
+  if (datacenter) renderDatacenter(state, datacenter);
 
   // Star Dock (Odyssey): trains the Leviathan capital ship. Its own panel (not the
   // Barracks) because the Leviathan costs strategic goods that never sit on the map,
   // so the Barracks' on-map-cost filter would hide it.
   const stardock = sel.find(e => e.kind === "building" && e.type === "stardock" && !e.constructing);
-  if (stardock) {
-    // Driven off BUILDINGS.stardock.produces like the CC and Barracks panels, rather than two
-    // hand-unrolled blocks — the third shape this same roster used to be written in.
-    for (const t of producibleAt("stardock")) {
-      const def = UNITS[t];
-      const locked = !prereqsMet(state, "player", def);
-      // The doomsday device gets an extra line about its blast (engine/bomb.js; it is built unarmed,
-      // and arming is a separate step once it's out on the field).
-      const tip = t === "heliumbomb"
-        ? `${unitTip(def)} · ${BOMB_BLAST_RADIUS}-radius blast, ${BOMB_FUSE_DELAY}s fuse once triggered — damage falls off with distance from ground zero`
-        : unitTip(def);
-      panelEl.appendChild(prodButton(`Produce ${def.name} (${costText(def.cost)})`,
-        () => queueProduction(state, stardock.id, t),
-        { cost: def.cost, tip, locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "unit", type: t } }));
-    }
-    if (stardock.queue.length) renderQueueRows(stardock);
-  }
+  if (stardock) renderStardock(state, stardock);
 
   // Antimatter Gate (Odyssey): the endgame wonder. Shows its charge toward the
   // galaxy win — keep antimatter flowing and hold the line.
@@ -1262,100 +1669,12 @@ function rebuildSelectionPanel(sel) {
   // core loop is invisible. Show its recipe and, in colour, whether it's running
   // and why not (no Power / low Power / starved of an input).
   const factory = sel.find(e => e.kind === "building" && recipeOf(e) && !e.constructing);
-  if (factory) {
-    const recipe = recipeOf(factory);
-    const inParts = Object.entries(recipe.in)
-      .filter(([c]) => c !== "energy")
-      .map(([c, q]) => `${q}${COM[c]?.ico || ""} ${COM[c]?.name || c}`).join(" + ");
-    const energy = recipe.in.energy || 0;
-    const recRow = document.createElement("div");
-    recRow.className = "sel-row";
-    recRow.textContent = `${inParts} → ${recipe.qty} ${COM[recipe.out]?.name || recipe.out}`
-      + (energy ? ` · ⚡${energy}` : "");
-    panelEl.appendChild(recRow);
-
-    const st = factoryStatus(state, factory, recipe);
-    const stRow = document.createElement("div");
-    stRow.className = "sel-note " + st.cls;
-    stRow.textContent = st.text;
-    panelEl.appendChild(stRow);
-
-    // Local logistics buffers (engine/haul.js): the input larder workers fill and the output
-    // buffer workers drain. Makes visible why a factory is fed/starved and clear/backed-up.
-    // Each input commodity gets its OWN slice of the larder (entities.js inputCapOf — an
-    // oversupplied one can never crowd out room for another the recipe still needs), so the
-    // breakdown shows each commodity against ITS OWN cap rather than one misleading combined total.
-    const input = factory.input || {};
-    const inCap = inputCapOf(factory.type);
-    const inList = Object.keys(recipe.in).filter(c => c !== "energy")
-      .map(c => `${Math.floor(input[c] || 0)}/${Math.floor(inCap)}${COM[c]?.ico || ""}`).join(" ");
-    const larder = document.createElement("div");
-    larder.className = "sel-note";
-    larder.textContent = `Larder${inList ? " " + inList : ""} — carried in by workers`;
-    panelEl.appendChild(larder);
-
-    const outBuf = document.createElement("div");
-    const outPct = storeCapOf(factory.type) ? Math.round((storeTotal(factory) / storeCapOf(factory.type)) * 100) : 0;
-    outBuf.className = "sel-note " + (storeRoom(factory) <= 1e-6 ? "bad" : outPct >= 66 ? "warn" : "");
-    outBuf.textContent = `Output ${Math.round(storeTotal(factory))}/${storeCapOf(factory.type)} ${COM[recipe.out]?.name || recipe.out} — hauled to a Command Center`;
-    panelEl.appendChild(outBuf);
-
-    panelEl.appendChild(gridEfficiencyRow(state, factory));
-    panelEl.appendChild(iceCoolantRow(state, factory.owner));
-    renderLogiPriority(state, factory);
-
-    // Pause toggle: stop this factory drawing down its inputs — the way to keep a hungry
-    // Smelter from eating all your ore, or to free most of the grid for the Gate (a paused
-    // factory still idles at a 5% Power trickle rather than freeing its whole reserved draw).
-    panelEl.appendChild(makeButton(factory.paused ? "▶ Resume production" : "⏸ Pause production",
-      () => { factory.paused = !factory.paused; },
-      { tip: factory.paused ? "Resume converting inputs into goods"
-                            : "Stop consuming inputs — banks nothing and idles its Power draw down to a 5% trickle until resumed" }));
-  }
+  if (factory) renderFactory(state, factory);
 
   // Plasma Rig (Odyssey): deep-core extraction. Say what it mines, how rich the seam is, its dig
   // progress + last strike, and why it's slow/stalled (out of nuclear, or a starved Power grid).
   const rig = sel.find(e => e.kind === "building" && BUILDINGS[e.type].rig && !e.constructing);
-  if (rig) {
-    const info = rigInfo(state, rig);
-    const meta = COM[info.vein];
-    const head = document.createElement("div");
-    head.className = "sel-row";
-    head.textContent = `⛏ Mining ${meta?.ico || ""} ${meta?.name || info.vein} · seam: ${info.richLabel}`;
-    panelEl.appendChild(head);
-
-    const progRow = document.createElement("div");
-    progRow.className = "sel-note";
-    progRow.textContent = `Dig ${Math.round(info.progress * 100)}%`
-      + (info.lastTier ? ` · last strike: ${info.lastTier} (+${Math.round(info.lastYield)} ${meta?.name || info.vein})` : " · warming up…");
-    panelEl.appendChild(progRow);
-
-    // Finite output buffer (engine/haul.js): what's piled up waiting to be hauled to a
-    // Command Center, and how close it is to full — the point at which the rig stalls.
-    const bufRow = document.createElement("div");
-    const bufPct = info.storeCap ? Math.round((info.stored / info.storeCap) * 100) : 0;
-    bufRow.className = "sel-note " + (info.storeFull ? "bad" : bufPct >= 66 ? "warn" : "");
-    bufRow.textContent = `Output buffer ${Math.round(info.stored)}/${info.storeCap} (${bufPct}%) — workers haul it to a Command Center`;
-    panelEl.appendChild(bufRow);
-
-    let cls = "good", text = "Digging at full power";
-    if (!info.nuclearOk) { cls = "bad"; text = "Stalled — out of radioactives (no nuclear to exploit)"; }
-    else if (info.throttle <= 0) { cls = "bad"; text = "Stalled — no Power for the plasma arc (build a Reactor)"; }
-    else if (info.storeFull) { cls = "bad"; text = "Stalled — output buffer full (needs a hauler to a Command Center)"; }
-    else if (info.throttle < 0.995) { cls = "warn"; text = `Throttled ${Math.round(info.throttle * 100)}% — low Power`; }
-    const stRow = document.createElement("div");
-    stRow.className = "sel-note " + cls;
-    stRow.textContent = text;
-    panelEl.appendChild(stRow);
-
-    panelEl.appendChild(gridEfficiencyRow(state, rig));
-    panelEl.appendChild(iceCoolantRow(state, rig.owner));
-
-    panelEl.appendChild(makeButton(rig.paused ? "▶ Resume digging" : "⏸ Pause digging",
-      () => { rig.paused = !rig.paused; },
-      { tip: rig.paused ? "Restart the plasma arc"
-                        : "Stop burning radioactives and idle the plasma arc's Power draw down to a 5% trickle until resumed" }));
-  }
+  if (rig) renderPlasmaRig(state, rig);
 
   // A fuel-burning power station (Odyssey) — the Reactor (radioactives), the Combustion Generator
   // (gas), or the Biomass Reactor (biomass) — grants Power to the grid rather than running a
@@ -1365,33 +1684,7 @@ function rebuildSelectionPanel(sel) {
   // actually fed right now, and let the player pause it (engine/industry.js sourceActive) to stop
   // the fuel bill without demolishing it.
   const gen = sel.find(e => e.kind === "building" && BUILDINGS[e.type]?.combust && !e.constructing);
-  if (gen) {
-    const def = BUILDINGS[gen.type];
-    const fuelCap = inputCapOf(gen.type);
-    const larder = def.combust.fuels.map(f => `${Math.floor(gen.input?.[f] || 0)}/${Math.floor(fuelCap)}${COM[f]?.ico || ""}`).join(" ");
-    const row = document.createElement("div");
-    const lit = !gen.paused && gen.powered;
-    row.className = "sel-note " + (gen.paused ? "" : lit ? "good" : "bad");
-    row.textContent = gen.paused ? `Paused — grants no Power (⚡${def.energyGrants} when running)`
-      : lit ? `Grants ⚡${def.energyGrants} Power · burning ${COM[gen.fuel]?.name || gen.fuel}`
-            : `Stalled — larder empty (needs ${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} hauled in)`;
-    panelEl.appendChild(row);
-    const larderRow = document.createElement("div");
-    larderRow.className = "sel-note";
-    larderRow.textContent = `Larder ${larder} — carried in by workers`;
-    panelEl.appendChild(larderRow);
-    const note = document.createElement("p");
-    note.className = "hint";
-    const burnRate = def.combust.rate * iceCoolantMult(state, gen.owner);   // banked ice halves the live burn rate
-    note.textContent = `Powers your factories over its own grid — if total draw outruns your Power, every factory throttles. Burns ${burnRate.toFixed(2)}/s of `
-      + `${def.combust.fuels.map(f => COM[f]?.name || f).join(" or ")} while running; a worker keeps the larder fed like a factory's input, or pause it.`;
-    panelEl.appendChild(note);
-    panelEl.appendChild(iceCoolantRow(state, gen.owner));
-    renderLogiPriority(state, gen);
-    panelEl.appendChild(makeButton(gen.paused ? "▶ Resume" : "⏸ Pause",
-      () => { gen.paused = !gen.paused; },
-      { tip: gen.paused ? "Bring it back online, feeding the grid again" : "Take it off the grid until resumed, without demolishing it" }));
-  }
+  if (gen) renderGenerator(state, gen);
 
   // Any non-recipe building with a finite output buffer (storeCap, engine/entities.js) that
   // isn't the Command Center: surface how full it is and whether it's full, same finite-storage
@@ -1442,104 +1735,7 @@ function rebuildSelectionPanel(sel) {
   // the units staged nearby to another world; the world you leave carries on as
   // a colony.
   const spaceport = sel.find(e => e.kind === "building" && e.type === "spaceport" && !e.constructing);
-  if (spaceport && game.galaxy) {
-    const m = jumpManifest(state, spaceport);   // capacity-capped preview: what THIS pad alone lifts, what waits
-    const tier = spaceportTier(spaceport);
-    const vessel = jumpVessel(state);            // is a colony ship on any pad? (settles a NEW world) — a hint, not a gate
-    // A jump actually combines every completed Spaceport's staged units (jumpManifestAll), not
-    // just this one — comparing totals against this pad's own is a cheap way to tell whether a
-    // second pad is in play, without adding another exported "how many spaceports" helper.
-    const all = jumpManifestAll(state);
-    const otherPads = all.capacity > m.capacity;
-
-    // Fuel discount this pad's tier grants on NEW-world jumps (FUEL_DISCOUNT_BY_TIER,
-    // engine/galaxy.js jumpCost) — free return jumps are unaffected, so the copy only
-    // ever claims a new-world discount, never "jumps are cheaper" in general.
-    const fuelMult = FUEL_DISCOUNT_BY_TIER[tier] ?? 1;
-    const tierLine = document.createElement("div");
-    tierLine.className = "sel-note good";
-    tierLine.textContent = `Spaceport · Tier ${tier}/${SPACEPORT_MAX_TIER} · jump capacity ${m.capacity} supply`
-      + (fuelMult < 1 ? ` · new-world fuel ×${fuelMult}` : "");
-    panelEl.appendChild(tierLine);
-
-    const info = document.createElement("p");
-    info.className = "hint";
-    info.textContent = `Jump the fleet staged by the pad to another world — free to a world you already hold, fuel scaled by distance to reach a new one. A jump lifts up to ${m.capacity} supply (ship population); a larger fleet crosses in several jumps. Your bases here stay as a colony.`;
-    panelEl.appendChild(info);
-
-    // Staged-fleet manifest: total population vs the pad's capacity, and what waits for the next trip.
-    const fleet = document.createElement("p");
-    fleet.className = m.leftBehind > 0 ? "hint warn" : "hint";
-    fleet.textContent = m.staged === 0
-      ? "No units staged by the pad — a jump will carry only cargo. Park an army (to reinforce) or a Colony Ship (to settle) here to bring it."
-      : m.leftBehind > 0
-        ? `Fleet staged: ${m.stagedSupply} supply, ${m.staged} units. This jump lifts ${m.used}/${m.capacity} — ${m.leftBehind} unit${m.leftBehind === 1 ? "" : "s"} wait for the next trip (or upgrade the pad).`
-        : `Fleet staged: ${m.stagedSupply}/${m.capacity} supply (${m.staged} units) — all fit in one jump.`;
-    panelEl.appendChild(fleet);
-
-    // You hold more than one completed Spaceport: a jump combines every pad's staged fleet, so
-    // this panel's numbers (this pad alone) understate what actually launches — spell that out.
-    if (otherPads) {
-      const combined = document.createElement("p");
-      combined.className = "hint";
-      combined.textContent = `You hold more than one Spaceport — a jump lifts staged units from ALL of them together: ${all.used}/${all.capacity} supply combined this trip${all.leftBehind > 0 ? `, ${all.leftBehind} waiting` : ""}.`;
-      panelEl.appendChild(combined);
-    }
-
-    const shipHint = document.createElement("p");
-    shipHint.className = "hint";
-    shipHint.textContent = vessel
-      ? "A Colony Ship is loaded — jump to a new world and deploy it to found a base."
-      : "No Colony Ship on the pad: you can still hop to a world you hold (to control or reinforce it). To settle a NEW world, build a Colony Ship at a Command Center and park it here first.";
-    panelEl.appendChild(shipHint);
-
-    // Upgrade the launch pad (raises jump capacity AND cuts new-world fuel) — an Odyssey
-    // fortification, like the Capital.
-    if (tier < SPACEPORT_MAX_TIER) {
-      const upCost = SPACEPORT_UPGRADE_COST[tier + 1];
-      const nextCap = jumpCapacity({ tier: tier + 1 });
-      const nextMult = FUEL_DISCOUNT_BY_TIER[tier + 1] ?? 1;
-      panelEl.appendChild(makeButton(`⬆ Upgrade to Tier ${tier + 1} (${costText(upCost)}) — capacity ${nextCap}`,
-        () => upgradeSpaceport(state, spaceport),
-        { cost: upCost, icon: { kind: "building", type: "spaceport" },
-          tip: `A bigger launch pad: jump capacity ${m.capacity} → ${nextCap} supply, so more of your fleet crosses per jump. New-world fuel drops to ×${nextMult} too.` }));
-    }
-
-    // Cargo hold: manufactured goods ride in the CARGO SHIPS staged for this jump — the hold is
-    // their combined capacity (build Haulers/Heavy Haulers/Bulk Freighters at a Command Center and
-    // park them by the pad). Shows what's actually aboard right now (hand-loaded via each ship's
-    // own panel, Load/Unload) — a jump no longer auto-fills an empty hold (engine/galaxy.js
-    // loadCargo), so this preview is exactly what will be delivered, not a hypothetical pick.
-    const capacity = freightCapacity(m.riders);
-    const cargo = {};
-    for (const u of m.riders) for (const com in (u.freight || {})) cargo[com] = (cargo[com] || 0) + u.freight[com];
-    const cargoTotal = Object.values(cargo).reduce((a, b) => a + b, 0);
-    const cargoInfo = document.createElement("p");
-    cargoInfo.className = "hint";
-    cargoInfo.textContent = capacity === 0
-      ? "Cargo hold: none — stage a cargo ship (Hauler / Heavy Hauler / Bulk Freighter) by the pad to haul goods."
-      : cargoTotal
-        ? `Cargo hold (${cargoTotal}/${capacity}): ${Object.entries(cargo).map(([c, q]) => `${q} ${c}`).join(", ")} — delivered to the destination.`
-        : `Cargo hold (0/${capacity}): empty — load specific goods on a staged ship's own panel before you jump, or it arrives with nothing.`;
-    panelEl.appendChild(cargoInfo);
-    const jumpWorlds = game.galaxy.worlds.filter(w => w !== game.galaxy.activeId);
-    if (sectionToggle("spaceport:jump", "Jump", jumpWorlds.length)) {
-      for (const w of jumpWorlds) {
-        const name = planetName(w);
-        const owned = game.galaxy.planets.has(w);   // a world you already hold → free to return
-        const cost = jumpCost(game.galaxy, w);
-        const afford = game.galaxy.credits >= cost;
-        panelEl.appendChild(makeButton(`Jump ▸ ${name}${owned ? " · your colony" : ` · ◈${cost}`}`,
-          () => initiateJump(w),
-          { tip: owned ? "Hop to this world you already hold — free. Staged units ride along to control or reinforce it."
-                       : "Settle new ground: carry the staged expedition here. Bring a Colony Ship to found a base.",
-            locked: !afford,
-            lockTip: `Need ◈${cost} fuel — you have ◈${Math.floor(game.galaxy.credits)}` }));
-      }
-    }
-
-    renderLanes(state, spaceport);
-  }
+  if (spaceport && game.galaxy) renderSpaceport(state, spaceport);
 
   // Colony ship (Odyssey): settle in place into a Command Center. Locked (with the
   // reason) when the current spot is blocked — move to clear ground and deploy.
@@ -1585,155 +1781,21 @@ function rebuildSelectionPanel(sel) {
   // lightFuse) — the actual blast (detonateBomb) follows once that timer comes due, not
   // on the spot. Disarming while fused cuts it — the whole point of "reversible."
   const bomb = sel.find(e => e.kind === "unit" && UNITS[e.type].role === "bomb");
-  if (bomb) {
-    const armed = !!bomb.armed;
-    const fused = armed && bomb.fuseUntil != null;
-    const note = document.createElement("div");
-    note.className = "sel-note " + (fused || armed ? "bad" : "good");
-    note.textContent = fused
-      ? `🔥 FUSE LIT — detonating in ~${BOMB_FUSE_DELAY}s. Disarm now to cut the fuse.`
-      : armed
-        ? `⚠ ARMED — a live enemy within ${Math.round(BOMB_DETECT_RANGE)} of it (point-blank) lights a ${BOMB_FUSE_DELAY}s fuse, and so does your command. The blast that follows reaches ${BOMB_BLAST_RADIUS} — any owner, including yours — an outright kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that. A direct hit still sets it off instantly, no fuse.`
-        : `Unarmed — safe to move anywhere. Once armed: ${BOMB_BLAST_RADIUS}-radius blast, any owner — a guaranteed kill within ${Math.round(BOMB_CORE_RADIUS)} of ground zero, tapering off with distance beyond that.`;
-    panelEl.appendChild(note);
-    panelEl.appendChild(makeButton(armed ? "◯ Disarm" : "☢ Arm the Bomb",
-      () => {
-        const v = !armed;
-        for (const e of sel) if (e.kind === "unit" && UNITS[e.type].role === "bomb") {
-          e.armed = v;
-          if (!v) e.fuseUntil = null;   // standing down cuts a lit fuse too
-        }
-      },
-      { tip: armed ? (fused ? "Stand down — cuts the fuse, cancelling the detonation"
-                            : "Stand down — safe again until re-armed")
-                   : "Arm it: from now on a hit detonates it instantly; proximity or your command lights a fuse" }));
-    if (armed && !fused) {
-      panelEl.appendChild(makeButton("💥 Detonate Now", () => lightFuse(state, bomb),
-        { tip: `Light the fuse — detonates in ${BOMB_FUSE_DELAY}s` }));
-    }
-  }
+  if (bomb) renderBomb(state, bomb, sel);
 
   // Every selected unit that can found/assist-build ANYTHING (Worker, the sole generalist that
   // carries a buildCategories list). The building list below is then filtered to whatever's in
   // the UNION of the selection's categories via canBuildCategory, same single source of truth
   // issueBuild itself gates on.
   const builders = sel.filter(e => e.kind === "unit" && UNITS[e.type]?.buildCategories?.length);
-  if (builders.length && !input.building) {
-    const canBuild = t => builders.some(b => canBuildCategory(b.type, BUILDINGS[t].category));
-    const buildBtn = t => {
-      const def = BUILDINGS[t];
-      const locked = !prereqsMet(state, "player", def);
-      return prodButton(`Build ${def.name} (${costText(def.cost)})`,
-        () => input.startBuild(t),
-        { cost: def.cost, tip: unitTip(def), locked, lockTip: locked ? lockTipFor(def) : null, icon: { kind: "building", type: t } });
-    };
-    // Odyssey adds the Spaceport (jump pad) and the whole industry chain. You DON'T build a
-    // Command Center here — new bases are founded by deploying a Colony Ship (build one at a
-    // CC, move it, deploy). That's ~18 buildings — a flat list is a wall — so group them by
-    // purpose. The entry tier of each group is always shown; deeper buildings REVEAL as their
-    // prereqs are met (a greyed button per locked tier would bury the menu), mirroring how the
-    // Barracks hides units you can't yet field. NOTE: these "Economy"/"Military" group labels
-    // are a pre-existing purely cosmetic UI layout grouping — unrelated to BUILDINGS[t].category
-    // (the worker build-capability check), which is applied independently via canBuild.
-    const GROUPS = [
-      ["Economy", ["market", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "chemplant", "assembler",
-                   "fabricator", "chipfab", "machineworks", "antimatterforge", "aifoundry", "torpedoworks", "plasmarig"]],
-      ["Military", ["barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion", "torpedobattery", "habitat", "stardock"]],
-      ["Endgame", ["antimatter_gate"]],
-      ["Travel", ["spaceport"]],
-    ];
-    // bastille/aegisbastion join turret here (visible-but-locked, like the Foundry/Arsenal/
-    // Spaceport gates themselves) so the player sees the rest of the static-defense ladder as a
-    // goal before it's reachable — torpedobattery deliberately stays OUT of this set: it's a
-    // deep Strategic-tier leaf (Foundry/Arsenal-gated stuff previews early, but a Torpedo Works
-    // hasn't even been teched toward yet at that point), so it reveals only once actually reached,
-    // same as chipfab/machineworks/torpedoworks/stardock/antimatter_gate already do.
-    const alwaysShow = new Set(["market", "barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion",
-                                "habitat", "reactor", "combustor", "biomassreactor", "substation", "smelter", "datacenter", "spaceport"]);
-    // What's actually SHOWN (not just category-eligible) in each mode — the header's count
-    // mirrors this exactly, so "▸ Build (N)" never promises more than expanding reveals.
-    const shownGroups = state.endless
-      ? GROUPS.map(([title, types]) => [title, types.filter(t => canBuild(t) && (alwaysShow.has(t) || prereqsMet(state, "player", BUILDINGS[t])))])
-          .filter(([, shown]) => shown.length)
-      : [[null, ["barracks", "foundry", "arsenal", "refinery", "turret", "bastille", "aegisbastion", "habitat", "command"].filter(canBuild)]];
-    // Collapsible PER GROUP: a generalist Worker (every category) or a mixed selection can offer
-    // a long wall of options, and different players care about different groups — Economy vs
-    // Military fold independently (game.collapsedSections, session.js), remembered across
-    // selections like the formation choice below. Skirmish's single flat list (title === null,
-    // shownGroups above) has no sub-groups to split, so it falls through to one flat "Build"
-    // toggle instead — same shape, same helper, no special-casing needed. Collapsing a group
-    // shifts which building the Z/C/V/B/N hotkeys map to (prodButton claims them positionally by
-    // render order) — pre-existing behaviour, now scoped per group instead of per whole submenu.
-    for (const [title, shown] of shownGroups) {
-      const key = title ? `build:${title.toLowerCase()}` : "build:all";
-      if (sectionToggle(key, title || "Build", shown.length)) {
-        for (const t of shown) panelEl.appendChild(buildBtn(t));
-      }
-    }
-  }
+  if (builders.length && !input.building) renderBuildMenu(state, builders, input);
 
   // Formation: shown for any multi-unit selection. Picks the shape (and, where it matters, the
   // leader position) that THIS and every later move/attack-move/Hold-Formation command uses — a
   // session preference (game.formation, session.js), not per-unit state, so it carries across
   // selections until changed. Grid is the plain default (today's spread-to-a-grid, unchanged);
   // the other three trade that for a deliberate shape (engine/formation.js has the geometry).
-  if (sel.length > 1 && sel.some(e => e.kind === "unit")) {
-    const head = document.createElement("div");
-    head.className = "sel-group";
-    head.textContent = "Formation";
-    panelEl.appendChild(head);
-
-    const leaderHint = document.createElement("p");
-    leaderHint.className = "hint";
-    leaderHint.textContent = "The first unit you selected leads — the rest follow it, even on a later solo move. Ctrl+click a unit already in the selection to promote it to leader instead.";
-    panelEl.appendChild(leaderHint);
-
-    const shapeRow = document.createElement("div");
-    shapeRow.className = "formation-row";
-    for (const shape of FORMATION_SHAPES) {
-      const btn = document.createElement("button");
-      btn.className = "btn formation-btn" + (game.formation.shape === shape ? " active" : "");
-      btn.textContent = FORMATION_LABELS[shape];
-      btn.title = FORMATION_TIPS[shape];
-      btn.addEventListener("click", () => {
-        game.formation.shape = shape;
-        // A Circle's leader is always centered — force leaderPos to "center" so a stale
-        // "front"/"back" left over from Line/Wedge can't silently put it ON the ring instead
-        // (engine/formation.js's circleOffsets treats anything other than exactly "front"/"back"
-        // as "center"). Leaving Circle resets it back to a sane Line/Wedge default.
-        if (shape === "circle") game.formation.leaderPos = "center";
-        else if (game.formation.leaderPos === "center") game.formation.leaderPos = "front";
-        renderHUD();
-      });
-      shapeRow.appendChild(btn);
-    }
-    panelEl.appendChild(shapeRow);
-
-    // Leader position only matters for a shape with a real front/back — Grid has no natural
-    // leader slot, and a Circle's leader is always centered (protected), not toggled.
-    if (game.formation.shape === "line" || game.formation.shape === "wedge") {
-      const leaderRow = document.createElement("div");
-      leaderRow.className = "formation-row";
-      for (const leaderPos of ["front", "back"]) {
-        const btn = document.createElement("button");
-        btn.className = "btn formation-btn" + (game.formation.leaderPos === leaderPos ? " active" : "");
-        btn.textContent = leaderPos === "front" ? "Leader: Front" : "Leader: Back";
-        btn.title = leaderPos === "front" ? "The strongest unit leads at the point"
-                                           : "The strongest unit is shielded at the rear; flanks lead";
-        btn.addEventListener("click", () => { game.formation.leaderPos = leaderPos; renderHUD(); });
-        leaderRow.appendChild(btn);
-      }
-      panelEl.appendChild(leaderRow);
-    } else if (game.formation.shape === "circle") {
-      const note = document.createElement("p");
-      note.className = "hint";
-      note.textContent = "Leader: center — protected in the middle of the ring.";
-      panelEl.appendChild(note);
-    }
-
-    panelEl.appendChild(makeButton("Hold Formation ( F )", () => input.formSelected(),
-      { tip: "Form up right here in the chosen shape and hold — a defensive stance for the whole group, not just one ship" }));
-  }
+  if (sel.length > 1 && sel.some(e => e.kind === "unit")) renderMultiUnitOrders(input);
 
   if (sel.some(e => e.kind === "unit")) {
     panelEl.appendChild(makeButton("Stop ( X )", () => input.stopSelected()));

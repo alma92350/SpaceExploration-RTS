@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve, relative } from "node:path";
+import { dirname, join, resolve, relative, sep } from "node:path";
 import { walkJs } from "./_helpers.js";
 
 // The sim's determinism rests on the engine drawing ALL randomness from the one
@@ -14,7 +14,47 @@ import { walkJs } from "./_helpers.js";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const engineDir = join(root, "engine");
 const FORBIDDEN = /\bMath\.random\b|\bDate\.now\b|\bnew Date\b|\bperformance\.now\b/;
-const SPEC = /(?:import|export)[^"'`]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+const SPEC = /(?:import|export)[^"'`]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|import\s+["']([^"']+)["']/g;
+
+// Extra scan roots: the files under tools/ that the SHIPPED APP actually loads.
+//
+// tools/ was once purely Node CLI benches, and the scan's "engine/ plus what engine/ imports"
+// boundary was exactly right for that. It is not any more. boot.js imports tools/selfplay.js,
+// competition.js and competitionWorker.js import tools/duelCore.js and tools/genome.js, and
+// playerFingerprint.js imports tools/genome.js — so today three "bench" files run inside a browser
+// Worker and decide the outcomes that become persisted Elo ratings. Nothing in engine/ imports
+// them, so the fixed-point walk below never reached them: structurally identical code was guarded
+// on one side of a directory line and completely unguarded on the other.
+//
+// Both halves of the guard are the right ones for these files. A Worker has no `document`, so a
+// DOM reference is a crash rather than a style violation; and a duel that does not replay
+// identically makes every rating derived from it meaningless.
+//
+// DERIVED, NOT LISTED. Walking out from index.html means a fourth tools/ file pulled into the app
+// tomorrow is covered the day it is imported, with no list to remember to update.
+function browserReachableToolsFiles() {
+  const html = readFileSync(join(root, "index.html"), "utf8");
+  const entries = [...html.matchAll(/<script[^>]*type="module"[^>]*src="([^"]+)"/g)].map(m => resolve(root, m[1]));
+  // competitionWorker.js is reached by `new Worker(new URL(...))`, not by an import statement, so
+  // the walk cannot see that edge — seed it explicitly, exactly as static-integrity.test.js
+  // documents for the same file. It is the module that pulls in duelCore/genome for real.
+  const workerEntry = join(root, "competitionWorker.js");
+  const queue = [...entries, ...(existsSync(workerEntry) ? [workerEntry] : [])];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const file = queue.pop();
+    if (!existsSync(file)) continue;
+    for (const m of readFileSync(file, "utf8").matchAll(SPEC)) {
+      const path = m[1] || m[2] || m[3];
+      if (!path || !path.startsWith(".")) continue;
+      const abs = resolve(dirname(file), path);
+      if (seen.has(abs) || !existsSync(abs)) continue;
+      seen.add(abs);
+      queue.push(abs);
+    }
+  }
+  return [...seen].filter(f => relative(root, f).startsWith("tools" + sep)).sort();
+}
 
 // The purity rules are transitive: the engine's determinism guarantee is only as strong as the
 // modules it imports. `data.js` lives at the repo ROOT but is imported by nine engine modules
@@ -25,7 +65,7 @@ const SPEC = /(?:import|export)[^"'`]*?from\s*["']([^"']+)["']|import\(\s*["']([
 // ever imports a UI module, that module's DOM references fail the scan below, which is exactly
 // the right alarm for an engine→view leak.
 function purityScanFiles() {
-  const files = walkJs(engineDir);
+  const files = [...walkJs(engineDir), ...browserReachableToolsFiles()];
   const seen = new Set(files);
   for (let i = 0; i < files.length; i++) {
     const src = readFileSync(files[i], "utf8");
@@ -54,6 +94,29 @@ test("the purity scan reaches every engine file at any depth, plus what the engi
   assert.deepEqual(
     walkJs(engineDir).map(label).filter(f => !scanned.includes(f)), [],
     "every .js under engine/, at any depth, must be scanned");
+});
+
+test("the scan also covers every tools/ file the shipped app loads, and knows which those are", () => {
+  // The guard that keeps the tools/ extension honest in BOTH directions.
+  //
+  // Downward: these three really are browser code today (boot.js -> selfplay.js; competition.js
+  // and competitionWorker.js -> duelCore.js + genome.js; playerFingerprint.js -> genome.js), and a
+  // refactor that stops importing one should make this list shrink visibly rather than silently
+  // dropping a file out of the purity net while it is still shipping.
+  //
+  // Upward: the Node-only benches must STAY out. tools/ailab.js imports node:fs and legitimately
+  // calls Date.now for wall-clock run timing; sweeping it in would fail the scan for no reason and
+  // teach the next contributor that the purity guard cries wolf.
+  const reachable = browserReachableToolsFiles().map(label);
+  assert.deepEqual(reachable,
+    ["tools/duelCore.js", "tools/genome.js", "tools/selfplay.js"],
+    "the set of tools/ files the browser loads changed — if that is intended, update this list; " +
+    "if not, a Node-only bench has been pulled into the shipped app");
+
+  const scanned = purityScanFiles().map(label);
+  for (const f of reachable) assert.ok(scanned.includes(f), `${f} ships to the browser but is not purity-scanned`);
+  assert.ok(!scanned.includes("tools/ailab.js"),
+    "tools/ailab.js is a Node CLI bench (node:fs, wall-clock timing) and must stay outside the scan");
 });
 
 test("engine/ contains no unsanctioned nondeterminism (Math.random / Date / performance.now)", () => {
