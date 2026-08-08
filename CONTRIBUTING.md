@@ -134,6 +134,35 @@ writing the implementation:
   Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
   ```
 
+## Protecting `main` (one-time repo setup — not yet done)
+
+Everything above is enforced by tests, and the tests run in CI on every push and pull request. But
+nothing stops a red build being merged anyway, and that is not hypothetical: `npm run typecheck`
+failed on every commit from 2026-08-05 to 2026-08-08, and PRs #90 and #91 both merged to `main`
+straight through it. A gate nobody is required to pass is a gate that eventually gets walked past.
+
+This is a repository setting, so it cannot live in a file here. It takes about two minutes:
+
+**Settings → Branches → Add branch ruleset** (or *Add rule* on the classic UI)
+
+- Target branch: `main`
+- ☑ **Require status checks to pass before merging**, and add both by name:
+  - `tests (node 20)`
+  - `tests (node 22)`
+
+  Both must be listed. The matrix produces one check per Node version, and requiring only one
+  lets a version-specific regression through — which is the whole reason the matrix exists.
+- ☑ **Require branches to be up to date before merging** — so a check that passed against a stale
+  base cannot count for a merge onto a newer one.
+- ☑ **Block force pushes**
+
+Leave "Require a pull request before merging" to taste; it is orthogonal to the failure above,
+which was about a red check rather than an unreviewed one.
+
+The check names come from `.github/workflows/test.yml`'s job name
+(`name: tests (node ${{ matrix.node-version }})`). If that line is ever edited, the required
+checks silently stop matching and the gate goes quiet — so change the two together.
+
 ## Release checklist
 
 When cutting a release:
