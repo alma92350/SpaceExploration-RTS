@@ -4,6 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Stellar Frontier: RTS</title>
+<!-- Inline SVG data URI, not a file: every browser requests /favicon.ico unprompted, and with
+     nothing declared here that is a guaranteed 404 on every single page load. Harmless, but it
+     puts a permanent error in the console, which makes "the console is clean" useless as a signal
+     — tools/smoke.js asserts exactly that. A data URI fixes it with no binary asset to store, no
+     extra request, and nothing for the no-build-step rule to object to. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1020'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%2355ccff' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='%2355ccff'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>

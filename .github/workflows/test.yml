@@ -40,3 +40,30 @@ jobs:
       # deliberately, in its own commit, so a compiler upgrade is reviewable on its own.
       - name: Type-check the annotated files
         run: npx --yes --package typescript@5.7.2 -- tsc -p jsconfig.json
+
+  # The suite above is headless and dependency-free, which is the whole point of it — and it means
+  # nothing in it can see a page that parses, imports cleanly, and then throws on load. With no
+  # build step that failure is a blank white screen, and the way it has been caught here before is
+  # a human opening index.html. Demonstrated: a bad draw call in renderUnits.js leaves all 2502
+  # tests passing and takes the game down on the first frame.
+  #
+  # So: one job that boots the real page in real Chromium, starts a match, clicks, and fails on any
+  # uncaught error. Playwright is fetched at run time via npx and never enters package.json —
+  # exactly the precedent the type-check step set for TypeScript. It is a separate job rather than
+  # a matrix step because it tests the BROWSER, not the Node version; running it twice would just
+  # cost two Chromium downloads to learn the same thing.
+  smoke:
+    runs-on: ubuntu-latest
+    name: browser smoke test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # Only Chromium, and only its own deps — the full `playwright install` pulls three browsers
+      # this never launches. Pinned for the same reason the compiler is: a gate that changes
+      # underneath you cannot tell a regression from an upgrade.
+      - name: Install Chromium
+        run: npx --yes --package playwright-core@1.56.1 -- playwright install --with-deps chromium
+      - name: Boot the game in a real browser
+        run: npm run smoke
