@@ -2,11 +2,35 @@
 
 **Date:** 2026-08-07 · **Commit:** `56d13d7` · **Reviewer:** external, architecture + TDD focus
 
-> **Status update.** Findings 1, 2 and 3 have since been fixed in this branch — the typecheck is
-> green on both TypeScript 5.7 and 7, the CI compiler is pinned, and `updateIntel` now fades on a
-> real straight line. The three new tests in `test/aiIntel.test.js` were written red first and
-> reproduce the old decay exactly. Findings 4–9 are open. The suite is at 2497 passing.
-> Everything below is the review as written against `56d13d7`, left unedited.
+> **Status: all nine findings are closed.** Eight were fixed on this branch; one (#7) was
+> **withdrawn as wrong** — see its section for what I got wrong and why. The suite is at **2502
+> passing**, `npm run typecheck` is clean on TypeScript 5.7 and 7, and CI is green.
+>
+> | # | Finding | Outcome |
+> |---|---|---|
+> | 1 | CI red for two days, merged through twice | Fixed — both signatures corrected |
+> | 2 | Unpinned TypeScript in CI | Fixed — pinned to 5.7.2 |
+> | 3 | Adaptive AI forgets in ~60s, not 240s | Fixed — fade derived at read, per-channel clocks |
+> | 4 | Tests drive accumulating state at a cadence production never uses | Fixed — `advanceThinkCycles` on an engine-owned constant |
+> | 5 | Type-contract guard cannot fail on what broke CI | Fixed — inline-typedef parser, competition shapes covered |
+> | 6 | Two 780+ line functions | Fixed — 871→309 and 785→562, plus a new module |
+> | 7 | "15 unguarded UI import cycles" | **Withdrawn — the finding was wrong** |
+> | 8 | `tools/` ships to the browser, outside the purity guard | Fixed — scan roots derived from `index.html` |
+> | 9 | Release cadence stalled, deprecated CI actions | Fixed — 1.1.0 cut, actions bumped, smoke test run |
+>
+> Two things I flagged as needing a human are also done. The **browser smoke test**
+> (`CONTRIBUTING.md` release step 2) was run against real Chromium: the game boots with zero
+> uncaught errors, and drag-select, right-click commands and the rebuilt selection panel all work
+> — which is the validation finding 6's refactor actually needed, since no headless test clicks
+> anything. The only console error is the browser's automatic `/favicon.ico` request, which the
+> page declares none for; cosmetic, and left alone rather than adding a binary asset unasked.
+>
+> **Branch protection on `main` still needs you.** It is a repository setting I cannot change, and
+> without it finding 1 recurs the next time a check goes red. Tagging `v1.1.0` and deploying are
+> yours too — the version files and changelog are prepared, but I have not tagged or published.
+>
+> Everything below is the review as written against `56d13d7`, left unedited apart from #7's
+> correction.
 
 **Baseline measured, not assumed:**
 

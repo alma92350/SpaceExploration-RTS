@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.1.0] — 2026-08-08
+
+Everything below shipped since 1.0.0. Save formats are unchanged (`SAVE_VERSION` 1,
+`GALAXY_SAVE_VERSION` 1), so saves written by 1.0.0 load unchanged.
+
 ### Added
 
 - **Observer Mode — a free-look spectator over the Odyssey galaxy.** Press O (or the topbar's
