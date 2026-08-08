@@ -60,10 +60,19 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      # Only Chromium, and only its own deps — the full `playwright install` pulls three browsers
-      # this never launches. Pinned for the same reason the compiler is: a gate that changes
-      # underneath you cannot tell a regression from an upgrade.
-      - name: Install Chromium
-        run: npx --yes --package playwright-core@1.56.1 -- playwright install --with-deps chromium
+      # --no-save: Playwright is installed for this checkout only and never enters package.json,
+      # so the repo keeps its zero-dependency promise. `npx --package playwright -- node ...` is
+      # the tidier-looking version of this and does NOT work — npx puts the package's BIN on PATH
+      # but not its module on a child node process's resolution path, so the script's own require
+      # fails. That shipped broken once; this is the verified form.
+      #
+      # The FULL playwright package, not playwright-core: only the full one carries the CLI that
+      # downloads browsers. Pinned for the same reason the compiler is — a gate that moves
+      # underneath you cannot tell a regression from an upgrade. Chromium only; the bare
+      # `playwright install` pulls three browsers this never launches.
+      - name: Install Playwright and Chromium (never saved to package.json)
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
       - name: Boot the game in a real browser
         run: npm run smoke
