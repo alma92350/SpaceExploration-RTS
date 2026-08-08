@@ -55,7 +55,9 @@ explain *why*. That is real engineering.
 The problems are all on the outside of that core: **the quality gates are red and being merged
 through**, the type contract is enforced by a test that cannot fail on the thing that is broken,
 and the newest feature — the adaptive AI, ~3,000 lines across two PRs — **does not do what it says
-it does**, because the test written for it drives the code at a cadence the game never uses.
+it does once you break line of sight**, because the test written for it drives the code at a cadence
+the game never uses. (I first wrote that more sweepingly; see #3 for the measurement that narrowed
+it.)
 
 No sugar coating: you have excellent discipline pointed at the wrong 20% of the surface. The engine
 is over-guarded relative to its risk. The release pipeline, the type layer, and the newest AI logic
@@ -136,21 +138,36 @@ The belief is gone after one minute. Confidence collapses faster still, because
 `readEnemy` multiplies the already-compounded total by a *second*, independent freshness term
 (`aiIntel.js:157,162`) — the decay is applied twice.
 
-**So what.** This breaks the headline promise of the feature and of `docs/ai-adaptive-opponent.md`:
+**So what.** This breaks the headline promise of the feature and of `docs/ai-adaptive-opponent.md`.
+The module header says "an army stepping out of vision for a fight doesn't erase itself." It does.
 
-- The module header says "an army stepping out of vision for a fight doesn't erase itself." It does.
-- `enemyIsGreedy` needs `confidence >= 0.25`, which needs ~225 ore of *live* sighting. In practice it
-  can only fire while the AI is actively looking at the enemy — the persistent belief contributes
-  nothing.
-- `updateAdaptMode` computes `target = 0.5 + (posture - 0.5) * confidence`. With confidence at
-  ~0, target is neutral, the 0.15 dead band swallows it, and `adaptMode` sits pinned at 0.5.
-  `adaptDefenceMult` then returns 1.0 — byte-identical to having no adaptation at all.
+**Measured, after the fact — and this corrects an overstatement in my first draft.** I originally
+wrote that the adaptive layer was "effectively inert" and that `adaptDefenceMult` returned 1.0. That
+is wrong as a general claim. I checked by running a full 4-minute skirmish against both the old and
+new code, and the two are **identical**: same peak confidence (0.60), same `adaptMode` swing
+(0.50 → 0.34), same defence multiplier (0.808). While the AI keeps eyes on you, `live` refreshes the
+belief every cycle and the compounding decay never gets a chance to bite.
 
-So the AI adapts only while it has eyes on the enemy, which is exactly the case where it did not need
-a belief model. Scouting has close to zero payoff, and the evolvable dials bred on top of this
-(`punishPosture`, `punishConfidence`, `adaptBandMult`, `adaptRateMult`, `defenceSwingMult`) were
-searched against a signal that is mostly zero — **the cast in `tools/candidates/cast/` may be tuned
-against noise.**
+The bug bites in exactly one situation — after vision is *lost*. Scouting an 8-Lancer army (1200
+ore), then killing the scout:
+
+| Time since the scout died | Remembered (old) | Remembered (fixed) | Old: still informed? |
+|---|---:|---:|---|
+| 30 s | 304 | 1050 | yes (barely — 0.296) |
+| 60 s | 4 | 900 | **no — blind, hedges** |
+| 120 s | 0 | 600 | **no — blind, hedges** |
+
+So the correct statement is narrower than my first one, and still serious: the feature works while
+you are visible, and collapses in under a minute once you are not — which is precisely the case it
+was built for and the only case where a *belief* differs from a *look*. Killing the scout doesn't
+degrade the AI's picture, it deletes it.
+
+One knock-on I flagged and should also qualify: I suggested the MAP-Elites cast in
+`tools/candidates/cast/` "may be tuned against noise". Given the above, that is likely overstated —
+bench duels keep the two bases in contact for much of a match, so the signal was mostly present. A
+re-run is still worth doing (the adaptation dials `punishPosture`, `punishConfidence`,
+`adaptBandMult`, `adaptRateMult`, `defenceSwingMult` were searched against a fade that behaved
+differently after vision loss), but treat it as a refresh rather than as invalidating the archive.
 
 **Now what.**
 1. Decide which the design wants and make the code say it. Cleanest fix: keep a `intelPeakMil` /
@@ -159,7 +176,8 @@ against noise.**
    genuinely linear, cadence-independent, and matches every word of the existing comments.
 2. Remove the double decay: either `readEnemy` applies freshness, or the stored value carries it.
    Not both.
-3. Re-run the MAP-Elites cast afterwards. The archive's descriptors are downstream of this.
+3. Re-run the MAP-Elites cast afterwards as a refresh — see the measured correction above for why
+   this is housekeeping rather than a rebuild.
 
 Red test proving it (drop into `test/aiIntel.test.js`):
 
@@ -378,7 +396,7 @@ Stated plainly, because a review that only lists faults gives a false picture of
 | 1 | Fix the two `competitionLedger.js` signatures; get CI green | 30 min |
 | 2 | Pin the TypeScript version in CI; add branch protection | 15 min |
 | 3 | Fix the `updateIntel` compounding decay; land the red test first | half day |
-| 4 | Re-run the MAP-Elites cast against the corrected signal | rerun |
+| 4 | Re-run the MAP-Elites cast as a refresh (see #3's correction) | rerun |
 | 5 | `tsc` inside `npm test`; extend the contract table to competition shapes | half day |
 | 6 | Move browser-reachable `tools/` files into the shipped tree | 1 hour |
 | 7 | Cycle ratchet in `static-integrity`; cut 1.1.0 | 1 day |
